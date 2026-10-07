@@ -1493,7 +1493,8 @@ w_hosts() {
     local t
     {
         if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-            tailscale status --json 2>/dev/null | jq -r '[.Peer[]? | select((.OS // "") as $o | ($o != "iOS" and $o != "android" and $o != "tvOS"))]
+            tailscale status --json 2>/dev/null | jq -r '(.Self.UserID) as $me | [.Peer[]? | select(.UserID == $me)          # only your own devices (a tailnet can share others)
+                | select((.OS // "") as $o | ($o != "iOS" and $o != "android" and $o != "tvOS"))]
                 | sort_by(if .Online then 0 else 1 end)[] | ((.DNSName // "") | rtrimstr(".")) + "\u001fTailscale · " + (.OS // "?") + " · " + (.TailscaleIPs[0] // "") + (if .Online then "" else " · offline" end)' 2>/dev/null
         fi
         if [ -r "$HOME/.ssh/config" ]; then awk 'tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i !~ /[*?!]/) print $i "\037~/.ssh/config" }' "$HOME/.ssh/config"; fi
