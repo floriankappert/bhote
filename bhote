@@ -32,6 +32,7 @@ VERSION=${BHOTE_VERSION:-0.1.0}
 #   NAME_COLORS=a=teal,b=mauve   colour agents by a part of their name (case-insensitive); colours: red teal peach mauve blue green yellow
 #   ANIMATION=on|off       the dog blinks and pants (default on)
 #   SPLASH_AUTOCLOSE=on|off   the welcome screen closes by itself after SPLASH_SECONDS (default on, 15)
+#   AUTOSTART=on|off       the herdr plugin opens the panel next to the agents when herdr starts (default on)
 CONFIG_FILE=${BHOTE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/config}
 cfg_var() {  # cfg_var <var> <key> <default>: no subshell, no awk (the screen asks a dozen times)
     local _cl _cv=""   # odd names: the caller's target variable must never be shadowed
@@ -819,6 +820,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
     SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
 }
 bhote_settings() {
@@ -830,7 +832,7 @@ bhote_settings() {
         row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
         [ "$i" = "$cur" ] && sel=1
         case "$kind" in
-            bool) def=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE) def=on ;; esac; cfg_var v "$key" $def
+            bool) def=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE|AUTOSTART) def=on ;; esac; cfg_var v "$key" $def
                   if [ "$v" = on ]; then vp="[x]"; vc="${GREEN}[x]${X}"; else vp="[ ]"; vc="${D}[ ]${X}"; fi ;;
             choice) cfg_var v STORE local
                   if [ "$v" = remote ]; then cfg_var v STORE_MACHINE '?'; vp="‹ $v ›"; else vp="‹ local ›"; fi; vc="${C}${vp}${X}" ;;
@@ -892,7 +894,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             if [ "$kind" = choice ]; then store_cycle "$k"; return; fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || SETTINGS_GO=hotkeys; return; fi
             [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
-                bool) cur=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE) cur=on ;; esac
+                bool) cur=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE|AUTOSTART) cur=on ;; esac
                       [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
                 machine) off=$(cfg_get MACHINES_OFF '')
                       case ",$off,"  in
