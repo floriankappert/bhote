@@ -1412,23 +1412,23 @@ w_warn() { w_mark "$Y" "!" "$@"; }
 w_opt()  { local COLS=$(( W + 4 )); printf '  %s%s%s' "$C" "$1" "$X"; wrap_print 5 "$L" "$2" | sed '1s/^   //'; }   # a numbered choice
 w_line() { printf '\n'; }
 w_read() {  # w_read <var> <prompt> [default]: one answer (cooked terminal); q ends the wizard
-    local _a _q _w _line="" _first=1 _room=$(( W - 2 ))
+    local __wr_a __wr_q __wr_w __wr_line="" __wr_first=1 __wr_room=$(( W - 2 ))
     printf '\n'
-    for _w in $2; do                                       # word wrap: the first line after "▶ ", the others under the text
-        if [ -z "$_line" ]; then _line=$_w
-        elif [ $(( ${#_line} + 1 + ${#_w} )) -le "$_room" ]; then _line="$_line $_w"
+    for __wr_w in $2; do                                       # word wrap: the first line after "▶ ", the others under the text
+        if [ -z "$__wr_line" ]; then __wr_line=$__wr_w
+        elif [ $(( ${#__wr_line} + 1 + ${#__wr_w} )) -le "$__wr_room" ]; then __wr_line="$__wr_line $__wr_w"
         else
-            if [ "$_first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$_line" "$X"; _first=0; else printf '    %s%s%s\n' "$L" "$_line" "$X"; fi
-            _line=$_w
+            if [ "$__wr_first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$__wr_line" "$X"; __wr_first=0; else printf '    %s%s%s\n' "$L" "$__wr_line" "$X"; fi
+            __wr_line=$__wr_w
         fi
     done
-    _q="${3:+[$3]}"; [ $(( ${#_line} + 1 + ${#_q} )) -gt "$_room" ] && { if [ "$_first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$_line" "$X"; else printf '    %s%s%s\n' "$L" "$_line" "$X"; fi; _first=0; _line=""; }
-    if [ "$_first" = 1 ]; then printf '  %s▶%s %s%s%s %s%s%s ' "$C" "$X" "$L" "$_line" "$X" "$D" "$_q" "$X"
-    else printf '    %s%s%s%s%s%s%s ' "$L" "$_line" "$X" "${_line:+ }" "$D" "$_q" "$X"; fi
-    IFS= read -r _a </dev/tty || _a=q
-    _a=${_a//[[:cntrl:]]/}; _a=${_a#"${_a%%[! ]*}"}; _a=${_a%"${_a##*[! ]}"}
-    [ "$_a" = q ] && W_QUIT=1
-    printf -v "$1" '%s' "${_a:-${3:-}}"
+    __wr_q="${3:+[$3]}"; [ $(( ${#__wr_line} + 1 + ${#__wr_q} )) -gt "$__wr_room" ] && { if [ "$__wr_first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$__wr_line" "$X"; else printf '    %s%s%s\n' "$L" "$__wr_line" "$X"; fi; __wr_first=0; __wr_line=""; }
+    if [ "$__wr_first" = 1 ]; then printf '  %s▶%s %s%s%s %s%s%s ' "$C" "$X" "$L" "$__wr_line" "$X" "$D" "$__wr_q" "$X"
+    else printf '    %s%s%s%s%s%s%s ' "$L" "$__wr_line" "$X" "${__wr_line:+ }" "$D" "$__wr_q" "$X"; fi
+    IFS= read -r __wr_a </dev/tty || __wr_a=q
+    __wr_a=${__wr_a//[[:cntrl:]]/}; __wr_a=${__wr_a#"${__wr_a%%[! ]*}"}; __wr_a=${__wr_a%"${__wr_a##*[! ]}"}
+    [ "$__wr_a" = q ] && W_QUIT=1
+    printf -v "$1" '%s' "${__wr_a:-${3:-}}"
 }
 w_yn() {  # w_yn <question> <Y|N>: 0 yes, 1 no, 2 skip (s), 3 quit (q)
     local a hint="Y/n"; [ "$2" = N ] && hint="y/N"
@@ -1460,6 +1460,65 @@ w_self_target() {  # how other machines reach this one: user@<local name>.local 
 }
 w_machines() { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof en; do [ -n "$label" ] && printf '%s\037%s\037%s\n' "$label" "$host" "$en"; done; }
 
+# Finding the other machine without knowing its host name: Tailscale devices, machines that offer ssh on the local network
+# (Bonjour / Avahi), and the aliases in ~/.ssh/config. One "host US where" line each, no duplicates.
+w_hosts() {
+    local t
+    {
+        if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            tailscale status --json 2>/dev/null | jq -r '[.Peer[]? | select((.OS // "") as $o | ($o != "iOS" and $o != "android" and $o != "tvOS"))]
+                | sort_by(if .Online then 0 else 1 end)[] | ((.DNSName // "") | rtrimstr(".")) + "\u001fTailscale · " + (.OS // "?") + (if .Online then "" else " · offline" end)' 2>/dev/null
+        fi
+        if [ -r "$HOME/.ssh/config" ]; then awk 'tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i !~ /[*?!]/) print $i "\037~/.ssh/config" }' "$HOME/.ssh/config"; fi
+        if command -v dns-sd >/dev/null 2>&1; then
+            t=$(mktemp "$RUN_DIR/mdns.XXXXXX"); dns-sd -B _ssh._tcp local. > "$t" 2>/dev/null & local p=$!; sleep 2; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
+            awk '$2 == "Add" { n = ""; for (i = 7; i <= NF; i++) n = n (n ? " " : "") $i; gsub(/ /, "-", n); print n ".local\037local network (Bonjour)" }' "$t"
+        elif command -v avahi-browse >/dev/null 2>&1; then
+            avahi-browse -tpr _ssh._tcp 2>/dev/null | awk -F';' '$1 == "=" && $3 == "IPv4" { print $7 "\037local network (Avahi)" }'
+        fi
+    } | awk -F'\037' '$1 != "" && !seen[$1]++' | head -9
+}
+w_self_targets() {  # how the others can reach THIS machine: Tailscale name, local network name, IP address
+    local u=$USER ts ln ip
+    if command -v tailscale >/dev/null 2>&1; then ts=$(tailscale status --json 2>/dev/null | jq -r '(.Self.DNSName // "") | rtrimstr(".")' 2>/dev/null); [ -n "$ts" ] && printf '%s@%s\037Tailscale (works from anywhere in your tailnet)\n' "$u" "$ts"; fi
+    if [ "$(uname -s)" = Darwin ]; then ln=$(scutil --get LocalHostName 2>/dev/null); [ -n "$ln" ] && printf '%s@%s.local\037local network name (same Wi-Fi/LAN)\n' "$u" "$ln"
+        ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+    else ln=$(hostname 2>/dev/null); [ -n "$ln" ] && printf '%s@%s\037host name\n' "$u" "$ln"; ip=$(hostname -I 2>/dev/null | awk '{print $1}'); fi
+    [ -n "$ip" ] && printf '%s@%s\037IP address (can change)\n' "$u" "$ip"
+}
+w_pick() {  # w_pick <var> <question> <US-separated lines>: a numbered list; a number picks, anything else is taken as typed
+    local _v=$1 _q=$2 _lines=$3 _i=0 _h _w _a _vals=()
+    while IFS=$US read -r _h _w; do
+        [ -n "$_h" ] || continue; _i=$(( _i + 1 )); _vals[$_i]=$_h
+        printf '  %s%d%s  %s%s%s\n     %s%s%s\n' "$C" "$_i" "$X" "$L" "$(clip "$_h" $(( W - 5 )))" "$X" "$D" "$(clip "$_w" $(( W - 5 )))" "$X"
+    done <<< "$_lines"
+    [ "$_i" -gt 0 ] || w_say "Nothing found nearby: type it (a host name, user@host, or an IP address)."
+    w_read _a "$_q" "$([ "$_i" -gt 0 ] && echo 1)"; [ "$W_QUIT" = 1 ] && return
+    case "$_a" in [1-9]) [ -n "${_vals[$_a]:-}" ] && _a=${_vals[$_a]} ;; esac
+    printf -v "$_v" '%s' "$_a"
+}
+w_probe() {  # w_probe <ssh target>: can we get there? W_PROBE = ok | password | unknown | refused | unreachable | other
+    local out; out=$(ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new "$1" true 2>&1); local rc=$?
+    if [ $rc = 0 ]; then W_PROBE=ok; return 0; fi
+    case "$out" in
+        *"ermission denied"*|*"publickey"*) W_PROBE=password ;;
+        *"ould not resolve"*|*"not known"*|*"Name or service"*) W_PROBE=unknown ;;
+        *"onnection refused"*) W_PROBE=refused ;;
+        *"timed out"*|*"o route"*|*"nreachable"*) W_PROBE=unreachable ;;
+        *) W_PROBE=other ;;
+    esac
+    return 1
+}
+w_probe_say() {  # what the probe means, in one line
+    case "$W_PROBE" in
+        ok) w_ok "reachable" "ssh works with your key" ;;
+        password) w_ok "reachable" "ssh will ask for the password (bhote never sees it)" ;;
+        unknown) w_bad "unknown name" "pick it from the list or check the spelling" ;;
+        refused) w_bad "no ssh there" "switch on Remote Login (macOS) or sshd (Linux)" ;;
+        unreachable) w_bad "not reachable" "is it on and in the same network or tailnet?" ;;
+        *) w_bad "ssh failed" "try another address" ;;
+    esac
+}
 setup_step_checks() {
     w_screen 1 "CHECKS"
     w_say "What bhote needs on this machine. Nothing is changed in this step unless you say so."; w_line
@@ -1510,10 +1569,26 @@ setup_step_machines() {
         done <<< "$(w_machines)"
         [ "$any" = 1 ] || w_warn "none yet" "add one to see its agents here"
         w_yn "Add a machine?" N; r=$?; [ $r = 3 ] && return; [ $r = 0 ] || break
-        w_say "The ssh target of the other machine, e.g. flo@workstation or a name from ~/.ssh/config. herdr prepares its server there."
-        w_read t "ssh target (user@host):" ""; [ "$W_QUIT" = 1 ] && return; [ -n "$t" ] || continue
-        w_read lab "Label for it:" "${t#*@}"; [ "$W_QUIT" = 1 ] && return
-        case "$t$lab" in *[!A-Za-z0-9._@:%\ -]*) w_bad "refused" "odd characters in target or label"; w_continue; continue ;; esac
+        w_screen 3 "ADD A MACHINE"
+        w_say "Which machine? These were found nearby; a number picks one, or type a name or an address."; w_line
+        local h u
+        w_pick h "Machine:" "$(w_hosts)"; [ "$W_QUIT" = 1 ] && return; [ -n "$h" ] || continue
+        case "$h" in *@*) t=$h ;; *)                         # a ~/.ssh/config alias knows its user; else ask, with this user as default
+            if [ -r "$HOME/.ssh/config" ] && awk -v h="$h" 'tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i == h) f = 1 } END { exit !f }' "$HOME/.ssh/config"; then t=$h
+            else w_read u "User name on $h:" "$USER"; [ "$W_QUIT" = 1 ] && return; t="$u@$h"; fi ;;
+        esac
+        case "$t" in -*|*[!A-Za-z0-9._@:%-]*) w_bad "refused" "odd characters in $t"; w_continue; continue ;; esac
+        printf '\n  %s→ %s%s\n' "$C" "$(clip "testing ssh to $t" $(( W - 2 )))" "$X"; w_probe "$t"; w_probe_say
+        case "$W_PROBE" in ok|password) ;; *) w_continue; continue ;; esac
+        local short=${t#*@} dup=""; short=${short%%.*}          # the same device, saved under another name or address?
+        dup=$(w_machines | while IFS=$US read -r l2 h2 e2; do h2=${h2#*@}; [ "${h2%%.*}" = "$short" ] && { echo "$l2"; break; }; done)
+        if [ -n "$dup" ]; then w_warn "$short" "is saved already as $dup: nothing to add"; w_continue; continue; fi
+        lab=${h#*@}; lab=${lab%%.*}; lab="$(printf '%s' "${lab:0:1}" | tr '[:lower:]' '[:upper:]')${lab:1}"
+        w_read lab "Label for it in herdr and bhote:" "$lab"; [ "$W_QUIT" = 1 ] && return
+        case "$lab" in ''|*[!A-Za-z0-9._\ -]*) w_bad "refused" "the label may only have letters, digits, . _ - and spaces"; w_continue; continue ;; esac
+        if w_machines | awk -F'\037' -v l="$lab" '$1 == l { f = 1 } END { exit !f }'; then
+            w_warn "$lab" "is saved already (herdr machine list): nothing to add"; w_continue; continue
+        fi
         w_ssh_note "$t"
         w_run "herdr machine add --label $lab $t" herdr machine add --label "$lab" "$t"; w_continue
     done
@@ -1539,7 +1614,8 @@ setup_step_twoway() {
         fi
         w_ok "ssh into $HOST" "open"
         # 2) the address of this machine as seen from there
-        w_read tgt "How $label reaches $HOST (user@host):" "$(w_self_target)"; [ "$W_QUIT" = 1 ] && return
+        w_line; w_say "How can $label reach $HOST? Pick one; Tailscale works from anywhere, the local name only in the same network."
+        w_pick tgt "Address of $HOST:" "$(w_self_targets)"; [ "$W_QUIT" = 1 ] && return
         case "$tgt" in ''|-*|*[!A-Za-z0-9._@:%-]*) w_bad "refused" "odd characters in the target"; continue ;; esac
         # 3) the key of the other machine, shown with its fingerprint, allowed here only when you say so
         key=$(w_ssh "$label" 'for f in ~/.ssh/id_ed25519.pub ~/.ssh/id_ecdsa.pub ~/.ssh/id_rsa.pub; do [ -f "$f" ] && { head -1 "$f"; exit 0; }; done; exit 3'); r=$?
