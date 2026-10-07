@@ -1463,7 +1463,7 @@ w_yn() {  # w_yn <question> <Y|N>: 0 yes, 1 no, 2 skip (s), 3 quit (q); only y, 
         q) printf '%send%s\n' "$D" "$X"; W_QUIT=1; return 3 ;;
     esac
 }
-w_continue() { printf '\n  %s⏎ next · q end the setup%s ' "$D" "$X"; w_key q; [ "$W_KEY" = q ] && W_QUIT=1; printf '\n'; return 0; }
+w_continue() { printf '\n  %sq end the setup · ⏎ next%s ' "$D" "$X"; w_key q; [ "$W_KEY" = q ] && W_QUIT=1; printf '\n'; return 0; }
 w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a password here), then says how it went
     printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; shift
     "$@"; local rc=$?
