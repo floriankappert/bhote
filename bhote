@@ -356,7 +356,7 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""
+    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""
     [ "$color" = 1 ] || { TEAL=""; ORANGE=""; return 0; }
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
@@ -364,6 +364,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
         Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
+        DESC="${esc}[3m$(rgb "166;173;200")"; DESCSEL="${esc}[3m$(rgb "205;214;244")"  # the description: italic, between text and dim
         stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135"); GRAD_ANSI=""
     else                                                     # the terminal's palette: magenta, red, cyan, yellow, ...
         R="${esc}[35m"; NN="${esc}[31m"; S="${esc}[36m"; C="${esc}[33m"; L="${esc}[1;39m"; D="${esc}[90m"; B=$D
@@ -371,6 +372,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
         SELBG="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
+        DESC="${esc}[3;37m"; DESCSEL="${esc}[3;97m"                              # the description: italic
     fi
     for k in TEXT DIM FRAME SELECTION ACCENT NOW WAITING REVIEW LATER DONE ERROR; do
         cfg_var v "COLOR_$k" ""; [ -n "$v" ] || continue; v=$(hex_rgb "$v") || continue
@@ -380,7 +382,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
             LATER) R=$(rgb "$v") ;; DONE) GREEN=$(rgb "$v") ;; ERROR) NN=$(rgb "$v") ;;
         esac
     done
-    TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}
+    TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
 }
 theme_sig() {  # theme_sig <var>: the settings the colours come from, as one string (a change re-applies the theme)
     local _l _sig=""
@@ -777,16 +779,31 @@ group() {  # group <CAPTION> [colour]: a status caption; everything below starts
 # One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
 # find it for scrolling (and strips it). Done entries are one muted line.
-topic_item() {  # topic_item <selected 0|1> <meta colour> <unused> <title colour> <title> <description> <meta> <compact 0|1>
-    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d m mc=${2:-$D} tc=$4 dc=$D
-    clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); clip_set m "$7" $(( w - 5 ))
+topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> [compact 1]
+    # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
+    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n
+    clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 ))
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
-        bg=$SELBG; mk=$'\001'; [ "$tc" = "$L" ] && tc=$LSEL; dc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
+        bg=$SELBG; mk=$'\001'; [ "$tc" = "$L" ] && tc=$LSEL; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
     fi
     printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - ${#t} )) "" "$X"
     [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - ${#d} )) "" "$X"
-    [ -n "$m" ] && printf '%s  %s∟ %s%s%s%*s%s\n' "$bg" "$dc" "$mc" "$m" "$X$bg" $(( w - 4 - ${#m} )) "" "$X"
-    [ "$8" = 1 ] || printf '\n'
+    [ -n "$who$st$tm" ] || { [ "${9:-}" = 1 ] || printf '\n'; return 0; }
+    room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
+    n=$(( ${#who} + ${#st} + ${#tm} + (${#who} > 0 && ${#st} > 0 ? 3 : 0) + (${#tm} > 0 && ${#who}${#st} != 00 ? 3 : 0) ))
+    if [ "$n" -gt "$room" ]; then tm=""; n=$(( ${#who} + ${#st} + (${#who} > 0 && ${#st} > 0 ? 3 : 0) )); fi
+    if [ "$n" -gt "$room" ]; then
+        if [ -n "$who" ]; then clip_set st "$st" $(( room - ${#who} - 3 )); else clip_set st "$st" "$room"; fi
+        [ -n "$st" ] || clip_set who "$who" "$room"
+        n=$(( ${#who} + ${#st} + (${#who} > 0 && ${#st} > 0 ? 3 : 0) ))
+    fi
+    printf '%s  %s∟ ' "$bg" "$gc"
+    [ -n "$who" ] && printf '%s%s' "$wc" "$who"
+    [ -n "$who" ] && [ -n "$st" ] && printf '%s · ' "$gc"
+    [ -n "$st" ] && printf '%s%s' "$mc" "$st"
+    [ -n "$tm" ] && { [ -n "$who$st" ] && printf '%s · ' "$gc"; printf '%s%s' "$gc" "$tm"; }
+    printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
+    [ "${9:-}" = 1 ] || printf '\n'
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
     local _i _m _id _st _r _x gone=gone
@@ -797,7 +814,7 @@ agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | 
     printf -v "$1" '%s' "$gone"
 }
 topics_block() {  # the topics, grouped by status (now, waiting, later, done); done ones are capped at DONE_MAX (default 7)
-    local i prev="" st label lc ic icon tc meta age ast desc cp sl ndone=0 hidden=0 max
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc ndone=0 hidden=0 max
     num_set max "${U_DONE_MAX:-}" 7
     sel_index
     for (( i = 0; i < T_N; i++ )); do
@@ -810,21 +827,22 @@ topics_block() {  # the topics, grouped by status (now, waiting, later, done); d
             case "$st" in now) label=NOW; lc=$ORANGE ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             group "$label" "$lc"; prev=$st
         fi
+        who=""; state=""; tm=""; sc=$D                        # the meta line: who · state · time
         case "$st" in
-            now) ic=$D; icon=""; ago_set meta "${T_UPD[$i]:-$NOW}"
-                 if [ -n "${T_TN[$i]}" ]; then meta="${T_AG[$i]:-?} → ${T_TN[$i]} · handing over"; ic=$C
+            now) ago_set tm "${T_UPD[$i]:-$NOW}"
+                 if [ -n "${T_TN[$i]}" ]; then who="${T_AG[$i]:-?} → ${T_TN[$i]}"; state="handing over"; sc=$C; tm=""
                  elif [ -n "${T_AG[$i]}" ]; then    # given to an agent: say what that agent is doing now
-                     agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
-                     case "$ast" in working) meta="${T_AG[$i]} · working"; ic=$ORANGE ;; testing) meta="${T_AG[$i]} · running tests"; ic=$ORANGE ;; blocked) meta="${T_AG[$i]} · needs you"; ic=$NN ;;
-                         idle|done) meta="${T_AG[$i]} · finished"; ic=$GREEN; [ "$i" = "$SEL_IDX" ] && meta="$meta · x = done" ;; *) meta="${T_AG[$i]} · gone" ;; esac
+                     who=${T_AG[$i]}; tm=""; agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
+                     case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
+                         idle|done) state=finished; sc=$GREEN; [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;; *) state=gone; sc=$D ;; esac
                  fi ;;
-            waiting) ic=$D; icon=""; ago_set age "${T_WSINCE[$i]:-$NOW}"; meta="${T_WFOR[$i]:-?} · $age${T_AG[$i]:+ · ${T_AG[$i]} waits}" ;;
-            review) ic=$BLUE; icon=""; ago_set age "${T_UPD[$i]:-$NOW}"; meta="${T_AG[$i]:+${T_AG[$i]} · }ready for review · $age" ;;
-            later) ic=$D; icon=""; ago_set meta "${T_UPD[$i]:-$NOW}" ;;
-            done) ic=$D; icon=""; tc=$D; meta=""; desc=""; cp=1 ;;                  # muted, one line, no gap
+            waiting) who=${T_WFOR[$i]:-?}; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; } ;;
+            review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}" ;;
+            later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
+            done) tc=$D; desc=""; cp=1 ;;                                        # muted, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
-        topic_item "$sl" "$ic" "$icon" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$meta" "$cp"
+        topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
     done
     [ "$hidden" -gt 0 ] && printf '  %s+%d more%s\n' "$D" "$hidden" "$X"
     [ "$T_N" -gt 0 ] || printf '\n  %sno topics yet · n adds one%s\n\n' "$D" "$X"
@@ -1321,7 +1339,7 @@ bhote_suggest() {
     for (( i = 0; i < ${#SUG_MAP[@]}; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[${SUG_MAP[$i]}]}"
         sl=0; [ "$i" = "$SUG_IDX" ] && sl=1
-        topic_item "$sl" "" " " "$L" "$task" "" "$m · $name" 0
+        topic_item "$sl" "$D" "" "$L" "$task" "" "$name" "$m" 0
     done
     [ "${#SUG_MAP[@]}" -gt 0 ] || printf '   %snothing to suggest%s\n' "$D" "$X"
     printf '\n'; rule
