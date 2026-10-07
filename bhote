@@ -613,6 +613,7 @@ bhote_splash() {
 WORD
     blank
     mid "Agent & Work Management" "${D}Agent & Work Management${X}"
+    mid "by Florian Kappert" "${D}by Florian Kappert${X}"
     blanks "$SG2"
     splash_prompt_row                                       # right under the wordmark; the gaps are all the same size
     blanks "$SG3"
@@ -1246,7 +1247,7 @@ prompt_new_topic() {  # "Title", "Title; description", "Title @Name" or "Title >
 # The panel works between MIN and MAX columns: wider than MAX it uses only the left MAX columns, narrower than MIN (or shorter
 # than MIN_ROWS) it shows a hint instead of a broken picture. The start screen is a fixed picture (WIDTH x SPLASH_ROWS):
 # where it does not fit, the list is shown instead.
-MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-60}; MIN_ROWS=${BHOTE_MIN_ROWS:-20}; SPLASH_ROWS=38; TOO_SMALL=0
+MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-60}; MIN_ROWS=${BHOTE_MIN_ROWS:-20}; SPLASH_ROWS=39; TOO_SMALL=0
 splash_fits() { [ "${REAL_COLS:-44}" -ge "$SPLASH_W" ] && [ "${REAL_ROWS:-40}" -ge "$SPLASH_ROWS" ]; }
 # The start screen fills the pane: the frame is as wide and as high as the pane; the extra width centres the content, the extra
 # height becomes space between the sections (all of it above the prompt, so the keys stay on the bottom edge).
@@ -1258,7 +1259,7 @@ splash_geometry() {
     # five gaps (under the greeting, the dog, the wordmark, the prompt, the info), each one line plus an equal share of the rest
     q=$(( e / 5 )); r=$(( e % 5 ))
     SG0=$(( 1 + q + (r > 0) )); SG1=$(( 1 + q + (r > 1) )); SG2=$(( 1 + q + (r > 2) )); SG3=$(( 1 + q + (r > 3) )); SG4=$(( 1 + q ))
-    SPLASH_PROMPT_ROW=$(( 27 + SG0 + SG1 + SG2 ))
+    SPLASH_PROMPT_ROW=$(( 28 + SG0 + SG1 + SG2 ))
 }
 term_size() {
     local sz; sz=$(stty size </dev/tty 2>/dev/null); REAL_COLS=${sz#* }; REAL_ROWS=${sz% *}; REAL_COLS=${REAL_COLS:-44}; REAL_ROWS=${REAL_ROWS:-40}
@@ -1455,46 +1456,65 @@ cli_done() {  # after a change: merge with the data location (silent when the da
         *) echo "bhote: saved locally; $(cfg_get STORE_MACHINE) is not reachable, it will be merged later" >&2 ;;
     esac
 }
+# The JSON of one topic: the same object for `list --json`, `show --json` and every changing command with --json (schema:
+# docs/schema/topic.schema.json). A value that is not there is null, never an empty string or 0.
+json_num() { case "$1" in ''|*[!0-9]*) printf 'null' ;; *) printf '%s' "$1" ;; esac; }
+json_opt() { if [ -n "$1" ]; then json_str "$1"; else printf 'null'; fi; }
+topic_n() {  # topic_n <file>: its number in `bhote list --all` (1-based); needs topics_load
+    local i; for (( i = 0; i < T_N; i++ )); do [ "${T_FILE[$i]}" = "$1" ] && { printf '%s' $(( i + 1 )); return; }; done; printf 'null'
+}
+topic_json() {  # topic_json <file>
+    local f=$1 st wf ag am ap agent=null
+    st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane)
+    [ "$st" = waiting ] || wf=""
+    [ -n "$ag" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s}' "$(json_str "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")")
+    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"created":%s,"updated":%s}' \
+        "$(json_str "$(topic_get "$f" id)")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
+        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" \
+        "$(json_num "$(topic_get "$f" created)")" "$(json_num "$(topic_get "$f" updated)")"
+}
 cli_show() {  # cli_show <file> [--json]
-    local f=$1 id title st wf ws cr up desc ag
+    local f=$1 id title st wf ws desc ag
+    if [ "${2:-}" = --json ]; then [ -n "${T_N:-}" ] || topics_load; topic_json "$f"; printf '\n'; return 0; fi
     id=$(topic_get "$f" id); title=$(topic_get "$f" title); st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for)
-    ws=$(topic_get "$f" waiting_since 0); cr=$(topic_get "$f" created 0); up=$(topic_get "$f" updated 0); desc=$(topic_get "$f" description); ag=$(topic_get "$f" agent)
-    if [ "${2:-}" = --json ]; then
-        printf '{"id":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"created":%s,"updated":%s}\n' \
-            "$(json_str "$id")" "$(json_str "$title")" "$(json_str "$desc")" "$(json_str "$st")" "$(json_str "$wf")" "$(num_or "$ws" 0)" "$(num_or "$cr" 0)" "$(num_or "$up" 0)"
-    else
-        printf '%s\n  status: %s\n  id: %s\n' "$title" "$st" "$id"
-        if [ -n "$desc" ]; then printf '  description: %s\n' "$desc"; fi
-        if [ -n "$ag" ]; then printf '  agent: %s (%s)\n' "$ag" "$(topic_get "$f" agent_machine)"; fi
-        if [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
-    fi
+    ws=$(topic_get "$f" waiting_since 0); desc=$(topic_get "$f" description); ag=$(topic_get "$f" agent)
+    printf '%s\n  status: %s\n  id: %s\n' "$title" "$st" "$id"
+    if [ -n "$desc" ]; then printf '  description: %s\n' "$desc"; fi
+    if [ -n "$ag" ]; then printf '  agent: %s (%s)\n' "$ag" "$(topic_get "$f" agent_machine)"; fi
+    if [ "$st" = waiting ] && [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
     return 0
 }
 bhote_help() {
     cat <<'HELP'
 bhote — topics and agents next to herdr.
 
-  bhote                          the panel
-  bhote add <title> [-d <text>] [@Name]   new topic with an optional description; "@Name" (or --waiting Name) = waiting for Name
-  bhote list [--all] [--json]    the topics (done ones only with --all); --status now|waiting|later|done
-  bhote show <ref> [--json]      one topic
-  bhote done <ref>               mark done          bhote now <ref>      start / resume
-  bhote later <ref>              park               bhote wait <ref> <Name>   waiting for Name
-  bhote rename <ref> <title>     new title          bhote desc <ref> <text>   description (at most 140 characters)
-           bhote rm <ref>       delete
-  bhote sync                     merge with the data location now
-  bhote help
+  bhote                              the panel
+  bhote add <title> [options]        new topic   -d <text> description · @Name or -w Name waiting for Name · -s now|later|done
+  bhote list [--all] [-s <status>]   the open topics (--all: also done ones), numbered
+  bhote show <ref>                   one topic
+  bhote now|later|done <ref>         start or resume · park · mark done
+  bhote wait <ref> <Name>            waiting for Name (from now)
+  bhote rename <ref> <title>         new title
+  bhote desc <ref> [<text>]          new description (at most 140 characters; none = remove it)
+  bhote rm <ref>                     delete
+  bhote sync                         merge with the data location now
+  bhote version · bhote help
 
-<ref> is the number from `bhote list`, an id (or its start), or a piece of the title. Exit codes: 0 ok, 1 error,
-2 more than one topic matches. Settings: ~/.config/bhote/config (or the panel: ",").
+Every command takes --json: one topic object (list: an array) as described in docs/cli-reference.md.
+<ref> is a number from `bhote list --all`, an id (or its start), or part of the title.
+Exit codes: 0 ok · 1 error · 2 the ref matches more than one topic. Messages go to stderr.
+Settings: ~/.config/bhote/config (or in the panel: ",").
 HELP
 }
 bhote_cli() {
-    local cmd=${1:-}; shift
+    local cmd=${1:-} a json="" args=(); shift
     harden_perms
     trap 'rm -rf "$RUN_DIR"' EXIT
+    for a in "$@"; do if [ "$a" = --json ]; then json=--json; else args[${#args[@]}]=$a; fi; done   # --json anywhere
+    set -- ${args[@]+"${args[@]}"}
     case "$cmd" in
         help|-h|--help) bhote_help ;;
+        version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg
               while [ $# -gt 0 ]; do
                   case "$1" in
@@ -1509,9 +1529,10 @@ bhote_cli() {
               topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
               f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
               case "$st" in now|later|done) topic_set "$f" status "$st" ;; esac
-              cli_done; cli_show "$f" ;;
-        list|ls) local all="" json="" only="" i first=1
-              while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --json) json=1 ;; --status|-s) only=${2:-}; shift ;; esac; shift; done
+              cli_done; topics_load; cli_show "$f" $json ;;
+        list|ls) local all="" only="" i first=1
+              while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --status|-s) only=${2:-}; shift ;; *) echo "bhote: unknown option '$1' for list" >&2; return 1 ;; esac; shift; done
+              case "$only" in ''|now|waiting|later|done) ;; *) echo "bhote: --status is one of now, waiting, later, done" >&2; return 1 ;; esac
               NOW=$(date +%s); topics_load
               [ -n "$json" ] && printf '['
               for (( i = 0; i < T_N; i++ )); do
@@ -1519,8 +1540,7 @@ bhote_cli() {
                   [ -z "$only" ] && [ -z "$all" ] && [ "${T_STATUS[$i]}" = done ] && continue
                   if [ -n "$json" ]; then
                       [ "$first" = 1 ] || printf ','; first=0
-                      printf '{"n":%s,"id":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"updated":%s}' "$(( i + 1 ))" \
-                          "$(json_str "${T_ID[$i]}")" "$(json_str "${T_TITLE[$i]}")" "$(json_str "${T_DESC[$i]:-}")" "$(json_str "${T_STATUS[$i]}")" "$(json_str "${T_WFOR[$i]}")" "$(num_or "${T_WSINCE[$i]}" 0)" "$(num_or "${T_UPD[$i]}" 0)"
+                      topic_json "${T_FILE[$i]}"
                   else
                       printf '%3s  %-8s %s' "$(( i + 1 ))" "${T_STATUS[$i]}" "${T_TITLE[$i]}"
                       if [ "${T_STATUS[$i]}" = waiting ]; then printf '  (%s, %s)' "${T_WFOR[$i]}" "$(ago "${T_WSINCE[$i]:-$NOW}")"; fi
@@ -1528,7 +1548,7 @@ bhote_cli() {
                   fi
               done
               if [ -n "$json" ]; then printf ']\n'; fi; return 0 ;;
-        show) local f; f=$(topic_ref "${1:-}") || return $?; cli_show "$f" "${2:-}" ;;
+        show) local f; f=$(topic_ref "${1:-}") || return $?; topics_load; cli_show "$f" $json ;;
         done|now|later|wait|rename|desc|rm)
               local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
               f=$(topic_ref "$ref") || return $?; shift
@@ -1539,16 +1559,20 @@ bhote_cli() {
                   wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }
                         topic_set "$f" status waiting; topic_set "$f" waiting_for "$*"; topic_set "$f" waiting_since "$(date +%s)" ;;
                   rename) [ -n "${1:-}" ] || { echo "bhote: rename needs a title" >&2; return 1; }; topic_set "$f" title "$*" ;;
+                  rm) local rid; rid=$(topic_get "$f" id); topic_set "$f" deleted 1 ;;
                   desc) local dd="$*"; [ "${#dd}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
                         topic_set "$f" description "$*" ;;
-                  rm) topic_set "$f" deleted 1 ;;
               esac
-              cli_done; if [ "$cmd" = rm ]; then echo "deleted"; else cli_show "$f"; fi ;;
-        sync) if [ "$(cfg_get STORE local)" != remote ]; then echo "data location is local, nothing to merge"
+              cli_done
+              if [ "$cmd" = rm ]; then if [ -n "$json" ]; then printf '{"deleted":%s}\n' "$(json_str "$rid")"; else echo "deleted"; fi
+              else topics_load; cli_show "$f" $json; fi ;;
+        sync) local m; m=$(cfg_get STORE_MACHINE '')
+              sync_out() { if [ -n "$json" ]; then printf '{"sync":%s,"machine":%s}\n' "$(json_str "$1")" "$(json_opt "$m")"; fi; }
+              if [ "$(cfg_get STORE local)" != remote ]; then sync_out local; [ -n "$json" ] || echo "data location is local, nothing to merge"
               else store_sync; case $? in
-                  0) echo "in sync with $(cfg_get STORE_MACHINE)" ;;
-                  2) echo "bhote: another sync is running right now, try again in a moment" >&2; return 1 ;;
-                  *) echo "bhote: $(cfg_get STORE_MACHINE) is not reachable, changes stay local" >&2; return 1 ;;
+                  0) sync_out ok; [ -n "$json" ] || echo "in sync with $m" ;;
+                  2) sync_out busy; echo "bhote: another sync is running right now, try again in a moment" >&2; return 1 ;;
+                  *) sync_out offline; echo "bhote: $m is not reachable, changes stay local" >&2; return 1 ;;
               esac; fi ;;
         *) echo "bhote: unknown command '$cmd' (bhote help)" >&2; return 1 ;;
     esac

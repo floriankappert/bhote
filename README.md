@@ -1,5 +1,7 @@
 # bhote
 
+*by Florian Kappert*
+
 A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you work on, who you wait for) next to your
 **agents** (who is free, who is busy). A single bash script, about 44 columns wide, with a small sheepdog that guards the herd.
 
@@ -74,4 +76,4 @@ become files; control characters are stripped from everything shown or sent; pri
 panel per machine collects agent data, the others read its result. `tests/` holds the checks (`bash tests/smoke.sh`,
 `cli.sh`, `agents.sh`, `store.sh`).
 
-MIT licensed.
+MIT licensed. Documentation: [docs/](docs/README.md) — start with the [CLI reference](docs/cli-reference.md).

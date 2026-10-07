@@ -54,4 +54,30 @@ B add "Long description" -d "$long" >/dev/null 2>&1; d=$(B show "Long descriptio
 [ "$d" = 140 ] && ok "descriptions are cut to 140 characters (add -d)" || bad "description length $d"
 B desc "Long description" "$long" >/dev/null 2>&1; d=$(B show "Long description" --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["description"]))')
 [ "$d" = 140 ] && ok "descriptions are cut to 140 characters (desc)" || bad "desc length $d"
+# the JSON output matches docs/schema (checked with a small validator, no extra module needed)
+cat > "$T/validate.py" <<'PY'
+import json, sys, os
+base = sys.argv[1]
+def load(n): return json.load(open(os.path.join(base, n)))
+T = {"string": str, "integer": int, "object": dict, "array": list, "null": type(None)}
+def ok(v, s):
+    if "$ref" in s: return ok(v, load(s["$ref"]))
+    if "oneOf" in s: return sum(ok(v, x) for x in s["oneOf"]) == 1
+    if "enum" in s and v not in s["enum"]: return False
+    if "type" in s:
+        ts = s["type"] if isinstance(s["type"], list) else [s["type"]]
+        if not any(isinstance(v, T[t]) and not (t == "integer" and isinstance(v, bool)) for t in ts): return False
+    if isinstance(v, dict):
+        if any(k not in v for k in s.get("required", [])): return False
+        if s.get("additionalProperties") is False and any(k not in s.get("properties", {}) for k in v): return False
+        if any(not ok(v[k], ps) for k, ps in s.get("properties", {}).items() if k in v): return False
+    if isinstance(v, list) and "items" in s: return all(ok(x, s["items"]) for x in v)
+    if isinstance(v, str) and "maxLength" in s and len(v) > s["maxLength"]: return False
+    return True
+sys.exit(0 if ok(json.load(sys.stdin), load(sys.argv[2])) else 1)
+PY
+B list --all --json | python3 "$T/validate.py" docs/schema topic-list.schema.json && ok "schema: list --json matches topic-list.schema.json" || bad "list --json does not match the schema"
+B show 1 --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: show --json matches topic.schema.json" || bad "show --json does not match the schema"
+B wait 1 Robin --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: a changing command with --json matches too" || bad "wait --json does not match"
+B version --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"]' && ok "version --json" || bad "version --json"
 rm -rf "$T"; exit $fail
