@@ -356,7 +356,7 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""
+    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
     [ "$color" = 1 ] || { TEAL=""; ORANGE=""; return 0; }
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
@@ -364,7 +364,8 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
         Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
-        DESC="${esc}[3m$(rgb "166;173;200")"; DESCSEL="${esc}[3m$(rgb "205;214;244")"  # the description: italic, between text and dim
+        TITLE="${esc}[1m$(rgb "166;173;200")"; TITLESEL="${esc}[1m$(rgb "205;214;244")"   # a topic: the title bold in the softer colour,
+        DESC="${esc}[3m$(rgb "205;214;244")"; DESCSEL="${esc}[3m$(rgb "245;247;255")"     # the description italic in the full text colour
         stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135"); GRAD_ANSI=""
     else                                                     # the terminal's palette: magenta, red, cyan, yellow, ...
         R="${esc}[35m"; NN="${esc}[31m"; S="${esc}[36m"; C="${esc}[33m"; L="${esc}[1;39m"; D="${esc}[90m"; B=$D
@@ -372,7 +373,8 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
         SELBG="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
-        DESC="${esc}[3;37m"; DESCSEL="${esc}[3;97m"                              # the description: italic
+        TITLE="${esc}[1;37m"; TITLESEL="${esc}[1;97m"                            # a topic: the title bold in the softer colour,
+        DESC="${esc}[3;39m"; DESCSEL="${esc}[3;97m"                              # the description italic in the full text colour
     fi
     for k in TEXT DIM FRAME SELECTION ACCENT NOW WAITING REVIEW LATER DONE ERROR; do
         cfg_var v "COLOR_$k" ""; [ -n "$v" ] || continue; v=$(hex_rgb "$v") || continue
@@ -383,6 +385,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         esac
     done
     TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
+    TITLE=${TITLE:-$L}; TITLESEL=${TITLESEL:-$LSEL}
 }
 theme_sig() {  # theme_sig <var>: the settings the colours come from, as one string (a change re-applies the theme)
     local _l _sig=""
@@ -784,7 +787,8 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n
     clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 ))
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
-        bg=$SELBG; mk=$'\001'; [ "$tc" = "$L" ] && tc=$LSEL; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
+        bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
+        case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$DSEL" ;; esac   # muted (done) titles: readable
     fi
     printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - ${#t} )) "" "$X"
     [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - ${#d} )) "" "$X"
@@ -818,7 +822,7 @@ topics_block() {  # the topics, grouped by status (now, waiting, later, done); d
     num_set max "${U_DONE_MAX:-}" 7
     sel_index
     for (( i = 0; i < T_N; i++ )); do
-        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$L; cp=0
+        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         if [ "$st" = done ]; then                              # beyond the cap only the selected one is shown
             ndone=$(( ndone + 1 ))
             if [ "$ndone" -gt "$max" ] && [ "$i" != "$SEL_IDX" ]; then hidden=$(( hidden + 1 )); continue; fi
@@ -839,7 +843,7 @@ topics_block() {  # the topics, grouped by status (now, waiting, later, done); d
             waiting) who=${T_WFOR[$i]:-?}; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; } ;;
             review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}" ;;
             later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
-            done) tc=$D; desc=""; cp=1 ;;                                        # muted, one line, no gap
+            done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
@@ -1339,7 +1343,7 @@ bhote_suggest() {
     for (( i = 0; i < ${#SUG_MAP[@]}; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[${SUG_MAP[$i]}]}"
         sl=0; [ "$i" = "$SUG_IDX" ] && sl=1
-        topic_item "$sl" "$D" "" "$L" "$task" "" "$name" "$m" 0
+        topic_item "$sl" "$D" "" "$TITLE" "$task" "" "$name" "$m" 0
     done
     [ "${#SUG_MAP[@]}" -gt 0 ] || printf '   %snothing to suggest%s\n' "$D" "$X"
     printf '\n'; rule
