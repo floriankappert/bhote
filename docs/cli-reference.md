@@ -95,6 +95,9 @@ One topic. With `--json`: one [topic object](#json-output).
 Set the status: start or resume (`now`, also clears a waiting name), hand over for review (`review`), park (`later`), check
 off (`done`). Print the topic.
 
+When a **waiting** topic belongs to an agent (the agent created it, see the bhote skill) and you set it to `now`, that agent
+gets a prompt: "The wait is over (<who>): <title>. Go on with: <description>". `bhote now <ref> --quiet` skips the prompt.
+
 Run by an agent (a Claude Code session: `CLAUDECODE=1`), `review` and `done` send a herdr notification and record which
 agent it was
 (`CLAUDE_CODE_SESSION_ID`, `HERDR_PANE_ID`). With `AGENT_CAN_CLOSE=off` an agent cannot close a topic: its `done` becomes
@@ -143,6 +146,22 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 ```
 
 `config list --json` is an array of `{"key", "value", "default", "type", "description"}`.
+
+### `bhote agents`
+
+The agents herdr knows (this machine, and the saved machines when `REMOTE_AGENTS=on`), numbered. The numbers are agent refs
+for `transfer`. `--json`: an array of `{"n", "machine", "pane", "status", "name", "task", "free", "topic"}`.
+
+### `bhote transfer <from> <to> [--topic <ref>]`
+
+[Steal & Transfer](steal-and-transfer.md): `<from>` commits its work on its branch with a handover and hands it to `<to>`
+(a free agent). Agent refs: a number from `bhote agents`, `machine/pane`, a pane id, or a part of the name (exit `2` when
+that matches several). Prints the topic.
+
+### `bhote handover <topic> --to <machine/pane> --branch <b> --commit <c>`
+
+Run by the source agent of a transfer (its prompt contains the exact command): the topic goes to the target agent, which
+gets the branch, the commit and the instruction to go on.
 
 ### `bhote current`
 

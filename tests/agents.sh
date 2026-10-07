@@ -9,7 +9,7 @@ cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 case "$*" in
  *"pane run"*|*"agent prompt"*|*"notification show"*) echo "$*" >> "$FAKE_LOG" ;;
- *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
+ *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
 esac
 SH
@@ -65,6 +65,34 @@ cfg_set NOTIFY on
 topic_new "Mine" "" "my part"; mf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mf" agent_session "sess-42"
 out=$(CLAUDE_CODE_SESSION_ID=sess-42 cli_current); case "$out" in *"Mine. my part (bhote topic $NEW_TOPIC_ID"*) ok "current: an agent gets its own topic and how to report back" ;; *) bad "current: $out" ;; esac
 out=$(CLAUDE_CODE_SESSION_ID=nobody HERDR_PANE_ID=zz:p9 cli_current); [ -z "$out" ] && ok "current: nothing for an agent without a topic" || bad "current for nobody: $out"
+
+# Steal & Transfer: the source agent is told to commit and hand over, the target takes the branch over
+unset CLAUDECODE; : > "$FAKE_LOG"; HOST=Mac
+topic_new "Big refactor" "" ""; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; tid=$NEW_TOPIC_ID
+transfer_start "$tf" Mac w3:p1 busy Mac w2:p1 server; wait
+grep -q "^agent prompt w3:p1 Steal & Transfer (bhote topic $tid" "$FAKE_LOG" && ok "transfer: the source agent is told to stop, commit and hand over" || bad "no handover prompt: $(cat "$FAKE_LOG")"
+grep -q "bhote handover $tid --to Mac/w2:p1 --branch" "$FAKE_LOG" && ok "transfer: it gets the exact handover command" || bad "handover command missing"
+grep -q "do not create a new branch" "$FAKE_LOG" && ok "transfer: the branch is kept (no new branch)" || bad "branch rule missing"
+[ "$(topic_get "$tf" transfer_to)" = "Mac/w2:p1" ] && ok "transfer: the topic remembers where it goes" || bad "transfer_to: $(topic_get "$tf" transfer_to)"
+topics_load; COLS=60; out=$(topics_block); case "$out" in *"busy → server · handing over"*) ok "transfer: the list says it is being handed over" ;; *) bad "meta: $out" ;; esac
+: > "$FAKE_LOG"; transfer_finish "$tf" "Mac/w2:p1" "feat/x" "abc123def"; wait; sleep 0.3
+grep -q "^agent prompt w2:p1 Steal & Transfer: take over \"Big refactor\" (bhote topic $tid) from busy. The work is on branch feat/x" "$FAKE_LOG" && ok "handover: the target agent gets the branch and the handover" || bad "no takeover prompt: $(cat "$FAKE_LOG")"
+[ "$(topic_get "$tf" agent_pane)" = w2:p1 ] && [ -z "$(topic_get "$tf" transfer_to)" ] && ok "handover: the topic now belongs to the target" || bad "topic not moved"
+grep -q "notification show Transferred" "$FAKE_LOG" && ok "handover: a notification says so" || bad "no notification"
+topic_new "Other" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; : > "$FAKE_LOG"
+transfer_start "$of" Mac w2:p1 server Mac w3:p1 busy 2>/dev/null && bad "transfer to a busy agent was accepted" || ok "transfer: a busy target is refused"
+[ ! -s "$FAKE_LOG" ] && ok "transfer: nothing is sent when it is refused" || bad "sent although refused"
+# the wait is over: a waiting topic of an agent, set to now, makes that agent go on
+topic_new "Wait for deploy" "DevOps" "test the login"; wf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wf" agent IMS; topic_set "$wf" agent_machine Mac; topic_set "$wf" agent_pane w1:p1
+: > "$FAKE_LOG"; topic_resume "$wf"; wait
+grep -q "^agent prompt w1:p1 The wait is over (DevOps): Wait for deploy. Go on with: test the login" "$FAKE_LOG" && ok "resume: the waiting agent is told to go on" || bad "no resume prompt: $(cat "$FAKE_LOG")"
+[ "$(topic_get "$wf" status)" = now ] && ok "resume: the topic is running again" || bad "status after resume"
+# agent refs
+AG_N=3; AG_LINES=($'Mac\037w1:p1\037idle\037Project\037' $'Laptop\037w9:p2\037done\037server\037' $'Mac\037w3:p1\037working\037Project two\037')
+agent_ref 2 && [ "$AR_P" = w9:p2 ] && ok "agent ref: a number" || bad "agent ref number"
+agent_ref "Laptop/w9:p2" && [ "$AR_NAME" = server ] && ok "agent ref: machine/pane" || bad "agent ref machine/pane"
+agent_ref "server" && [ "$AR_M" = Laptop ] && ok "agent ref: part of the name" || bad "agent ref name"
+agent_ref "project" 2>/dev/null; [ $? = 2 ] && ok "agent ref: ambiguous is exit 2" || bad "agent ref ambiguous"
 
 # one collector per machine: the first live process leads, the others follow; a dead leader is replaced
 sleep 30 & A=$!; sleep 30 & B=$!
