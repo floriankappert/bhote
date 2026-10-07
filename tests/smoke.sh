@@ -28,4 +28,5 @@ sys.exit(0 if ok else 1)" && echo "ok   fit $3 $1x$2" || { echo "FAIL fit $3 $1x
     rm -rf "$t"
 }
 for size in "44 40" "36 24" "44 87"; do set -- $size; fit "$1" "$2" main; fit "$1" "$2" settings; done
+BHOTE_SOURCE_ONLY= bash ./bhote setup --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "machines" in d and "plugin" in d' && echo "ok   setup --json" || { echo "FAIL setup --json"; fail=1; }
 exit $fail

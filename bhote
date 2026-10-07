@@ -21,6 +21,7 @@ SHARED_DIR=${BHOTE_SHARED:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bhote-$UID}
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.1.0}
+NEWS=""                 # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 
 # ── settings: ~/.config/bhote/config, plain KEY=value lines (never sourced). Everything that reaches beyond this machine
 # is OFF until the user switches it on in the settings screen (","): bhote must not open SSH connections unasked.
@@ -56,7 +57,8 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
 }
 # Every setting: KEY|default|type|description. Types: bool (on/off), int:min:max, enum:a:b, text, list (comma-separated).
 # The panel, `bhote config` and docs/configuration.md all follow this table; a value that does not fit is refused.
-SETTINGS='STORE|local|enum:local:remote|Where the topics are kept: local, or a replica on STORE_MACHINE
+SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it opens at the next start)
+STORE|local|enum:local:remote|Where the topics are kept: local, or a replica on STORE_MACHINE
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
 REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
@@ -704,7 +706,7 @@ WORD
     mid "by Florian Kappert" "${D}by Florian Kappert${X}"
     blanks "$SG2"
     splash_prompt_row                                       # right under the wordmark; the gaps are all the same size
-    blanks "$SG3"
+    if [ -n "$NEWS" ]; then mid "NEW: $NEWS" "${GREEN}NEW:${X} ${D}$NEWS${X}"; blanks $(( SG3 - 1 )); else blanks "$SG3"; fi
     local mv=${#host} vv t   # the four lines are one block: centred as a whole, values start in one column
     for vv in "${herdr_v:-?}" "$agents" "$T_N$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
     INFO_PAD=$(( (INNER - (9 + mv)) / 2 )); [ "$INFO_PAD" -lt 1 ] && INFO_PAD=1
@@ -916,6 +918,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
+    SET_ROWS[${#SET_ROWS[@]}]="link|SETUP|Setup wizard"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
 }
 bhote_settings() {
@@ -989,7 +992,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
         DOWN|j) SET_IDX=$(( (${SET_IDX:-0} + 1) % n )) ;;
         " "|ENTER|LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
             if [ "$kind" = choice ]; then store_cycle "$k"; return; fi
-            if [ "$kind" = link ]; then [ "$k" = LEFT ] || SETTINGS_GO=hotkeys; return; fi
+            if [ "$kind" = link ]; then [ "$k" = LEFT ] || { [ "$key" = SETUP ] && SETTINGS_GO=setup || SETTINGS_GO=hotkeys; }; return; fi
             if [ "$kind" = enum ]; then                              # step through the allowed values
                 setting_row "$key"; local vals cur2 nxt="" prev="" first="" last="" found=0 x IFS=:
                 vals=${S_TYPE#enum:}; cfg_var cur2 "$key" "$S_DEF"
@@ -1386,6 +1389,275 @@ harden_perms() {  # data, config and their folders: this user only (older versio
     [ -f "$CONFIG_FILE" ] && chmod 600 "$CONFIG_FILE" 2>/dev/null
     return 0
 }
+# ── the setup wizard. On the first start of every machine it opens by itself (once; one panel only), later from the settings
+# ("Setup wizard") or as `bhote setup`. Every step explains itself and asks first; Enter takes the [default], s skips a step,
+# q ends the setup. It never asks for a password: when ssh needs one, ssh asks for it itself, and bhote never sees it.
+W_STEPS=9; W_QUIT=0
+w_width() { W=$(( ${COLS:-44} - 4 )); [ "$W" -lt 26 ] && W=26; [ "$W" -gt 72 ] && W=72; }
+w_screen() {  # w_screen <step> <TITLE>: a clean screen with the progress dots and the step's caption
+    local i dots=""; w_width
+    for (( i = 1; i <= W_STEPS; i++ )); do
+        if [ "$i" -lt "$1" ]; then dots="$dots${GREEN}●${X}"; elif [ "$i" = "$1" ]; then dots="$dots${C}●${X}"; else dots="$dots${D}○${X}"; fi
+    done
+    printf '\033[H\033[2J\n  %s%s\n  %s\n  %s\n\n  %s%s%s  %sstep %d of %d%s\n\n' "${HEAD_GRAD:-${L}Bhote setup}" "$X" "$B$(hline "$W")$X" "$dots" "$R" "$2" "$X" "$D" "$1" "$W_STEPS" "$X"
+}
+w_say() { local col=${2:-$D} COLS=$(( W + 4 )); wrap_print 2 "$col" "$1"; }          # a paragraph, wrapped at the left edge
+w_mark() {  # w_mark <colour> <mark> <name> <detail>: aligned check lines (mark, name in 16 columns, detail cut to the edge)
+    local n d; clip_set n "$3" 16; clip_set d "${4:-}" $(( W - 19 ))
+    printf '  %s%s%s %-16s %s%s%s\n' "$1" "$2" "$X" "$n" "$D" "$d" "$X"
+}
+w_ok()   { w_mark "$GREEN" "✓" "$@"; }
+w_bad()  { w_mark "$NN" "✗" "$@"; }
+w_warn() { w_mark "$Y" "!" "$@"; }
+w_opt()  { local COLS=$(( W + 4 )); printf '  %s%s%s' "$C" "$1" "$X"; wrap_print 5 "$L" "$2" | sed '1s/^   //'; }   # a numbered choice
+w_line() { printf '\n'; }
+w_read() {  # w_read <var> <prompt> [default]: one answer (cooked terminal); q ends the wizard
+    local _a _q _w _line="" _first=1 _room=$(( W - 2 ))
+    printf '\n'
+    for _w in $2; do                                       # word wrap: the first line after "▶ ", the others under the text
+        if [ -z "$_line" ]; then _line=$_w
+        elif [ $(( ${#_line} + 1 + ${#_w} )) -le "$_room" ]; then _line="$_line $_w"
+        else
+            if [ "$_first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$_line" "$X"; _first=0; else printf '    %s%s%s\n' "$L" "$_line" "$X"; fi
+            _line=$_w
+        fi
+    done
+    _q="${3:+[$3]}"; [ $(( ${#_line} + 1 + ${#_q} )) -gt "$_room" ] && { if [ "$_first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$_line" "$X"; else printf '    %s%s%s\n' "$L" "$_line" "$X"; fi; _first=0; _line=""; }
+    if [ "$_first" = 1 ]; then printf '  %s▶%s %s%s%s %s%s%s ' "$C" "$X" "$L" "$_line" "$X" "$D" "$_q" "$X"
+    else printf '    %s%s%s%s%s%s%s ' "$L" "$_line" "$X" "${_line:+ }" "$D" "$_q" "$X"; fi
+    IFS= read -r _a </dev/tty || _a=q
+    _a=${_a//[[:cntrl:]]/}; _a=${_a#"${_a%%[! ]*}"}; _a=${_a%"${_a##*[! ]}"}
+    [ "$_a" = q ] && W_QUIT=1
+    printf -v "$1" '%s' "${_a:-${3:-}}"
+}
+w_yn() {  # w_yn <question> <Y|N>: 0 yes, 1 no, 2 skip (s), 3 quit (q)
+    local a hint="Y/n"; [ "$2" = N ] && hint="y/N"
+    w_read a "$1" "$hint"
+    [ "$W_QUIT" = 1 ] && return 3
+    case "$a" in y|Y|yes|j|J) return 0 ;; n|N|no) return 1 ;; s|S) return 2 ;; "$hint") [ "$2" = Y ] && return 0; return 1 ;; *) [ "$2" = Y ] && return 0; return 1 ;; esac
+}
+w_continue() { local a; printf '\n  %s⏎ next · q end the setup%s ' "$D" "$X"; IFS= read -r a </dev/tty; [ "$a" = q ] && W_QUIT=1; return 0; }
+w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a password here), then says how it went
+    printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; shift
+    "$@"; local rc=$?
+    if [ "$rc" = 0 ]; then w_ok "done"; else w_bad "failed" "exit $rc"; fi
+    return $rc
+}
+w_ssh() {  # w_ssh <machine label> <sh script>: on the other machine, through the ssh target herdr saved for it (asks for a password if needed)
+    local host; host=$(store_host "$1"); case "$host" in ''|-*|*[!A-Za-z0-9._@:%-]*) return 1 ;; esac
+    ssh -o ConnectTimeout=8 "$host" "sh -lc $(printf '%q' "$2")"
+}
+w_rbhote() { printf 'b=$(command -v bhote || echo "$HOME/.local/bin/bhote"); "$b" %s' "$1"; }   # bhote on the other machine
+w_self_dir() {  # the folder of this checkout (bhote is usually a link in ~/.local/bin)
+    local p=$0 l; while [ -L "$p" ]; do l=$(readlink "$p"); case "$l" in /*) p=$l ;; *) p=$(dirname "$p")/$l ;; esac; done
+    (cd "$(dirname "$p")" && pwd)
+}
+w_ssh_note() { w_say "If ssh needs a password for $1, ssh asks for it itself, right here. bhote never sees it and stores nothing."; }
+w_inbound_ssh() { (exec 3<>/dev/tcp/127.0.0.1/22) 2>/dev/null; }                    # can other machines log in here at all?
+w_self_target() {  # how other machines reach this one: user@<local name>.local on macOS, user@<host name> elsewhere
+    if [ "$(uname -s)" = Darwin ]; then printf '%s@%s.local' "$USER" "$(scutil --get LocalHostName 2>/dev/null || hostname -s)"
+    else printf '%s@%s' "$USER" "$(hostname 2>/dev/null || uname -n)"; fi
+}
+w_machines() { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof en; do [ -n "$label" ] && printf '%s\037%s\037%s\n' "$label" "$host" "$en"; done; }
+
+setup_step_checks() {
+    w_screen 1 "CHECKS"
+    w_say "What bhote needs on this machine. Nothing is changed in this step unless you say so."; w_line
+    local dir hook="$HOME/.claude/settings.json" r
+    command -v jq >/dev/null 2>&1 && w_ok "jq" "$(jq --version 2>/dev/null)" || w_bad "jq" "install it: brew install jq / pacman -S jq"
+    if command -v herdr >/dev/null 2>&1; then w_ok "herdr" "${HERDR_V:-?}"; else w_bad "herdr" "not found: bhote lives next to herdr"; fi
+    herdr pane list >/dev/null 2>&1 && w_ok "herdr server" "running" || w_warn "herdr server" "not reachable right now"
+    command -v bhote >/dev/null 2>&1 && w_ok "bhote command" "$(command -v bhote | sed "s#^$HOME#~#")" || w_warn "bhote command" "not on PATH (install.sh links ~/.local/bin/bhote)"
+    for t in gzip base64 perl; do command -v "$t" >/dev/null 2>&1 && w_ok "$t" "" || w_warn "$t" "missing: some extras are off"; done
+    if herdr plugin list 2>/dev/null | grep -q 'bhote.panel'; then w_ok "herdr plugin" "bhote.panel"
+    else
+        w_bad "herdr plugin" "not linked: no autostart, no events, no sync through herdr"
+        dir=$(w_self_dir)
+        if [ -d "$dir/herdr-plugin" ]; then w_yn "Link the plugin from $dir/herdr-plugin?" Y; r=$?; [ $r = 3 ] && return
+            [ $r = 0 ] && w_run "herdr plugin link" herdr plugin link "$dir/herdr-plugin"; fi
+    fi
+    if [ -f "$hook" ]; then
+        if grep -q 'bhote current' "$hook" 2>/dev/null; then w_ok "Claude hook" "agents learn their topic at start"
+        else
+            w_warn "Claude hook" "not set: an agent does not learn its topic at start"
+            w_say "Adds a SessionStart hook (bhote current) to $hook."
+            w_yn "Add it?" Y; r=$?; [ $r = 3 ] && return
+            if [ $r = 0 ] && command -v jq >/dev/null 2>&1; then
+                local tmp="$hook.tmp.$$"
+                jq '.hooks.SessionStart = ((.hooks.SessionStart // [{"matcher":"*","hooks":[]}]) | .[0].hooks += [{"type":"command","command":"command -v bhote >/dev/null 2>&1 && bhote current 2>/dev/null; true","timeout":10}])' "$hook" > "$tmp" \
+                    && jq empty "$tmp" && mv "$tmp" "$hook" && w_ok "Claude hook" "added" || { rm -f "$tmp"; w_bad "Claude hook" "could not be added"; }
+            fi
+        fi
+    else w_warn "Claude Code" "no ~/.claude/settings.json: the hook is skipped"; fi
+    w_continue
+}
+setup_step_name() {
+    w_screen 2 "THIS MACHINE"
+    w_say "How this machine is called in the agent lists. Other machines must know it by the same name (herdr machine label)."
+    local n; w_read n "Name of this machine:" "$HOST"; [ "$W_QUIT" = 1 ] && return
+    n=${n//[!A-Za-z0-9 ._-]/}; [ -n "$n" ] && { cfg_set HOST_LABEL "$n"; HOST=$n; w_ok "name" "$n"; }
+    w_continue
+}
+setup_step_machines() {
+    local label host en r t lab
+    while true; do
+        w_screen 3 "OTHER MACHINES"
+        w_say "The machines herdr knows (herdr machine list). bhote reaches them through herdr: their agents, and the topics."; w_line
+        local any=0
+        while IFS=$US read -r label host en; do
+            any=1
+            if herdr --machine "$label" pane list >/dev/null 2>&1; then w_ok "$label" "$host · reachable"; else w_warn "$label" "$host · not reachable now"; fi
+        done <<< "$(w_machines)"
+        [ "$any" = 1 ] || w_warn "none yet" "add one to see its agents here"
+        w_yn "Add a machine?" N; r=$?; [ $r = 3 ] && return; [ $r = 0 ] || break
+        w_say "The ssh target of the other machine, e.g. flo@workstation or a name from ~/.ssh/config. herdr prepares its server there."
+        w_read t "ssh target (user@host):" ""; [ "$W_QUIT" = 1 ] && return; [ -n "$t" ] || continue
+        w_read lab "Label for it:" "${t#*@}"; [ "$W_QUIT" = 1 ] && return
+        case "$t$lab" in *[!A-Za-z0-9._@:%\ -]*) w_bad "refused" "odd characters in target or label"; w_continue; continue ;; esac
+        w_ssh_note "$t"
+        w_run "herdr machine add --label $lab $t" herdr machine add --label "$lab" "$t"; w_continue
+    done
+}
+setup_step_twoway() {
+    w_screen 4 "THE OTHER WAY ROUND"
+    w_say "So that the other machines see the agents of this one, and topics can travel both ways, they must know this machine too."; w_line
+    local label host en r tgt key fp ak="$HOME/.ssh/authorized_keys" known
+    while IFS=$US read -r label host en; do
+        [ -n "$label" ] || continue
+        known=$(herdr --machine "$label" machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r a l b c d; do [ "$l" = "$HOST" ] && echo yes; done)
+        if [ -n "$known" ]; then w_ok "$label" "knows $HOST already"; continue; fi
+        w_warn "$label" "does not know $HOST yet"
+        w_yn "Set up $label → $HOST now (uses ssh to $label, asks before every change)?" Y; r=$?; [ $r = 3 ] && return; [ $r = 0 ] || continue
+        w_ssh_note "$host"
+        # 1) can anyone log in here?
+        if ! w_inbound_ssh; then
+            w_bad "ssh into $HOST" "not open"
+            if [ "$(uname -s)" = Darwin ]; then w_say "Switch on Remote Login: System Settings › General › Sharing › Remote Login (needs an admin). Then continue."
+            else w_say "Start the ssh server: sudo systemctl enable --now sshd (needs root). Then continue."; fi
+            w_continue; [ "$W_QUIT" = 1 ] && return
+            w_inbound_ssh || { w_bad "ssh into $HOST" "still closed: $label is skipped"; w_continue; continue; }
+        fi
+        w_ok "ssh into $HOST" "open"
+        # 2) the address of this machine as seen from there
+        w_read tgt "How $label reaches $HOST (user@host):" "$(w_self_target)"; [ "$W_QUIT" = 1 ] && return
+        case "$tgt" in ''|-*|*[!A-Za-z0-9._@:%-]*) w_bad "refused" "odd characters in the target"; continue ;; esac
+        # 3) the key of the other machine, shown with its fingerprint, allowed here only when you say so
+        key=$(w_ssh "$label" 'for f in ~/.ssh/id_ed25519.pub ~/.ssh/id_ecdsa.pub ~/.ssh/id_rsa.pub; do [ -f "$f" ] && { head -1 "$f"; exit 0; }; done; exit 3'); r=$?
+        if [ $r = 3 ]; then
+            w_warn "key of $label" "none yet"
+            w_yn "Create an ssh key on $label (ed25519, no passphrase)?" Y || { w_say "Without a key $label cannot log in here: it is skipped."; continue; }
+            key=$(w_ssh "$label" 'ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519 </dev/null && head -1 ~/.ssh/id_ed25519.pub')
+        fi
+        case "$key" in "ssh-ed25519 "*|"ecdsa-sha2-"*|"ssh-rsa "*) ;; *) w_bad "key of $label" "could not be read"; w_continue; continue ;; esac
+        key=${key//[[:cntrl:]]/}
+        fp=$(printf '%s\n' "$key" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
+        w_line; w_say "The key of $label:" "$L"; printf '  %s%s%s\n' "$C" "${fp:-?}" "$X"
+        w_yn "Allow $label to log in to $HOST with this key (added to ~/.ssh/authorized_keys)?" N; r=$?; [ $r = 3 ] && return
+        if [ $r != 0 ]; then
+            w_say "Then $label cannot reach $HOST: it shows no agents of $HOST, and topics travel only from $label to here (pick ssh in the next step, or keep them local). You can run the setup again any time." "$Y"
+            w_continue; continue
+        fi
+        mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; touch "$ak" && chmod 600 "$ak"
+        grep -qxF "$key" "$ak" 2>/dev/null || printf '%s\n' "$key" >> "$ak"
+        w_ok "key of $label" "allowed here"
+        # 4) does it work from there? then let herdr there save this machine
+        if w_ssh "$label" "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 $(printf '%q' "$tgt") true" >/dev/null 2>&1; then
+            w_ok "$label → $HOST" "ssh works"
+        else w_bad "$label → $HOST" "ssh does not work (address? firewall?)"; w_continue; continue; fi
+        w_yn "Save $HOST as a machine in herdr on $label?" Y; r=$?; [ $r = 3 ] && return
+        [ $r = 0 ] && w_run "on $label: herdr machine add --label $HOST $tgt" w_ssh "$label" "herdr machine add --label $(printf '%q' "$HOST") $(printf '%q' "$tgt")"
+    done <<< "$(w_machines)"
+    w_continue
+}
+setup_step_topics() {
+    w_screen 5 "TOPICS"
+    w_say "Where your topics live. The local copy is always the working copy; another machine can hold a replica."; w_line
+    w_opt 1 "only on this machine"; w_opt 2 "in step with a machine, through herdr (recommended)"; w_opt 3 "in step with a machine, through ssh"
+    local c m labels="" label host en r cur; cfg_var cur STORE local
+    w_read c "Choose 1, 2 or 3:" "$([ "$cur" = remote ] && { [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3; } || echo 1)"; [ "$W_QUIT" = 1 ] && return
+    case "$c" in
+        1) cfg_set STORE local; w_ok "topics" "only here" ;;
+        2|3) while IFS=$US read -r label host en; do labels="${labels:+$labels, }$label"; done <<< "$(w_machines)"
+             [ -n "$labels" ] || { w_bad "no machine" "add one in step 3 first"; w_continue; return; }
+             w_read m "Which machine ($labels):" "$(cfg_get STORE_MACHINE "${labels%%,*}")"; [ "$W_QUIT" = 1 ] && return
+             store_host "$m" >/dev/null; [ -n "$(store_host "$m")" ] || { w_bad "$m" "is not a saved herdr machine"; w_continue; return; }
+             if [ "$c" = 2 ]; then cfg_set STORE remote STORE_MACHINE "$m" SYNC_VIA herdr
+                 w_ok "topics" "in step with $m through herdr"
+                 w_say "Through herdr each side pulls from the other, so $m must pull from $HOST too."
+                 w_yn "Set that up on $m now (bhote config there, through ssh)?" Y; r=$?; [ $r = 3 ] && return
+                 [ $r = 0 ] && w_run "on $m: bhote config set STORE remote · STORE_MACHINE $HOST · SYNC_VIA herdr" \
+                     w_ssh "$m" "$(w_rbhote "config set STORE remote") && $(w_rbhote "config set STORE_MACHINE $(printf '%q' "$HOST")") && $(w_rbhote "config set SYNC_VIA herdr")" >/dev/null
+             else cfg_set STORE remote STORE_MACHINE "$m" SYNC_VIA ssh; w_ok "topics" "in step with $m through ssh"; fi
+             printf '\n  %s→ a first merge%s\n' "$C" "$X"
+             store_sync >/dev/null 2>&1; case $? in 0) w_ok "merge" "$(store_summary)" ;; *) w_warn "merge" "$(store_summary)" ;; esac ;;
+    esac
+    w_continue
+}
+setup_step_agents() {
+    w_screen 6 "REMOTE AGENTS"
+    w_say "Also list the agents of the other machines (asked through herdr)."
+    local r; w_yn "Show the agents of the other machines here?" "$([ "$(cfg_get REMOTE_AGENTS off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set REMOTE_AGENTS on; w_ok "remote agents" "on" ;; 1) cfg_set REMOTE_AGENTS off; w_ok "remote agents" "off" ;; esac
+    w_continue
+}
+setup_step_behaviour() {
+    w_screen 7 "AGENTS AND NOTIFICATIONS"
+    local r h
+    w_say "When you hand a topic to an agent, it reports back with bhote review (you check it) or bhote done."
+    w_yn "May an agent close its topic itself?" "$([ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set AGENT_CAN_CLOSE on ;; 1) cfg_set AGENT_CAN_CLOSE off ;; esac
+    w_yn "herdr notifications (ready for review, done, waiting too long)?" "$([ "$(cfg_get NOTIFY on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set NOTIFY on ;; 1) cfg_set NOTIFY off ;; esac
+    w_read h "Remind a waiting topic after how many hours (0 = never):" "$(cfg_get WAIT_REMIND 24)"; [ "$W_QUIT" = 1 ] && return
+    setting_check WAIT_REMIND "$h" 2>/dev/null && cfg_set WAIT_REMIND "$h"
+    w_yn "Does an agent whose workspace runs tests count as busy?" "$([ "$(cfg_get TESTS_BUSY off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set TESTS_BUSY on ;; 1) cfg_set TESTS_BUSY off ;; esac
+    w_line
+    w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"
+    w_continue
+}
+setup_step_panel() {
+    w_screen 8 "THE PANEL"
+    local r
+    w_yn "Open the panel next to your agents when herdr starts?" "$([ "$(cfg_get AUTOSTART on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set AUTOSTART on ;; 1) cfg_set AUTOSTART off ;; esac
+    w_yn "Let the dog on the welcome screen blink and pant?" "$([ "$(cfg_get ANIMATION on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set ANIMATION on ;; 1) cfg_set ANIMATION off ;; esac
+    w_continue
+}
+setup_step_done() {
+    w_screen 9 "DONE"
+    w_ok "machine" "$HOST"
+    w_ok "topics" "$([ "$(cfg_get STORE local)" = remote ] && printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" || echo 'only here')"
+    w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
+    w_ok "autostart" "$(cfg_get AUTOSTART on)"
+    w_line; w_say "Change anything later in the settings (,), or run the setup again: settings › Setup wizard, or bhote setup."
+    w_continue
+}
+bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
+    local st; W_QUIT=0; COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
+    HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
+    for st in checks name machines twoway topics agents behaviour panel done; do
+        "setup_step_$st"; [ "$W_QUIT" = 1 ] && break
+    done
+    cfg_set SETUP_DONE "$(date +%Y-%m-%d)"
+    HEAD_GRAD=""                                            # the list makes its own again
+    printf '\033[H\033[2J'
+}
+setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
+    printf '{"machine":%s,"jq":%s,"herdr":%s,"plugin":%s,"claude_hook":%s,"machines":[' "$(json_str "$HOST")" \
+        "$(command -v jq >/dev/null 2>&1 && echo true || echo false)" "$(command -v herdr >/dev/null 2>&1 && echo true || echo false)" \
+        "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo true || echo false)" "$(grep -q 'bhote current' "$HOME/.claude/settings.json" 2>/dev/null && echo true || echo false)"
+    local label host en first=1 known
+    while IFS=$US read -r label host en; do
+        [ -n "$label" ] || continue
+        known=$(herdr --machine "$label" machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r a l b c d; do [ "$l" = "$HOST" ] && echo true; done)
+        [ "$first" = 1 ] || printf ','; first=0
+        printf '{"label":%s,"reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$(herdr --machine "$label" pane list >/dev/null 2>&1 && echo true || echo false)" "${known:-false}"
+    done <<< "$(w_machines)"
+    printf '],"setup_done":%s}\n' "$(json_opt "$(cfg_get SETUP_DONE '')")"
+}
+
 bhote_main() {
     local f chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
     harden_perms; bhote_info
@@ -1396,6 +1668,10 @@ bhote_main() {
     fi
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
+    # never set up on this machine: the wizard opens once, in the first panel only (herdr may start several at a time)
+    if [ -z "$(cfg_get SETUP_DONE '')" ] && mkdir "$SHARED_DIR/setup.lock" 2>/dev/null; then
+        printf ']2;Bhote'; bhote_setup; rmdir "$SHARED_DIR/setup.lock" 2>/dev/null
+    fi
     local pids="" stty_saved
     # The terminal must not echo what arrives between two reads: a mouse wheel in the alternate screen sends arrow keys
     # (ESC [ B) all the time, and with echo on they showed up as ^[[B on the screen. Restored on exit.
@@ -1451,7 +1727,13 @@ bhote_main() {
             case "$key" in
                 ","|ESC|q|Q) view=$back; redraw=1 ;;
                 ""|DRAG) ;;
-                *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys; redraw=1 ;;
+                *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys
+                   if [ "$SETTINGS_GO" = setup ]; then                 # the wizard needs a normal terminal: leave the panel mode, come back
+                       trap '' USR1; printf '%s\033[?25h' "$MOUSE_OFF"; stty "$stty_saved" </dev/tty 2>/dev/null
+                       bhote_setup
+                       stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null; printf '\033[?25l%s' "$MOUSE_ON"; trap 'anim=1' USR1; term_size
+                   fi
+                   redraw=1 ;;
             esac
         elif [ "$view" = hotkeys ]; then
             case "$key" in ESC|LEFT|h|q|Q|","|ENTER) view=settings; redraw=1 ;; esac
@@ -1691,6 +1973,7 @@ bhote — topics and agents next to herdr.
   bhote sync                         merge with the data location now
   bhote config [list|get|set|unset]  read and change the settings (bhote config list shows them all)
   bhote current                      the topic of the agent that asks (for a Claude Code SessionStart hook)
+  bhote setup [--json]               the setup wizard (--json: only what is in place)
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
 
@@ -1709,6 +1992,7 @@ bhote_cli() {
     case "$cmd" in
         help|-h|--help) bhote_help ;;
         config) cli_config "$@" ;;
+        setup) bhote_info; if [ -n "$json" ]; then setup_status_json; else term_size 2>/dev/null; bhote_setup; fi ;;
         event) bhote_info; cli_event ;;
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
