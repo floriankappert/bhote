@@ -1393,6 +1393,8 @@ harden_perms() {  # data, config and their folders: this user only (older versio
 # ("Setup wizard") or as `bhote setup`. Every step explains itself and asks first; Enter takes the [default], s skips a step,
 # q ends the setup. It never asks for a password: when ssh needs one, ssh asks for it itself, and bhote never sees it.
 W_STEPS=9; W_QUIT=0
+W_LOG="$DATA_DIR/setup.log"                                   # what the wizard did and saw: every check, every command and its output
+w_log() { mkdir -p "$DATA_DIR" 2>/dev/null; printf '%s %s\n' "$(date '+%F %T')" "${*//[[:cntrl:]]/}" >> "$W_LOG" 2>/dev/null; }
 w_width() { W=$(( ${COLS:-44} - 4 )); [ "$W" -lt 26 ] && W=26; [ "$W" -gt 72 ] && W=72; }
 w_screen() {  # w_screen <step> <TITLE>: a clean screen with the progress dots and the step's caption
     local i dots=""; w_width
@@ -1400,10 +1402,11 @@ w_screen() {  # w_screen <step> <TITLE>: a clean screen with the progress dots a
         if [ "$i" -lt "$1" ]; then dots="$dots${GREEN}●${X}"; elif [ "$i" = "$1" ]; then dots="$dots${C}●${X}"; else dots="$dots${D}○${X}"; fi
     done
     printf '\033[H\033[2J\n  %s%s\n  %s\n  %s\n\n  %s%s%s  %sstep %d of %d%s\n\n' "${HEAD_GRAD:-${L}Bhote setup}" "$X" "$B$(hline "$W")$X" "$dots" "$R" "$2" "$X" "$D" "$1" "$W_STEPS" "$X"
+    w_log "== step $1: $2"
 }
 w_say() { local col=${2:-$D} COLS=$(( W + 4 )); wrap_print 2 "$col" "$1"; }          # a paragraph, wrapped at the left edge
 w_mark() {  # w_mark <colour> <mark> <name> <detail>: aligned check lines (mark, name in 16 columns, detail cut to the edge)
-    local n d; clip_set n "$3" 16; clip_set d "${4:-}" $(( W - 19 ))
+    local n d; clip_set n "$3" 16; clip_set d "${4:-}" $(( W - 19 )); w_log "$2 $3: ${4:-}"
     printf '  %s%s%s %-16s %s%s%s\n' "$1" "$2" "$X" "$n" "$D" "$d" "$X"
 }
 w_ok()   { w_mark "$GREEN" "✓" "$@"; }
@@ -1469,10 +1472,16 @@ w_choose() {  # w_choose <var> <prompt> <allowed keys, e.g. 123> <default>: one 
     case "$W_KEY" in ENTER) W_KEY=$4 ;; q) W_QUIT=1; printf '%send%s\n' "$D" "$X"; return 1 ;; esac
     printf '%s%s%s\n' "$GREEN" "$W_KEY" "$X"; printf -v "$1" '%s' "$W_KEY"
 }
-w_continue() { printf '\n  %sq end the setup · ⏎ next%s ' "$D" "$X"; w_key q; [ "$W_KEY" = q ] && W_QUIT=1; printf '\n'; return 0; }
+w_button() { if [ "$color" = 1 ]; then printf '%s\033[7m %s \033[27m%s' "$L" "$1" "$X"; else printf '[ %s ]' "$1"; fi; }   # light on dark, inverted
+w_continue() {  # the way on: a button for Enter, quitting next to it (quiet)
+    printf '\n  %s  %sq end the setup%s ' "$(w_button "⏎ next")" "$D" "$X"
+    w_key q; [ "$W_KEY" = q ] && W_QUIT=1; printf '\n'; return 0
+}
 w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a password here), then says how it went
-    printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; shift
-    "$@"; local rc=$?
+    printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; w_log "run: $1"; shift
+    local out="$RUN_DIR/wrun.$$"
+    "$@" 2>&1 | tee "$out"; local rc=${PIPESTATUS[0]}       # visible here, and kept in the setup log
+    sed 's/^/    | /' "$out" >> "$W_LOG" 2>/dev/null; rm -f "$out"; w_log "exit $rc"
     if [ "$rc" = 0 ]; then w_ok "done"; else w_bad "failed" "exit $rc"; fi
     return $rc
 }
@@ -1584,6 +1593,13 @@ w_probe_say() {  # what the probe means, in one line
         *) w_bad "ssh failed" "try another address" ;;
     esac
 }
+w_remote_knows() {  # w_remote_knows <machine label>: does that machine have THIS one saved in herdr? 0 yes, 1 no, 2 cannot tell
+    # (herdr does not run `machine list` through --machine; this asks the other side over ssh, read-only, never for a password)
+    local host list; host=$(store_host "$1"); case "$host" in ''|-*|*[!A-Za-z0-9._@:%-]*) return 2 ;; esac
+    list=$(ssh -o BatchMode=yes -o ConnectTimeout=6 "$host" 'sh -lc "herdr machine list"' 2>/dev/null) || return 2
+    printf '%s\n' "$list" | awk -F'\t' -v h="$HOST" '$2 == h { f = 1 } END { exit !f }' && return 0
+    return 1
+}
 setup_step_checks() {
     w_screen 1 "CHECKS"
     w_say "What bhote needs on this machine. Nothing is changed in this step unless you say so."; w_line
@@ -1593,6 +1609,9 @@ setup_step_checks() {
     herdr pane list >/dev/null 2>&1 && w_ok "herdr server" "running" || w_warn "herdr server" "not reachable right now"
     command -v bhote >/dev/null 2>&1 && w_ok "bhote command" "$(command -v bhote | sed "s#^$HOME#~#")" || w_warn "bhote command" "not on PATH (install.sh links ~/.local/bin/bhote)"
     for t in gzip base64 perl; do command -v "$t" >/dev/null 2>&1 && w_ok "$t" "" || w_warn "$t" "missing: some extras are off"; done
+    if w_inbound_ssh; then w_ok "ssh into here" "open (other machines can reach $HOST)"; else w_warn "ssh into here" "closed: step 4 can switch it on"; fi
+    if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then w_ok "Tailscale" "on (machines are found by name)"
+    else w_warn "Tailscale" "not running: machines are found in the local network only"; fi
     if herdr plugin list 2>/dev/null | grep -q 'bhote.panel'; then w_ok "herdr plugin" "bhote.panel"
     else
         w_bad "herdr plugin" "not linked: no autostart, no events, no sync through herdr"
@@ -1689,8 +1708,8 @@ setup_open_ssh() {  # ssh into this machine is closed: switch it on here (sudo a
     w_choose c "Choose:" 123 1 || return 1
     case "$c" in
         1) if [ "$(uname -s)" = Darwin ]; then
-               w_run "sudo systemsetup -setremotelogin on" sudo systemsetup -setremotelogin on \
-                   || w_run "sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist" sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist
+               # systemsetup needs Full Disk Access for the terminal on current macOS; launchd starts the same ssh service without it
+               w_run "sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist" sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist
            else w_run "sudo systemctl enable --now sshd" sudo systemctl enable --now sshd; fi
            w_wait_ssh 10 ;;
         2) [ "$(uname -s)" = Darwin ] && open "x-apple.systempreferences:com.apple.Sharing-Settings.extension" 2>/dev/null
@@ -1706,9 +1725,11 @@ setup_step_twoway() {
     local label host en r tgt key fp ak="$HOME/.ssh/authorized_keys" known
     while IFS=$US read -r label host en; do
         [ -n "$label" ] || continue
-        known=$(herdr --machine "$label" machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r a l b c d; do [ "$l" = "$HOST" ] && echo yes; done)
-        if [ -n "$known" ]; then w_ok "$label" "knows $HOST already"; continue; fi
-        w_warn "$label" "does not know $HOST yet"
+        w_remote_knows "$label"; case $? in
+            0) w_ok "$label" "knows $HOST already"; continue ;;
+            1) w_warn "$label" "does not know $HOST yet" ;;
+            *) w_warn "$label" "cannot tell (no ssh without a password yet)" ;;
+        esac
         w_yn "Set up $label → $HOST now (uses ssh to $label, asks before every change)?" Y; r=$?; [ $r = 3 ] && return; [ $r = 0 ] || continue
         w_ssh_note "$host"
         # 1) can anyone log in here?
@@ -1806,19 +1827,35 @@ setup_step_panel() {
     case $r in 0) cfg_set ANIMATION on ;; 1) cfg_set ANIMATION off ;; esac
     w_continue
 }
-setup_step_done() {
+setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
     w_screen 9 "DONE"
     w_ok "machine" "$HOST"
     w_ok "topics" "$([ "$(cfg_get STORE local)" = remote ] && printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" || echo 'only here')"
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
     w_ok "autostart" "$(cfg_get AUTOSTART on)"
-    w_line; w_say "Change anything later in the settings (,), or run the setup again: settings › Setup wizard, or bhote setup."
+    local label host en n known
+    while IFS=$US read -r label host en; do
+        [ -n "$label" ] || continue
+        printf '\n  %s%s%s\n' "$R" "$label" "$X"
+        n=$(herdr --machine "$label" pane list 2>/dev/null | jq '[.result.panes[] | select(.agent)] | length' 2>/dev/null)
+        if [ -n "$n" ]; then w_ok "$HOST → $label" "reachable, $n agents"; else w_bad "$HOST → $label" "not reachable through herdr"; fi
+        w_remote_knows "$label"; case $? in
+            0) w_ok "$label → $HOST" "knows this machine" ;;
+            1) w_warn "$label → $HOST" "does not know it (step 4)" ;;
+            *) w_warn "$label → $HOST" "cannot tell" ;;
+        esac
+    done <<< "$(w_machines)"
+    if [ "$(cfg_get STORE local)" = remote ]; then
+        store_sync >/dev/null 2>&1; case $? in 0) w_ok "topics merge" "works" ;; 2) w_warn "topics merge" "busy, it runs again by itself" ;; *) w_bad "topics merge" "$(store_summary)" ;; esac
+    fi
+    w_line; w_say "Change anything later in the settings (,), or run the setup again: settings › Setup wizard, or bhote setup. A log of this setup: ${W_LOG/#$HOME/~}"
     w_continue
 }
 bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     local st; W_QUIT=0; ask_drain                              # keys typed before it opened must not answer its first questions
     COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
+    w_log "==== setup on $HOST (bhote $VERSION)"
     for st in checks name machines twoway topics agents behaviour panel done; do
         "setup_step_$st"; [ "$W_QUIT" = 1 ] && break
     done
@@ -1833,9 +1870,9 @@ setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
     local label host en first=1 known
     while IFS=$US read -r label host en; do
         [ -n "$label" ] || continue
-        known=$(herdr --machine "$label" machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r a l b c d; do [ "$l" = "$HOST" ] && echo true; done)
+        w_remote_knows "$label"; case $? in 0) known=true ;; 1) known=false ;; *) known=null ;; esac
         [ "$first" = 1 ] || printf ','; first=0
-        printf '{"label":%s,"reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$(herdr --machine "$label" pane list >/dev/null 2>&1 && echo true || echo false)" "${known:-false}"
+        printf '{"label":%s,"reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$(herdr --machine "$label" pane list >/dev/null 2>&1 && echo true || echo false)" "$known"
     done <<< "$(w_machines)"
     printf '],"setup_done":%s}\n' "$(json_opt "$(cfg_get SETUP_DONE '')")"
 }
