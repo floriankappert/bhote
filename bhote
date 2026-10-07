@@ -1149,7 +1149,7 @@ ask_draw() {  # ask_draw <label>: the prompt row with ED_BUF; the part around th
     printf '\033[%d;1H\033[2K%s%*s' "$rows" "$SELBG" "$w" ""
     [ -n "$cnt" ] && printf '\033[%d;%dH%s%s' "$rows" $(( w - ${#cnt} )) "$D" "$cnt"
     printf '\033[%d;1H%s%s▶ %s%s%s%s\033[7m%s\033[27m%s' "$rows" "$SELBG" "$ORANGE" "$L" "$1" "$X$SELBG$L" "$pre" "$mid" "$post"
-    col=$(( 4 + ${#1} + ED_CUR - off )); printf '\033[%d;%dH' "$rows" "$col"   # the terminal cursor where the text cursor is
+    col=$(( 3 + ${#1} + ED_CUR - off )); printf '\033[%d;%dH' "$rows" "$col"   # "▶ " is 2 columns, the label starts in column 3
 }
 menu_line() {  # menu_line <selected: 1 or empty> <text>: a choice; the selected one is a bar over the whole width
     local w=$(( ${COLS:-44} - 2 )) t; clip_set t "$2" $(( w - 4 ))
