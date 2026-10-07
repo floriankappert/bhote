@@ -16,7 +16,7 @@ chmod +x "$T/fakessh"
 # shellcheck disable=SC1091
 . ./bhote
 store_host() { echo fakehost; }                        # stands in for `herdr machine list`
-cfg_set STORE remote; cfg_set STORE_MACHINE Fake
+cfg_set STORE remote; cfg_set STORE_MACHINE Fake; cfg_set SYNC_VIA ssh    # the ssh transport (herdr: see the end)
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
 mk() {  # mk <dir> <id> <title> <updated> [deleted]
     mkdir -p "$1"; printf 'id=%s\ntitle=%s\nstatus=now\nwaiting_for=\nwaiting_since=\ncreated=%s\nupdated=%s\ndeleted=%s\n' "$2" "$3" "$4" "$4" "${5:-0}" > "$1/$2.topic"
@@ -110,6 +110,26 @@ store_sync; [ $? = 0 ] && [ ! -d "$DATA_DIR/sync.lock" ] && ok "hardening: the l
 # config: several keys in one write, labels with regex characters
 cfg_set A 1 B 2; [ "$(cfg_get A x)$(cfg_get B x)" = 12 ] && ok "hardening: cfg_set writes several keys at once" || bad "cfg_set multi"
 cfg_set 'A.*' z; [ "$(cfg_get A x)" = 1 ] && ok "hardening: a key with regex characters does not delete other keys" || bad "regex key removed others"
+
+# 12) the herdr transport: the other machine's plugin dumps its topics, herdr hands the output over; nothing is pushed
+mkdir -p "$T/hbin" "$T/hremote"; mk "$T/hremote" hz "From the herdr side" 99990
+cat > "$T/hbin/herdr" <<SH
+#!/bin/sh
+case "\$*" in
+  *"machine list"*) printf 'id1\tFake\tfakehost\tdefault\tenabled\n' ;;
+  *"plugin action invoke dump"*) echo invoked >> "$T/hlog" ;;
+  *"plugin log list"*) TOPIC_DIR="$T/hremote" dump=\$(BHOTE_DATA="$T/hremote-data" BHOTE_SOURCE_ONLY=1 bash -c '. ./bhote; TOPIC_DIR="$T/hremote"; topics_dump')
+      printf '%s' "\$dump" | python3 -c 'import json,sys; print(json.dumps({"result":{"logs":[{"action_id":"dump","status":"succeeded","started_unix_ms":99999999999999,"stdout":sys.stdin.read()}]}}))' ;;
+esac
+SH
+chmod +x "$T/hbin/herdr"
+store_host() { herdr machine list 2>/dev/null | awk -F'\t' -v l="$1" '$2 == l { print $3; exit }'; }   # the real one again
+cfg_set SYNC_VIA herdr; PATH="$T/hbin:$PATH" store_sync; rc=$?
+[ "$rc" = 0 ] && [ "$(title "$TOPIC_DIR/hz.topic")" = "From the herdr side" ] && ok "herdr transport: topics come over through the other side's plugin" || bad "herdr pull failed (rc $rc)"
+mk "$TOPIC_DIR" onlyhere "Only local" 99995; PATH="$T/hbin:$PATH" store_sync
+[ ! -f "$T/hremote/onlyhere.topic" ] && ok "herdr transport: nothing is written to the other side (it pulls itself)" || bad "herdr transport pushed"
+[ "$(grep -c invoked "$T/hlog")" -ge 1 ] && ok "herdr transport: no ssh, the dump runs as a plugin action" || bad "dump action not invoked"
+store_host() { echo fakehost; }; cfg_set SYNC_VIA ssh
 
 # 7) data location local: no ssh at all
 cfg_set STORE local; FAKE_OFFLINE=1 store_sync && ok "local mode: no connection needed" || bad "local mode tried to connect"

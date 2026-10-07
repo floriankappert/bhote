@@ -58,6 +58,7 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
 # The panel, `bhote config` and docs/configuration.md all follow this table; a value that does not fit is refused.
 SETTINGS='STORE|local|enum:local:remote|Where the topics are kept: local, or a replica on STORE_MACHINE
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
+SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
 REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
 MACHINES_OFF||list|Saved machines that stay out even with REMOTE_AGENTS=on
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
@@ -208,13 +209,14 @@ ago_set() { age_set "$1" "$2"; if [ "${!1}" = now ]; then printf -v "$1" '%s' 'j
 ago() { ago_set _AGO "$1"; printf '%s' "$_AGO"; }
 store_sync_run() {  # merge the local copy with the replica on the chosen machine. Returns 1 while that machine is unreachable.
     [ "$(cfg_get STORE local)" = remote ] || { rm -f "$STORE_STATUS"; return 0; }
-    local label host tmp f l r ok=1 NOW_SYNC; NOW_SYNC=$(date +%s)
-    label=$(cfg_get STORE_MACHINE ''); host=$(store_host "$label")
-    [ -n "$host" ] || { store_note offline; return 1; }
+    local label host tmp f l r ok=1 NOW_SYNC via; NOW_SYNC=$(date +%s)
+    label=$(cfg_get STORE_MACHINE ''); host=$(store_host "$label"); cfg_var via SYNC_VIA herdr
+    [ -n "$host" ] || { store_note offline; return 1; }        # not a saved herdr machine (both transports need that)
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/bhote.sync.XXXXXX"); mkdir -p "$TOPIC_DIR"
     # 1) everything the machine has: one stream, "@@name" before each file
     # (a newline before every marker: a file without a final newline must not swallow the next one; at most 8 MB are read)
-    store_sh "$host" "umask 077; mkdir -p $REMOTE_TOPIC_DIR && cd $REMOTE_TOPIC_DIR && for f in *.topic; do [ -f \"\$f\" ] && { printf '\\n@@%s\\n' \"\$f\"; cat \"\$f\"; }; done; echo; echo @@END" 2>/dev/null | head -c 8000001 > "$tmp/dump"
+    if [ "$via" = herdr ]; then herdr_dump "$label" 2>/dev/null | head -c 8000001 > "$tmp/dump"
+    else store_sh "$host" "umask 077; mkdir -p $REMOTE_TOPIC_DIR && cd $REMOTE_TOPIC_DIR && for f in *.topic; do [ -f \"\$f\" ] && { printf '\\n@@%s\\n' \"\$f\"; cat \"\$f\"; }; done; echo; echo @@END" 2>/dev/null | head -c 8000001 > "$tmp/dump"; fi
     # only a complete dump counts (ssh can die in the middle and still leave a plausible half): it must end with the @@END line
     if [ "$(wc -c < "$tmp/dump")" -gt 8000000 ] || [ "$(tail -n 1 "$tmp/dump")" != "@@END" ]; then
         rm -rf "$tmp"; store_note offline; return 1
@@ -234,12 +236,30 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
             # a local change that happened during the dump must not be overwritten
             if [ -f "$TOPIC_DIR/$f" ] && [ "$(num_or "$(topic_get "$TOPIC_DIR/$f" updated 0)" 0)" != "$l" ]; then rm -f "$TOPIC_DIR/$f.tmp.$$"; continue; fi
             mv "$TOPIC_DIR/$f.tmp.$$" "$TOPIC_DIR/$f"
-        elif [ "$l" -gt "$r" ]; then
+        elif [ "$l" -gt "$r" ] && [ "$via" != herdr ]; then     # through herdr the other side pulls by itself: nothing is pushed
             store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0
         fi
     done < "$tmp/ids"
     rm -rf "$tmp"
     if [ "$ok" = 1 ]; then store_note ok; else store_note offline; return 1; fi
+}
+topics_dump() {  # every topic file in one stream: a "@@name" line before each, an "@@END" line at the end (the merge needs it)
+    local f; for f in "$TOPIC_DIR"/*.topic; do
+        [ -f "$f" ] || continue; case "${f##*/}" in [A-Za-z0-9]*) ;; *) continue ;; esac
+        printf '\n@@%s\n' "${f##*/}"; cat "$f"
+    done; printf '\n@@END\n'
+}
+herdr_dump() {  # herdr_dump <machine label>: the other machine's topics through herdr: its bhote plugin runs `bhote dump`,
+    # and herdr keeps the output in that plugin's log, which this machine reads. No ssh of our own.
+    local m=$1 t0 i out; t0=$(( $(date +%s) * 1000 - 2000 ))
+    herdr --machine "$m" plugin action invoke dump --plugin bhote.panel >/dev/null 2>&1 || return 1
+    for (( i = 0; i < 20; i++ )); do
+        out=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r --argjson t "$t0" '
+            [.result.logs[] | select(.action_id == "dump" and .status == "succeeded" and (.started_unix_ms // 0) >= $t)] | last | .stdout // empty' 2>/dev/null)
+        [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+        sleep 0.5
+    done
+    return 1
 }
 topic_valid() {  # topic_valid <file> <now>: KEY=value lines only, no key twice, numbers are digits, not from the future, small
     awk -F= -v now="$2" '
@@ -272,7 +292,7 @@ store_summary() {  # one line for the settings screen: where the data lives and 
     label=$(cfg_get STORE_MACHINE '?')
     st=$(awk -F= '$1 == "state" { print $2 }' "$STORE_STATUS" 2>/dev/null); ok_at=$(num_or "$(awk -F= '$1 == "ok_at" { print $2 }' "$STORE_STATUS" 2>/dev/null)" 0)
     case "$st" in
-        ok) printf 'in sync with %s (%s)' "$label" "$(ago "$ok_at")" ;;
+        ok) printf 'in sync with %s (%s)%s' "$label" "$(ago "$ok_at")" "$([ "$(cfg_get SYNC_VIA herdr)" = herdr ] && printf ' through herdr; %s should pull from here too' "$label")" ;;
         offline) for f in "$TOPIC_DIR"/*.topic; do [ -f "$f" ] && [ "$(num_or "$(topic_get "$f" updated 0)" 0)" -gt "$ok_at" ] && n=$(( n + 1 )); done
                  printf 'OFFLINE: saving locally, %s change(s) wait for %s' "$n" "$label" ;;
         *) printf 'connecting to %s ...' "$label" ;;
@@ -870,7 +890,7 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
 # ↑/↓ (or k/j) choose, space or enter switches, ←/→ change a number, "," or esc goes back. Every change is saved at once.
 SET_ROWS=()
 settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exist only while REMOTE_AGENTS is on
-    SET_ROWS=("choice|STORE|Data location" "bool|REMOTE_AGENTS|Load remote agents over SSH")
+    SET_ROWS=("choice|STORE|Data location" "enum|SYNC_VIA|Sync through" "bool|REMOTE_AGENTS|Remote agents (via herdr)")
     if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
         local id label host prof enabled
         while IFS=$US read -r id label host prof enabled; do
@@ -906,11 +926,12 @@ bhote_settings() {
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
             link) vp="›"; vc="${D}›${X}" ;;
+            enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
-            REMOTE_AGENTS) wrap_print 5 "$D" "Off by default: bhote opens no connection to another machine until you switch this on." ;;
+            REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
         esac
     done
     printf '\n'; rule
@@ -960,6 +981,13 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
         " "|ENTER|LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
             if [ "$kind" = choice ]; then store_cycle "$k"; return; fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || SETTINGS_GO=hotkeys; return; fi
+            if [ "$kind" = enum ]; then                              # step through the allowed values
+                setting_row "$key"; local vals cur2 nxt="" prev="" first="" last="" found=0 x IFS=:
+                vals=${S_TYPE#enum:}; cfg_var cur2 "$key" "$S_DEF"
+                for x in $vals; do [ -z "$first" ] && first=$x; [ "$found" = 1 ] && [ -z "$nxt" ] && nxt=$x; [ "$x" = "$cur2" ] && { found=1; prev=$last; }; last=$x; done
+                unset IFS; [ -z "$nxt" ] && nxt=$first; [ -z "$prev" ] && prev=$last
+                if [ "$k" = LEFT ]; then cfg_set "$key" "$prev"; else cfg_set "$key" "$nxt"; fi; : > "$STORE_DIRTY"; return
+            fi
             [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
                 bool) setting_row "$key"; cur=${S_DEF:-off}
                       [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
@@ -1673,6 +1701,7 @@ bhote_cli() {
         help|-h|--help) bhote_help ;;
         config) cli_config "$@" ;;
         event) bhote_info; cli_event ;;
+        dump) topics_dump ;;                                  # for the herdr plugin action "dump" (another machine reads it)
         current) bhote_info; cli_current ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg
