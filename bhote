@@ -219,6 +219,8 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
     else store_sh "$host" "umask 077; mkdir -p $REMOTE_TOPIC_DIR && cd $REMOTE_TOPIC_DIR && for f in *.topic; do [ -f \"\$f\" ] && { printf '\\n@@%s\\n' \"\$f\"; cat \"\$f\"; }; done; echo; echo @@END" 2>/dev/null | head -c 8000001 > "$tmp/dump"; fi
     # only a complete dump counts (ssh can die in the middle and still leave a plausible half): it must end with the @@END line
     if [ "$(wc -c < "$tmp/dump")" -gt 8000000 ] || [ "$(tail -n 1 "$tmp/dump")" != "@@END" ]; then
+        # through herdr a cut-off dump means: more topics than herdr hands over (64 KB packed); ssh has no such limit
+        [ "$via" = herdr ] && [ -s "$tmp/dump" ] && echo "bhote: the topics of $label do not fit through herdr; SYNC_VIA=ssh has no limit" >&2
         rm -rf "$tmp"; store_note offline; return 1
     fi
     # only plain topic names are accepted from the other side: a name like ../../x must never become a path
@@ -249,6 +251,13 @@ topics_dump() {  # every topic file in one stream: a "@@name" line before each, 
         printf '\n@@%s\n' "${f##*/}"; cat "$f"
     done; printf '\n@@END\n'
 }
+# herdr keeps at most 64 KB of an action's output: the dump for herdr travels packed (gzip, base64), about 5 times smaller.
+topics_dump_packed() { if command -v gzip >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1; then echo "@@GZ"; topics_dump | gzip -c | base64; else topics_dump; fi; }
+dump_unpack() {  # stdin: a packed or plain dump -> the plain one (a damaged packed dump gives nothing, so the merge sees no @@END)
+    local first; IFS= read -r first
+    if [ "$first" = "@@GZ" ]; then { base64 -d 2>/dev/null || base64 -D 2>/dev/null; } | gzip -dc 2>/dev/null
+    else printf '%s\n' "$first"; cat; fi
+}
 herdr_dump() {  # herdr_dump <machine label>: the other machine's topics through herdr: its bhote plugin runs `bhote dump`,
     # and herdr keeps the output in that plugin's log, which this machine reads. No ssh of our own.
     local m=$1 t0 i out; t0=$(( $(date +%s) * 1000 - 2000 ))
@@ -256,7 +265,7 @@ herdr_dump() {  # herdr_dump <machine label>: the other machine's topics through
     for (( i = 0; i < 20; i++ )); do
         out=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r --argjson t "$t0" '
             [.result.logs[] | select(.action_id == "dump" and .status == "succeeded" and (.started_unix_ms // 0) >= $t)] | last | .stdout // empty' 2>/dev/null)
-        [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+        [ -n "$out" ] && { printf '%s\n' "$out" | dump_unpack; return 0; }
         sleep 0.5
     done
     return 1
@@ -1701,7 +1710,7 @@ bhote_cli() {
         help|-h|--help) bhote_help ;;
         config) cli_config "$@" ;;
         event) bhote_info; cli_event ;;
-        dump) topics_dump ;;                                  # for the herdr plugin action "dump" (another machine reads it)
+        dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg

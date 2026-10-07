@@ -96,4 +96,6 @@ CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=abc-123 B done "Agent task" >/dev/null 2>&1
 [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = review ] && ok "AGENT_CAN_CLOSE=off: an agent's done becomes review" || bad "agent closed although not allowed"
 B done "Agent task" >/dev/null; [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = done ] && ok "AGENT_CAN_CLOSE=off: you can still close it" || bad "user could not close"
 B config unset AGENT_CAN_CLOSE >/dev/null
+n_plain=$(B dump | grep -c '^@@'); n_packed=$(B dump --packed | BHOTE_SOURCE_ONLY=1 bash -c '. ./bhote; dump_unpack' | grep -c '^@@')
+[ "$n_plain" = "$n_packed" ] && [ "$n_plain" -gt 1 ] && ok "dump --packed (for herdr) unpacks to the same topics" || bad "packed dump differs: $n_plain vs $n_packed"
 rm -rf "$T"; exit $fail

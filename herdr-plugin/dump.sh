@@ -3,4 +3,4 @@
 bhote=$(command -v bhote 2>/dev/null)
 for c in "$HOME/.local/bin/bhote" /opt/homebrew/bin/bhote /usr/local/bin/bhote /usr/bin/bhote; do [ -n "$bhote" ] && break; [ -x "$c" ] && bhote=$c; done
 [ -x "$bhote" ] || exit 1
-exec "$bhote" dump
+exec "$bhote" dump --packed
