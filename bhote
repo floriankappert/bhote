@@ -1745,8 +1745,13 @@ bhote_main() {
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
     # never set up on this machine: the wizard opens once, in the first panel only (herdr may start several at a time)
-    if [ -z "$(cfg_get SETUP_DONE '')" ] && mkdir "$SHARED_DIR/setup.lock" 2>/dev/null; then
-        printf ']2;Bhote'; bhote_setup; rmdir "$SHARED_DIR/setup.lock" 2>/dev/null
+    if [ -z "$(cfg_get SETUP_DONE '')" ]; then
+        local sl=$SHARED_DIR/setup.lock so=""                 # the lock holds the pid of the panel that shows the wizard
+        [ -r "$sl/pid" ] && read -r so < "$sl/pid"
+        if { [ -n "$so" ] && ! kill -0 "$so" 2>/dev/null; } || { [ -d "$sl" ] && [ -z "$so" ]; }; then rm -rf "$sl"; fi   # its panel is gone
+        if mkdir "$sl" 2>/dev/null; then
+            echo "$$" > "$sl/pid"; printf '\033]2;Bhote\007'; bhote_setup; rm -rf "$sl"
+        fi
     fi
     local pids="" stty_saved
     # The terminal must not echo what arrives between two reads: a mouse wheel in the alternate screen sends arrow keys
