@@ -10,7 +10,11 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 - Start a topic on a free agent: bhote sends the title and description to its pane (`herdr pane run`, with `--machine` for agents on another machine).
 - Agents' tasks that are no topic yet are suggested (`a`); a finished agent is marked, `x` closes its topic.
 - Topics are plain files; they can be kept in sync with a second machine over ssh (opt-in).
-- A CLI to create and close topics from scripts and chats.
+- **Steal & Transfer**: an agent commits its state with a handover on its branch, and a free agent takes over ([how](docs/steal-and-transfer.md)).
+- Agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on.
+- Themes: follows your terminal colours (and Omarchy's system theme) by default, or exact Catppuccin colours, each role overridable.
+- A setup wizard on the first start: machines in both directions, sync through herdr, notifications.
+- A CLI (every command with `--json`) to create and close topics from scripts and agents.
 
 ## Install
 
@@ -32,6 +36,7 @@ right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the c
 | `→` / `⏎`, `←` / `esc` | open the topic menu / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |
+| `t` | Steal & Transfer to another agent |
 | `e` / `d` | edit the title / the description (Esc cancels) |
 | `x` | mark done |
 | `a` | topics suggested from what the running agents work on |

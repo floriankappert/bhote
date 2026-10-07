@@ -6,6 +6,7 @@
 |---|---|
 | [CLI reference](cli-reference.md) | Every command, topic refs, JSON output, exit codes, environment. The CLI is the API. |
 | [JSON schemas](schema/) | [`topic.schema.json`](schema/topic.schema.json), [`topic-list.schema.json`](schema/topic-list.schema.json) (JSON Schema 2020-12). |
+| [Steal & Transfer](steal-and-transfer.md) | Hand an agent's work and branch to another agent. |
 | [Setup wizard](setup.md) | The first-start wizard: checks, machines both ways, sync, agents, notifications. |
 | [The panel](panel.md) | Keys, the editor, agents, safety. |
 | [Configuration](configuration.md) | Every setting in `~/.config/bhote/config`. |

@@ -14,6 +14,7 @@ and the agents below.
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
+| `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one |
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
 | `,` | settings (the full key list is under *Hotkeys* there) · `S` welcome screen · `q` quit |
 
@@ -39,6 +40,13 @@ more or fewer rows. A topic handed to an agent shows that agent's state in its m
 with `AGENT_CAN_CLOSE=on`, `bhote done <id>` when nothing needs checking). The topic remembers the agent's pane and session.
 When the agent reports back, or simply stops working, the topic moves to **REVIEW** at the top of the list and herdr shows a
 notification (setting `NOTIFY`). Waiting topics are reminded once after `WAIT_REMIND` hours.
+
+## Agents that wait
+
+With the bhote skill (installed by the setup wizard), an agent that has to wait for someone else (a deployment, a review,
+infrastructure, an answer) creates a waiting topic itself, with what it will do then as the description. When the wait is
+over, set the topic to now (topic menu › *The wait is over: … goes on*, or `bhote now <ref>`): the agent gets a prompt and
+goes on.
 
 ## Safety
 
