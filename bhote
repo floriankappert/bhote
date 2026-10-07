@@ -158,28 +158,28 @@ store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STAT
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
-    local f line k v id title st wf ws up del desc ag am ap seen n=0 s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    local f line k v id title st wf ws up del desc ag am ap as dl seen n=0 a_as a_dl s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
         [ -f "$f" ] || continue
-        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; seen=" "
+        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; seen=" "
         while IFS= read -r line; do
             k=${line%%=*}; v=${line#*=}
             case "$seen" in *" $k "*) continue ;; esac; seen="$seen$k "     # the FIRST value counts, everywhere (topic_get does the same)
-            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; esac
+            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; esac
         done < "$f"
         [ "$del" = 1 ] && continue
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
         case "$st" in now|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
-        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; n=$(( n + 1 ))
+        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; n=$(( n + 1 ))
     done
-    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=()
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=()
     for s in review now waiting later done; do                  # review first: it waits for you
         for (( i = 0; i < n; i++ )); do
             [ "${a_st[$i]}" = "$s" ] || continue
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
-            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; m=$(( m + 1 ))
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; m=$(( m + 1 ))
         done
     done
     T_N=$m
@@ -600,6 +600,17 @@ collect_remote() {  # only the saved machines that are switched on; with the set
       done; } > "$AGENT_REMOTE.tmp.$$"
     mv "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
 }
+remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND hours: a notification (remembered locally)
+    local h i f now id; cfg_var h WAIT_REMIND 24; num_set h "$h" 24; [ "$h" -gt 0 ] || return 0
+    topics_load; now=$(date +%s)
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = waiting ] || continue
+        [ $(( now - $(num_or "${T_WSINCE[$i]}" "$now") )) -ge $(( h * 3600 )) ] || continue
+        id="${T_ID[$i]}:${T_WSINCE[$i]}"; grep -qxF "$id" "$DATA_DIR/reminded" 2>/dev/null && continue
+        echo "$id" >> "$DATA_DIR/reminded"
+        notify "Still waiting" "${T_TITLE[$i]} · ${T_WFOR[$i]:-?} for ${h}h+" request
+    done
+}
 # One panel per machine collects (herdr is asked once, not once per panel); the others only read the files. The collector is
 # whoever holds $SHARED_DIR/collector.lock (its pid inside); when that process is gone, another panel takes over.
 collector_lead() {  # collector_lead <main pid>: 0 when this panel is the collector
@@ -623,9 +634,11 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
                 [ $(( n % (every_r / every_l + 1) )) -eq 0 ] && collect_remote
             else : > "$AGENT_REMOTE"; fi
+            remind_waiting
             n=$(( n + 1 ))
         else n=0; fi
-        sleep "$every_l"
+        local w=0; while [ "$w" -lt "$every_l" ]; do              # wait in 1 s steps: a poke (agent event, CLI change) ends it
+            [ -e "$SHARED_DIR/poke" ] && { rm -f "$SHARED_DIR/poke"; break; }; sleep 1; w=$(( w + 1 )); done
     done
 }
 
@@ -1245,9 +1258,15 @@ bhote_pick() {
     printf '\n'; rule
     printf ' %s↑↓ choose · →/⏎ start · ←/esc back%s\n' "$D" "$X"
 }
-pick_do() {  # pick_do <index>: hand the topic to that agent (its title as a prompt, Enter included) and mark it started
-    local f m id st name task opt=() title desc; f=$(sel_file); [ -n "$f" ] || return 0
-    title=$(topic_get "$f" title); desc=$(topic_get "$f" description); [ -n "$desc" ] && title="$title. $desc"
+delegation_text() {  # delegation_text <file>: the prompt an agent gets: the topic, and how it reports back
+    local f=$1 id title desc how
+    id=$(topic_get "$f" id); title=$(topic_get "$f" title); desc=$(topic_get "$f" description)
+    how="when you are finished, run \`bhote review $id\` so that I check it"
+    [ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && how="$how, or \`bhote done $id\` when nothing needs checking"
+    printf '%s%s (bhote topic %s: %s.)' "$title" "${desc:+. $desc}" "$id" "$how"
+}
+pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt through herdr) and mark it started
+    local f m id st name task opt=() title desc live sess; f=$(sel_file); [ -n "$f" ] || return 0
     if [ "$1" -gt 0 ]; then
         pick_build
         IFS=$US read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]:-0}]}"
@@ -1256,13 +1275,16 @@ pick_do() {  # pick_do <index>: hand the topic to that agent (its title as a pro
         [ "$m" = "$HOST" ] || opt=(--machine "$m")
         # the lists are a few seconds old: right before typing, ask herdr itself that this pane still runs a FREE agent
         # (a pane that is now a plain shell would execute the text)
-        st=$(herdr "${opt[@]}" pane list 2>/dev/null | jq -r --arg p "$id" '[.result.panes[] | select(.pane_id == $p)][0] | if . == null then "gone" elif (.agent // "") == "" then "noagent" else (.agent_status // "") end' 2>/dev/null)
+        live=$(herdr "${opt[@]}" pane list 2>/dev/null | jq -r --arg p "$id" '[.result.panes[] | select(.pane_id == $p)][0] | if . == null then "gone" elif (.agent // "") == "" then "noagent" else ((.agent_status // "") + "\u001f" + ((.agent_session.value // "") | tostring | gsub("[^A-Za-z0-9-]"; ""))) end' 2>/dev/null)
+        st=${live%%$US*}; sess=""; case "$live" in *"$US"*) sess=${live#*$US} ;; esac
         case "$st" in idle|done) ;; *) return 0 ;; esac
     fi
     topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" agent ""
     if [ "$1" -gt 0 ]; then
         topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
-        ( herdr "${opt[@]}" pane run "$id" -- "$title" >/dev/null 2>&1 ) &
+        topic_set "$f" agent_session "$sess"; topic_set "$f" delegated "$(date +%s)"
+        title=$(delegation_text "$f")
+        ( herdr "${opt[@]}" agent prompt "$id" "$title" >/dev/null 2>&1 ) &
     fi
     : > "$STORE_DIRTY"
 }
@@ -1500,11 +1522,54 @@ topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bho
     for (( i = 0; i < T_N; i++ )); do title_has "${T_TITLE[$i]}" "$low" && echo "  $(( i + 1 ))  ${T_TITLE[$i]}" >&2; done
     return 2
 }
+notify() {  # notify <title> <body> [sound: done|request|none]: a herdr notification, never blocking, never failing
+    [ "$(cfg_get NOTIFY on)" = on ] || return 0
+    command -v herdr >/dev/null 2>&1 || return 0
+    ( herdr notification show "${1//[[:cntrl:]]/}" --body "${2//[[:cntrl:]]/}" --sound "${3:-done}" >/dev/null 2>&1 & ) 2>/dev/null
+    return 0
+}
+poke() { : > "$SHARED_DIR/poke" 2>/dev/null; return 0; }   # the collector looks at once instead of after its interval
 agent_note() {  # agent_note <file>: when an agent runs the command, remember which one (its herdr session and pane)
     [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${HERDR_PANE_ID:-}" ] || return 0
     [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && topic_set "$1" agent_session "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}"
     [ -n "${HERDR_PANE_ID:-}" ] && [ -z "$(topic_get "$1" agent_pane)" ] && topic_set "$1" agent_pane "${HERDR_PANE_ID//[!A-Za-z0-9:_-]/}"
     return 0
+}
+# An agent's status changed (the herdr plugin passes the event as HERDR_PLUGIN_EVENT_JSON, or on stdin). When an agent that
+# holds a running topic stops working (done / idle) and did not report back itself, the topic goes to review and you get a
+# notification. Either way the collector is poked, so every panel shows the new state at once.
+cli_event() {
+    local ev pane st sess i f now; ev=${HERDR_PLUGIN_EVENT_JSON:-}; [ -n "$ev" ] || ev=$(head -c 65536)
+    command -v jq >/dev/null 2>&1 || return 0
+    read -r pane st sess <<< "$(printf '%s' "$ev" | jq -r '(.data // .) as $d | ($d.pane // $d) as $p |
+        [ ($p.pane_id // $d.pane_id // ""), ($d.agent_status // $p.agent_status // $d.status // ""), (($p.agent_session.value // $d.agent_session.value // "") | tostring) ]
+        | map(tostring | gsub("[^A-Za-z0-9:_-]"; "")) | map(if . == "" then "-" else . end) | join(" ")' 2>/dev/null)"
+    poke
+    case "$st" in done|idle) ;; *) return 0 ;; esac
+    [ "$pane" = - ] && pane=""; [ "$sess" = - ] && sess=""
+    topics_load; now=$(date +%s)
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = now ] || continue
+        if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ]; }; then
+            [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 5 ] || continue      # the idle right after handing it over is not "finished"
+            f=${T_FILE[$i]}; topic_set "$f" status review
+            notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request
+        fi
+    done
+    return 0
+}
+# `bhote current`: the topic of the agent that asks (its Claude session, else its herdr pane). For a SessionStart hook: the
+# agent learns what it works on and how to report back. Prints nothing (exit 0) when there is none.
+cli_current() {
+    local i f hit=""; topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in now|review|waiting) ;; *) continue ;; esac
+        if { [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ "${T_AS[$i]}" = "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}" ]; } \
+           || { [ -n "${HERDR_PANE_ID:-}" ] && [ "${T_AP[$i]}" = "$HERDR_PANE_ID" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ]; }; then hit=${T_FILE[$i]}; break; fi
+    done
+    if [ -z "$hit" ]; then [ -n "$json" ] && printf 'null\n'; return 0; fi
+    if [ -n "$json" ]; then topic_json "$hit"; printf '\n'; return 0; fi
+    printf 'Your bhote topic: %s\n' "$(delegation_text "$hit")"
 }
 cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <KEY>
     local sub=${1:-list} key=${2:-} v line k d first=1
@@ -1588,6 +1653,8 @@ bhote — topics and agents next to herdr.
   bhote rm <ref>                     delete
   bhote sync                         merge with the data location now
   bhote config [list|get|set|unset]  read and change the settings (bhote config list shows them all)
+  bhote current                      the topic of the agent that asks (for a Claude Code SessionStart hook)
+  bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
 
 Every command takes --json: one topic object (list: an array) as described in docs/cli-reference.md.
@@ -1605,6 +1672,8 @@ bhote_cli() {
     case "$cmd" in
         help|-h|--help) bhote_help ;;
         config) cli_config "$@" ;;
+        event) bhote_info; cli_event ;;
+        current) bhote_info; cli_current ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg
               while [ $# -gt 0 ]; do
@@ -1647,9 +1716,10 @@ bhote_cli() {
               case "$cmd" in
                   done) if [ -n "${CLAUDECODE:-}" ] && [ "$(cfg_get AGENT_CAN_CLOSE on)" != on ]; then   # an agent may only hand it over
                             echo "bhote: agents may not close topics here (AGENT_CAN_CLOSE=off): set to review" >&2; topic_set "$f" status review
-                        else topic_set "$f" status done; fi
-                        agent_note "$f" ;;
-                  review) topic_set "$f" status review; agent_note "$f" ;;
+                            notify "Ready for review" "$(topic_get "$f" title)" request
+                        else topic_set "$f" status done; [ -n "${CLAUDECODE:-}" ] && notify "Done" "$(topic_get "$f" title)" done; fi
+                        agent_note "$f"; poke ;;
+                  review) topic_set "$f" status review; agent_note "$f"; [ -n "${CLAUDECODE:-}" ] && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
                   now) topic_set "$f" status now; topic_set "$f" waiting_for "" ;;
                   later) topic_set "$f" status later ;;
                   wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }

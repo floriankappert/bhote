@@ -95,7 +95,8 @@ One topic. With `--json`: one [topic object](#json-output).
 Set the status: start or resume (`now`, also clears a waiting name), hand over for review (`review`), park (`later`), check
 off (`done`). Print the topic.
 
-Run by an agent (a Claude Code session: `CLAUDECODE=1`), the command also records which agent it was
+Run by an agent (a Claude Code session: `CLAUDECODE=1`), `review` and `done` send a herdr notification and record which
+agent it was
 (`CLAUDE_CODE_SESSION_ID`, `HERDR_PANE_ID`). With `AGENT_CAN_CLOSE=off` an agent cannot close a topic: its `done` becomes
 `review` (with a note on stderr, exit `0`), and you check it off.
 
@@ -142,6 +143,23 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 ```
 
 `config list --json` is an array of `{"key", "value", "default", "type", "description"}`.
+
+### `bhote current`
+
+The topic of the agent that asks: matched by its Claude session (`CLAUDE_CODE_SESSION_ID`), else by its herdr pane
+(`HERDR_PANE_ID`). Prints one line with the topic, its id and how to report back (`--json`: the topic object, or `null`);
+nothing when there is none. Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
+
+```json
+{"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bhote current"}]}]}}
+```
+
+### `bhote event`
+
+Called by the [herdr plugin](herdr-plugin.md) on `pane.agent_status_changed` with the event in `HERDR_PLUGIN_EVENT_JSON`
+(or on stdin). When the agent of a running topic stops working (`done`/`idle`, at least 5 s after it got the topic) and has
+not reported back itself, the topic goes to `review` and a herdr notification says so. Every event also makes the panels
+refresh at once.
 
 ### `bhote version` · `bhote help`
 

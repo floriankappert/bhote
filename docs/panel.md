@@ -33,6 +33,13 @@ other machines carry the machine's initial unless their name starts with it. Dra
 more or fewer rows. A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
 `finished · x = done`, `gone`).
 
+## Handing a topic to an agent
+
+`s` sends the topic through `herdr agent prompt`, together with its id and how to report back: `bhote review <id>` (and,
+with `AGENT_CAN_CLOSE=on`, `bhote done <id>` when nothing needs checking). The topic remembers the agent's pane and session.
+When the agent reports back, or simply stops working, the topic moves to **REVIEW** at the top of the list and herdr shows a
+notification (setting `NOTIFY`). Waiting topics are reminded once after `WAIT_REMIND` hours.
+
 ## Safety
 
 The text sent to an agent is checked live against herdr right before it is typed: the pane must still run an agent, and it

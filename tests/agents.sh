@@ -8,7 +8,7 @@ mkdir -p "$T/bin"
 cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 case "$*" in
- *"pane run"*) echo "$*" >> "$FAKE_LOG" ;;
+ *"pane run"*|*"agent prompt"*|*"notification show"*) echo "$*" >> "$FAKE_LOG" ;;
  *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
 esac
@@ -34,15 +34,37 @@ AG_N=3; AG_LINES=($'Mac\037w1:p1\037idle\037Project\037' $'Laptop\037w9:p2\037do
 pick_build
 [ "${#PICK_MAP[@]}" = 2 ] && ok "picker: only the two free agents are offered (the working one is not)" || bad "picker offers ${#PICK_MAP[@]} agents"
 pick_do 1; wait
-grep -qx "pane run w1:p1 -- Deploy fix. needs care" "$FAKE_LOG" && ok "delegate: a local agent gets the text, no --machine" || bad "local delegate: $(cat "$FAKE_LOG")"
+grep -q "^agent prompt w1:p1 Deploy fix. needs care (bhote topic $NEW_TOPIC_ID: when you are finished, run \`bhote review $NEW_TOPIC_ID\`" "$FAKE_LOG" && ok "delegate: a local agent gets the topic with its id and how to report back, no --machine" || bad "local delegate: $(cat "$FAKE_LOG")"
 [ "$(topic_get "$TOPIC_DIR/$NEW_TOPIC_ID.topic" agent_pane)" = "w1:p1" ] && ok "delegate: the topic remembers the agent" || bad "agent not stored"
 topic_new "Second" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; pick_build
 [ "${#PICK_MAP[@]}" = 1 ] && ok "picker: an agent that holds a running topic is not offered again" || bad "taken agent still offered (${#PICK_MAP[@]})"
 pick_do 1; wait
-grep -qx -e "--machine Laptop pane run w9:p2 -- Second" "$FAKE_LOG" && ok "delegate: a remote agent is reached with --machine" || bad "remote delegate: $(cat "$FAKE_LOG")"
+grep -q -e "^--machine Laptop agent prompt w9:p2 Second (bhote topic" "$FAKE_LOG" && ok "delegate: a remote agent is reached with --machine" || bad "remote delegate: $(cat "$FAKE_LOG")"
 AG_LINES=($'Mac\037w1:p1\037working\037Project\037' $'Laptop\037w9:p2\037done\037server\037'); : > "$FAKE_LOG"
 topic_new "Third" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; PICK_MAP=(0); pick_do 1; wait
 [ ! -s "$FAKE_LOG" ] && ok "delegate: an agent that became busy meanwhile gets nothing" || bad "sent to a busy agent: $(cat "$FAKE_LOG")"
+
+# events from herdr: an agent that stops working moves its topic to review and notifies
+unset CLAUDECODE; : > "$FAKE_LOG"
+topic_new "Evented" "" ""; ef="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+topic_set "$ef" agent "IMS"; topic_set "$ef" agent_machine Mac; topic_set "$ef" agent_pane w5:p1; topic_set "$ef" agent_session "s-777"; topic_set "$ef" delegated 1
+HERDR_PLUGIN_EVENT_JSON='{"event":"pane_agent_status_changed","data":{"pane_id":"w5:p1","agent_status":"working"}}' cli_event
+[ "$(topic_get "$ef" status)" = now ] && ok "event: working keeps the topic running" || bad "working changed the topic"
+[ -e "$SHARED_DIR/poke" ] && ok "event: the collector is poked (panels update at once)" || bad "no poke"
+HERDR_PLUGIN_EVENT_JSON='{"event":"pane_agent_status_changed","data":{"pane":{"pane_id":"w0:p0","agent_status":"done","agent_session":{"value":"s-777"}}}}' cli_event
+[ "$(topic_get "$ef" status)" = review ] && ok "event: the agent's session finished -> review" || bad "done event did not move to review: $(topic_get "$ef" status)"
+sleep 0.5; grep -q "notification show Ready for review" "$FAKE_LOG" && ok "event: a herdr notification says it is ready for review" || bad "no notification: $(cat "$FAKE_LOG")"
+topic_new "Fresh" "" ""; ff="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$ff" agent_pane w6:p1; topic_set "$ff" agent_machine Mac; topic_set "$ff" delegated "$(date +%s)"
+HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w6:p1","agent_status":"idle"}}' cli_event
+[ "$(topic_get "$ff" status)" = now ] && ok "event: the idle right after handing over is ignored" || bad "fresh delegation moved to review"
+cfg_set NOTIFY off; : > "$FAKE_LOG"; topic_set "$ff" delegated 1
+HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w6:p1","agent_status":"done"}}' cli_event
+[ ! -s "$FAKE_LOG" ] && ok "NOTIFY=off: no notification" || bad "notified although NOTIFY=off"
+cfg_set NOTIFY on
+# bhote current: the topic of the agent that asks
+topic_new "Mine" "" "my part"; mf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mf" agent_session "sess-42"
+out=$(CLAUDE_CODE_SESSION_ID=sess-42 cli_current); case "$out" in *"Mine. my part (bhote topic $NEW_TOPIC_ID"*) ok "current: an agent gets its own topic and how to report back" ;; *) bad "current: $out" ;; esac
+out=$(CLAUDE_CODE_SESSION_ID=nobody HERDR_PANE_ID=zz:p9 cli_current); [ -z "$out" ] && ok "current: nothing for an agent without a topic" || bad "current for nobody: $out"
 
 # one collector per machine: the first live process leads, the others follow; a dead leader is replaced
 sleep 30 & A=$!; sleep 30 & B=$!
