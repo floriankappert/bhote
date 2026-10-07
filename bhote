@@ -600,9 +600,9 @@ bhote_splash() {
     top
     blank
     mid "Welcome back, $who!" "${L}Welcome back, $who!${X}"
-    blank; blanks "$SG0"
+    blanks "$SG0"
     dog
-    blank; blanks "$SG1"
+    blanks "$SG1"
     local line
     while IFS= read -r line; do mid "$line" "$(gradient "$line")"; done <<'WORD'
 ████▄  █   █  ▄███▄  █████  █████
@@ -611,9 +611,11 @@ bhote_splash() {
 █   █  █   █  █   █    █    █    
 ████▀  █   █  ▀███▀    █    █████
 WORD
-    blank; blanks "$SG2"
+    blank
     mid "Agent & Work Management" "${D}Agent & Work Management${X}"
-    blank; blanks "$SG3"
+    blanks "$SG2"
+    splash_prompt_row                                       # right under the wordmark; the gaps are all the same size
+    blanks "$SG3"
     local mv=${#host} vv t   # the four lines are one block: centred as a whole, values start in one column
     for vv in "${herdr_v:-?}" "$agents" "$T_N$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
     INFO_PAD=$(( (INNER - (9 + mv)) / 2 )); [ "$INFO_PAD" -lt 1 ] && INFO_PAD=1
@@ -621,9 +623,7 @@ WORD
     info "Herdr   " "${herdr_v:-?}"
     info "Agents  " "$agents"
     info "Topics  " "$T_N$STORE_TAG"
-    blank; blanks "$SG4"
-    splash_prompt_row
-    blank
+    blanks "$SG4"
     mid "n new · , settings · q quit" "${D}n new · , settings · q quit${X}"
     bottom
 }
@@ -936,7 +936,7 @@ dog_animate() {  # the main loop's answer to USR1 (only on the splash and the li
     [ "$1" = splash ] && ! splash_fits && return 0
     read -r idx blink < "$ANIM_FILE" 2>/dev/null || { idx=0; blink=on; }
     case "$1" in
-        splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at big $(( 5 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
+        splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at big $(( 4 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
                 if [ "$blink" != "${DRAWN_BLINK:-}" ]; then splash_prompt_at "$blink"; DRAWN_BLINK=$blink; fi ;;
         main) ;;                                            # no dog in the list
     esac
@@ -1249,14 +1249,15 @@ MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-60}; MIN_ROWS=${BHOTE
 splash_fits() { [ "${REAL_COLS:-44}" -ge "$SPLASH_W" ] && [ "${REAL_ROWS:-40}" -ge "$SPLASH_ROWS" ]; }
 # The start screen fills the pane: the frame is as wide and as high as the pane; the extra width centres the content, the extra
 # height becomes space between the sections (all of it above the prompt, so the keys stay on the bottom edge).
-SG0=0; SG1=0; SG2=0; SG3=0; SG4=0; SPLASH_E=0
+SG0=1; SG1=1; SG2=1; SG3=1; SG4=1; SPLASH_E=0
 splash_geometry() {
     local e q r
     WIDTH=${REAL_COLS:-44}; [ "$WIDTH" -lt "$SPLASH_W" ] && WIDTH=$SPLASH_W; INNER=$(( WIDTH - 2 ))
     e=$(( ${REAL_ROWS:-40} - SPLASH_ROWS )); [ "$e" -lt 0 ] && e=0; SPLASH_E=$e
+    # five gaps (under the greeting, the dog, the wordmark, the prompt, the info), each one line plus an equal share of the rest
     q=$(( e / 5 )); r=$(( e % 5 ))
-    SG0=$(( q + (r > 0) )); SG1=$(( q + (r > 1) )); SG2=$(( q + (r > 2) )); SG3=$(( q + (r > 3) )); SG4=$q
-    SPLASH_PROMPT_ROW=$(( 35 + e ))
+    SG0=$(( 1 + q + (r > 0) )); SG1=$(( 1 + q + (r > 1) )); SG2=$(( 1 + q + (r > 2) )); SG3=$(( 1 + q + (r > 3) )); SG4=$(( 1 + q ))
+    SPLASH_PROMPT_ROW=$(( 27 + SG0 + SG1 + SG2 ))
 }
 term_size() {
     local sz; sz=$(stty size </dev/tty 2>/dev/null); REAL_COLS=${sz#* }; REAL_ROWS=${sz% *}; REAL_COLS=${REAL_COLS:-44}; REAL_ROWS=${REAL_ROWS:-40}
