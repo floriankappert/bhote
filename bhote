@@ -1659,6 +1659,41 @@ setup_step_machines() {
         w_continue; [ "$W_QUIT" = 1 ] && return                 # the result (also a failed test, with its reason) stays readable
     done
 }
+w_wait_ssh() {  # w_wait_ssh <seconds>: until ssh is open here (checked every second); any key stops waiting
+    local n=0 k; printf '  %swaiting for ssh to open (any key stops)%s ' "$D" "$X"
+    while [ "$n" -lt "$1" ]; do
+        w_inbound_ssh && { printf '\n'; return 0; }
+        IFS= read -rsn1 -t 1 k </dev/tty && { printf '\n'; return 1; }
+        printf '%s·%s' "$D" "$X"; n=$(( n + 1 ))
+    done
+    printf '\n'; return 1
+}
+setup_open_ssh() {  # ssh into this machine is closed: switch it on here (sudo asks for the password itself), or open the settings
+    local c
+    w_say "Other machines can reach $HOST only when ssh is open here."
+    w_line
+    if [ "$(uname -s)" = Darwin ]; then
+        w_opt 1 "switch on Remote Login now (sudo asks for your Mac password; bhote never sees it)"
+        w_opt 2 "open System Settings › Sharing; I switch on Remote Login there"
+    else
+        w_opt 1 "start the ssh server now (sudo systemctl enable --now sshd; sudo asks for your password)"
+        w_opt 2 "I start it myself in another terminal"
+    fi
+    w_opt 3 "skip it"
+    w_read c "Choose 1, 2 or 3:" 1; [ "$W_QUIT" = 1 ] && return 1
+    case "$c" in
+        1) if [ "$(uname -s)" = Darwin ]; then
+               w_run "sudo systemsetup -setremotelogin on" sudo systemsetup -setremotelogin on \
+                   || w_run "sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist" sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist
+           else w_run "sudo systemctl enable --now sshd" sudo systemctl enable --now sshd; fi
+           w_wait_ssh 10 ;;
+        2) [ "$(uname -s)" = Darwin ] && open "x-apple.systempreferences:com.apple.Sharing-Settings.extension" 2>/dev/null
+           w_wait_ssh 180 ;;
+        *) return 1 ;;
+    esac
+    if w_inbound_ssh; then w_ok "ssh into $HOST" "open now"; return 0; fi
+    return 1
+}
 setup_step_twoway() {
     w_screen 4 "THE OTHER WAY ROUND"
     w_say "So that the other machines see the agents of this one, and topics can travel both ways, they must know this machine too."; w_line
@@ -1673,10 +1708,8 @@ setup_step_twoway() {
         # 1) can anyone log in here?
         if ! w_inbound_ssh; then
             w_bad "ssh into $HOST" "not open"
-            if [ "$(uname -s)" = Darwin ]; then w_say "Switch on Remote Login: System Settings › General › Sharing › Remote Login (needs an admin). Then continue."
-            else w_say "Start the ssh server: sudo systemctl enable --now sshd (needs root). Then continue."; fi
-            w_continue; [ "$W_QUIT" = 1 ] && return
-            w_inbound_ssh || { w_bad "ssh into $HOST" "still closed: $label is skipped"; w_continue; continue; }
+            setup_open_ssh || { w_bad "ssh into $HOST" "still closed: $label is skipped"; w_continue; continue; }
+            [ "$W_QUIT" = 1 ] && return
         fi
         w_ok "ssh into $HOST" "open"
         # 2) the address of this machine as seen from there
