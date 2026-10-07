@@ -795,38 +795,53 @@ agent_divider() {  # the handle between topics and agents: a rule with a grip in
     l=$(( (w - 5) / 2 )); r=$(( w - 5 - l ))
     printf '  %s%s%s ═══ %s%s%s\n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X"
 }
-agents_block() {  # two columns: the free agents (idle, done) on the left, the busy ones on the right; the colours follow the herdr sidebar
-    local i m id st name task ic nc label cw maxr rows shown hidden r left right lpad f=() b=() fw=() bw=() nf=0 nb=0 cell plain
+agents_block() {  # two columns: free agents (idle, done) left, busy ones right; grouped by machine (a dim caption per machine when
+    # there is more than one), so names need no machine prefix. The colours follow the herdr sidebar.
+    local i k m id st name task ic nc label cw maxr cell plain _ln machines=() nm=0 lines=() lw=() lc=() n=0 shown hidden=0 r
     maxr=$(( ${ROWS:-40} - 21 )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
-    if [ "$AG_N" -gt 0 ]; then
+    agent_divider
+    [ "$AG_N" -gt 0 ] || { agent_footer; return; }
+    # the machines, this one first
+    machines[0]=$HOST; nm=1
+    for (( i = 0; i < AG_N; i++ )); do
+        m=${AG_LINES[$i]%%$US*}; for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done
+        [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
+    done
+    printf '  %s%-*s%s%s%s\n' "$GREEN" $(( cw + 1 )) "FREE" "$X$ORANGE" "BUSY" "$X"
+    for (( k = 0; k < nm; k++ )); do
+        local f=() b=() fw=() nf=0 nb=0 rows
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+            [ "$m" = "${machines[$k]}" ] || continue
             case "$st" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
-            name_color_set nc "$name"
-            label=$name                                         # another machine: its initial in front (not when the name says it)
-            [ "$m" = "$HOST" ] || case "$name" in "$m"*) ;; *) label="${m:0:1}·$name" ;; esac
-            clip_set label "$label" $(( cw - 2 ))
+            name_color_set nc "$name"; clip_set label "$name" $(( cw - 2 ))
             cell="$ic$X $nc$label$X"; plain=$(( ${#label} + 2 ))
-            case "$st" in
-                idle|done) f[$nf]=$cell; fw[$nf]=$plain; nf=$(( nf + 1 )) ;;
-                *) b[$nb]=$cell; bw[$nb]=$plain; nb=$(( nb + 1 )) ;;
-            esac
+            case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; nb=$(( nb + 1 )) ;; esac
         done
+        [ $(( nf + nb )) -gt 0 ] || continue
+        # a caption for the machine when several machines are listed
+        if [ "$nm" -gt 1 ]; then                              # a divider with the machine's name ("── Omarchy ─────"); only machines with agents
+            local cap=${machines[$k]} rest; rest=$(( ${#RULE_LINE} - 4 - ${#cap} )); [ "$rest" -lt 1 ] && rest=1
+            # (braces around the colours: bash 3.2 takes the first byte of a "─" right after $B into the variable name)
+            lines[$n]="  ${B}──${X} ${D}${cap}${X} ${B}${RULE_LINE:0:$rest}${X}"; lc[$n]=0; n=$(( n + 1 ))
+        fi
         rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
-        shown=$rows; [ "$shown" -gt "$maxr" ] && shown=$maxr
-        agent_divider
-        printf '  %s%-*s%s%s%s\n' "$GREEN" $(( cw + 1 )) "FREE" "$X$ORANGE" "BUSY" "$X"
-        [ -n "$want" ] && shown=$maxr                           # a dragged height stays, also with fewer agents
-        for (( r = 0; r < shown; r++ )); do
-            left=${f[$r]:-}; right=${b[$r]:-}; lpad=$(( cw - ${fw[$r]:-0} ))
-            printf '  %s%*s %s\n' "$left" "$lpad" "" "$right"
+        for (( r = 0; r < rows; r++ )); do
+            printf -v _ln '  %s%*s %s' "${f[$r]:-}" $(( cw - ${fw[$r]:-0} )) "" "${b[$r]:-}"; lines[$n]=$_ln   # no subshell per row
+            lc[$n]=$(( (r < nf) + (r < nb) )); n=$(( n + 1 ))
         done
-        hidden=0; [ "$nf" -gt "$shown" ] && hidden=$(( nf - shown )); [ "$nb" -gt "$shown" ] && hidden=$(( hidden + nb - shown ))
-        [ "$hidden" -gt 0 ] && printf '  %s+%d more agents%s\n' "$D" "$hidden" "$X"
-    else agent_divider
-    fi
+    done
+    shown=$n; [ "$shown" -gt "$maxr" ] && shown=$maxr
+    for (( r = 0; r < n; r++ )); do
+        if [ "$r" -lt "$shown" ]; then printf '%s\n' "${lines[$r]}"; else hidden=$(( hidden + lc[$r] )); fi
+    done
+    if [ "$hidden" -gt 0 ]; then printf '  %s+%d more agents%s\n' "$D" "$hidden" "$X"
+    elif [ -n "$want" ]; then for (( r = shown; r < maxr; r++ )); do printf '\n'; done; fi   # a dragged height stays, also with fewer agents
+    agent_footer
+}
+agent_footer() {
     # saved machines exist but are not asked: say so, and where to change it
     if [ "$U_REMOTE" != on ] && [ "${HAS_MACHINES:-0}" = 1 ]; then
         printf '\n  %sRemote agents off · , settings%s\n' "$D" "$X"
