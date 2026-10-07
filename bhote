@@ -1775,7 +1775,8 @@ setup_step_done() {
     w_continue
 }
 bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
-    local st; W_QUIT=0; COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
+    local st; W_QUIT=0; ask_drain                              # keys typed before it opened must not answer its first questions
+    COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     for st in checks name machines twoway topics agents behaviour panel done; do
         "setup_step_$st"; [ "$W_QUIT" = 1 ] && break
