@@ -1035,7 +1035,7 @@ harden_perms() {  # data, config and their folders: this user only (older versio
     return 0
 }
 bhote_main() {
-    local f tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
+    local f chk tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
     harden_perms; bhote_info
     if [ -n "${BHOTE_ONCE:-}" ] || [ ! -t 0 ]; then
         AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote
@@ -1130,9 +1130,10 @@ bhote_main() {
         # the agent lists changed (the collector writes them every few seconds): redraw the list view
         # the collector rewrites its files every few seconds: only a change of CONTENT repaints the list
         # (only when idle: after a key press the screen is repainted anyway, and a key must not wait for this check)
-        # idle = nothing was read and no animation tick is waiting. (bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128:
-        # so the exit status alone cannot tell a timeout from a key.)
-        if [ "$rc" != 0 ] && [ -z "$key" ] && [ "$anim" != 1 ]; then
+        # Every 2 seconds, when no key was read: did the agent lists, the topics or the sync state change? (Not tied to a read
+        # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
+        if [ -z "$key" ] && [ "$SECONDS" -ge $(( ${chk:-0} + 2 )) ]; then
+            chk=$SECONDS
             m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; } | cksum )
             if [ "$m1" != "$last_m" ]; then last_m=$m1; [ "$view" = main ] && redraw=1; fi
         fi
