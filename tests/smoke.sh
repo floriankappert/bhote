@@ -11,7 +11,7 @@ check() {  # check <view> <text that must appear>
     else echo "FAIL $1: '$2' missing"; fail=1; fi
 }
 check splash   "PRESS ANY KEY TO START"
-check main     "work & agent sync"
+check main     "work & agent management"
 check settings "Settings"
 # no line may reach the panel's right edge, and the frame has exactly ROWS lines (main view)
 fit() {  # fit <cols> <rows> <view>

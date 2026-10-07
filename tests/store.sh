@@ -59,7 +59,7 @@ after=$(cat "$TOPIC_DIR"/*.topic | md5 2>/dev/null || cat "$TOPIC_DIR"/*.topic |
 # 8) hardening: what the other side sends is never trusted
 cat > "$T/evilssh" <<'SH'
 #!/bin/sh
-case "$*" in *@@*) printf '@@../escape.topic\nid=x\ntitle=pwn\nupdated=99999\n@@bad name;touch pwned.topic\nupdated=99999\n@@good1.topic\nid=good1\ntitle=ok\nstatus=now\nupdated=99999\ndeleted=0\n' ;; *) exec "$FAKE_SSH_REAL" "$@" ;; esac
+case "$*" in *@@*) printf '@@../escape.topic\nid=x\ntitle=pwn\nupdated=99999\n@@bad name;touch pwned.topic\nupdated=99999\n@@good1.topic\nid=good1\ntitle=ok\nstatus=now\nupdated=99999\ndeleted=0\n\n@@END\n' ;; *) exec "$FAKE_SSH_REAL" "$@" ;; esac
 SH
 chmod +x "$T/evilssh"; cp -R "$TOPIC_DIR" "$T/local-before"
 FAKE_SSH_REAL=$T/fakessh BHOTE_SSH=$T/evilssh store_sync
@@ -76,6 +76,39 @@ rm -f "$f"
 
 # 10) private scratch dir, nothing predictable
 [ "$(ls -ld "$RUN_DIR" | cut -c1-10)" = "drwx------" ] && ok "hardening: scratch dir is private (0700)" || bad "scratch dir is open: $(ls -ld "$RUN_DIR")"
+
+# 11) hardening round 2: numbers from topic files never reach $(( )) as code, replica files are checked, dumps must be complete
+f=$TOPIC_DIR/arith.topic; printf 'id=arith\ntitle=Arith\nstatus=waiting\nwaiting_for=x\nwaiting_since=a[$(touch %s/PWNED)]\nupdated=b[$(touch %s/PWNED2)]\ndeleted=0\n' "$T" "$T" > "$f"
+topics_load; NOW=1000; for (( i = 0; i < T_N; i++ )); do age_text "${T_WSINCE[$i]:-0}" >/dev/null; age_text "${T_UPD[$i]:-0}" >/dev/null; done
+age_text 'c[$(touch '"$T"'/PWNED3)]' >/dev/null
+[ ! -e "$T/PWNED" ] && [ ! -e "$T/PWNED2" ] && [ ! -e "$T/PWNED3" ] && ok "hardening: a[\$(cmd)] in a timestamp never runs" || bad "arithmetic injection ran a command"
+rm -f "$f"
+printf 'id=d\ntitle=Shown\ndescription=first\ndescription=second\nupdated=5\n' > "$T/dup.topic"
+topic_valid "$T/dup.topic" 1000 && bad "a replica file with a repeated key was accepted" || ok "hardening: a replica file with a repeated key is refused"
+printf 'id=d\ntitle=x\nupdated=a[1]\n' > "$T/num.topic"; topic_valid "$T/num.topic" 1000 && bad "non-numeric updated accepted" || ok "hardening: a non-numeric timestamp in a replica file is refused"
+printf 'id=d\ntitle=x\nupdated=99999999999\n' > "$T/fut.topic"; topic_valid "$T/fut.topic" 1000 && bad "a timestamp from the future accepted" || ok "hardening: a timestamp far in the future is refused"
+printf 'id=d\ntitle=x\nstatus=now\nupdated=900\ndeleted=0\n' > "$T/okv.topic"; topic_valid "$T/okv.topic" 1000 && ok "hardening: a normal replica file is accepted" || bad "a normal file was refused"
+f=$TOPIC_DIR/first.topic; printf 'id=first\ntitle=First\ndescription=hidden\ndescription=shown\nstatus=now\nupdated=5\ndeleted=0\n' > "$f"
+topics_load; for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = first ] && d=${T_DESC[$i]}; done
+[ "$d" = "$(topic_get "$f" description)" ] && ok "hardening: the list and the agent prompt read the same value of a repeated key" || bad "list shows '$d', prompt gets '$(topic_get "$f" description)'"
+rm -f "$f"
+# a dump that ends early (ssh died in the middle) changes nothing
+mk "$R" half "Half" 99990; before=$(ls "$TOPIC_DIR" | sort)
+cat > "$T/halfssh" <<'SH'
+#!/bin/sh
+case "$*" in *@@*) printf '\n@@half.topic\nid=half\ntitle=Half\nupdated=99990\n' ;; *) exec "$FAKE_SSH_REAL" "$@" ;; esac
+SH
+chmod +x "$T/halfssh"; FAKE_SSH_REAL=$T/fakessh BHOTE_SSH=$T/halfssh store_sync; rc=$?
+[ "$rc" = 1 ] && [ "$before" = "$(ls "$TOPIC_DIR" | sort)" ] && ok "hardening: an incomplete dump is not merged (offline)" || bad "incomplete dump: rc=$rc"
+rm -f "$R/half.topic"
+# the sync lock: busy -> 2; a lock of a dead process is taken over
+mkdir -p "$DATA_DIR/sync.lock"; sleep 30 & held=$!; echo "$held" > "$DATA_DIR/sync.lock/pid"
+store_sync; [ $? = 2 ] && ok "hardening: a running sync elsewhere returns 2 (busy)" || bad "busy lock not reported"
+kill "$held"; wait "$held" 2>/dev/null
+store_sync; [ $? = 0 ] && [ ! -d "$DATA_DIR/sync.lock" ] && ok "hardening: the lock of a dead process is taken over and released" || bad "stale lock not taken over"
+# config: several keys in one write, labels with regex characters
+cfg_set A 1 B 2; [ "$(cfg_get A x)$(cfg_get B x)" = 12 ] && ok "hardening: cfg_set writes several keys at once" || bad "cfg_set multi"
+cfg_set 'A.*' z; [ "$(cfg_get A x)" = 1 ] && ok "hardening: a key with regex characters does not delete other keys" || bad "regex key removed others"
 
 # 7) data location local: no ssh at all
 cfg_set STORE local; FAKE_OFFLINE=1 store_sync && ok "local mode: no connection needed" || bad "local mode tried to connect"

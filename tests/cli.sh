@@ -38,4 +38,20 @@ B bogus >/dev/null 2>&1; [ "$?" = 1 ] && ok "unknown command: exit code 1" || ba
 
 # the panel's data = the CLI's data: a topic made here is a file the panel reads
 ls "$BHOTE_DATA/topics"/*.topic >/dev/null 2>&1 && ok "topics are plain files the panel reads" || bad "no files"
+# exit codes and refs (hardening round 2)
+B add "Exit code check" >/dev/null; [ $? = 0 ] && ok "exit code: add returns 0" || bad "add returned non-zero"
+B list >/dev/null; [ $? = 0 ] && ok "exit code: list returns 0" || bad "list returned non-zero"
+B show "Exit code" >/dev/null; [ $? = 0 ] && ok "exit code: show returns 0" || bad "show returned non-zero"
+B done "Exit code" >/dev/null; [ $? = 0 ] && ok "exit code: done returns 0" || bad "done returned non-zero"
+B show 999 >/dev/null 2>&1; [ $? = 1 ] && ok "a number out of range is an error, not a title search" || bad "out-of-range number not an error"
+B show 01 >/dev/null 2>&1; [ $? = 0 ] && ok "a number with a leading zero is decimal (01 = 1)" || bad "leading zero"
+B show 08 >/dev/null 2>&1; r=$?; [ "$r" = 0 ] || [ "$r" = 1 ] && ok "08 is not read as octal (no shell error)" || bad "08 crashed: $r"
+f=$(ls "$T/data/topics"/*.topic | head -1); printf 'waiting_since=1x\n' >> "$f"
+B list --json | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null && ok "list --json stays valid JSON with a broken number" || bad "invalid JSON from list"
+B show 1 --json | python3 -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null && ok "show --json stays valid JSON" || bad "invalid JSON from show"
+long=$(printf 'x%.0s' $(seq 1 200))
+B add "Long description" -d "$long" >/dev/null 2>&1; d=$(B show "Long description" --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["description"]))')
+[ "$d" = 140 ] && ok "descriptions are cut to 140 characters (add -d)" || bad "description length $d"
+B desc "Long description" "$long" >/dev/null 2>&1; d=$(B show "Long description" --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["description"]))')
+[ "$d" = 140 ] && ok "descriptions are cut to 140 characters (desc)" || bad "desc length $d"
 rm -rf "$T"; exit $fail
