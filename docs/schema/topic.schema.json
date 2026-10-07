@@ -5,32 +5,127 @@
   "description": "One topic as printed by `bhote show --json`, `bhote list --json` (array items) and every changing command with --json. A value that is not set is null.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "n", "title", "description", "status", "waiting_for", "waiting_since", "agent", "created", "updated"],
+  "required": [
+    "id",
+    "n",
+    "title",
+    "description",
+    "status",
+    "waiting_for",
+    "waiting_since",
+    "agent",
+    "created",
+    "updated"
+  ],
   "properties": {
-    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$", "description": "Stable id, <created epoch>-<random>. Never changes, also not across machines." },
-    "n": { "type": ["integer", "null"], "minimum": 1, "description": "Position in `bhote list --all` at the moment of the call. Usable as <ref> right away; changes when topics change." },
-    "title": { "type": "string", "minLength": 1 },
-    "description": { "type": ["string", "null"], "maxLength": 140 },
-    "status": { "enum": ["now", "waiting", "later", "done"] },
-    "waiting_for": { "type": ["string", "null"], "description": "Who the topic waits for; only set while status is waiting." },
-    "waiting_since": { "type": ["integer", "null"], "description": "Unix time (seconds) since when it waits; only set while status is waiting." },
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "Stable id, <created epoch>-<random>. Never changes, also not across machines."
+    },
+    "n": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "Position in `bhote list --all` at the moment of the call. Usable as <ref> right away; changes when topics change."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 140
+    },
+    "status": {
+      "enum": [
+        "now",
+        "waiting",
+        "review",
+        "later",
+        "done"
+      ]
+    },
+    "waiting_for": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Who the topic waits for; only set while status is waiting."
+    },
+    "waiting_since": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Unix time (seconds) since when it waits; only set while status is waiting."
+    },
     "agent": {
-      "description": "The herdr agent the topic was handed to (panel: s), or null.",
+      "description": "The herdr agent the topic belongs to (handed over with s, or the agent that last changed it), or null.",
       "oneOf": [
-        { "type": "null" },
+        {
+          "type": "null"
+        },
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["name", "machine", "pane"],
+          "required": [
+            "name",
+            "machine",
+            "pane",
+            "session"
+          ],
           "properties": {
-            "name": { "type": "string", "description": "The agent's workspace name." },
-            "machine": { "type": ["string", "null"], "description": "Machine label (HOST_LABEL or a saved herdr machine)." },
-            "pane": { "type": ["string", "null"], "description": "herdr pane id, e.g. w3:p2." }
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The agent's workspace name."
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Machine label (HOST_LABEL or a saved herdr machine)."
+            },
+            "pane": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "herdr pane id, e.g. w3:p2."
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The agent's session id (herdr agent_session, = CLAUDE_CODE_SESSION_ID). Stable across herdr restarts."
+            }
           }
         }
       ]
     },
-    "created": { "type": ["integer", "null"], "description": "Unix time (seconds)." },
-    "updated": { "type": ["integer", "null"], "description": "Unix time (seconds) of the last change; the newer one wins when replicas are merged." }
+    "created": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Unix time (seconds)."
+    },
+    "updated": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Unix time (seconds) of the last change; the newer one wins when replicas are merged."
+    }
   }
 }

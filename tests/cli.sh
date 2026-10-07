@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests of the command line (bhote add/list/show/done/...). Throw-away config and data; no network. Usage: bash tests/cli.sh
 cd "$(dirname "$0")/.." || exit 1
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data TMPDIR=$T BHOTE_SHARED=$T/shared
 B() { bash ./bhote "$@"; }
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
@@ -80,4 +81,19 @@ B list --all --json | python3 "$T/validate.py" docs/schema topic-list.schema.jso
 B show 1 --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: show --json matches topic.schema.json" || bad "show --json does not match the schema"
 B wait 1 Robin --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: a changing command with --json matches too" || bad "wait --json does not match"
 B version --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"]' && ok "version --json" || bad "version --json"
+# settings over the API
+B config set DONE_MAX 3 >/dev/null && [ "$(B config get DONE_MAX)" = 3 ] && ok "config: set and get" || bad "config set/get"
+B config set DONE_MAX lots >/dev/null 2>&1; [ $? = 1 ] && [ "$(B config get DONE_MAX)" = 3 ] && ok "config: a value of the wrong type is refused" || bad "config accepted a bad value"
+B config set NOPE 1 >/dev/null 2>&1; [ $? = 1 ] && ok "config: an unknown key is refused" || bad "unknown key accepted"
+B config set AGENT_CAN_CLOSE maybe >/dev/null 2>&1; [ $? = 1 ] && ok "config: bool settings take on/off only" || bad "bool accepted maybe"
+B config unset DONE_MAX >/dev/null; [ "$(B config get DONE_MAX)" = 7 ] && ok "config: unset goes back to the default" || bad "unset"
+B config list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert any(x["key"]=="AGENT_CAN_CLOSE" and x["default"]=="on" for x in d)' && ok "config list --json" || bad "config list --json"
+# review, and what an agent may do
+B add "Agent task" >/dev/null; B review "Agent task" >/dev/null; [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = review ] && ok "review: status review" || bad "review"
+B list | head -1 | grep -q review && ok "review topics come first in the list" || bad "review not first"
+B config set AGENT_CAN_CLOSE off >/dev/null
+CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=abc-123 B done "Agent task" >/dev/null 2>&1
+[ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = review ] && ok "AGENT_CAN_CLOSE=off: an agent's done becomes review" || bad "agent closed although not allowed"
+B done "Agent task" >/dev/null; [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = done ] && ok "AGENT_CAN_CLOSE=off: you can still close it" || bad "user could not close"
+B config unset AGENT_CAN_CLOSE >/dev/null
 rm -rf "$T"; exit $fail

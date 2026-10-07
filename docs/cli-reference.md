@@ -69,13 +69,13 @@ Exit `1` without a title.
 
 ### `bhote list [--all] [-s <status>]`
 
-The topics in list order: `now`, `waiting`, `later`, then (with `--all`) `done`; within a group by creation. The numbers
+The topics in list order: `review`, `now`, `waiting`, `later`, then (with `--all`) `done`; within a group by creation. The numbers
 are the [refs](#topic-refs).
 
 | Option | |
 |---|---|
 | `-a`, `--all` | Include done topics. |
-| `-s`, `--status <now\|waiting\|later\|done>` | Only this status (done included when asked for). |
+| `-s`, `--status <now\|waiting\|review\|later\|done>` | Only this status (done included when asked for). |
 
 ```console
 $ bhote list
@@ -90,9 +90,14 @@ With `--json`: an array of [topic objects](#json-output) (`[]` when there are no
 
 One topic. With `--json`: one [topic object](#json-output).
 
-### `bhote now <ref>` · `bhote later <ref>` · `bhote done <ref>`
+### `bhote now <ref>` · `bhote review <ref>` · `bhote later <ref>` · `bhote done <ref>`
 
-Set the status: start or resume (`now`, also clears a waiting name), park (`later`), check off (`done`). Print the topic.
+Set the status: start or resume (`now`, also clears a waiting name), hand over for review (`review`), park (`later`), check
+off (`done`). Print the topic.
+
+Run by an agent (a Claude Code session: `CLAUDECODE=1`), the command also records which agent it was
+(`CLAUDE_CODE_SESSION_ID`, `HERDR_PANE_ID`). With `AGENT_CAN_CLOSE=off` an agent cannot close a topic: its `done` becomes
+`review` (with a note on stderr, exit `0`), and you check it off.
 
 ### `bhote wait <ref> <Name>`
 
@@ -126,6 +131,18 @@ Merges with the [data location](data-and-sync.md) now.
 | Another panel is syncing | message on stderr | `{"sync":"busy","machine":"<machine>"}` | 1 |
 | Machine not reachable | message on stderr | `{"sync":"offline","machine":"<machine>"}` | 1 |
 
+### `bhote config [list]` · `config get <KEY>` · `config set <KEY> <value>` · `config unset <KEY>`
+
+Read and change the [settings](configuration.md). `set` checks the value against the setting's type (`on`/`off`, a number in
+range, one of a list) and refuses anything else with exit `1`; `unset` goes back to the default.
+
+```console
+$ bhote config set AGENT_CAN_CLOSE off --json
+{"key":"AGENT_CAN_CLOSE","value":"off","default":"on"}
+```
+
+`config list --json` is an array of `{"key", "value", "default", "type", "description"}`.
+
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.1.0` (`--json`: `{"version":"0.1.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
@@ -147,10 +164,10 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `n` | integer | Position in `bhote list --all` at the time of the call; a valid ref until topics change. |
 | `title` | string | Never empty. |
 | `description` | string \| null | At most 140 characters. |
-| `status` | `"now"` \| `"waiting"` \| `"later"` \| `"done"` | |
+| `status` | `"now"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
-| `agent` | object \| null | The agent the topic was handed to: `{"name", "machine", "pane"}`. |
+| `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session"}` (each may be null). |
 | `created` | integer \| null | |
 | `updated` | integer \| null | Last change; the newer one wins in a merge. |
 

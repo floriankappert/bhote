@@ -2,6 +2,7 @@
 # Tests of the data location: local-first, offline fallback, merge when the machine is back. No network: a fake ssh runs
 # the remote command in a throw-away "remote home". Usage: bash tests/store.sh
 cd "$(dirname "$0")/.." || exit 1
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/config BHOTE_DATA=$T/local BHOTE_SSH=$T/fakessh BHOTE_SHARED=$T/shared
 export FAKE_HOME=$T/remote-home; mkdir -p "$FAKE_HOME"
 cat > "$T/fakessh" <<'SH'

@@ -54,6 +54,49 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
       while [ $# -ge 2 ]; do printf '%s=%s\n' "$1" "${2//[[:cntrl:]]/}"; shift 2; done
     } > "$tmp" && mv "$tmp" "$CONFIG_FILE"
 }
+# Every setting: KEY|default|type|description. Types: bool (on/off), int:min:max, enum:a:b, text, list (comma-separated).
+# The panel, `bhote config` and docs/configuration.md all follow this table; a value that does not fit is refused.
+SETTINGS='STORE|local|enum:local:remote|Where the topics are kept: local, or a replica on STORE_MACHINE
+STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
+REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
+MACHINES_OFF||list|Saved machines that stay out even with REMOTE_AGENTS=on
+LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
+REMOTE_EVERY|10|int:1:3600|Seconds between two queries of the other machines and the regular merge
+TESTS_BUSY|off|bool|An agent whose workspace runs tests counts as busy
+AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
+NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
+WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
+ANIMATION|on|bool|The dog on the welcome screen blinks and pants
+SPLASH_AUTOCLOSE|on|bool|The welcome screen closes by itself
+SPLASH_SECONDS|15|int:1:600|Seconds until the welcome screen closes itself
+AUTOSTART|on|bool|The herdr plugin opens the panel next to the agents when herdr starts
+AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
+DONE_MAX|7|int:0:999|Done topics shown before +n more
+HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
+NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve'
+setting_row() {  # setting_row <KEY>: sets S_DEF, S_TYPE, S_DESC; 1 when the key is unknown
+    local line; S_DEF=""; S_TYPE=""; S_DESC=""
+    while IFS= read -r line; do
+        [ "${line%%|*}" = "$1" ] || continue
+        line=${line#*|}; S_DEF=${line%%|*}; line=${line#*|}; S_TYPE=${line%%|*}; S_DESC=${line#*|}; return 0
+    done <<< "$SETTINGS"
+    return 1
+}
+setting_check() {  # setting_check <KEY> <value>: 0 when the value fits the key's type (an empty value = back to the default)
+    local v=$2 t lo hi opts; setting_row "$1" || { echo "bhote: unknown setting '$1' (bhote config list)" >&2; return 1; }
+    [ -z "$v" ] && return 0
+    case "$v" in *[[:cntrl:]]*) echo "bhote: no control characters in a value" >&2; return 1 ;; esac
+    t=$S_TYPE
+    case "$t" in
+        bool) case "$v" in on|off) return 0 ;; esac; echo "bhote: $1 is on or off" >&2; return 1 ;;
+        int:*) lo=${t#int:}; hi=${lo#*:}; lo=${lo%%:*}
+               case "$v" in *[!0-9]*) ;; *) [ "${#v}" -le 6 ] && [ "$v" -ge "$lo" ] && [ "$v" -le "$hi" ] && return 0 ;; esac
+               echo "bhote: $1 is a whole number from $lo to $hi" >&2; return 1 ;;
+        enum:*) opts=":${t#enum:}:"; case "$opts" in *":$v:"*) return 0 ;; esac
+                echo "bhote: $1 is one of: $(printf '%s' "${t#enum:}" | tr ':' ' ')" >&2; return 1 ;;
+        *) [ "${#v}" -le 500 ] && return 0; echo "bhote: $1 is at most 500 characters" >&2; return 1 ;;
+    esac
+}
 machine_wanted() {  # machine_wanted <label>: remote queries on, and this machine not switched off
     [ "$(cfg_get REMOTE_AGENTS off)" = on ] || return 1
     case ",$(cfg_get MACHINES_OFF ''),"  in *",$1,"*) return 1 ;; esac
@@ -113,7 +156,7 @@ topic_new() {  # topic_new <title> [waiting for] [description]
 }
 store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STATE:-}" = offline ] && STORE_TAG_OUT=" · offline"; printf '%s' "$STORE_TAG_OUT"; }
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
-# and grew with the square of the count). Order: now, waiting, later, done; inside a group by file name = by creation.
+# and grew with the square of the count). Order: review, now, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
     local f line k v id title st wf ws up del desc ag am ap seen n=0 s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
@@ -126,13 +169,13 @@ topics_load() {
         done < "$f"
         [ "$del" = 1 ] && continue
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
-        case "$st" in now|waiting|later|done) ;; *) st=now ;; esac
+        case "$st" in now|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
         a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; n=$(( n + 1 ))
     done
     T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=()
-    for s in now waiting later done; do
+    for s in review now waiting later done; do                  # review first: it waits for you
         for (( i = 0; i < n; i++ )); do
             [ "${a_st[$i]}" = "$s" ] || continue
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
@@ -825,6 +868,9 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     fi
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
+    SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
@@ -839,13 +885,13 @@ bhote_settings() {
         row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
         [ "$i" = "$cur" ] && sel=1
         case "$kind" in
-            bool) def=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE|AUTOSTART) def=on ;; esac; cfg_var v "$key" $def
+            bool) setting_row "$key"; def=${S_DEF:-off}; cfg_var v "$key" $def
                   if [ "$v" = on ]; then vp="[x]"; vc="${GREEN}[x]${X}"; else vp="[ ]"; vc="${D}[ ]${X}"; fi ;;
             choice) cfg_var v STORE local
                   if [ "$v" = remote ]; then cfg_var v STORE_MACHINE '?'; vp="‹ $v ›"; else vp="‹ local ›"; fi; vc="${C}${vp}${X}" ;;
             machine) ind=2; cfg_var off MACHINES_OFF ""
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
-            num) case "$key" in REMOTE_EVERY) def=10 ;; *) def=3 ;; esac; cfg_var v "$key" $def; vp=$v; vc="${C}${v}${X}" ;;
+            num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
             link) vp="›"; vc="${D}›${X}" ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
@@ -902,7 +948,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             if [ "$kind" = choice ]; then store_cycle "$k"; return; fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || SETTINGS_GO=hotkeys; return; fi
             [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
-                bool) cur=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE|AUTOSTART) cur=on ;; esac
+                bool) setting_row "$key"; cur=${S_DEF:-off}
                       [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
                 machine) off=$(cfg_get MACHINES_OFF '')
                       case ",$off,"  in
@@ -913,9 +959,10 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             esac ;;
         LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
             if [ "$kind" = num ]; then
-                v=$(num_or "$(cfg_get "$key" $([ "$key" = REMOTE_EVERY ] && echo 10 || echo 3))" 3)
-                if [ "$k" = RIGHT ]; then v=$(( v + 1 )); else v=$(( v > 1 ? v - 1 : 1 )); fi
-                cfg_set "$key" "$v"
+                setting_row "$key"; local lo=${S_TYPE#int:}; lo=${lo%%:*}
+                v=$(num_or "$(cfg_get "$key" "$S_DEF")" "$S_DEF")
+                if [ "$k" = RIGHT ]; then v=$(( v + 1 )); else v=$(( v > lo ? v - 1 : lo )); fi
+                setting_check "$key" "$v" 2>/dev/null && cfg_set "$key" "$v"
             fi ;;
     esac
 }
@@ -1453,6 +1500,41 @@ topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bho
     for (( i = 0; i < T_N; i++ )); do title_has "${T_TITLE[$i]}" "$low" && echo "  $(( i + 1 ))  ${T_TITLE[$i]}" >&2; done
     return 2
 }
+agent_note() {  # agent_note <file>: when an agent runs the command, remember which one (its herdr session and pane)
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${HERDR_PANE_ID:-}" ] || return 0
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && topic_set "$1" agent_session "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}"
+    [ -n "${HERDR_PANE_ID:-}" ] && [ -z "$(topic_get "$1" agent_pane)" ] && topic_set "$1" agent_pane "${HERDR_PANE_ID//[!A-Za-z0-9:_-]/}"
+    return 0
+}
+cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <KEY>
+    local sub=${1:-list} key=${2:-} v line k d first=1
+    case "$sub" in
+        list|ls)
+            if [ -n "$json" ]; then printf '['; fi
+            while IFS= read -r line; do
+                k=${line%%|*}; setting_row "$k"; cfg_var v "$k" "$S_DEF"
+                if [ -n "$json" ]; then
+                    [ "$first" = 1 ] || printf ','; first=0
+                    printf '{"key":%s,"value":%s,"default":%s,"type":%s,"description":%s}' "$(json_str "$k")" "$(json_opt "$v")" "$(json_opt "$S_DEF")" "$(json_str "$S_TYPE")" "$(json_str "$S_DESC")"
+                else printf '%-17s %-10s %s\n' "$k" "${v:--}" "$S_DESC"; fi
+            done <<< "$SETTINGS"
+            if [ -n "$json" ]; then printf ']\n'; fi ;;
+        get) setting_row "$key" || { echo "bhote: unknown setting '$key' (bhote config list)" >&2; return 1; }
+             cfg_var v "$key" "$S_DEF"
+             if [ -n "$json" ]; then printf '{"key":%s,"value":%s,"default":%s}\n' "$(json_str "$key")" "$(json_opt "$v")" "$(json_opt "$S_DEF")"; else printf '%s\n' "$v"; fi ;;
+        set) [ $# -ge 3 ] || { echo "bhote: config set <KEY> <value>" >&2; return 1; }
+             shift 2; v="$*"
+             setting_check "$key" "$v" || return 1
+             cfg_set "$key" "$v"
+             case "$key" in STORE|STORE_MACHINE) : > "$STORE_DIRTY" ;; esac
+             cli_config get "$key" ;;
+        unset) setting_check "$key" "" || return 1
+             local tmp="$CONFIG_FILE.tmp.$$"
+             if [ -r "$CONFIG_FILE" ]; then grep -v "^$key=" "$CONFIG_FILE" > "$tmp"; mv "$tmp" "$CONFIG_FILE"; fi
+             cli_config get "$key" ;;
+        *) echo "bhote: config list | get <KEY> | set <KEY> <value> | unset <KEY>" >&2; return 1 ;;
+    esac
+}
 cli_done() {  # after a change: merge with the data location (silent when the data is only local)
     [ -n "${BHOTE_NO_SYNC:-}" ] && return 0
     [ "$(cfg_get STORE local)" = remote ] || return 0
@@ -1470,10 +1552,11 @@ topic_n() {  # topic_n <file>: its number in `bhote list --all` (1-based); needs
     local i; for (( i = 0; i < T_N; i++ )); do [ "${T_FILE[$i]}" = "$1" ] && { printf '%s' $(( i + 1 )); return; }; done; printf 'null'
 }
 topic_json() {  # topic_json <file>
-    local f=$1 st wf ag am ap agent=null
+    local f=$1 st wf ag am ap as agent=null
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane)
+    as=$(topic_get "$f" agent_session)
     [ "$st" = waiting ] || wf=""
-    [ -n "$ag" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s}' "$(json_str "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")")
+    [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")")
     printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"created":%s,"updated":%s}' \
         "$(json_str "$(topic_get "$f" id)")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
         "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" \
@@ -1498,12 +1581,13 @@ bhote — topics and agents next to herdr.
   bhote add <title> [options]        new topic   -d <text> description · @Name or -w Name waiting for Name · -s now|later|done
   bhote list [--all] [-s <status>]   the open topics (--all: also done ones), numbered
   bhote show <ref>                   one topic
-  bhote now|later|done <ref>         start or resume · park · mark done
+  bhote now|review|later|done <ref>  start or resume · ready for review · park · mark done
   bhote wait <ref> <Name>            waiting for Name (from now)
   bhote rename <ref> <title>         new title
   bhote desc <ref> [<text>]          new description (at most 140 characters; none = remove it)
   bhote rm <ref>                     delete
   bhote sync                         merge with the data location now
+  bhote config [list|get|set|unset]  read and change the settings (bhote config list shows them all)
   bhote version · bhote help
 
 Every command takes --json: one topic object (list: an array) as described in docs/cli-reference.md.
@@ -1520,6 +1604,7 @@ bhote_cli() {
     set -- ${args[@]+"${args[@]}"}
     case "$cmd" in
         help|-h|--help) bhote_help ;;
+        config) cli_config "$@" ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg
               while [ $# -gt 0 ]; do
@@ -1534,11 +1619,12 @@ bhote_cli() {
               [ "${#desc}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
               topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
               f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
-              case "$st" in now|later|done) topic_set "$f" status "$st" ;; esac
+              case "$st" in ''|now|waiting) ;; later|done|review) topic_set "$f" status "$st" ;;
+                  *) echo "bhote: --status is one of now, review, later, done" >&2 ;; esac
               cli_done; topics_load; cli_show "$f" $json ;;
         list|ls) local all="" only="" i first=1
               while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --status|-s) only=${2:-}; shift ;; *) echo "bhote: unknown option '$1' for list" >&2; return 1 ;; esac; shift; done
-              case "$only" in ''|now|waiting|later|done) ;; *) echo "bhote: --status is one of now, waiting, later, done" >&2; return 1 ;; esac
+              case "$only" in ''|now|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, waiting, review, later, done" >&2; return 1 ;; esac
               NOW=$(date +%s); topics_load
               [ -n "$json" ] && printf '['
               for (( i = 0; i < T_N; i++ )); do
@@ -1555,11 +1641,15 @@ bhote_cli() {
               done
               if [ -n "$json" ]; then printf ']\n'; fi; return 0 ;;
         show) local f; f=$(topic_ref "${1:-}") || return $?; topics_load; cli_show "$f" $json ;;
-        done|now|later|wait|rename|desc|rm)
+        done|now|review|later|wait|rename|desc|rm)
               local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
               f=$(topic_ref "$ref") || return $?; shift
               case "$cmd" in
-                  done) topic_set "$f" status done ;;
+                  done) if [ -n "${CLAUDECODE:-}" ] && [ "$(cfg_get AGENT_CAN_CLOSE on)" != on ]; then   # an agent may only hand it over
+                            echo "bhote: agents may not close topics here (AGENT_CAN_CLOSE=off): set to review" >&2; topic_set "$f" status review
+                        else topic_set "$f" status done; fi
+                        agent_note "$f" ;;
+                  review) topic_set "$f" status review; agent_note "$f" ;;
                   now) topic_set "$f" status now; topic_set "$f" waiting_for "" ;;
                   later) topic_set "$f" status later ;;
                   wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }

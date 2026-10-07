@@ -2,6 +2,7 @@
 # Smoke test: every view must draw (non-empty, framed or ruled, with its own marker text) without errors.
 # Runs against a throw-away config and data directory. Usage: bash tests/smoke.sh
 cd "$(dirname "$0")/.." || exit 1
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 export NO_COLOR=1 BHOTE_ONCE=1 BHOTE_CONFIG=$(mktemp -d)/config BHOTE_DATA=$(mktemp -d) BHOTE_SHARED=$(mktemp -d)
 fail=0
 check() {  # check <view> <text that must appear>

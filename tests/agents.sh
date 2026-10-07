@@ -2,6 +2,7 @@
 # Tests of the agent lists: a running test makes an agent busy, escape codes are stripped, and exactly one panel collects.
 # A fake herdr answers; nothing touches the real one. Usage: bash tests/agents.sh
 cd "$(dirname "$0")/.." || exit 1
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data BHOTE_SHARED=$T/shared
 mkdir -p "$T/bin"
 cat > "$T/bin/herdr" <<'SH'
