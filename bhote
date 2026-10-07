@@ -1,0 +1,1275 @@
+#!/usr/bin/env bash
+# bhote — start screen: a framed welcome like Claude Code's (name and version in the top edge), a compass over a
+# gradient wordmark, then a few lines about where it runs. Truecolor; NO_COLOR=1 prints it plain. Bash 3.2 compatible.
+# Palette = the Catppuccin values of the herdr sidebar (teal, blue, mauve, pink, peach); the dog has its own.
+export LC_ALL="${LC_ALL:-en_US.UTF-8}"
+umask 077                                                             # everything bhote writes is for this user only
+RUN_DIR=$(mktemp -d "${TMPDIR:-/tmp}/bhote.XXXXXX") || exit 1         # private (0700) scratch dir: nothing predictable in /tmp
+trap 'rm -rf "$RUN_DIR"' EXIT
+# What all panels of this machine share (the agent lists, "a change is waiting", which panel collects): a private folder that
+# must belong to this user; if it does not (or cannot be made), every panel keeps to its own scratch dir.
+SHARED_DIR=${BHOTE_SHARED:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bhote-$UID}
+{ mkdir -p "$SHARED_DIR" && chmod 700 "$SHARED_DIR"; } 2>/dev/null
+{ [ -d "$SHARED_DIR" ] && [ -O "$SHARED_DIR" ] && [ ! -L "$SHARED_DIR" ]; } || SHARED_DIR=$RUN_DIR
+SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
+WIDTH=$SPLASH_W
+VERSION=${BHOTE_VERSION:-0.1.0}
+
+# ── settings: ~/.config/bhote/config, plain KEY=value lines (never sourced). Everything that reaches beyond this machine
+# is OFF until the user switches it on in the settings screen (","): bhote must not open SSH connections unasked.
+#   REMOTE_AGENTS=on|off   ask the saved herdr machines for their agents, in the background (default off)
+#   MACHINES_OFF=a,b       saved machines that stay out even when REMOTE_AGENTS is on
+#   REMOTE_EVERY=10        seconds between two remote queries      LOCAL_EVERY=3   seconds between two local ones
+#   TESTS_BUSY=on|off      an agent whose workspace is running tests counts as busy, not free (default off)
+#   HOST_LABEL=Name        how this machine is called in the agent lists (default: Mac on macOS, else the host name)
+#   NAME_COLORS=a=teal,b=mauve   colour agents by a part of their name (case-insensitive); colours: red teal peach mauve blue green yellow
+#   ANIMATION=on|off       the dog blinks and pants (default on)
+#   SPLASH_AUTOCLOSE=on|off   the welcome screen closes by itself after SPLASH_SECONDS (default on, 15)
+CONFIG_FILE=${BHOTE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/config}
+cfg_var() {  # cfg_var <var> <key> <default>: no subshell, no awk (the screen asks a dozen times)
+    local _cl _cv=""   # odd names: the caller's target variable must never be shadowed
+    if [ -r "$CONFIG_FILE" ]; then while IFS= read -r _cl; do [ "${_cl%%=*}" = "$2" ] && _cv=${_cl#*=}; done < "$CONFIG_FILE"; fi
+    printf -v "$1" '%s' "${_cv:-$3}"
+}
+cfg_get() { cfg_var _CFG "$1" "$2"; printf '%s' "$_CFG"; }
+cfg_set() {  # cfg_set KEY value  (a value never contains a control character: it could add a line)
+    local v=${2//[[:cntrl:]]/}
+    mkdir -p "$(dirname "$CONFIG_FILE")"
+    { grep -v "^$1=" "$CONFIG_FILE" 2>/dev/null; printf '%s=%s\n' "$1" "$v"; } > "$CONFIG_FILE.tmp.$$" && mv "$CONFIG_FILE.tmp.$$" "$CONFIG_FILE"
+}
+machine_wanted() {  # machine_wanted <label>: remote queries on, and this machine not switched off
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] || return 1
+    case ",$(cfg_get MACHINES_OFF ''),"  in *",$1,"*) return 1 ;; esac
+    return 0
+}
+
+# ── topics: one small KEY=value file per topic (id, title, status now|waiting|later|done, waiting_for, waiting_since,
+# created, updated, deleted). The LOCAL copy is always the working copy: it is read and written, also when the chosen data
+# location is a saved machine (STORE=remote, STORE_MACHINE=<label>). That machine holds a replica which is merged in the
+# background whenever it can be reached; while it cannot, bhote simply keeps working locally ("offline") and the changes
+# wait. Merging is per topic, the newer `updated` wins (a deleted topic stays as a tombstone with deleted=1 so that the
+# deletion travels, too). BHOTE_SSH replaces ssh (the tests use a fake one); BHOTE_REMOTE_DIR the folder on the machine.
+DATA_DIR=${BHOTE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/bhote}
+TOPIC_DIR=$DATA_DIR/topics
+REMOTE_TOPIC_DIR=${BHOTE_REMOTE_DIR:-.local/share/bhote/topics}      # relative to the remote home
+STORE_STATUS="$DATA_DIR/store.status"                                 # state=ok|offline, ok_at=<epoch>; shared by all panels
+STORE_DIRTY="$SHARED_DIR/dirty"                          # touched by every local change: sync at once
+store_ssh() { local host=$1; shift; case "$host" in ''|-*|*[!A-Za-z0-9._@:%-]*) return 1 ;; esac   # never an option, never odd characters
+    "${BHOTE_SSH:-ssh}" -o BatchMode=yes -o ConnectTimeout=4 "$host" "$@"; }
+# The remote LOGIN shell may be zsh or fish: an empty glob aborts a zsh command line. So every remote script goes to
+# `sh -c` as one safely quoted word, and does not depend on what the login shell would make of it.
+store_sh() { local host=$1 script=$2; store_ssh "$host" "sh -c $(printf '%q' "$script")"; }
+store_host() {  # store_host <saved machine label> -> its ssh target
+    herdr machine list 2>/dev/null | awk -F'\t' -v l="$1" '$2 == l { print $3; exit }'
+}
+store_note() {  # store_note ok|offline
+    local ok_at; ok_at=$(awk -F= '$1 == "ok_at" { print $2 }' "$STORE_STATUS" 2>/dev/null)
+    [ "$1" = ok ] && ok_at=$(date +%s)
+    printf 'state=%s\nok_at=%s\n' "$1" "${ok_at:-0}" > "$STORE_STATUS"
+}
+topic_get() {  # topic_get <file> <key> [default]
+    local line v=""
+    [ -f "$1" ] || { printf '%s' "$3"; return; }
+    while IFS= read -r line; do [ "${line%%=*}" = "$2" ] && { v=${line#*=}; break; }; done < "$1"
+    case "$v" in *[[:cntrl:]]*) v=${v//[[:cntrl:]]/} ;; esac      # a topic may come from another machine: never print its escape codes
+    printf '%s' "${v:-$3}"
+}
+topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
+    local f=$1 now v=${3//[[:cntrl:]]/}; now=$(date +%s)      # no control character in a value: a newline would add keys
+    { grep -v -e "^$2=" -e '^updated=' "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"
+    : > "$STORE_DIRTY"
+}
+topic_new() {  # topic_new <title> [waiting for] [description]
+    mkdir -p "$TOPIC_DIR"
+    local now id title status=now since=""; now=$(date +%s); id="$now-$RANDOM"
+    title=${1//[[:cntrl:]]/}; title=$(printf '%s' "$title" | sed 's/^ *//; s/ *$//'); set -- "$title" "${2//[[:cntrl:]]/}" "${3//[[:cntrl:]]/}"
+    [ -n "$title" ] || return 1
+    [ -n "$2" ] && { status=waiting; since=$now; }
+    printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\n' \
+        "$id" "$title" "$status" "$2" "$since" "$now" "$now" "${3:-}" > "$TOPIC_DIR/$id.topic"
+    NEW_TOPIC_ID=$id
+    : > "$STORE_DIRTY"
+}
+store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STATE:-}" = offline ] && STORE_TAG_OUT=" · offline"; printf '%s' "$STORE_TAG_OUT"; }
+# All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
+# and grew with the square of the count). Order: now, waiting, later, done; inside a group by file name = by creation.
+topics_load() {
+    local f line k v id title st wf ws up del desc ag am ap n=0 s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    for f in "$TOPIC_DIR"/*.topic; do
+        [ -f "$f" ] || continue
+        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""
+        while IFS= read -r line; do
+            k=${line%%=*}; v=${line#*=}
+            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; esac
+        done < "$f"
+        [ "$del" = 1 ] && continue
+        case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
+        case "$st" in now|waiting|later|done) ;; *) st=now ;; esac
+        id=${f##*/}; id=${id%.topic}
+        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; n=$(( n + 1 ))
+    done
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=()
+    for s in now waiting later done; do
+        for (( i = 0; i < n; i++ )); do
+            [ "${a_st[$i]}" = "$s" ] || continue
+            T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; m=$(( m + 1 ))
+        done
+    done
+    T_N=$m
+}
+sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the first); needs topics_load first
+    local i; SEL_IDX=0
+    for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && { SEL_IDX=$i; return; }; done
+}
+topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
+sel_file() { topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"; }
+sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game
+    [ -n "${T_N:-}" ] || topics_load; [ "$T_N" -gt 0 ] || return 0   # the arrays of the last frame; ui_load reloads right after
+    sel_index; SEL_IDX=$(( (SEL_IDX + $1 + T_N) % T_N )); SEL_ID=${T_ID[$SEL_IDX]}
+}
+topic_files() { topics_ordered; }
+topics_count() { topics_load; echo "$T_N"; }
+age_set() {  # age_set <var> <epoch>: "5 min" / "3 h" / "2 d", relative to NOW
+    local d t; [ -n "${NOW:-}" ] || NOW=$(date +%s); d=$(( NOW - $2 ))
+    if [ "$d" -lt 3600 ]; then t="$(( d / 60 )) min"; elif [ "$d" -lt 172800 ]; then t="$(( d / 3600 )) h"; else t="$(( d / 86400 )) d"; fi
+    printf -v "$1" '%s' "$t"
+}
+age_text() { age_set _AGE "$1"; printf '%s' "$_AGE"; }
+store_sync_run() {  # merge the local copy with the replica on the chosen machine. Returns 1 while that machine is unreachable.
+    [ "$(cfg_get STORE local)" = remote ] || { rm -f "$STORE_STATUS"; return 0; }
+    local label host tmp f l r ok=1
+    label=$(cfg_get STORE_MACHINE ''); host=$(store_host "$label")
+    [ -n "$host" ] || { store_note offline; return 1; }
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/bhote.sync.XXXXXX"); mkdir -p "$TOPIC_DIR"
+    # 1) everything the machine has: one stream, "@@name" before each file
+    if ! store_sh "$host" "umask 077; mkdir -p $REMOTE_TOPIC_DIR && cd $REMOTE_TOPIC_DIR && for f in *.topic; do [ -f \"\$f\" ] && { printf '@@%s\\n' \"\$f\"; cat \"\$f\"; }; done; true" > "$tmp/dump" 2>/dev/null; then
+        rm -rf "$tmp"; store_note offline; return 1
+    fi
+    [ "$(wc -c < "$tmp/dump")" -le 8000000 ] || { rm -rf "$tmp"; store_note offline; return 1; }   # a sane replica is small
+    # only plain topic names are accepted from the other side: a name like ../../x must never become a path
+    mkdir "$tmp/remote"; awk -v d="$tmp/remote" '/^@@/ { if (f != "") close(f); f = ""; if ($0 ~ /^@@[A-Za-z0-9][A-Za-z0-9_-]*\.topic$/) f = d "/" substr($0, 3); next } f != "" { print > f }' "$tmp/dump"
+    # 2) per topic: the newer one wins, in both directions
+    { ls "$tmp/remote" 2>/dev/null; ls "$TOPIC_DIR" 2>/dev/null; } | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*\.topic$' | sort -u > "$tmp/ids"
+    while IFS= read -r f; do
+        l=0; r=0
+        [ -f "$TOPIC_DIR/$f" ] && l=$(topic_get "$TOPIC_DIR/$f" updated 0)
+        [ -f "$tmp/remote/$f" ] && r=$(topic_get "$tmp/remote/$f" updated 0)
+        case "$l$r" in *[!0-9]*) l=0; r=0 ;; esac
+        if [ "$r" -gt "$l" ]; then cp "$tmp/remote/$f" "$TOPIC_DIR/$f.tmp" && mv "$TOPIC_DIR/$f.tmp" "$TOPIC_DIR/$f"
+        elif [ "$l" -gt "$r" ]; then
+            store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0
+        fi
+    done < "$tmp/ids"
+    rm -rf "$tmp"
+    if [ "$ok" = 1 ]; then store_note ok; else store_note offline; return 1; fi
+}
+store_sync() {  # one sync at a time over all panels of this machine: the lock is a directory, one older than 3 minutes is stale
+    local lock=$DATA_DIR/sync.lock rc
+    mkdir -p "$DATA_DIR"
+    if ! mkdir "$lock" 2>/dev/null; then
+        if [ -n "$(find "$lock" -maxdepth 0 -mmin +3 2>/dev/null)" ]; then rmdir "$lock" 2>/dev/null; mkdir "$lock" 2>/dev/null || return 0
+        else return 0; fi
+    fi
+    store_sync_run; rc=$?; rmdir "$lock" 2>/dev/null; return $rc
+}
+store_summary() {  # one line for the settings screen: where the data lives and whether it is in step
+    local label st ok_at pending f n=0
+    if [ "$(cfg_get STORE local)" != remote ]; then printf 'local only (%s)' "${TOPIC_DIR/#$HOME/~}"; return; fi
+    label=$(cfg_get STORE_MACHINE '?')
+    st=$(awk -F= '$1 == "state" { print $2 }' "$STORE_STATUS" 2>/dev/null); ok_at=$(awk -F= '$1 == "ok_at" { print $2 }' "$STORE_STATUS" 2>/dev/null)
+    case "$st" in
+        ok) printf 'in sync with %s (%s ago)' "$label" "$(age_text "$ok_at")" ;;
+        offline) for f in "$TOPIC_DIR"/*.topic; do [ -f "$f" ] && [ "$(topic_get "$f" updated 0)" -gt "${ok_at:-0}" ] && n=$(( n + 1 )); done
+                 printf 'OFFLINE: saving locally, %s change(s) wait for %s' "$n" "$label" ;;
+        *) printf 'connecting to %s ...' "$label" ;;
+    esac
+}
+
+if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ] && [ -z "${BHOTE_FORCE_COLOR:-}" ]; then
+    rgb() { :; }; X=""; R=""; NN=""; S=""; C=""; L=""; D=""; color=0
+else
+    color=1; esc=$'\033'
+    rgb() { printf '%s[38;2;%sm' "$esc" "$1"; }
+    X="${esc}[0m"
+    R=$(rgb "203;166;247")            # ring: mauve
+    NN=$(rgb "243;139;168")           # north half of the needle: red
+    S=$(rgb "148;226;213")            # south half: teal
+    C=$(rgb "250;179;135")            # centre: peach
+    L="${esc}[1m$(rgb "205;214;244")" # N E S W: bold, bright
+    D=$(rgb "108;112;134")            # arrows, tagline: dim
+fi
+
+stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135")
+gradient() {            # gradient <text> : colours the characters of one line left to right
+    local line=$1 n=$(( ${#stops[@]} - 1 )) w=${#1} i ch p seg t r1 g1 b1 r2 g2 b2 out=""
+    [ "$color" = 1 ] || { printf '%s' "$line"; return; }
+    for (( i = 0; i < w; i++ )); do
+        ch=${line:$i:1}
+        if [ "$ch" = " " ]; then out="$out "; continue; fi
+        p=$(( i * n * 100 / (w - 1) )); seg=$(( p / 100 )); [ $seg -ge $n ] && seg=$(( n - 1 )); t=$(( p - seg * 100 ))
+        read -r r1 g1 b1 <<< "${stops[$seg]}"; read -r r2 g2 b2 <<< "${stops[$((seg + 1))]}"
+        out="$out$(rgb "$(( r1 + (r2 - r1) * t / 100 ));$(( g1 + (g2 - g1) * t / 100 ));$(( b1 + (b2 - b1) * t / 100 ))")$ch"
+    done
+    printf '%s%s' "$out" "$X"
+}
+
+Y=""; GREEN=""; BLUE=""
+if [ "$color" = 1 ]; then Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); fi   # waiting / prompt, done, Mac
+B="" ; [ "$color" = 1 ] && B=$(rgb "108;112;134")      # frame colour (dim)
+INNER=$(( WIDTH - 2 ))
+hline() { local _s; printf -v _s '%*s' "$1" ''; printf '%s' "${_s// /─}"; }   # n times ─ (GNU tr cannot map to a multibyte character)
+at_col() { [ "$color" = 1 ] && printf '%s[%dG' "$esc" "$1"; }
+
+# One framed line: the right edge is placed by cursor column, so wide or combining characters cannot push it.
+row() {  # row <shown text>
+    printf '%s│%s%s' "$B" "$X" "$1"
+    if [ "$color" = 1 ]; then printf '%s[K' "$esc"; at_col "$WIDTH"; printf '%s│%s\n' "$B" "$X"    # clear what an earlier frame left behind
+    else printf '%*s│\n' $(( INNER - ${2:-0} )) ""; fi
+}
+mid() { local plain=$1 shown=$2 w=${3:-${#1}}; row "$(printf '%*s' $(( (INNER - w) / 2 )) "")$shown" $(( (INNER - w) / 2 + w )); }
+blank() { row "" 0; }
+blanks() { local n; for (( n = 0; n < $1; n++ )); do blank; done; }
+
+top() {
+    local title=" Bhote v$VERSION " n
+    n=$(( INNER - ${#title} - 1 ))
+    printf '%s╭─%s%s%s%s%s╮%s\n' "$B" "$X$L" "$title" "$X$B" "$(hline "$n")" "" "$X"
+}
+bottom() { printf '%s╰%s╯%s\n' "$B" "$(hline "$INNER")" "$X"; }
+
+info() {   # info <label> <value>
+    local label=$1 value=$2 pad=${INFO_PAD:-1}       # INFO_PAD centres the whole block (bhote_splash sets it)
+    row "$(printf '%*s' "$pad" '')${D}${label}${X} ${value}" $(( pad + ${#label} + ${#value} + 1 ))
+}
+
+# >>> dog (generated by tools/dog.py bashfn — do not edit by hand)
+dog_rgb() {   # letter -> r;g;b
+    case "$1" in
+        a) printf '%s' '155;106;69' ;;
+        b) printf '%s' '201;143;92' ;;
+        c) printf '%s' '232;185;138' ;;
+        C) printf '%s' '246;220;184' ;;
+        d) printf '%s' '93;61;46' ;;
+        e) printf '%s' '123;83;64' ;;
+        f) printf '%s' '216;164;104' ;;
+        g) printf '%s' '236;192;136' ;;
+        h) printf '%s' '251;238;221' ;;
+        i) printf '%s' '27;21;35' ;;
+        j) printf '%s' '148;226;213' ;;
+        k) printf '%s' '58;44;43' ;;
+        l) printf '%s' '91;68;64' ;;
+        m) printf '%s' '18;15;24' ;;
+        n) printf '%s' '186;194;222' ;;
+        o) printf '%s' '27;21;35' ;;
+        p) printf '%s' '243;139;168' ;;
+        q) printf '%s' '212;106;140' ;;
+    esac
+}
+DOG_W=38
+DOG_H=32
+DOG_MINI_W=14
+DOG_MINI_H=12
+DOG_ROWS_0='
+......................................|.................aa....a..............
+..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
+.....dd...aaabaaabbbbbcbbaabaaadd.....|.....ddddaaabbbabbbbbbccbabbbdddd.....
+....addddddbbccggggggggcbcbdddddd.....|....addeedddhhhgggggggghhhdddeeddaaa..
+....addeeeehhhhhgggggghhhhdeeeeddbaa..|.aabaddeeeeehhhgggggggghhheeeeeddbaa..
+.ababddeeeefiiiggggggggiiifeeeeddbaa..|bbbadddeedffijiggggggggijiffdeeddda...
+aabcdddddfffiiiffffffffiiifffdddddbaaa|.abcdddCcffffiiffffffffiiffffCcdddcbaa
+.aabddcCcffffffffffffffffffffCCcddbbba|ababbccCffffffffffffffffffffffCcccbbba
+aabbccccfffffffffmmmmfffffffffccccbbbb|bacccCccffffffkkmnnmmmkkffffffcccbbbaa
+abbbccccfffffkklmmmmmmlkkfffffccbcbbaa|abbbccccCfffkkkllmmmmllkkkfffcCcccbbaa
+aaabbcbccffkkkkllloolllkkkkffCcccbcbaa|..aacccccffkkkkklloollkkkkkffCcccbcbab
+abbbbbcccCfkooooooooooooookfCccbbbbbaa|abbbbbccccckkooooppppooookkCCccbaaabaa
+aabaccccccCkkkkkkppppkkkkkkccccccba...|aaaabbbcccCckkkkkppppkkkkkcbcccccbaa..
+.aaaaabccccCkkkkkppppkkkkkccbcbbbaba..|....aabccccccCkkkkppkkkkcCccbbabbaaa..
+....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
+.....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
+'
+DOG_MINI_ROWS_0='
+...aabbbbaa...|..abbccccbba..
+.addcCffCcdda.|.addhhffhhdda.
+abdcifffficdba|abccifffficcba
+abcffmmmmffcba|abcfkkkkkkfcba
+abckkkppkkkcba|abcckkppkkccba
+.abbcckkccbba.|...aabbbbaa...
+'
+DOG_ROWS_1='
+......................................|.................aa....a..............
+..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
+.....dd...aaabaaabbbbbcbbaabaaadd.....|.....ddddaaabbbabbbbbbccbabbbdddd.....
+....addddddbbccggggggggcbcbdddddd.....|....addeedddhhhgggggggghhhdddeeddaaa..
+....addeeeehhhhhgggggghhhhdeeeeddbaa..|.aabaddeeeeehhhgggggggghhheeeeeddbaa..
+.ababddeeeeffffggggggggffffeeeeddbaa..|bbbadddeedffiiiggggggggiiiffdeeddda...
+aabcdddddffffffffffffffffffffdddddbaaa|.abcdddCcffffffffffffffffffffCcdddcbaa
+.aabddcCcffffffffffffffffffffCCcddbbba|ababbccCffffffffffffffffffffffCcccbbba
+aabbccccfffffffffmmmmfffffffffccccbbbb|bacccCccffffffkkmnnmmmkkffffffcccbbbaa
+abbbccccfffffkklmmmmmmlkkfffffccbcbbaa|abbbccccCfffkkkllmmmmllkkkfffcCcccbbaa
+aaabbcbccffkkkkllloolllkkkkffCcccbcbaa|..aacccccffkkkkklloollkkkkkffCcccbcbab
+abbbbbcccCfkooooooooooooookfCccbbbbbaa|abbbbbccccckkooooppppooookkCCccbaaabaa
+aabaccccccCkkkkkkppppkkkkkkccccccba...|aaaabbbcccCckkkkkppppkkkkkcbcccccbaa..
+.aaaaabccccCkkkkkppppkkkkkccbcbbbaba..|....aabccccccCkkkkppkkkkcCccbbabbaaa..
+....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
+.....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
+'
+DOG_MINI_ROWS_1='
+...aabbbbaa...|..abbccccbba..
+.addcCffCcdda.|.addhhffhhdda.
+abdcffffffcdba|abccifffficcba
+abcffmmmmffcba|abcfkkkkkkfcba
+abckkkppkkkcba|abcckkppkkccba
+.abbcckkccbba.|...aabbbbaa...
+'
+DOG_ROWS_2='
+......................................|.................aa....a..............
+..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
+.....dd...aaabaaabbbbbcbbaabaaadd.....|.....ddddaaabbbabbbbbbccbabbbdddd.....
+....addddddbbccggggggggcbcbdddddd.....|....addeedddhhhgggggggghhhdddeeddaaa..
+....addeeeehhhhhgggggghhhhdeeeeddbaa..|.aabaddeeeeehhhgggggggghhheeeeeddbaa..
+.ababddeeeefiiiggggggggiiifeeeeddbaa..|bbbadddeedffijiggggggggijiffdeeddda...
+aabcdddddfffiiiffffffffiiifffdddddbaaa|.abcdddCcffffiiffffffffiiffffCcdddcbaa
+.aabddcCcffffffffffffffffffffCCcddbbba|ababbccCffffffffffffffffffffffCcccbbba
+aabbccccfffffffffmmmmfffffffffccccbbbb|bacccCccffffffkkmnnmmmkkffffffcccbbbaa
+abbbccccfffffkklmmmmmmlkkfffffccbcbbaa|abbbccccCfffkkkllmmmmllkkkfffcCcccbbaa
+aaabbcbccffkkkkllloolllkkkkffCcccbcbaa|..aacccccffkkkkklloollkkkkkffCcccbcbab
+abbbbbcccCfkooooooooooooookfCccbbbbbaa|abbbbbccccckkooookkkkooookkCCccbaaabaa
+aabaccccccCkkkkkkkkkkkkkkkkccccccba...|aaaabbbcccCckkkkkkkkkkkkkkcbcccccbaa..
+.aaaaabccccCkkkkkkkkkkkkkkccbcbbbaba..|....aabccccccCkkkkkkkkkkcCccbbabbaaa..
+....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
+.....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
+'
+DOG_MINI_ROWS_2='
+...aabbbbaa...|..abbccccbba..
+.addcCffCcdda.|.addhhffhhdda.
+abdcifffficdba|abccifffficcba
+abcffmmmmffcba|abcfkkkkkkfcba
+abckkkkkkkkcba|abcckkkkkkccba
+.abbcckkccbba.|...aabbbbaa...
+'
+DOG_ROWS_3='
+......................................|.................aa....a..............
+..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
+.....dd...aaabaaabbbbbcbbaabaaadd.....|.....ddddaaabbbabbbbbbccbabbbdddd.....
+....addddddbbccggggggggcbcbdddddd.....|....addeedddhhhgggggggghhhdddeeddaaa..
+....addeeeehhhhhgggggghhhhdeeeeddbaa..|.aabaddeeeeehhhgggggggghhheeeeeddbaa..
+.ababddeeeeffffggggggggffffeeeeddbaa..|bbbadddeedffiiiggggggggiiiffdeeddda...
+aabcdddddffffffffffffffffffffdddddbaaa|.abcdddCcffffffffffffffffffffCcdddcbaa
+.aabddcCcffffffffffffffffffffCCcddbbba|ababbccCffffffffffffffffffffffCcccbbba
+aabbccccfffffffffmmmmfffffffffccccbbbb|bacccCccffffffkkmnnmmmkkffffffcccbbbaa
+abbbccccfffffkklmmmmmmlkkfffffccbcbbaa|abbbccccCfffkkkllmmmmllkkkfffcCcccbbaa
+aaabbcbccffkkkkllloolllkkkkffCcccbcbaa|..aacccccffkkkkklloollkkkkkffCcccbcbab
+abbbbbcccCfkooooooooooooookfCccbbbbbaa|abbbbbccccckkooookkkkooookkCCccbaaabaa
+aabaccccccCkkkkkkkkkkkkkkkkccccccba...|aaaabbbcccCckkkkkkkkkkkkkkcbcccccbaa..
+.aaaaabccccCkkkkkkkkkkkkkkccbcbbbaba..|....aabccccccCkkkkkkkkkkcCccbbabbaaa..
+....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
+.....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
+'
+DOG_MINI_ROWS_3='
+...aabbbbaa...|..abbccccbba..
+.addcCffCcdda.|.addhhffhhdda.
+abdcffffffcdba|abccifffficcba
+abcffmmmmffcba|abcfkkkkkkfcba
+abckkkkkkkkcba|abcckkkkkkccba
+.abbcckkccbba.|...aabbbbaa...
+'
+# The escape codes of every colour are made once (DOGC_x = foreground, DOGB_x = background), so drawing needs no
+# subshell per cell. Two pixel rows per text row: ▀ with the upper pixel as foreground, the lower one as background.
+dog_init() {
+    local ch
+    for ch in a b c C d e f g h i j k l m n o p q; do
+        printf -v "DOGC_$ch" '%s' "$(rgb "$(dog_rgb "$ch")")"
+        printf -v "DOGB_$ch" '%s' "${esc}[48;2;$(dog_rgb "$ch")m"
+    done
+}
+dog_lines() {  # dog_lines <rows> <width>  ->  array DOGL with one coloured string per text row
+    local rows=$1 w=$2 line top bot i t b out n=0 fg bg
+    DOGL=()
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        top=${line%|*}; bot=${line##*|}; out=""
+        for (( i = 0; i < w; i++ )); do
+            t=${top:$i:1}; b=${bot:$i:1}
+            if [ "$color" != 1 ]; then
+                if [ "$t" = "." ] && [ "$b" = "." ]; then out="${out} "; else out="${out}█"; fi
+            elif [ "$t" = "." ] && [ "$b" = "." ]; then out="${out} "
+            elif [ "$b" = "." ]; then fg=DOGC_$t; out="${out}${!fg}▀${X}"
+            elif [ "$t" = "." ]; then fg=DOGC_$b; out="${out}${!fg}▄${X}"
+            else fg=DOGC_$t; bg=DOGB_$b; out="${out}${!fg}${!bg}▀${X}"; fi
+        done
+        DOGL[$n]=$out; n=$(( n + 1 ))
+    done <<< "$rows"
+}
+dog_rows() {  # dog_rows <big|mini> <variant 0..3>  ->  the rows text of that variant
+    local v; if [ "$1" = big ]; then v="DOG_ROWS_$2"; else v="DOG_MINI_ROWS_$2"; fi
+    printf '%s' "${!v}"
+}
+# The coloured rows of every picture are kept in variables (DOGR_<kind>_<variant>, rows joined by ): made once in dog_warm
+# at the start, so a repaint or an animation step never has to build a picture again.
+dog_lines_for() {  # dog_lines_for <big|mini> <variant>  ->  array DOGL
+    local v="DOGR_$1_$2" s n=0 w; s=${!v}
+    if [ -z "$s" ]; then
+        if [ "$1" = big ]; then w=$DOG_W; else w=$DOG_MINI_W; fi
+        dog_lines "$(dog_rows "$1" "$2")" "$w"
+        for (( n = 0; n < ${#DOGL[@]}; n++ )); do s="$s${DOGL[$n]}"$''; done
+        printf -v "$v" '%s' "$s"; return
+    fi
+    DOGL=(); n=0
+    while [ -n "$s" ]; do DOGL[$n]=${s%%$''*}; s=${s#*$''}; n=$(( n + 1 )); done
+}
+dog_warm() { local k i; for k in big mini; do for i in 0 1 2 3; do dog_lines_for $k $i; done; done; }
+dog() {  # the big dog, centred in the frame
+    local i
+    dog_lines_for big "${DOG_IDX:-0}"
+    for (( i = 0; i < ${#DOGL[@]}; i++ )); do mid "$(printf '%*s' "$DOG_W" '')" "${DOGL[$i]}" "$DOG_W"; done
+}
+# For the animation only the text rows that differ from what is on screen are written (eyes, tongue), at an absolute
+# position. DOG_PREV_B / DOG_PREV_M remember the rows on screen; dog_prev_reset sets them after every full repaint.
+DOG_PREV_B=(); DOG_PREV_M=()
+dog_prev_reset() {  # dog_prev_reset <splash|main>: only the dog that is on screen
+    if [ "$1" = splash ]; then dog_lines_for big "${DOG_IDX:-0}"; DOG_PREV_B=("${DOGL[@]}")
+    else dog_lines_for mini "${DOG_IDX:-0}"; DOG_PREV_M=("${DOGL[@]}"); fi
+}
+dog_at() {  # dog_at <big|mini> <row> <col>
+    local kind=$1 row=$2 col=$3 i
+    dog_lines_for "$kind" "${DOG_IDX:-0}"
+    for (( i = 0; i < ${#DOGL[@]}; i++ )); do
+        if [ "$kind" = big ]; then [ "${DOG_PREV_B[$i]:-}" = "${DOGL[$i]}" ] && continue; DOG_PREV_B[$i]=${DOGL[$i]}
+        else [ "${DOG_PREV_M[$i]:-}" = "${DOGL[$i]}" ] && continue; DOG_PREV_M[$i]=${DOGL[$i]}; fi
+        printf '%s[%d;%dH%s' "$esc" $(( row + i )) "$col" "${DOGL[$i]}"
+    done
+}
+# <<< dog
+
+# Where this runs: the first name, the machine, herdr's version and the agents of ALL machines (see collect_agents).
+bhote_info() {  # what never changes while bhote runs: asked once
+    if [ -z "${HOST:-}" ]; then
+        WHO=$(git config user.name 2>/dev/null | awk '{print $1}'); WHO=${WHO:-${USER:-friend}}
+        HERDR_V=$(herdr --version 2>/dev/null | awk '{print $NF}')
+        # how this machine is called in the lists: HOST_LABEL in the config, else "Mac" on macOS, else the short host name
+        cfg_var HOST HOST_LABEL ""
+        [ -n "$HOST" ] || HOST=$([ "$(uname -s)" = Darwin ] && echo Mac || hostname -s)
+        HAS_MACHINES=$([ -n "$(herdr machine list 2>/dev/null)" ] && echo 1 || echo 0)
+    fi
+}
+# Everything a screen needs, read ONCE per repaint and without starting a single process (except one `date`): the settings,
+# the sync state, both agent files and the topics. The screen functions then only print. (Every awk/cat/wc/cut that the
+# drawing used to start cost 5 to 15 ms; a key press took 300 ms.)
+ui_load() {
+    local line st=""
+    [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
+    NOW=$(( NOW_BASE + SECONDS ))
+    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
+    if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; esac; done < "$STORE_STATUS"; fi
+    U_STORE_STATE=$st
+    STORE_TAG=""; [ "$U_STORE" = remote ] && [ "$st" = offline ] && STORE_TAG=" · offline"
+    AG_N=0; AG_LINES=()
+    for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do
+        [ -r "$f" ] && while IFS= read -r line; do [ -n "$line" ] && { AG_LINES[$AG_N]=$line; AG_N=$(( AG_N + 1 )); }; done < "$f"
+    done
+    AGENTS=$AG_N
+    topics_load
+}
+
+# ── the agents of every machine: this one and every enabled saved machine (herdr --machine <label>). Collected in the
+# background (ssh takes a second or two), so drawing never waits for it. One line per agent in AGENT_LOCAL / AGENT_REMOTE:
+# machine <TAB> pane id <TAB> status <TAB> workspace <TAB> topic
+AGENT_LOCAL="$SHARED_DIR/agents.local"
+AGENT_REMOTE="$SHARED_DIR/agents.remote"
+agents_all() { cat "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null; }
+collect_one() {  # collect_one <machine label> [herdr options: --machine X]
+    local label=$1 panes ws; shift
+    panes=$(herdr "$@" pane list 2>/dev/null) || return 0
+    ws=$(herdr "$@" workspace list 2>/dev/null)
+    # control characters out of every text (a name must not carry escape codes to the terminal), only plain pane ids
+    local tb; cfg_var tb TESTS_BUSY off
+    printf '%s\n%s\n' "$panes" "$ws" | jq -rs --arg m "$label" --arg tb "$tb" '
+        def clean: gsub("[\u0001-\u001f\u007f-\u009f]"; "");
+        ((.[1].result.workspaces // []) | map({(.workspace_id): (.label | tostring | clean)}) | add // {}) as $w |
+        # a test run in the workspace of the agent (its tests token starts with ◌ while it runs or waits) makes it busy
+        ((.[1].result.workspaces // []) | map({(.workspace_id): ((.tokens.tests // "") | tostring | startswith("◌"))}) | add // {}) as $t
+        | .[0].result.panes[] | select(.agent) | select(.pane_id | test("^[A-Za-z0-9:_-]+$"))
+        | [($m | clean), .pane_id, (if ($tb == "on") and ($t[.workspace_id] // false) and ((.agent_status // "") != "working") then "testing" else ((.agent_status // "") | clean) end), ($w[.workspace_id] // .workspace_id), ((.tokens.task // "") | clean | ltrimstr("∟ "))] | @tsv' 2>/dev/null
+}
+collect_local() { collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"; mv "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"; }
+collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied
+    local id label host prof enabled
+    { herdr machine list 2>/dev/null | while IFS=$'\t' read -r id label host prof enabled; do
+          [ "$enabled" = enabled ] && machine_wanted "$label" && collect_one "$label" --machine "$label"
+      done; } > "$AGENT_REMOTE.tmp.$$"
+    mv "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
+}
+# One panel per machine collects (herdr is asked once, not once per panel); the others only read the files. The collector is
+# whoever holds $SHARED_DIR/collector.lock (its pid inside); when that process is gone, another panel takes over.
+collector_lead() {  # collector_lead <main pid>: 0 when this panel is the collector
+    local lock=$SHARED_DIR/collector.lock owner=""
+    [ -r "$lock/pid" ] && read -r owner < "$lock/pid"
+    [ "$owner" = "$1" ] && return 0
+    [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && return 1       # somebody else is alive and leads
+    rm -rf "$lock"; mkdir "$lock" 2>/dev/null || return 1; echo "$1" > "$lock/pid"
+}
+collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
+    local n=0 every_l every_r
+    while true; do
+        every_l=$(cfg_get LOCAL_EVERY 3); every_r=$(cfg_get REMOTE_EVERY 10)
+        if collector_lead "$1"; then
+            # the data location: at once after a local change, otherwise as often as the remote agents
+            if [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; store_sync
+            elif [ $(( n % (every_r / every_l + 1) )) -eq 0 ]; then store_sync; fi
+            collect_local
+            if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
+                [ $(( n % (every_r / every_l + 1) )) -eq 0 ] && collect_remote
+            else : > "$AGENT_REMOTE"; fi
+            n=$(( n + 1 ))
+        else n=0; fi
+        sleep "$every_l"
+    done
+}
+
+# The line of an old arcade game, in capitals, blinking: drawn once with the frame (splash_prompt_row), then toggled in
+# place by the animation (splash_prompt_at). SPLASH_PROMPT_ROW is the screen row of that line (tests/smoke.sh checks it).
+PROMPT_TEXT="PRESS ANY KEY TO START"
+SPLASH_PROMPT_ROW=35      # grows by SPLASH_E on a taller pane
+prompt_shown() {  # prompt_shown <on|off>
+    if [ "$1" = on ]; then printf '%s%s%s%s' "$Y" "${esc}[1m" "$PROMPT_TEXT" "$X"; else printf '%*s' "${#PROMPT_TEXT}" ""; fi
+}
+splash_prompt_row() { mid "$PROMPT_TEXT" "$(prompt_shown on)"; }
+splash_prompt_at() {  # splash_prompt_at <on|off>
+    printf '%s[%d;%dH%s' "$esc" "$SPLASH_PROMPT_ROW" $(( 2 + (WIDTH - 2 - ${#PROMPT_TEXT}) / 2 )) "$(prompt_shown "$1")"
+}
+
+bhote_splash() {
+    local who=$WHO host=$HOST herdr_v=$HERDR_V agents=$AGENTS
+    top
+    blank
+    mid "Welcome back, $who!" "${L}Welcome back, $who!${X}"
+    blank; blanks "$SG0"
+    dog
+    blank; blanks "$SG1"
+    local line
+    while IFS= read -r line; do mid "$line" "$(gradient "$line")"; done <<'WORD'
+████▄  █   █  ▄███▄  █████  █████
+█   █  █   █  █   █    █    █    
+████▄  █████  █   █    █    ████ 
+█   █  █   █  █   █    █    █    
+████▀  █   █  ▀███▀    █    █████
+WORD
+    blank; blanks "$SG2"
+    mid "work & agent sync" "${D}work & agent sync${X}"
+    blank; blanks "$SG3"
+    local mv=${#host} vv t   # the four lines are one block: centred as a whole, values start in one column
+    for vv in "${herdr_v:-?}" "$agents" "$T_N$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
+    INFO_PAD=$(( (INNER - (9 + mv)) / 2 )); [ "$INFO_PAD" -lt 1 ] && INFO_PAD=1
+    info "Machine " "$host"
+    info "Herdr   " "${herdr_v:-?}"
+    info "Agents  " "$agents"
+    info "Topics  " "$T_N$STORE_TAG"
+    blank; blanks "$SG4"
+    splash_prompt_row
+    blank
+    mid "n new · , settings · q quit" "${D}n new · , settings · q quit${X}"
+    bottom
+}
+
+# ── the topic list: after the start screen the dog shrinks into the header. The topics are SAMPLE DATA for now.
+TEAL=$S; ORANGE=$C
+SELBG=""; [ "$color" = 1 ] && SELBG="${esc}[48;2;49;50;68m"      # the highlighted row: the sidebar's active-row colour
+rule() { printf ' %s%s%s\n' "$B" "${RULE_LINE:-────────────────────────────────────────}" "$X"; }
+group() { printf '\n  %s%s%s\n' "$D" "$1" "$X"; }
+item() {  # item <icon colour> <icon> <title colour> <title> <status line> [description]
+    local d; clip_set d "${6:-}" $(( ${COLS:-44} - 6 ))
+    printf ' %s%s%s %s%s%s\n' "$1" "$2" "$X" "$3" "$4" "$X"
+    [ -n "$5" ] && printf '   %s∟ %s%s\n' "$D" "$5" "$X"      # parked and done topics have no second line
+    [ -n "$d" ] && printf '     %s%s%s\n' "$D" "$d" "$X"
+    printf '\n'
+}
+item_sel() {  # the selected topic: ▶ in front and a highlighted bar over both lines, like the cursor of an old game menu
+    local w=$(( ${COLS:-44} - 2 )) t st p1 p2 d p3
+    clip_set t "$3" $(( w - 6 )); clip_set st "$4" $(( w - 6 )); clip_set d "${5:-}" $(( w - 6 ))
+    p1=$(( w - 5 - ${#t} )); p2=$(( w - 5 - ${#st} )); [ $p1 -lt 0 ] && p1=0; [ $p2 -lt 0 ] && p2=0
+    printf '%s %s▶ %s%s %s%s%*s%s\n' "$SELBG" "$ORANGE" "$1" "$2" "$L" "$t" "$p1" "" "$X"
+    [ -n "$4" ] && printf '%s   %s∟ %s%*s%s\n' "$SELBG" "$D" "$st" "$p2" "" "$X"
+    if [ -n "$d" ]; then p3=$(( w - 5 - ${#d} )); [ $p3 -lt 0 ] && p3=0; printf '%s     %s%s%*s%s\n' "$SELBG" "$D" "$d" "$p3" "" "$X"; fi
+    printf '\n'
+}
+agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
+    local _i _m _id _st _r _x gone=gone
+    for (( _i = 0; _i < AG_N; _i++ )); do
+        IFS=$'\t' read -r _m _id _st _r _x <<< "${AG_LINES[$_i]}"
+        if [ "$_m" = "$2" ] && [ "$_id" = "$3" ]; then gone=${_st:-idle}; break; fi
+    done
+    printf -v "$1" '%s' "$gone"
+}
+topics_block() {  # the topics, grouped by status; every one is two lines like in the herdr sidebar
+    local i prev="" st label ic icon status_line age ast
+    sel_index
+    for (( i = 0; i < T_N; i++ )); do
+        st=${T_STATUS[$i]}
+        if [ "$st" != "$prev" ]; then
+            case "$st" in now) label=NOW ;; waiting) label=WAITING ;; later) label=LATER ;; done) label=DONE ;; esac
+            group "$label"; prev=$st
+        fi
+        case "$st" in
+            now) ic=$ORANGE; icon="◆"; age_set age "${T_UPD[$i]:-$NOW}"; status_line="started $age ago"
+                 if [ -n "${T_AG[$i]}" ]; then      # given to an agent: say what that agent is doing now
+                     agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
+                     case "$ast" in working) status_line="${T_AG[$i]} · working" ;; testing) status_line="${T_AG[$i]} · running tests" ;; blocked) status_line="${T_AG[$i]} · needs you"; ic=$NN ;;
+                         idle|done) status_line="${T_AG[$i]} · finished"; ic=$GREEN; [ "$i" = "$SEL_IDX" ] && status_line="$status_line · d = done" ;; *) status_line="${T_AG[$i]} · gone" ;; esac
+                 fi ;;
+            waiting) ic=$Y; icon="⧗"; age_set age "${T_WSINCE[$i]:-$NOW}"; status_line="${T_WFOR[$i]:-?} · for $age" ;;
+            later) ic=$D; icon="○"; status_line="" ;;
+            done) ic=$GREEN; icon="✓"; status_line="" ;;
+        esac
+        if [ "$i" = "$SEL_IDX" ]; then item_sel "$ic" "$icon" "${T_TITLE[$i]:-(untitled)}" "$status_line" "${T_DESC[$i]:-}"
+        else item "$ic" "$icon" "$L" "${T_TITLE[$i]:-(untitled)}" "$status_line" "${T_DESC[$i]:-}"; fi
+    done
+    [ "$T_N" -gt 0 ] || printf '\n  %sno topics yet · n adds one%s\n\n' "$D" "$X"
+}
+name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS rule (part-of-name=colour) that matches, else plain
+    local _r _p _c _col="$L"
+    if [ -n "${U_NAME_COLORS:-}" ]; then
+        while IFS= read -r _r; do
+            _p=${_r%%=*}; _c=${_r#*=}; [ -n "$_p" ] || continue
+            shopt -s nocasematch; [[ $2 == *"$_p"* ]] && { shopt -u nocasematch
+                case "$_c" in red) _col=$NN ;; teal) _col=$S ;; peach) _col=$C ;; mauve) _col=$R ;; blue) _col=$BLUE ;; green) _col=$GREEN ;; yellow) _col=$Y ;; esac; break; }
+            shopt -u nocasematch
+        done <<< "${U_NAME_COLORS//,/$'\n'}"
+    fi
+    printf -v "$1" '%s' "$_col"
+}
+agents_block() {  # two columns: the free agents (idle, done) on the left, the busy ones on the right; the colours follow the herdr sidebar
+    local i m id st name task ic nc label cw maxr rows shown hidden r left right lpad f=() b=() fw=() bw=() nf=0 nb=0 cell plain
+    maxr=$(( ${ROWS:-40} - 22 )); [ "$maxr" -lt 1 ] && maxr=1     # the head, the keys and four lines of topics always stay
+    cw=$(( (${COLS:-44} - 3) / 2 ))
+    if [ "$AG_N" -gt 0 ]; then
+        for (( i = 0; i < AG_N; i++ )); do
+            IFS=$'\t' read -r m id st name task <<< "${AG_LINES[$i]}"
+            case "$st" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+            name_color_set nc "$name"
+            label=$name; [ "$m" = "$HOST" ] || label="${m:0:1}·$name"       # another machine: its initial in front
+            clip_set label "$label" $(( cw - 2 ))
+            cell="$ic$X $nc$label$X"; plain=$(( ${#label} + 2 ))
+            case "$st" in
+                idle|done) f[$nf]=$cell; fw[$nf]=$plain; nf=$(( nf + 1 )) ;;
+                *) b[$nb]=$cell; bw[$nb]=$plain; nb=$(( nb + 1 )) ;;
+            esac
+        done
+        rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
+        shown=$rows; [ "$shown" -gt "$maxr" ] && shown=$maxr
+        printf '\n  %s%-*s%s%s\n' "$D" $(( cw )) "FREE" "BUSY" "$X"
+        for (( r = 0; r < shown; r++ )); do
+            left=${f[$r]:-}; right=${b[$r]:-}; lpad=$(( cw - ${fw[$r]:-0} ))
+            printf ' %s%*s %s\n' "$left" "$lpad" "" "$right"
+        done
+        hidden=0; [ "$nf" -gt "$shown" ] && hidden=$(( nf - shown )); [ "$nb" -gt "$shown" ] && hidden=$(( hidden + nb - shown ))
+        [ "$hidden" -gt 0 ] && printf ' %s+%d more agents%s\n' "$D" "$hidden" "$X"
+    fi
+    # saved machines exist but are not asked: say so, and where to change it
+    if [ "$U_REMOTE" != on ] && [ "${HAS_MACHINES:-0}" = 1 ]; then
+        printf '\n %sRemote agents off · , settings%s\n' "$D" "$X"
+    fi
+}
+clip_set() {  # clip_set <var> <text> <max columns>: cut with a … when longer (plain text only)
+    local _ct=$2; [ "${#_ct}" -gt "$3" ] && _ct="${_ct:0:$(( $3 - 1 ))}…"
+    printf -v "$1" '%s' "$_ct"
+}
+clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
+view_head() {  # the dog, the text beside it, a rule
+    local i tx max l3 l4
+    dog_lines_for mini "${DOG_IDX:-0}"
+    # The text beside the dog starts one line lower (the dog has 6 rows, the text 4). What does not fit next to the dog is
+    # cut off with a "…": a line that wrapped used to run into the picture.
+    max=$(( ${COLS:-44} - 2 - DOG_MINI_W - 2 - 1 ))
+    clip_set l3 "$HOST · herdr $HERDR_V" "$max"; clip_set l4 "$AGENTS agents$STORE_TAG" "$max"
+    printf '\n'
+    for (( i = 0; i < ${#DOGL[@]}; i++ )); do
+        case $i in
+            1) tx="${L}Bhote${X} ${D}v$VERSION${X}" ;;
+            2) tx="${D}work & agent sync${X}" ;;
+            3) tx="$l3" ;;
+            4) tx="$l4" ;;
+            *) tx="" ;;
+        esac
+        printf ' %s  %s\n' "${DOGL[$i]}" "$tx"
+    done
+    rule
+}
+view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
+    agents_block
+    rule
+    local sg=""; suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" (${#SUG_MAP[@]})"
+    printf ' %s↑↓ move · →/⏎ open · n new%s\n %sd done · a from agents%s%s\n %s, settings · s start · q quit%s' "$D" "$X" "$D" "$sg" "$X" "$D" "$X"
+}
+count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution on text full of escapes and UTF-8 is very slow in bash 3.2)
+    local _n=0 _l; while IFS= read -r _l; do _n=$(( _n + 1 )); done <<< "$2"; printf -v "$1" '%s' "$_n"
+}
+bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
+    local head topics bottom hh th bh avail pad=0 i off sel=-1 content tl=() n=0 line
+    head=$(view_head); topics=$(topics_block); bottom=$(view_bottom)
+    count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
+    avail=$(( ${ROWS:-40} - hh - bh ))
+    printf '%s\n' "$head"
+    if [ "$th" -le "$avail" ]; then
+        printf '%s\n' "$topics"; pad=$(( avail - th ))
+    elif [ "$avail" -ge 4 ]; then       # more topics than room: a window that follows the selection, one row for the marker
+        content=$(( avail - 1 ))
+        while IFS= read -r line; do tl[$n]=$line; [ "$sel" = -1 ] && case "$line" in *▶*) sel=$n ;; esac; n=$(( n + 1 )); done <<< "$topics"
+        [ "$sel" = -1 ] && sel=0
+        off=$(( sel + 2 - content )); [ "$off" -lt 0 ] && off=0; [ "$off" -gt $(( th - content )) ] && off=$(( th - content ))
+        for (( i = off; i < off + content; i++ )); do printf '%s\n' "${tl[$i]}"; done
+        printf ' %s↑↓ %d more lines%s\n' "$D" $(( th - content )) "$X"
+    else printf '%s\n' "$topics"
+    fi
+    for (( i = 0; i < pad; i++ )); do printf '\n'; done
+    printf '%s' "$bottom"
+}
+
+# Word wrap with a hanging indent: every line of a paragraph starts at the same column and ends before the panel's edge.
+wrap_print() {  # wrap_print <indent> <colour> <text>
+    local ind=$1 col=$2 width=$(( ${COLS:-44} - 2 - $1 )) line="" word pad
+    printf -v pad '%*s' "$ind" ''
+    set -f
+    for word in $3; do
+        [ "${#word}" -gt "$width" ] && clip_set word "$word" "$width"     # a path or URL that cannot break
+        if [ -z "$line" ]; then line=$word
+        elif [ $(( ${#line} + 1 + ${#word} )) -le "$width" ]; then line="$line $word"
+        else printf '%s%s%s%s\n' "$pad" "$col" "$line" "$X"; line=$word; fi
+    done
+    set +f
+    [ -n "$line" ] && printf '%s%s%s%s\n' "$pad" "$col" "$line" "$X"
+}
+set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [extra indent]: label left, value right-aligned
+    local sel=$1 label=$2 vp=$3 vc=$4 ind=${5:-0} w=$(( ${COLS:-44} - 2 )) pad
+    clip_set label "$label" $(( w - 5 - ind - ${#vp} ))
+    pad=$(( w - 4 - ind - ${#label} - ${#vp} )); [ "$pad" -lt 1 ] && pad=1
+    if [ "$sel" = 1 ]; then printf '%s %s▶%s %*s%s%s%*s%s%s\n' "$SELBG" "$ORANGE" "$L" "$ind" "" "$label" "$SELBG" "$pad" "" "$vc" "$X"
+    else printf '   %*s%s%s%s%*s%s\n' "$ind" "" "$D" "$label" "$X" "$pad" "" "$vc"; fi
+}
+
+# ── the settings screen (","). Rows: the remote switch, one row per saved machine, the intervals, the animation.
+# ↑/↓ (or k/j) choose, space or enter switches, ←/→ change a number, "," or esc goes back. Every change is saved at once.
+SET_ROWS=()
+settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exist only while REMOTE_AGENTS is on
+    SET_ROWS=("choice|STORE|Data location" "bool|REMOTE_AGENTS|Load remote agents over SSH")
+    if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
+        local id label host prof enabled
+        while IFS=$'\t' read -r id label host prof enabled; do
+            [ -n "$label" ] && SET_ROWS[${#SET_ROWS[@]}]="machine|$label|$label ($host)"
+        done <<< "$(herdr machine list 2>/dev/null)"
+        SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
+    fi
+    SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
+}
+bhote_settings() {
+    local i row kind key label vp vc v def cur=${SET_IDX:-0} sel ind off
+    settings_rows
+    printf '\n %sSettings%s  %s%s%s\n' "$L" "$X" "$D" "$(clip "${CONFIG_FILE/#$HOME/~}" $(( ${COLS:-44} - 13 )))" "$X"
+    rule; printf '\n'
+    for (( i = 0; i < ${#SET_ROWS[@]}; i++ )); do
+        row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
+        [ "$i" = "$cur" ] && sel=1
+        case "$kind" in
+            bool) def=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE) def=on ;; esac; cfg_var v "$key" $def
+                  if [ "$v" = on ]; then vp="[x]"; vc="${GREEN}[x]${X}"; else vp="[ ]"; vc="${D}[ ]${X}"; fi ;;
+            choice) cfg_var v STORE local
+                  if [ "$v" = remote ]; then cfg_var v STORE_MACHINE '?'; vp="‹ $v ›"; else vp="‹ local ›"; fi; vc="${C}${vp}${X}" ;;
+            machine) ind=2; cfg_var off MACHINES_OFF ""
+                  case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
+            num) case "$key" in REMOTE_EVERY) def=10 ;; *) def=3 ;; esac; cfg_var v "$key" $def; vp=$v; vc="${C}${v}${X}" ;;
+        esac
+        set_row "$sel" "$label" "$vp" "$vc" "$ind"
+        case "$key" in
+            STORE) wrap_print 5 "$D" "$(store_summary)" ;;
+            REMOTE_AGENTS) wrap_print 5 "$D" "Off by default: bhote opens no connection to another machine until you switch this on." ;;
+        esac
+    done
+    printf '\n'; rule
+    printf ' %s↑↓ select · space toggle%s\n %s←→ change · , back%s\n' "$D" "$X" "$D" "$X"
+}
+store_cycle() {  # step the data location through: local, then every saved machine (→ / space forward, ← back)
+    local opts=(local) id label host prof enabled cur i n k=$1 dir=1
+    while IFS=$'\t' read -r id label host prof enabled; do [ -n "$label" ] && opts[${#opts[@]}]="$label"; done <<< "$(herdr machine list 2>/dev/null)"
+    cur=local; [ "$(cfg_get STORE local)" = remote ] && cur=$(cfg_get STORE_MACHINE '')
+    n=${#opts[@]}; [ "$k" = LEFT ] && dir=$(( n - 1 ))
+    for (( i = 0; i < n; i++ )); do [ "${opts[$i]}" = "$cur" ] && break; done
+    i=$(( (i + dir) % n ))
+    if [ "${opts[$i]}" = local ]; then cfg_set STORE local; else cfg_set STORE remote; cfg_set STORE_MACHINE "${opts[$i]}"; fi
+    : > "$STORE_DIRTY"
+}
+settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C/D)
+    local k=$1 n=${#SET_ROWS[@]} row kind key cur v off
+    settings_rows; n=${#SET_ROWS[@]}
+    case "$k" in
+        UP|k) SET_IDX=$(( (${SET_IDX:-0} + n - 1) % n )) ;;
+        DOWN|j) SET_IDX=$(( (${SET_IDX:-0} + 1) % n )) ;;
+        " "|ENTER|LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
+            if [ "$kind" = choice ]; then store_cycle "$k"; return; fi
+            [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
+                bool) cur=off; case "$key" in ANIMATION|SPLASH_AUTOCLOSE) cur=on ;; esac
+                      [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
+                machine) off=$(cfg_get MACHINES_OFF '')
+                      case ",$off,"  in
+                          *",$key,"*) cfg_set MACHINES_OFF "$(printf '%s' ",$off," | sed "s/,$key,/,/; s/^,//; s/,$//")" ;;
+                          *) cfg_set MACHINES_OFF "${off:+$off,}$key" ;;
+                      esac ;;
+            esac ;;
+        LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
+            if [ "$kind" = num ]; then
+                v=$(cfg_get "$key" $([ "$key" = REMOTE_EVERY ] && echo 10 || echo 3))
+                if [ "$k" = RIGHT ]; then v=$(( v + 1 )); else v=$(( v > 1 ? v - 1 : 1 )); fi
+                cfg_set "$key" "$v"
+            fi ;;
+    esac
+}
+
+# ── the animation. A background ticker only DECIDES which picture is due (eyes open or closed, tongue out or in) and tells
+# the main loop with USR1; the main loop is the only one that writes to the screen, so two writers can never mix their
+# escape sequences. It redraws just the dog, at an absolute position, so nothing flickers.
+ANIM_FILE="$RUN_DIR/anim"
+dog_ticker() {  # dog_ticker <main pid>
+    local tick=0 closed tin idx last="" blink bl_last=""
+    while true; do
+        sleep 0.3; tick=$(( tick + 1 ))
+        blink=on; [ $(( (tick / 2) % 2 )) -eq 1 ] && blink=off
+        closed=0; [ $(( RANDOM % 14 )) -eq 0 ] && closed=1
+        tin=0; [ $(( tick % 9 )) -ge 6 ] && tin=1
+        idx=$(( closed + 2 * tin ))
+        [ "$(cfg_get ANIMATION on)" = on ] || idx=0
+        [ "$idx $blink" = "$last" ] && continue
+        last="$idx $blink"; echo "$idx $blink" > "$ANIM_FILE"; kill -USR1 "$1" 2>/dev/null || exit 0
+    done
+}
+dog_animate() {  # the main loop's answer to USR1 (only on the splash and the list); draws only what changed
+    local idx blink
+    [ "$TOO_SMALL" = 1 ] && return 0
+    [ "$1" = splash ] && ! splash_fits && return 0
+    read -r idx blink < "$ANIM_FILE" 2>/dev/null || { idx=0; blink=on; }
+    case "$1" in
+        splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at big $(( 5 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
+                if [ "$blink" != "${DRAWN_BLINK:-}" ]; then splash_prompt_at "$blink"; DRAWN_BLINK=$blink; fi ;;
+        main)   if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at mini 2 2; DRAWN_IDX=$idx; fi ;;
+    esac
+}
+
+ask() {  # ask <label>: a highlighted two-line prompt at the bottom of the screen (over the keys) -> ANSWER (empty = cancelled)
+    local rows=${ROWS:-40} w=$(( ${COLS:-44} - 1 ))
+    trap '' USR1                                           # the animation must not cut the typing short
+    printf '\033[%d;1H\033[2K\033[?25h%s%*s\r%s▶ %s%s' "$rows" "$SELBG" "$w" "" "$ORANGE" "$L" "$1"   # one bar on the last row
+    stty echo </dev/tty 2>/dev/null; IFS= read -r ANSWER; stty -echo </dev/tty 2>/dev/null
+    printf '\033[0m\033[?25l'; trap 'anim=1' USR1
+    ANSWER=${ANSWER//$'\033l'/@}; ANSWER=${ANSWER//$'\0337'/|}; ANSWER=${ANSWER//$'\033'/}   # a left Option arrives as Alt: ESC l / ESC 7 are the @ and | of a German keyboard
+    ANSWER=${ANSWER//[[:cntrl:]]/}; ANSWER=${ANSWER#"${ANSWER%%[! ]*}"}; ANSWER=${ANSWER%"${ANSWER##*[! ]}"}
+}
+MENU_ITEMS=("Start with agent ..." "Waiting for ..." "Park for later" "Mark done" "Rename" "Describe ..." "Delete" "Back")
+bhote_menu() {  # the action menu of the selected topic
+    local f i title; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
+    clip_set title "$(topic_get "$f" title '(untitled)')" $(( ${COLS:-44} - 8 ))
+    printf '\n %s▸ %s%s\n' "$ORANGE" "$L$title" "$X"
+    printf ' %s%s · %s%s\n' "$D" "$(topic_get "$f" status now)" "$(topic_get "$f" waiting_for -)" "$X"
+    rule; printf '\n'
+    for (( i = 0; i < ${#MENU_ITEMS[@]}; i++ )); do
+        if [ "$i" = "${MENU_IDX:-0}" ]; then printf '%s %s▶ %s%-*s%s\n' "$SELBG" "$ORANGE" "$L" $(( ${COLS:-44} - 6 )) "${MENU_ITEMS[$i]}" "$X"
+        else printf '   %s%s%s\n' "$D" "${MENU_ITEMS[$i]}" "$X"; fi
+    done
+    printf '\n'; rule
+    printf ' %s↑↓ choose · →/⏎ do it · ←/esc back%s\n' "$D" "$X"
+}
+# ── suggestions: what the running agents work on (the "task" of each agent pane) and is not a topic yet. "a" lists them; adopting one
+# makes it a topic that is already assigned to that agent. "x" dismisses one for good (kept in $DATA_DIR/dismissed).
+SUG_MAP=(); SUG_IDX=0
+eq_ci() { local r=1; shopt -s nocasematch; [[ $1 == "$2" ]] && r=0; shopt -u nocasematch; return $r; }
+suggest_build() {  # SUG_MAP = indexes into AG_LINES of agents whose task is neither a topic nor assigned nor dismissed
+    local i m id st name task t known line; SUG_MAP=()
+    for (( i = 0; i < AG_N; i++ )); do
+        IFS=$'\t' read -r m id st name task <<< "${AG_LINES[$i]}"
+        [ -n "$task" ] || continue
+        known=0
+        for (( t = 0; t < T_N; t++ )); do
+            [ "${T_STATUS[$t]}" = done ] && continue
+            if [ "${T_AM[$t]}" = "$m" ] && [ "${T_AP[$t]}" = "$id" ]; then known=1; break; fi
+            eq_ci "${T_TITLE[$t]}" "$task" && { known=1; break; }
+        done
+        [ "$known" = 0 ] && [ -r "$DATA_DIR/dismissed" ] && while IFS= read -r line; do [ "$line" = "$m|$id|$task" ] && { known=1; break; }; done < "$DATA_DIR/dismissed"
+        [ "$known" = 0 ] && SUG_MAP[${#SUG_MAP[@]}]=$i
+    done
+}
+bhote_suggest() {
+    local i m id st name task
+    printf '\n %sFrom running agents%s\n %sTheir tasks that are no topic yet%s\n' "$L" "$X" "$D" "$X"
+    rule; printf '\n'
+    suggest_build
+    for (( i = 0; i < ${#SUG_MAP[@]}; i++ )); do
+        IFS=$'\t' read -r m id st name task <<< "${AG_LINES[${SUG_MAP[$i]}]}"
+        clip_set task "$task" $(( ${COLS:-44} - 8 )); clip_set name "$m · $name" $(( ${COLS:-44} - 8 ))
+        if [ "$i" = "$SUG_IDX" ]; then
+            printf '%s %s▶ %s%-*s%s\n' "$SELBG" "$ORANGE" "$L" $(( ${COLS:-44} - 6 )) "$task" "$X"
+            printf '%s   %s∟ %s%-*s%s\n\n' "$SELBG" "$D" "$name" $(( ${COLS:-44} - 8 )) "" "$X"
+        else printf '   %s%s%s\n     %s%s%s\n\n' "$L" "$task" "$X" "$D" "$name" "$X"; fi
+    done
+    [ "${#SUG_MAP[@]}" -gt 0 ] || printf '   %snothing to suggest%s\n' "$D" "$X"
+    printf '\n'; rule
+    printf ' %s↑↓ choose · →/⏎ add as topic%s\n %sx dismiss · ←/esc back%s\n' "$D" "$X" "$D" "$X"
+}
+suggest_do() {  # suggest_do <adopt|dismiss> <index>
+    local m id st name task f
+    suggest_build; [ -n "${SUG_MAP[$2]:-}" ] || return 0
+    IFS=$'\t' read -r m id st name task <<< "${AG_LINES[${SUG_MAP[$2]}]}"
+    if [ "$1" = dismiss ]; then printf '%s|%s|%s\n' "$m" "$id" "$task" >> "$DATA_DIR/dismissed"; return 0; fi
+    topic_new "$task" "" "" || return 0
+    f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; SEL_ID=$NEW_TOPIC_ID
+    topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
+}
+# ── the picker: "Start" asks which free agent takes the topic. Free = idle or done; entry 0 only marks the topic as started.
+PICK_MAP=(); PICK_IDX=0
+agent_taken() {  # agent_taken <machine> <pane>: already working on another open topic
+    local _t; for (( _t = 0; _t < T_N; _t++ )); do
+        [ "${T_STATUS[$_t]}" = now ] && [ "${T_AM[$_t]}" = "$1" ] && [ "${T_AP[$_t]}" = "$2" ] && [ "${T_ID[$_t]}" != "${SEL_ID:-}" ] && return 0
+    done; return 1
+}
+pick_build() {  # PICK_MAP = indexes into AG_LINES of the free agents
+    local i m id st name task; PICK_MAP=()
+    for (( i = 0; i < AG_N; i++ )); do
+        IFS=$'\t' read -r m id st name task <<< "${AG_LINES[$i]}"
+        case "$st" in idle|done) agent_taken "$m" "$id" || PICK_MAP[${#PICK_MAP[@]}]=$i ;; esac
+    done
+}
+bhote_pick() {
+    local f i k m id st name task title n=0 label
+    f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
+    clip_set title "$(topic_get "$f" title '(untitled)')" $(( ${COLS:-44} - 8 ))
+    printf '\n %s▸ %s%s\n %sWho takes it?%s\n' "$ORANGE" "$L$title" "$X" "$D" "$X"
+    rule; printf '\n'
+    pick_build
+    for (( i = 0; i <= ${#PICK_MAP[@]}; i++ )); do
+        if [ "$i" = 0 ]; then label="Just mark as started"
+        else
+            IFS=$'\t' read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( i - 1 ))]}]}"
+            label="$m · $name"; [ "$st" = done ] && label="$label ✓"
+        fi
+        clip_set label "$label" $(( ${COLS:-44} - 8 ))
+        if [ "$i" = "$PICK_IDX" ]; then printf '%s %s▶ %s%-*s%s\n' "$SELBG" "$ORANGE" "$L" $(( ${COLS:-44} - 6 )) "$label" "$X"
+        else printf '   %s%s%s\n' "$D" "$label" "$X"; fi
+    done
+    [ "${#PICK_MAP[@]}" -gt 0 ] || printf '\n   %sno free agent right now%s\n' "$D" "$X"
+    printf '\n'; rule
+    printf ' %s↑↓ choose · →/⏎ start · ←/esc back%s\n' "$D" "$X"
+}
+pick_do() {  # pick_do <index>: hand the topic to that agent (its title as a prompt, Enter included) and mark it started
+    local f m id st name task opt=() title desc; f=$(sel_file); [ -n "$f" ] || return 0
+    title=$(topic_get "$f" title); desc=$(topic_get "$f" description); [ -n "$desc" ] && title="$title. $desc"
+    if [ "$1" -gt 0 ]; then
+        pick_build
+        IFS=$'\t' read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]:-0}]}"
+        [ -n "${PICK_MAP[$(( $1 - 1 ))]:-}" ] || return 0
+        agent_state_set st "$m" "$id"; case "$st" in idle|done) ;; *) return 0 ;; esac     # taken in the meantime: change nothing
+        [ "$m" = "$HOST" ] || opt=(--machine "$m")
+    fi
+    topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" agent ""
+    if [ "$1" -gt 0 ]; then
+        topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
+        ( herdr "${opt[@]}" pane run "$id" -- "$title" >/dev/null 2>&1 ) &
+    fi
+    : > "$STORE_DIRTY"
+}
+menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 = stay in the menu, 1 = leave it
+    local f; f=$(sel_file); [ -n "$f" ] || return 1
+    case "$1" in
+        0) PICK_IDX=0; view=pick; return 0 ;;     # the picker of free agents (view is bhote_main's variable)
+        1) ask "Waiting for: "; [ -n "$ANSWER" ] || return 0
+           topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)" ;;
+        2) topic_set "$f" status later ;;
+        3) topic_set "$f" status done ;;
+        4) ask "New title: "; [ -n "$ANSWER" ] && topic_set "$f" title "$ANSWER"; [ -n "$ANSWER" ] || return 0 ;;
+        5) ask "Description: "; [ -n "$ANSWER" ] && topic_set "$f" description "$ANSWER"; [ -n "$ANSWER" ] || return 0 ;;
+        6) ask "Delete \"$(topic_get "$f" title)\"? y/N: "; [ "$ANSWER" = y ] || [ "$ANSWER" = Y ] || return 0
+           topic_set "$f" deleted 1; SEL_ID="" ;;
+        7) ;;
+    esac
+    return 1
+}
+prompt_new_topic() {  # "Title", "Title; description", "Title @Name" or "Title > Name" (= waiting for Name); the new topic gets selected
+    local title who="" desc=""
+    ask "Topic: "
+    title=$ANSWER
+    case "$title" in *" @"*) who=${title##* @}; title=${title% @*} ;; *" > "*) who=${title##* > }; title=${title% > *} ;; esac   # the name goes last
+    case "$title" in *";"*) desc=${title#*;}; title=${title%%;*} ;; esac
+    title=${title%"${title##*[! ]}"}; desc=${desc#"${desc%%[! ]*}"}
+    topic_new "$title" "$who" "$desc" && SEL_ID=$NEW_TOPIC_ID
+}
+
+# ── run. BHOTE_ONCE=1 prints a view once and exits (BHOTE_VIEW=splash|main|settings picks it); otherwise it runs as a panel:
+# the start screen first, any key moves on to the topic list (the dog shrinks), "s" shows the start screen again, "," the
+# settings, "q" quits. On a short terminal it starts with the list. The window title says "Bhote" so that herdr's
+# autostart can tell that it is there.
+# The panel works between MIN and MAX columns: wider than MAX it uses only the left MAX columns, narrower than MIN (or shorter
+# than MIN_ROWS) it shows a hint instead of a broken picture. The start screen is a fixed picture (WIDTH x SPLASH_ROWS):
+# where it does not fit, the list is shown instead.
+MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-60}; MIN_ROWS=12; SPLASH_ROWS=38; TOO_SMALL=0
+splash_fits() { [ "${REAL_COLS:-44}" -ge "$SPLASH_W" ] && [ "${REAL_ROWS:-40}" -ge "$SPLASH_ROWS" ]; }
+# The start screen fills the pane: the frame is as wide and as high as the pane; the extra width centres the content, the extra
+# height becomes space between the sections (all of it above the prompt, so the keys stay on the bottom edge).
+SG0=0; SG1=0; SG2=0; SG3=0; SG4=0; SPLASH_E=0
+splash_geometry() {
+    local e q r
+    WIDTH=${REAL_COLS:-44}; [ "$WIDTH" -lt "$SPLASH_W" ] && WIDTH=$SPLASH_W; INNER=$(( WIDTH - 2 ))
+    e=$(( ${REAL_ROWS:-40} - SPLASH_ROWS )); [ "$e" -lt 0 ] && e=0; SPLASH_E=$e
+    q=$(( e / 5 )); r=$(( e % 5 ))
+    SG0=$(( q + (r > 0) )); SG1=$(( q + (r > 1) )); SG2=$(( q + (r > 2) )); SG3=$(( q + (r > 3) )); SG4=$q
+    SPLASH_PROMPT_ROW=$(( 35 + e ))
+}
+term_size() {
+    local sz; sz=$(stty size </dev/tty 2>/dev/null); REAL_COLS=${sz#* }; REAL_ROWS=${sz% *}; REAL_COLS=${REAL_COLS:-44}; REAL_ROWS=${REAL_ROWS:-40}
+    TOO_SMALL=0; { [ "$REAL_COLS" -lt "$MIN_COLS" ] || [ "$REAL_ROWS" -lt "$MIN_ROWS" ]; } && TOO_SMALL=1
+    COLS=$REAL_COLS; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; [ "$COLS" -lt "$MIN_COLS" ] && COLS=$MIN_COLS
+    ROWS=$REAL_ROWS; splash_geometry
+    RULE_LINE=$(hline $(( COLS - 4 )))
+}
+harden_perms() {  # data, config and their folders: this user only (older versions created them open)
+    mkdir -p "$TOPIC_DIR" "$(dirname "$CONFIG_FILE")" 2>/dev/null
+    chmod 700 "$DATA_DIR" "$TOPIC_DIR" "$(dirname "$CONFIG_FILE")" 2>/dev/null
+    [ -f "$CONFIG_FILE" ] && chmod 600 "$CONFIG_FILE" 2>/dev/null
+    return 0
+}
+bhote_main() {
+    local f tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
+    harden_perms; bhote_info
+    if [ -n "${BHOTE_ONCE:-}" ] || [ ! -t 0 ]; then
+        AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote
+        collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
+        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 4 ))); ui_load; bhote_draw "$view"; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
+    fi
+    printf '\033]2;Bhote\007'
+    dog_init; dog_warm; term_size
+    local pids="" stty_saved
+    # The terminal must not echo what arrives between two reads: a mouse wheel in the alternate screen sends arrow keys
+    # (ESC [ B) all the time, and with echo on they showed up as ^[[B on the screen. Restored on exit.
+    stty_saved=$(stty -g </dev/tty 2>/dev/null); stty -echo </dev/tty 2>/dev/null
+    cleanup() { kill $pids 2>/dev/null; [ -n "$stty_saved" ] && stty "$stty_saved" </dev/tty 2>/dev/null; [ "$(cat "$SHARED_DIR/collector.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$SHARED_DIR/collector.lock"; rm -rf "$RUN_DIR"; printf '\033[?25h\033[?1049l'; }
+    trap 'cleanup; exit 0' INT TERM EXIT
+    trap 'redraw=1; resize=1' WINCH
+    trap 'anim=1' USR1
+    printf '\033[?1049h\033[?25l'                       # alternate screen, hidden cursor
+    splash_fits || view=main
+    collector "$$" & pids="$!"
+    echo "0 on" > "$ANIM_FILE"; dog_ticker $$ & pids="$pids $!"
+    local back=main
+    redraw=1
+    while true; do
+        if [ "$redraw" = 1 ]; then
+            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; }
+            [ "$view" = splash ] && ! splash_fits && view=main
+            read -r DOG_IDX _ < "$ANIM_FILE" 2>/dev/null || DOG_IDX=0
+            DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
+            bhote_paint "$view"; dog_prev_reset "$view"
+        elif [ "$anim" = 1 ]; then anim=0; dog_animate "$view"; fi
+        [ "$view" = splash ] && [ -z "${SPLASH_SINCE:-}" ] && SPLASH_SINCE=$SECONDS
+        [ "$view" = splash ] || SPLASH_SINCE=""
+        tmo=2; [ "$view" = splash ] && tmo=1
+        key=""; IFS= read -rsn1 -t "$tmo" key 2>/dev/null; rc=$?
+        [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
+        if [ "$key" = $'\033' ]; then      # an arrow key (ESC [ A..D) or a lone Esc
+            IFS= read -rsn1 -t 1 k2 2>/dev/null || k2=""; k3=""
+            if [ "$k2" = "[" ]; then IFS= read -rsn1 -t 1 k3 2>/dev/null; case "$k3" in A) key=UP ;; B) key=DOWN ;; C) key=RIGHT ;; D) key=LEFT ;; esac
+            else key=ESC; fi
+        fi
+        if [ "$view" = settings ]; then
+            case "$key" in
+                ","|ESC|q|Q) view=$back; redraw=1 ;;
+                "") ;;
+                *) settings_key "$key"; redraw=1 ;;
+            esac
+        elif [ "$view" = suggest ]; then
+            suggest_build
+            case "$key" in
+                UP|k) SUG_IDX=$(( (SUG_IDX + ${#SUG_MAP[@]} - 1) % (${#SUG_MAP[@]} + (${#SUG_MAP[@]} == 0)) )); redraw=1 ;;
+                DOWN|j) SUG_IDX=$(( (SUG_IDX + 1) % (${#SUG_MAP[@]} + (${#SUG_MAP[@]} == 0)) )); redraw=1 ;;
+                ENTER|RIGHT) suggest_do adopt "$SUG_IDX"; SUG_IDX=0; view=main; redraw=1 ;;
+                x|X) suggest_do dismiss "$SUG_IDX"; SUG_IDX=0; redraw=1 ;;
+                ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
+            esac
+        elif [ "$view" = pick ]; then
+            pick_build
+            case "$key" in
+                UP|k) PICK_IDX=$(( (PICK_IDX + ${#PICK_MAP[@]}) % (${#PICK_MAP[@]} + 1) )); redraw=1 ;;
+                DOWN|j) PICK_IDX=$(( (PICK_IDX + 1) % (${#PICK_MAP[@]} + 1) )); redraw=1 ;;
+                ENTER|RIGHT) pick_do "$PICK_IDX"; view=main; redraw=1 ;;
+                ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
+            esac
+        elif [ "$view" = menu ]; then       # the action menu of the selected topic
+            case "$key" in
+                UP|k) MENU_IDX=$(( (MENU_IDX + ${#MENU_ITEMS[@]} - 1) % ${#MENU_ITEMS[@]} )); redraw=1 ;;
+                DOWN|j) MENU_IDX=$(( (MENU_IDX + 1) % ${#MENU_ITEMS[@]} )); redraw=1 ;;
+                ENTER|RIGHT) if menu_do "$MENU_IDX"; then :; else view=main; fi; redraw=1 ;;
+                ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
+            esac
+        else
+            case "$key" in
+                "") ;;
+                q|Q) exit 0 ;;
+                s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
+                S) splash_fits && view=splash; redraw=1 ;;
+                a|A) if [ "$view" = main ]; then view=suggest; SUG_IDX=0; redraw=1; fi ;;
+                d|D) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && topic_set "$f" status done; redraw=1; fi ;;
+                n|N) if [ "$view" = main ]; then prompt_new_topic; redraw=1; else view=main; redraw=1; fi ;;
+                ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_IDX=0; redraw=1 ;;
+                UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; fi ;;      # on the start screen the wheel does nothing
+                DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; fi ;;
+                ENTER|RIGHT) if [ "$view" = splash ]; then view=main; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
+                *) if [ "$view" = splash ]; then view=main; redraw=1; fi ;;
+            esac
+        fi
+        # the welcome screen closes by itself (setting, default on) when nobody pressed a key for SPLASH_SECONDS
+        if [ "$view" = splash ] && [ -z "$key" ]; then
+            cfg_var _sa SPLASH_AUTOCLOSE on; cfg_var _ss SPLASH_SECONDS 15
+            if [ "$_sa" = on ] && [ $(( SECONDS - ${SPLASH_SINCE:-$SECONDS} )) -ge "$_ss" ]; then view=main; redraw=1; fi
+        fi
+        # the agent lists changed (the collector writes them every few seconds): redraw the list view
+        # the collector rewrites its files every few seconds: only a change of CONTENT repaints the list
+        # (only when idle: after a key press the screen is repainted anyway, and a key must not wait for this check)
+        # idle = nothing was read and no animation tick is waiting. (bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128:
+        # so the exit status alone cannot tell a timeout from a key.)
+        if [ "$rc" != 0 ] && [ -z "$key" ] && [ "$anim" != 1 ]; then
+            m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; } | cksum )
+            if [ "$m1" != "$last_m" ]; then last_m=$m1; [ "$view" = main ] && redraw=1; fi
+        fi
+    done
+}
+bhote_draw() { case "$1" in main) bhote_view ;; suggest) bhote_suggest ;; menu) bhote_menu ;; pick) bhote_pick ;; settings) bhote_settings ;; *) bhote_splash ;; esac; }
+# One frame = ONE write: home, every line cleared to its end, then the rest of the screen cleared. No full clear first,
+# so nothing flashes; and it is only called when what is on screen would really look different.
+bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame itself is built in a subshell that only prints
+    local frame line out="" first=1
+    if [ "$TOO_SMALL" = 1 ]; then     # too small for any picture: one line that cannot wrap
+        printf '\033[H\033[J%s' "$(clip "Too small (min ${MIN_COLS}x${MIN_ROWS})" "$(( ${REAL_COLS:-30} - 1 ))")"; return 0
+    fi
+    ui_load
+    frame=$(bhote_draw "$1")
+    while IFS= read -r line; do
+        [ "$first" = 1 ] || out="${out}"$'\n'; first=0
+        out="${out}${line}"$'\033[K'
+    done <<< "$frame"
+    printf '\033[H%s\033[J' "$out"
+}
+
+# ── the command line: the same topics as the panel, for scripts and for chats ("bhote help"). Every change that is made
+# here is also merged with the data location at once (best effort: offline it stays local and is merged later).
+json_str() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\r' | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }')"; }
+topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bhote list`, an id (prefix), or part of the title.
+    local ref=$1 i hits=0 hit="" low
+    topics_load
+    case "$ref" in ''|*[!0-9]*) ;; *) if [ "${#ref}" -le 3 ] && [ "$ref" -ge 1 ] && [ "$ref" -le "$T_N" ]; then printf '%s' "${T_FILE[$(( ref - 1 ))]}"; return 0; fi ;; esac
+    low=$(printf '%s' "$ref" | tr '[:upper:]' '[:lower:]')
+    for (( i = 0; i < T_N; i++ )); do
+        if [ "${T_ID[$i]}" = "$ref" ]; then printf '%s' "${T_FILE[$i]}"; return 0; fi
+    done
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_ID[$i]}" in "$ref"*) hits=$(( hits + 1 )); hit=${T_FILE[$i]}; continue ;; esac
+        case "$(printf '%s' "${T_TITLE[$i]}" | tr '[:upper:]' '[:lower:]')" in *"$low"*) hits=$(( hits + 1 )); hit=${T_FILE[$i]} ;; esac
+    done
+    if [ "$hits" = 1 ]; then printf '%s' "$hit"; return 0; fi
+    if [ "$hits" = 0 ]; then echo "bhote: no topic matches '$ref'" >&2; return 1; fi
+    echo "bhote: '$ref' matches $hits topics, be more specific:" >&2
+    for (( i = 0; i < T_N; i++ )); do case "$(printf '%s' "${T_TITLE[$i]}" | tr '[:upper:]' '[:lower:]')" in *"$low"*) echo "  $(( i + 1 ))  ${T_TITLE[$i]}" >&2 ;; esac; done
+    return 2
+}
+cli_done() {  # after a change: merge with the data location (silent when the data is only local)
+    [ -n "${BHOTE_NO_SYNC:-}" ] && return 0
+    [ "$(cfg_get STORE local)" = remote ] || return 0
+    if ! store_sync >/dev/null 2>&1; then echo "bhote: saved locally; $(cfg_get STORE_MACHINE) is not reachable, it will be merged later" >&2; fi
+}
+cli_show() {  # cli_show <file> [--json]
+    local f=$1 id title st wf ws cr up desc ag
+    id=$(topic_get "$f" id); title=$(topic_get "$f" title); st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for)
+    ws=$(topic_get "$f" waiting_since 0); cr=$(topic_get "$f" created 0); up=$(topic_get "$f" updated 0); desc=$(topic_get "$f" description); ag=$(topic_get "$f" agent)
+    if [ "${2:-}" = --json ]; then
+        printf '{"id":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"created":%s,"updated":%s}\n' \
+            "$(json_str "$id")" "$(json_str "$title")" "$(json_str "$desc")" "$(json_str "$st")" "$(json_str "$wf")" "${ws:-0}" "$cr" "$up"
+    else printf '%s\n  status: %s\n  id: %s\n' "$title" "$st" "$id"; [ -n "$desc" ] && printf '  description: %s\n' "$desc"; [ -n "$ag" ] && printf '  agent: %s (%s)\n' "$ag" "$(topic_get "$f" agent_machine)"; [ -n "$wf" ] && printf '  waiting for: %s (for %s)\n' "$wf" "$(age_text "$ws")"; fi
+}
+bhote_help() {
+    cat <<'HELP'
+bhote — topics and agents next to herdr.
+
+  bhote                          the panel
+  bhote add <title> [-d <text>] [@Name]   new topic with an optional description; "@Name" (or --waiting Name) = waiting for Name
+  bhote list [--all] [--json]    the topics (done ones only with --all); --status now|waiting|later|done
+  bhote show <ref> [--json]      one topic
+  bhote done <ref>               mark done          bhote now <ref>      start / resume
+  bhote later <ref>              park               bhote wait <ref> <Name>   waiting for Name
+  bhote rename <ref> <title>     new title          bhote desc <ref> <text>   description
+           bhote rm <ref>       delete
+  bhote sync                     merge with the data location now
+  bhote help
+
+<ref> is the number from `bhote list`, an id (or its start), or a piece of the title. Exit codes: 0 ok, 1 error,
+2 more than one topic matches. Settings: ~/.config/bhote/config (or the panel: ",").
+HELP
+}
+bhote_cli() {
+    local cmd=${1:-}; shift
+    harden_perms
+    trap 'rm -rf "$RUN_DIR"' EXIT
+    case "$cmd" in
+        help|-h|--help) bhote_help ;;
+        add)  local title="" who="" st="" desc="" arg
+              while [ $# -gt 0 ]; do
+                  case "$1" in
+                      --waiting|-w) who=${2:-}; shift ;;
+                      --status|-s) st=${2:-}; shift ;;
+                      --desc|-d) desc=${2:-}; shift ;;
+                      @?*) who=${1#@} ;;
+                      *) title="${title:+$title }$1" ;;
+                  esac; shift
+              done
+              topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
+              f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+              case "$st" in now|later|done) topic_set "$f" status "$st" ;; esac
+              cli_done; cli_show "$f" ;;
+        list|ls) local all="" json="" only="" i first=1
+              while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --json) json=1 ;; --status|-s) only=${2:-}; shift ;; esac; shift; done
+              NOW=$(date +%s); topics_load
+              [ -n "$json" ] && printf '['
+              for (( i = 0; i < T_N; i++ )); do
+                  [ -n "$only" ] && [ "${T_STATUS[$i]}" != "$only" ] && continue
+                  [ -z "$only" ] && [ -z "$all" ] && [ "${T_STATUS[$i]}" = done ] && continue
+                  if [ -n "$json" ]; then
+                      [ "$first" = 1 ] || printf ','; first=0
+                      printf '{"n":%s,"id":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"updated":%s}' "$(( i + 1 ))" \
+                          "$(json_str "${T_ID[$i]}")" "$(json_str "${T_TITLE[$i]}")" "$(json_str "${T_DESC[$i]:-}")" "$(json_str "${T_STATUS[$i]}")" "$(json_str "${T_WFOR[$i]}")" "${T_WSINCE[$i]:-0}" "${T_UPD[$i]:-0}"
+                  else
+                      printf '%3s  %-8s %s' "$(( i + 1 ))" "${T_STATUS[$i]}" "${T_TITLE[$i]}"
+                      [ "${T_STATUS[$i]}" = waiting ] && printf '  (%s, for %s)' "${T_WFOR[$i]}" "$(age_text "${T_WSINCE[$i]:-$NOW}")"
+                      printf '\n'
+                  fi
+              done
+              [ -n "$json" ] && printf ']\n' ;;
+        show) local f; f=$(topic_ref "${1:-}") || return $?; cli_show "$f" "${2:-}" ;;
+        done|now|later|wait|rename|desc|rm)
+              local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
+              f=$(topic_ref "$ref") || return $?; shift
+              case "$cmd" in
+                  done) topic_set "$f" status done ;;
+                  now) topic_set "$f" status now; topic_set "$f" waiting_for "" ;;
+                  later) topic_set "$f" status later ;;
+                  wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }
+                        topic_set "$f" status waiting; topic_set "$f" waiting_for "$*"; topic_set "$f" waiting_since "$(date +%s)" ;;
+                  rename) [ -n "${1:-}" ] || { echo "bhote: rename needs a title" >&2; return 1; }; topic_set "$f" title "$*" ;;
+                  desc) topic_set "$f" description "$*" ;;
+                  rm) topic_set "$f" deleted 1 ;;
+              esac
+              cli_done; [ "$cmd" = rm ] && echo "deleted" || cli_show "$f" ;;
+        sync) if [ "$(cfg_get STORE local)" != remote ]; then echo "data location is local, nothing to merge"
+              elif store_sync; then echo "in sync with $(cfg_get STORE_MACHINE)"
+              else echo "bhote: $(cfg_get STORE_MACHINE) is not reachable, changes stay local" >&2; return 1; fi ;;
+        *) echo "bhote: unknown command '$cmd' (bhote help)" >&2; return 1 ;;
+    esac
+}
+
+# BHOTE_SOURCE_ONLY=1 loads the functions without starting the panel (the tests do that).
+if [ -n "${BHOTE_SOURCE_ONLY:-}" ]; then :
+elif [ $# -gt 0 ]; then bhote_cli "$@"
+else bhote_main; fi

@@ -1,0 +1,19 @@
+id = "bhote.panel"
+name = "Bhote Panel"
+version = "0.1.0"
+min_herdr_version = "0.8.2"
+description = "Opens the Bhote side panel (topics + agents) on the right of every tab, about as wide as the herdr sidebar, when herdr starts"
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["sh", "open_panel.sh", "startup"]
+
+[[events]]
+on = "worktree.created"
+command = ["sh", "open_panel.sh", "event"]
+
+[[actions]]
+id = "open"
+title = "Bhote: open panel"
+contexts = ["global"]
+command = ["sh", "open_panel.sh", "open"]

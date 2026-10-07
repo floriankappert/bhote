@@ -1,0 +1,21 @@
+# Maintainer: Florian Kappert
+pkgname=bhote
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Topics and agents side panel for the herdr terminal workspace manager'
+arch=('any')
+url='https://github.com/floriankappert/bhote'
+license=('MIT')
+depends=('bash' 'jq')
+source=("git+https://github.com/floriankappert/bhote.git#tag=v${pkgver}")
+sha256sums=('SKIP')
+
+package() {
+  cd "$srcdir/bhote"
+  install -Dm755 bhote "$pkgdir/usr/bin/bhote"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -d "$pkgdir/usr/share/bhote/herdr-plugin"
+  install -m644 herdr-plugin/herdr-plugin.toml "$pkgdir/usr/share/bhote/herdr-plugin/"
+  install -m755 herdr-plugin/open_panel.sh "$pkgdir/usr/share/bhote/herdr-plugin/"
+  echo "link the herdr plugin with: herdr plugin link /usr/share/bhote/herdr-plugin" >&2
+}
