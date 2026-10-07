@@ -1503,7 +1503,21 @@ w_hosts() {
         elif command -v avahi-browse >/dev/null 2>&1; then
             avahi-browse -tpr _ssh._tcp 2>/dev/null | awk -F';' '$1 == "=" && $3 == "IPv4" { print $7 "\037local network (Avahi)" }'
         fi
-    } | awk -F'\037' '$1 != "" && !seen[$1]++' | w_not_saved | head -9
+    } | awk -F'\037' '$1 != "" && !seen[$1]++' | w_not_saved | head -9 | w_reach
+}
+w_reach() {  # every candidate is tried at once (ssh, 3 s): the answer goes into its description, reachable ones first
+    local h w i=0 n r rest dir; dir=$(mktemp -d "$RUN_DIR/reach.XXXXXX")
+    while IFS=$US read -r h w; do
+        [ -n "$h" ] || continue; i=$(( i + 1 )); printf '%s\n%s\n' "$h" "$w" > "$dir/$i.in"
+        ( out=$(ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=accept-new "$USER@$h" true 2>&1); rc=$?
+          case "$rc:$out" in 0:*) echo "0 ssh ok" ;; *ermission*|*publickey*) echo "1 needs a password" ;; *) echo "2 not reachable" ;; esac > "$dir/$i.out" ) &
+    done
+    wait
+    for (( n = 1; n <= i; n++ )); do
+        { IFS= read -r h; IFS= read -r w; } < "$dir/$n.in"; read -r r rest < "$dir/$n.out"
+        printf '%s %s\037%s · %s\n' "$r" "$h" "$w" "$rest"
+    done | sort -s -n -k1,1 | cut -d' ' -f2-
+    rm -rf "$dir"
 }
 w_saved_shorts() {  # the short names (and Tailscale IPs) of the machines herdr has saved already
     local label host en ip
