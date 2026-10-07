@@ -612,7 +612,7 @@ bhote_splash() {
 ████▀  █   █  ▀███▀    █    █████
 WORD
     blank; blanks "$SG2"
-    mid "work & agent management" "${D}work & agent sync${X}"
+    mid "Agent & Work Management" "${D}Agent & Work Management${X}"
     blank; blanks "$SG3"
     local mv=${#host} vv t   # the four lines are one block: centred as a whole, values start in one column
     for vv in "${herdr_v:-?}" "$agents" "$T_N$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
