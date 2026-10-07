@@ -28,7 +28,7 @@ right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the c
 
 | key | does |
 |---|---|
-| `↑↓` / `jk`, wheel | move |
+| `↑↓` / `jk` | move |
 | `→` / `⏎`, `←` / `esc` | open the topic menu / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |

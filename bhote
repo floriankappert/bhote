@@ -956,7 +956,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     local k
     printf '\n %sHotkeys%s\n' "$L" "$X"; rule
     hk_group "LIST"
-    hk "↑↓ jk wheel" "move"; hk "→ ⏎" "open the topic menu"; hk "n" "new topic (Title; description @Name)"
+    hk "↑↓ jk" "move"; hk "→ ⏎" "open the topic menu"; hk "n" "new topic (Title; description @Name)"
     hk "e" "edit the title"; hk "d" "edit the description"
     hk "s" "start on a free agent"; hk "x" "mark done"; hk "a" "suggestions from agents"
     hk "," "settings"; hk "S" "welcome screen"; hk "q" "quit"
@@ -965,7 +965,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     hk_group "SETTINGS"
     hk "↑↓" "select"; hk "space ⏎" "switch"; hk "←→" "change a value"; hk ", esc" "back"
     hk_group "MOUSE"
-    hk "wheel" "move"; hk "drag ═══" "resize the agent area"
+    hk "drag ═══" "resize the agent area"
     printf '\n'; rule
     printf ' %s← esc back%s\n' "$D" "$X"
 }
@@ -1072,14 +1072,11 @@ ask_drain() {  # throw away input that is still waiting (the rest of a multi-lin
 # The divider above the agents is a handle like herdr's sidebar split: press on it, drag, release. Its row is written by the frame
 # (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is kept as AGENT_ROWS in the config.
 MOUSE_ON=$'\033[?1002h\033[?1006h'; MOUSE_OFF=$'\033[?1002l\033[?1006l'; DRAG=0; DRAG_ROWS=""
-mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (UP/DOWN for the wheel, DRAG while the divider moves, else empty)
+mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the divider moves, else empty)
     local b x y div rest; MOUSE_KEY=""
     b=${1%%;*}; rest=${1#*;}; x=${rest%%;*}; y=${rest#*;}
     case "$b$x$y" in *[!0-9]*) return ;; esac
-    case "$b" in
-        64) MOUSE_KEY=UP; return ;;
-        65) MOUSE_KEY=DOWN; return ;;
-    esac
+    case "$b" in 64|65|66|67) return ;; esac                 # the wheel does nothing (it must not move the selection)
     div=$(cat "$RUN_DIR/divrow" 2>/dev/null); div=$(num_or "$div" 0)
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then DRAG=1; return; fi
     if [ "$DRAG" = 1 ] && [ "$2" = M ] && [ "$b" = 32 ]; then       # moving with the button held: the agents start below row y
@@ -1877,6 +1874,11 @@ setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
     printf '],"setup_done":%s}\n' "$(json_opt "$(cfg_get SETUP_DONE '')")"
 }
 
+panel_setup() {  # the wizard from inside the panel: a normal terminal for it, then the panel mode again
+    trap '' USR1; printf '%s\033[?25h' "$MOUSE_OFF"; stty "$stty_saved" </dev/tty 2>/dev/null
+    bhote_setup
+    stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null; printf '\033[?25l%s' "$MOUSE_ON"; trap 'anim=1' USR1; term_size
+}
 bhote_main() {
     local f chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
     harden_perms; bhote_info
@@ -1893,7 +1895,9 @@ bhote_main() {
         [ -r "$sl/pid" ] && read -r so < "$sl/pid"
         if { [ -n "$so" ] && ! kill -0 "$so" 2>/dev/null; } || { [ -d "$sl" ] && [ -z "$so" ]; }; then rm -rf "$sl"; fi   # its panel is gone
         if mkdir "$sl" 2>/dev/null; then
-            echo "$$" > "$sl/pid"; printf '\033]2;Bhote\007'; bhote_setup; rm -rf "$sl"
+            echo "$$" > "$sl/pid"; printf '\033]2;Bhote\007'
+            # the welcome screen comes first and says what a key does now; too small for it: straight into the setup
+            if splash_fits; then SETUP_PENDING=1; PROMPT_TEXT="PRESS ANY KEY TO START SETUP"; else bhote_setup; rm -rf "$sl"; fi
         fi
     fi
     local pids="" stty_saved
@@ -1907,6 +1911,7 @@ bhote_main() {
         [ -n "$stty_saved" ] && stty "$stty_saved" </dev/tty 2>/dev/null
         [ "$(cat "$SHARED_DIR/collector.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$SHARED_DIR/collector.lock"
         [ "$(cat "$DATA_DIR/sync.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$DATA_DIR/sync.lock"
+        [ "$(cat "$SHARED_DIR/setup.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$SHARED_DIR/setup.lock"
         rm -rf "$RUN_DIR"
         printf '%s\033[0m\033[?25h\033[?1049l\033]2;\007' "$MOUSE_OFF" 2>/dev/null   # mouse off, colours, cursor, normal screen, title
     }
@@ -1947,16 +1952,16 @@ bhote_main() {
             elif [ -z "$k2" ]; then key=ESC
             else key=""; fi                                    # Alt+key: nothing
         fi
+        if [ "${SETUP_PENDING:-}" = 1 ] && [ "$view" = splash ] && [ -n "$key" ] && [ "$key" != DRAG ]; then
+            panel_setup; SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; rm -rf "$SHARED_DIR/setup.lock"
+            view=main; redraw=1; key=""
+        fi
         if [ "$view" = settings ]; then
             case "$key" in
                 ","|ESC|q|Q) view=$back; redraw=1 ;;
                 ""|DRAG) ;;
                 *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys
-                   if [ "$SETTINGS_GO" = setup ]; then                 # the wizard needs a normal terminal: leave the panel mode, come back
-                       trap '' USR1; printf '%s\033[?25h' "$MOUSE_OFF"; stty "$stty_saved" </dev/tty 2>/dev/null
-                       bhote_setup
-                       stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null; printf '\033[?25l%s' "$MOUSE_ON"; trap 'anim=1' USR1; term_size
-                   fi
+                   [ "$SETTINGS_GO" = setup ] && panel_setup
                    redraw=1 ;;
             esac
         elif [ "$view" = hotkeys ]; then
@@ -2007,7 +2012,7 @@ bhote_main() {
             esac
         fi
         # the welcome screen closes by itself (setting, default on) when nobody pressed a key for SPLASH_SECONDS
-        if [ "$view" = splash ] && [ -z "$key" ]; then
+        if [ "$view" = splash ] && [ -z "$key" ] && [ "${SETUP_PENDING:-}" != 1 ]; then
             cfg_var _sa SPLASH_AUTOCLOSE on; cfg_var _ss SPLASH_SECONDS 15
             if [ "$_sa" = on ] && [ $(( SECONDS - ${SPLASH_SINCE:-$SECONDS} )) -ge "$_ss" ]; then view=main; redraw=1; fi
         fi

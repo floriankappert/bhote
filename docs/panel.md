@@ -8,7 +8,7 @@ and the agents below.
 
 | Key | List |
 |---|---|
-| `↑` `↓` `j` `k`, mouse wheel | move |
+| `↑` `↓` `j` `k` | move |
 | `→` `⏎` | the topic's menu (start with agent, waiting for, park, done, rename, describe, delete) |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
