@@ -356,30 +356,31 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""
+    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""
     [ "$color" = 1 ] || { TEAL=""; ORANGE=""; return 0; }
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
         R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135")
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
         Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"
+        LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
         stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135"); GRAD_ANSI=""
     else                                                     # the terminal's palette: magenta, red, cyan, yellow, ...
         R="${esc}[35m"; NN="${esc}[31m"; S="${esc}[36m"; C="${esc}[33m"; L="${esc}[1;39m"; D="${esc}[90m"; B=$D
         Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
-        SELBG="${esc}[48;5;236m"
+        SELBG="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
     fi
     for k in TEXT DIM FRAME SELECTION ACCENT NOW WAITING REVIEW LATER DONE ERROR; do
         cfg_var v "COLOR_$k" ""; [ -n "$v" ] || continue; v=$(hex_rgb "$v") || continue
         case "$k" in
-            TEXT) L="${esc}[1m$(rgb "$v")" ;; DIM) D=$(rgb "$v") ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m" ;;
+            TEXT) L="${esc}[1m$(rgb "$v")"; LSEL=$L ;; DIM) D=$(rgb "$v") ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m" ;;
             ACCENT) S=$(rgb "$v") ;; NOW) C=$(rgb "$v") ;; WAITING) Y=$(rgb "$v") ;; REVIEW) BLUE=$(rgb "$v") ;;
             LATER) R=$(rgb "$v") ;; DONE) GREEN=$(rgb "$v") ;; ERROR) NN=$(rgb "$v") ;;
         esac
     done
-    TEAL=$S; ORANGE=$C; HEAD_GRAD=""
+    TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}
 }
 theme_sig() {  # theme_sig <var>: the settings the colours come from, as one string (a change re-applies the theme)
     local _l _sig=""
@@ -724,7 +725,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
 PROMPT_TEXT="PRESS ANY KEY TO START"
 SPLASH_PROMPT_ROW=35      # grows by SPLASH_E on a taller pane
 prompt_shown() {  # prompt_shown <on|off>
-    if [ "$1" = on ]; then printf '%s%s%s%s' "$Y" "${esc}[1m" "$PROMPT_TEXT" "$X"; else printf '%*s' "${#PROMPT_TEXT}" ""; fi
+    if [ "$1" = on ]; then printf '%s%s%s%s' "$Y" "$([ "$color" = 1 ] && printf '%s[1m' "$esc")" "$PROMPT_TEXT" "$X"; else printf '%*s' "${#PROMPT_TEXT}" ""; fi
 }
 splash_prompt_row() { mid "$PROMPT_TEXT" "$(prompt_shown on)"; }
 splash_prompt_at() {  # splash_prompt_at <on|off>
@@ -777,12 +778,14 @@ group() {  # group <CAPTION> [colour]: a status caption; everything below starts
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
 # find it for scrolling (and strips it). Done entries are one muted line.
 topic_item() {  # topic_item <selected 0|1> <meta colour> <unused> <title colour> <title> <description> <meta> <compact 0|1>
-    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d m mc=${2:-$D}
+    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d m mc=${2:-$D} tc=$4 dc=$D
     clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); clip_set m "$7" $(( w - 5 ))
-    [ "$1" = 1 ] && { bg=$SELBG; mk=$'\001'; }
-    printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$4" "$t" "$X$bg" $(( w - 2 - ${#t} )) "" "$X"
-    [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$D" "$d" "$X$bg" $(( w - 2 - ${#d} )) "" "$X"
-    [ -n "$m" ] && printf '%s  %s∟ %s%s%s%*s%s\n' "$bg" "$D" "$mc" "$m" "$X$bg" $(( w - 4 - ${#m} )) "" "$X"
+    if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
+        bg=$SELBG; mk=$'\001'; [ "$tc" = "$L" ] && tc=$LSEL; dc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
+    fi
+    printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - ${#t} )) "" "$X"
+    [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - ${#d} )) "" "$X"
+    [ -n "$m" ] && printf '%s  %s∟ %s%s%s%*s%s\n' "$bg" "$dc" "$mc" "$m" "$X$bg" $(( w - 4 - ${#m} )) "" "$X"
     [ "$8" = 1 ] || printf '\n'
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
@@ -956,7 +959,7 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
     local sel=$1 label=$2 vp=$3 vc=$4 ind=${5:-0} w=$(( ${COLS:-44} - 2 )) pad
     clip_set label "$label" $(( w - 5 - ind - ${#vp} ))
     pad=$(( w - 4 - ind - ${#label} - ${#vp} )); [ "$pad" -lt 1 ] && pad=1
-    if [ "$sel" = 1 ]; then printf '%s   %s%*s%s%s%*s%s%s%s\n' "$SELBG" "$L" "$ind" "" "$label" "$X$SELBG" "$pad" "" "$vc" "$SELBG " "$X"
+    if [ "$sel" = 1 ]; then printf '%s   %s%*s%s%s%*s%s%s%s\n' "$SELBG" "$LSEL" "$ind" "" "$label" "$X$SELBG" "$pad" "" "$vc" "$SELBG " "$X"
     else printf '   %*s%s%s%s%*s%s\n' "$ind" "" "$D" "$label" "$X" "$pad" "" "$vc"; fi
 }
 
@@ -1267,7 +1270,7 @@ ask_draw() {  # ask_draw <label>: the prompt row with ED_BUF; the part around th
 }
 menu_line() {  # menu_line <selected: 1 or empty> <text>: a choice; the selected one is a bar over the whole width
     local w=$(( ${COLS:-44} - 2 )) t; clip_set t "$2" $(( w - 4 ))
-    if [ -n "$1" ]; then printf '%s   %s%s%*s%s\n' "$SELBG" "$L" "$t" $(( w - 3 - ${#t} )) "" "$X"
+    if [ -n "$1" ]; then printf '%s   %s%s%*s%s\n' "$SELBG" "$LSEL" "$t" $(( w - 3 - ${#t} )) "" "$X"
     else printf '   %s%s%s\n' "$D" "$t" "$X"; fi
 }
 MENU_ITEMS=()                                                  # "key|label", made for the selected topic (menu_build)
