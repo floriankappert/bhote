@@ -1515,7 +1515,7 @@ w_reach() {  # every candidate is tried at once (ssh, 3 s): the answer goes into
     wait
     for (( n = 1; n <= i; n++ )); do
         { IFS= read -r h; IFS= read -r w; } < "$dir/$n.in"; read -r r rest < "$dir/$n.out"
-        printf '%s %s\037%s · %s\n' "$r" "$h" "$w" "$rest"
+        printf '%s %s\037%s · %s\n' "$r" "$h" "$rest" "$w"      # the answer first: it must not be cut off
     done | sort -s -n -k1,1 | cut -d' ' -f2-
     rm -rf "$dir"
 }
@@ -1655,6 +1655,7 @@ setup_step_machines() {
         local hs h u
         w_pick hs "Machines:" "$(w_hosts)"; [ "$W_QUIT" = 1 ] && return; [ -n "$hs" ] || continue
         for h in $hs; do setup_add_machine "$h"; [ "$W_QUIT" = 1 ] && return; done
+        w_continue; [ "$W_QUIT" = 1 ] && return                 # the result (also a failed test, with its reason) stays readable
     done
 }
 setup_step_twoway() {
