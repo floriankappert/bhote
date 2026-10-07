@@ -103,11 +103,13 @@ chmod +x "$T/halfssh"; FAKE_SSH_REAL=$T/fakessh BHOTE_SSH=$T/halfssh store_sync;
 [ "$rc" = 1 ] && [ "$before" = "$(ls "$TOPIC_DIR" | sort)" ] && ok "hardening: an incomplete dump is not merged (offline)" || bad "incomplete dump: rc=$rc"
 rm -f "$R/half.topic"
 # the sync lock: busy -> 2; a lock of a dead process is taken over
-mkdir -p "$DATA_DIR/sync.lock"; sleep 30 & held=$!; echo "$held" > "$DATA_DIR/sync.lock/pid"
+sleep 30 & held=$!; ln -s "$held" "$DATA_DIR/sync.lock"
 store_sync; [ $? = 2 ] && ok "hardening: a running sync elsewhere returns 2 (busy)" || bad "busy lock not reported"
 kill "$held"; wait "$held" 2>/dev/null
-store_sync; [ $? = 0 ] && [ ! -d "$DATA_DIR/sync.lock" ] && ok "hardening: the lock of a dead process is taken over and released" || bad "stale lock not taken over"
+store_sync; [ $? = 0 ] && [ ! -e "$DATA_DIR/sync.lock" ] && [ ! -L "$DATA_DIR/sync.lock" ] && ok "hardening: the lock of a dead process is taken over and released" || bad "stale lock not taken over"
 # config: several keys in one write, labels with regex characters
+mkdir -p "$DATA_DIR/sync.lock"; echo 1 > "$DATA_DIR/sync.lock/pid"   # an old directory lock (older version) is replaced
+store_sync; [ $? = 0 ] && [ ! -e "$DATA_DIR/sync.lock" ] && ok "hardening: an old directory lock is replaced" || bad "old dir lock blocks"
 cfg_set A 1 B 2; [ "$(cfg_get A x)$(cfg_get B x)" = 12 ] && ok "hardening: cfg_set writes several keys at once" || bad "cfg_set multi"
 cfg_set 'A.*' z; [ "$(cfg_get A x)" = 1 ] && ok "hardening: a key with regex characters does not delete other keys" || bad "regex key removed others"
 
@@ -118,8 +120,12 @@ cat > "$T/hbin/herdr" <<SH
 case "\$*" in
   *"machine list"*) printf 'id1\tFake\tfakehost\tdefault\tenabled\n' ;;
   *"plugin action invoke dump"*) echo invoked >> "$T/hlog" ;;
-  *"plugin log list"*) TOPIC_DIR="$T/hremote" dump=\$(BHOTE_DATA="$T/hremote-data" BHOTE_SOURCE_ONLY=1 bash -c '. ./bhote; TOPIC_DIR="$T/hremote"; topics_dump')
-      printf '%s' "\$dump" | python3 -c 'import json,sys; print(json.dumps({"result":{"logs":[{"action_id":"dump","status":"succeeded","started_unix_ms":99999999999999,"stdout":sys.stdin.read()}]}}))' ;;
+  *"plugin log list"*) n=\$(grep -c invoked "$T/hlog" 2>/dev/null); n=\${n:-0}   # an old dump (log 1, stale) and one per invoke
+      TOPIC_DIR="$T/hremote" dump=\$(BHOTE_DATA="$T/hremote-data" BHOTE_SOURCE_ONLY=1 bash -c '. ./bhote; TOPIC_DIR="$T/hremote"; topics_dump')
+      printf '%s' "\$dump" | python3 -c 'import json,sys; n=int(sys.argv[1]); d=sys.stdin.read()
+logs=[{"log_id":"plugin-log-1","action_id":"dump","status":"succeeded","stdout":"\\n@@hz.topic\\nid=hz\\ntitle=Stale\\nupdated=99999\\n\\n@@END\\n"}]
+logs+=[{"log_id":"plugin-log-%d"%(i+2),"action_id":"dump","status":"succeeded","stdout":d} for i in range(n)]
+print(json.dumps({"result":{"logs":logs}}))' "\$n" ;;
 esac
 SH
 chmod +x "$T/hbin/herdr"

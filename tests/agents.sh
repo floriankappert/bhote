@@ -9,6 +9,7 @@ cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 case "$*" in
  *"pane run"*|*"agent prompt"*|*"notification show"*) echo "$*" >> "$FAKE_LOG" ;;
+ *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
  *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
 esac
@@ -34,12 +35,12 @@ AG_N=3; AG_LINES=($'Mac\037w1:p1\037idle\037Project\037' $'Laptop\037w9:p2\037do
 pick_build
 [ "${#PICK_MAP[@]}" = 2 ] && ok "picker: only the two free agents are offered (the working one is not)" || bad "picker offers ${#PICK_MAP[@]} agents"
 pick_do 1; wait
-grep -q "^agent prompt w1:p1 Deploy fix. needs care (bhote topic $NEW_TOPIC_ID: when you are finished, run \`bhote review $NEW_TOPIC_ID\`" "$FAKE_LOG" && ok "delegate: a local agent gets the topic with its id and how to report back, no --machine" || bad "local delegate: $(cat "$FAKE_LOG")"
+grep -q "^agent prompt w1:p1 Your bhote topic: Deploy fix. needs care (bhote topic $NEW_TOPIC_ID: when you are finished, run \`bhote review $NEW_TOPIC_ID\`" "$FAKE_LOG" && ok "delegate: a local agent gets the topic with its id and how to report back, no --machine" || bad "local delegate: $(cat "$FAKE_LOG")"
 [ "$(topic_get "$TOPIC_DIR/$NEW_TOPIC_ID.topic" agent_pane)" = "w1:p1" ] && ok "delegate: the topic remembers the agent" || bad "agent not stored"
 topic_new "Second" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; pick_build
 [ "${#PICK_MAP[@]}" = 1 ] && ok "picker: an agent that holds a running topic is not offered again" || bad "taken agent still offered (${#PICK_MAP[@]})"
 pick_do 1; wait
-grep -q -e "^--machine Laptop agent prompt w9:p2 Second (bhote topic" "$FAKE_LOG" && ok "delegate: a remote agent is reached with --machine" || bad "remote delegate: $(cat "$FAKE_LOG")"
+grep -q -e "^--machine Laptop agent prompt w9:p2 Your bhote topic: Second (bhote topic" "$FAKE_LOG" && ok "delegate: a remote agent is reached with --machine" || bad "remote delegate: $(cat "$FAKE_LOG")"
 AG_LINES=($'Mac\037w1:p1\037working\037Project\037' $'Laptop\037w9:p2\037done\037server\037'); : > "$FAKE_LOG"
 topic_new "Third" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; PICK_MAP=(0); pick_do 1; wait
 [ ! -s "$FAKE_LOG" ] && ok "delegate: an agent that became busy meanwhile gets nothing" || bad "sent to a busy agent: $(cat "$FAKE_LOG")"
@@ -53,7 +54,7 @@ HERDR_PLUGIN_EVENT_JSON='{"event":"pane_agent_status_changed","data":{"pane_id":
 [ -e "$SHARED_DIR/poke" ] && ok "event: the collector is poked (panels update at once)" || bad "no poke"
 HERDR_PLUGIN_EVENT_JSON='{"event":"pane_agent_status_changed","data":{"pane":{"pane_id":"w0:p0","agent_status":"done","agent_session":{"value":"s-777"}}}}' cli_event
 [ "$(topic_get "$ef" status)" = review ] && ok "event: the agent's session finished -> review" || bad "done event did not move to review: $(topic_get "$ef" status)"
-sleep 0.5; grep -q "notification show Ready for review" "$FAKE_LOG" && ok "event: a herdr notification says it is ready for review" || bad "no notification: $(cat "$FAKE_LOG")"
+for _w in 1 2 3 4 5 6; do grep -q "notification show" "$FAKE_LOG" && break; sleep 0.5; done; grep -q "notification show Ready for review" "$FAKE_LOG" && ok "event: a herdr notification says it is ready for review" || bad "no notification: $(cat "$FAKE_LOG")"
 topic_new "Fresh" "" ""; ff="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$ff" agent_pane w6:p1; topic_set "$ff" agent_machine Mac; topic_set "$ff" delegated "$(date +%s)"
 HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w6:p1","agent_status":"idle"}}' cli_event
 [ "$(topic_get "$ff" status)" = now ] && ok "event: the idle right after handing over is ignored" || bad "fresh delegation moved to review"
@@ -71,7 +72,7 @@ unset CLAUDECODE; : > "$FAKE_LOG"; HOST=Mac
 topic_new "Big refactor" "" ""; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; tid=$NEW_TOPIC_ID
 transfer_start "$tf" Mac w3:p1 busy Mac w2:p1 server; wait
 grep -q "^agent prompt w3:p1 Steal & Transfer (bhote topic $tid" "$FAKE_LOG" && ok "transfer: the source agent is told to stop, commit and hand over" || bad "no handover prompt: $(cat "$FAKE_LOG")"
-grep -q "bhote handover $tid --to Mac/w2:p1 --branch" "$FAKE_LOG" && ok "transfer: it gets the exact handover command" || bad "handover command missing"
+grep -q "bhote handover $tid --to 'Mac/w2:p1' --branch" "$FAKE_LOG" && ok "transfer: it gets the exact handover command" || bad "handover command missing"
 grep -q "do not create a new branch" "$FAKE_LOG" && ok "transfer: the branch is kept (no new branch)" || bad "branch rule missing"
 [ "$(topic_get "$tf" transfer_to)" = "Mac/w2:p1" ] && ok "transfer: the topic remembers where it goes" || bad "transfer_to: $(topic_get "$tf" transfer_to)"
 topics_load; COLS=60; out=$(topics_block); case "$out" in *"busy → server · handing over"*) ok "transfer: the list says it is being handed over" ;; *) bad "meta: $out" ;; esac
@@ -103,4 +104,19 @@ kill "$A"; wait "$A" 2>/dev/null
 collector_lead "$B" && ok "collector: a follower takes over when the leader is gone" || bad "no takeover"
 kill "$B"; wait "$B" 2>/dev/null
 [ "$(ls -ld "$SHARED_DIR" | cut -c1-10)" = "drwx------" ] && ok "the shared folder is private (0700)" || bad "shared folder is open"
+# hardening: a handover needs a pending transfer to exactly that agent; another status ends a pending transfer
+out=$(BHOTE_NO_SYNC=1 cli_handover "$tid" --to Mac/w2:p1 2>&1); [ $? = 1 ] && case "$out" in *"no transfer is pending"*) true ;; *) false ;; esac && ok "handover: refused without a pending transfer" || bad "handover without transfer: $out"
+topic_set "$tf" transfer_to "Mac/w2:p1"
+out=$(BHOTE_NO_SYNC=1 cli_handover "$tid" --to Mac/w9:p9 2>&1); [ $? = 1 ] && ok "handover: refused for another target" || bad "handover to another target: $out"
+out=$(BHOTE_NO_SYNC=1 cli_handover "$tid" extra --to Mac/w2:p1 2>&1); [ $? = 1 ] && ok "handover: refused with a second topic word" || bad "handover extra arg: $out"
+topic_set "$tf" status later; [ -z "$(topic_get "$tf" transfer_to)" ] && ok "status: parking a topic ends a pending transfer" || bad "transfer_to kept after later"
+# the transfer picker: index 0 does not exist there (bash 4 would read the last agent)
+: > "$FAKE_LOG"; SEL_ID=$tid; topic_set "$tf" status now; PICK_MODE=transfer; pick_do 0; wait
+[ ! -s "$FAKE_LOG" ] && ok "transfer picker: index 0 does nothing" || bad "pick_do 0 sent: $(cat "$FAKE_LOG")"
+# "just mark as started" forgets the old agent
+PICK_MODE=start; pick_do 0; [ -z "$(topic_get "$tf" agent_pane)$(topic_get "$tf" agent_machine)$(topic_get "$tf" agent_session)" ] && ok "just started: no agent left on the topic" || bad "agent fields kept"
+# a source agent that waits for a permission cannot hand over
+blocked_live() { LIVE_ST=blocked; LIVE_SESS=""; LIVE_CWD=""; }
+( agent_live() { if [ "$2" = w3:p1 ]; then blocked_live; else LIVE_ST=idle; fi; }
+  transfer_start "$tf" Mac w3:p1 busy Mac w2:p1 server 2>/dev/null ) && bad "blocked source accepted" || ok "transfer: a blocked source agent is refused"
 rm -rf "$T"; exit $fail

@@ -16,8 +16,11 @@ trap 'rm -rf "$RUN_DIR"' EXIT
 # What all panels of this machine share (the agent lists, "a change is waiting", which panel collects): a private folder that
 # must belong to this user; if it does not (or cannot be made), every panel keeps to its own scratch dir.
 SHARED_DIR=${BHOTE_SHARED:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bhote-$UID}
-{ mkdir -p "$SHARED_DIR" && chmod 700 "$SHARED_DIR"; } 2>/dev/null
-{ [ -d "$SHARED_DIR" ] && [ -O "$SHARED_DIR" ] && [ ! -L "$SHARED_DIR" ]; } || SHARED_DIR=$RUN_DIR
+if [ -L "$SHARED_DIR" ]; then SHARED_DIR=$RUN_DIR                    # a symlink there is not ours: never follow it (not even chmod)
+else
+    { [ -d "$SHARED_DIR" ] || mkdir -m 700 "$SHARED_DIR"; } 2>/dev/null
+    if [ -d "$SHARED_DIR" ] && [ -O "$SHARED_DIR" ] && [ ! -L "$SHARED_DIR" ]; then chmod 700 "$SHARED_DIR" 2>/dev/null; else SHARED_DIR=$RUN_DIR; fi
+fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.1.0}
@@ -41,12 +44,20 @@ cfg_var() {  # cfg_var <var> <key> <default>: no subshell, no awk (the screen as
     printf -v "$1" '%s' "${_cv:-$3}"
 }
 cfg_get() { cfg_var _CFG "$1" "$2"; printf '%s' "$_CFG"; }
-num_or() { case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) printf '%s' "$1" ;; esac; }   # num_or <value> <default>: digits only
-num_set() { case "$2" in ''|*[!0-9]*) printf -v "$1" '%s' "$3" ;; *) printf -v "$1" '%s' "$2" ;; esac; }   # the same into a variable (no subshell)
+# num_or <value> <default>: digits only, without leading zeros ("08" would be octal in $(( ))), at most 18 digits
+num_or() { case "$1" in ''|*[!0-9]*) printf '%s' "$2" ;; *) local _v=${1#"${1%%[!0]*}"}; _v=${_v:-0}; [ "${#_v}" -le 18 ] || _v=$2; printf '%s' "$_v" ;; esac; }
+num_set() {  # the same into a variable (no subshell)
+    case "$2" in ''|*[!0-9]*) printf -v "$1" '%s' "$3" ;; *) local _v=${2#"${2%%[!0]*}"}; _v=${_v:-0}; [ "${#_v}" -le 18 ] || _v=$3; printf -v "$1" '%s' "$_v" ;; esac
+}
 # Every value that ends up in $(( )) must be plain digits first: bash expands a[$(cmd)] inside arithmetic and would RUN cmd.
 cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value never contains a control character: it could add a line)
-    local tmp="$CONFIG_FILE.tmp.$$" line k keep a
+    local tmp line k keep a i=0 o
     mkdir -p "$(dirname "$CONFIG_FILE")"
+    while ! ln -s "$$" "$CONFIG_FILE.lock" 2>/dev/null; do        # one writer at a time (the panel, the CLI, the wizard)
+        o=$(readlink "$CONFIG_FILE.lock" 2>/dev/null); [ -n "$o" ] && ! kill -0 "$o" 2>/dev/null && rm -f "$CONFIG_FILE.lock"
+        i=$(( i + 1 )); [ "$i" -gt 40 ] && break; sleep 0.05
+    done
+    tmp=$(mktemp "$CONFIG_FILE.XXXXXX") || { rm -f "$CONFIG_FILE.lock"; return 1; }
     { if [ -r "$CONFIG_FILE" ]; then while IFS= read -r line; do
           k=${line%%=*}; keep=1
           for (( a = 1; a <= $#; a += 2 )); do [ "$k" = "${!a}" ] && keep=0; done
@@ -54,6 +65,7 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
       done < "$CONFIG_FILE"; fi
       while [ $# -ge 2 ]; do printf '%s=%s\n' "$1" "${2//[[:cntrl:]]/}"; shift 2; done
     } > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+    [ "$(readlink "$CONFIG_FILE.lock" 2>/dev/null)" = "$$" ] && rm -f "$CONFIG_FILE.lock"
 }
 # Every setting: KEY|default|type|description. Types: bool (on/off), int:min:max, enum:a:b, text, list (comma-separated).
 # The panel, `bhote config` and docs/configuration.md all follow this table; a value that does not fit is refused.
@@ -143,6 +155,7 @@ store_note() {  # store_note ok|offline
     [ "$1" = ok ] && ok_at=$(date +%s)
     printf 'state=%s\nok_at=%s\n' "$1" "${ok_at:-0}" > "$STORE_STATUS"
 }
+topic_id() { local _b=${1##*/}; printf '%s' "${_b%.topic}"; }   # the id IS the file name (checked: [A-Za-z0-9_-]); never trust an id= line
 topic_get() {  # topic_get <file> <key> [default]
     local line v=""
     [ -f "$1" ] || { printf '%s' "$3"; return; }
@@ -154,15 +167,18 @@ DESC_MAX=140                                                          # a descri
 topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     local f=$1 now old v=${3//[[:cntrl:]]/}; now=$(date +%s)      # no control character in a value: a newline would add keys
     [ "$2" = description ] && v=${v:0:$DESC_MAX}
+    [ "$2" = title ] && v=${v:0:500}
     old=$(num_or "$(topic_get "$f" updated 0)" 0); [ "$now" -le "$old" ] && now=$(( old + 1 ))   # a change always counts as newer
-    { grep -v -e "^$2=" -e '^updated=' "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$f.tmp.$$" && mv "$f.tmp.$$" "$f"
+    local tmp; tmp=$(mktemp "$f.XXXXXX") || return 1           # unique: the collector runs in a subshell with the same $$
+    local x='^updated='; [ "$2" = status ] && [ "$v" != now ] && x='^updated=|^transfer_to=|^transfer_to_name=|^transfer_from='
+    { grep -v -E -e "^$2=" -e "$x" "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$tmp" && mv "$tmp" "$f"
     : > "$STORE_DIRTY"
 }
 topic_new() {  # topic_new <title> [waiting for] [description]
     mkdir -p "$TOPIC_DIR"
     local now id title status=now since=""; now=$(date +%s); id="$now-$RANDOM"
     title=${1//[[:cntrl:]]/}; title=$(printf '%s' "$title" | sed 's/^ *//; s/ *$//'); set -- "$title" "${2//[[:cntrl:]]/}" "${3//[[:cntrl:]]/}"
-    set -- "$1" "$2" "${3:0:$DESC_MAX}"
+    set -- "${1:0:500}" "$2" "${3:0:$DESC_MAX}"
     [ -n "$title" ] || return 1
     [ -n "$2" ] && { status=waiting; since=$now; }
     printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\n' \
@@ -224,7 +240,7 @@ ago_set() { age_set "$1" "$2"; if [ "${!1}" = now ]; then printf -v "$1" '%s' 'j
 ago() { ago_set _AGO "$1"; printf '%s' "$_AGO"; }
 store_sync_run() {  # merge the local copy with the replica on the chosen machine. Returns 1 while that machine is unreachable.
     [ "$(cfg_get STORE local)" = remote ] || { rm -f "$STORE_STATUS"; return 0; }
-    local label host tmp f l r ok=1 NOW_SYNC via; NOW_SYNC=$(date +%s)
+    local label host tmp f l r ok=1 NOW_SYNC via n; NOW_SYNC=$(date +%s)
     label=$(cfg_get STORE_MACHINE ''); host=$(store_host "$label"); cfg_var via SYNC_VIA herdr
     [ -n "$host" ] || { store_note offline; return 1; }        # not a saved herdr machine (both transports need that)
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/bhote.sync.XXXXXX"); mkdir -p "$TOPIC_DIR"
@@ -240,34 +256,63 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
     fi
     # only plain topic names are accepted from the other side: a name like ../../x must never become a path
     mkdir "$tmp/remote"; awk -v d="$tmp/remote" '/^@@/ { if (f != "") close(f); f = ""; if ($0 ~ /^@@[A-Za-z0-9][A-Za-z0-9_-]*\.topic$/) f = d "/" substr($0, 3); next } $0 == "" { next } f != "" { print > f }' "$tmp/dump"
-    for f in "$tmp/remote"/*.topic; do [ -f "$f" ] && ! topic_valid "$f" "$NOW_SYNC" && rm -f "$f"; done   # a malformed replica file is not taken
+    # a malformed replica file is not taken, and remembered: its local copy must not be pushed over it either (ssh)
+    : > "$tmp/rejected"; n=0
+    for f in "$tmp/remote"/*.topic; do
+        [ -f "$f" ] || continue; n=$(( n + 1 ))
+        if [ "$n" -gt 2000 ] || ! topic_valid "$f" "$NOW_SYNC" || [ "$(topic_get "$f" id)" != "$(topic_id "$f")" ]; then
+            echo "${f##*/}" >> "$tmp/rejected"; rm -f "$f"
+        fi
+    done
+    [ -s "$tmp/rejected" ] && echo "bhote: $(wc -l < "$tmp/rejected" | tr -d ' ') topic(s) from $label were not taken (malformed, from the future, or too many)" >&2
     # 2) per topic: the newer one wins, in both directions
     { ls "$tmp/remote" 2>/dev/null; ls "$TOPIC_DIR" 2>/dev/null; } | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*\.topic$' | sort -u > "$tmp/ids"
     while IFS= read -r f; do
+        grep -qxF "$f" "$tmp/rejected" 2>/dev/null && continue   # refused from the other side: neither pulled nor pushed
         l=0; r=0
         [ -f "$TOPIC_DIR/$f" ] && l=$(topic_get "$TOPIC_DIR/$f" updated 0)
         [ -f "$tmp/remote/$f" ] && r=$(topic_get "$tmp/remote/$f" updated 0)
         l=$(num_or "$l" 0); r=$(num_or "$r" 0)
         if [ "$r" -gt "$l" ]; then
-            cp "$tmp/remote/$f" "$TOPIC_DIR/$f.tmp.$$" || continue
+            local pt; pt=$(mktemp "$TOPIC_DIR/.pull.XXXXXX") || continue
+            cp "$tmp/remote/$f" "$pt" || { rm -f "$pt"; continue; }
             # a local change that happened during the dump must not be overwritten
-            if [ -f "$TOPIC_DIR/$f" ] && [ "$(num_or "$(topic_get "$TOPIC_DIR/$f" updated 0)" 0)" != "$l" ]; then rm -f "$TOPIC_DIR/$f.tmp.$$"; continue; fi
-            mv "$TOPIC_DIR/$f.tmp.$$" "$TOPIC_DIR/$f"
+            if [ -f "$TOPIC_DIR/$f" ] && [ "$(num_or "$(topic_get "$TOPIC_DIR/$f" updated 0)" 0)" != "$l" ]; then rm -f "$pt"; continue; fi
+            mv "$pt" "$TOPIC_DIR/$f"
         elif [ "$l" -gt "$r" ] && [ "$via" != herdr ]; then     # through herdr the other side pulls by itself: nothing is pushed
-            store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0
+            # pushed only when the remote file is still what the dump showed (an edit there in the meantime wins the next round)
+            store_sh "$host" "umask 077; f=$REMOTE_TOPIC_DIR/$f; cur=\$(sed -n 's/^updated=//p' \"\$f\" 2>/dev/null | head -1); if [ \"\${cur:-0}\" = $r ]; then cat > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\"; else cat >/dev/null; fi" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0
+        elif [ "$l" = "$r" ] && [ "$l" != 0 ] && [ -f "$tmp/remote/$f" ] && ! cmp -s "$TOPIC_DIR/$f" "$tmp/remote/$f"; then
+            # the same stamp, other contents: both sides decide the same way (the larger checksum wins)
+            local cl cr; cl=$(cksum < "$TOPIC_DIR/$f" | cut -d' ' -f1); cr=$(cksum < "$tmp/remote/$f" | cut -d' ' -f1)
+            if [ "$cr" -gt "$cl" ]; then cp "$tmp/remote/$f" "$TOPIC_DIR/$f.tmp.$$" && mv "$TOPIC_DIR/$f.tmp.$$" "$TOPIC_DIR/$f"
+            elif [ "$via" != herdr ]; then store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0; fi
         fi
     done < "$tmp/ids"
     rm -rf "$tmp"
+    local tomb old=$(( NOW_SYNC - 30 * 86400 ))                 # deletions travel as tombstones; after 30 days both sides have them
+    for tomb in $(grep -l '^deleted=1' "$TOPIC_DIR"/*.topic 2>/dev/null); do
+        [ "$(num_or "$(topic_get "$tomb" updated 0)" 0)" -lt "$old" ] && rm -f "$tomb"
+    done
     if [ "$ok" = 1 ]; then store_note ok; else store_note offline; return 1; fi
 }
-topics_dump() {  # every topic file in one stream: a "@@name" line before each, an "@@END" line at the end (the merge needs it)
-    local f; for f in "$TOPIC_DIR"/*.topic; do
-        [ -f "$f" ] || continue; case "${f##*/}" in [A-Za-z0-9]*) ;; *) continue ;; esac
-        printf '\n@@%s\n' "${f##*/}"; cat "$f"
-    done; printf '\n@@END\n'
+topics_dump() {  # topics_dump [max bytes]: every topic in one stream, the most recently changed first: "@@name" before each,
+    # "@@END" at the end (the merge needs it). With a limit, it stops before that many bytes (only whole topics).
+    local max=${1:-0}
+    ls "$TOPIC_DIR" 2>/dev/null | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*\.topic$' | sed "s#^#$TOPIC_DIR/#" > "$RUN_DIR/dumplist" 2>/dev/null
+    if [ -s "$RUN_DIR/dumplist" ]; then
+        tr '\n' '\0' < "$RUN_DIR/dumplist" | xargs -0 awk -F= '$1 == "updated" && !(FILENAME in u) { u[FILENAME] = $2 + 0 }
+            END { for (f in u) print u[f], f } ' 2>/dev/null | sort -rn | cut -d' ' -f2- | tr '\n' '\0' \
+            | xargs -0 awk -v max="$max" 'FNR == 1 { if (max > 0 && total > max) exit; n = split(FILENAME, p, "/"); printf "\n@@%s\n", p[n] }
+                { print; total += length($0) + 1 }' 2>/dev/null
+    fi
+    printf '\n@@END\n'
 }
 # herdr keeps at most 64 KB of an action's output: the dump for herdr travels packed (gzip, base64), about 5 times smaller.
-topics_dump_packed() { if command -v gzip >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1; then echo "@@GZ"; topics_dump | gzip -c | base64; else topics_dump; fi; }
+topics_dump_packed() {  # about 10x smaller packed; 400 KB of topics stay well under herdr's 64 KB (the oldest are left out beyond)
+    if command -v gzip >/dev/null 2>&1 && command -v base64 >/dev/null 2>&1; then echo "@@GZ"; topics_dump 400000 | gzip -c | base64
+    else topics_dump 50000; fi
+}
 dump_unpack() {  # stdin: a packed or plain dump -> the plain one (a damaged packed dump gives nothing, so the merge sees no @@END)
     local first; IFS= read -r first
     if [ "$first" = "@@GZ" ]; then { base64 -d 2>/dev/null || base64 -D 2>/dev/null; } | gzip -dc 2>/dev/null
@@ -275,11 +320,14 @@ dump_unpack() {  # stdin: a packed or plain dump -> the plain one (a damaged pac
 }
 herdr_dump() {  # herdr_dump <machine label>: the other machine's topics through herdr: its bhote plugin runs `bhote dump`,
     # and herdr keeps the output in that plugin's log, which this machine reads. No ssh of our own.
-    local m=$1 t0 i out; t0=$(( $(date +%s) * 1000 - 2000 ))
+    # (the newest dump in the log before we ask is the baseline: only a newer one counts. No clocks of two machines compared.)
+    local m=$1 i out base q='def lid: (.log_id // "" | tostring | capture("(?<n>[0-9]+)$").n // "0" | tonumber);'
+    base=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r "$q"' [.result.logs[] | select(.action_id == "dump") | lid] | max // 0' 2>/dev/null)
+    base=$(num_or "$base" 0)
     herdr --machine "$m" plugin action invoke dump --plugin bhote.panel >/dev/null 2>&1 || return 1
     for (( i = 0; i < 20; i++ )); do
-        out=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r --argjson t "$t0" '
-            [.result.logs[] | select(.action_id == "dump" and .status == "succeeded" and (.started_unix_ms // 0) >= $t)] | last | .stdout // empty' 2>/dev/null)
+        out=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r --argjson b "$base" "$q"'
+            [.result.logs[] | select(.action_id == "dump" and .status == "succeeded" and (lid > $b))] | last | .stdout // empty' 2>/dev/null)
         [ -n "$out" ] && { printf '%s\n' "$out" | dump_unpack; return 0; }
         sleep 0.5
     done
@@ -294,20 +342,23 @@ topic_valid() {  # topic_valid <file> <now>: KEY=value lines only, no key twice,
         length($0) > 4000 || NR > 64 { bad = 1 }
         END { exit bad }' "$1" 2>/dev/null
 }
-# One sync at a time over all panels of this machine (and the CLI). The lock is a directory with the pid of its owner inside;
-# it is stale when that process is gone (or after 3 minutes). store_sync returns 2 when another sync is running.
+# Locks are symlinks to the pid of their owner: `ln -s` is atomic, so a lock never exists without its owner. A lock whose
+# owner is gone is taken over. (Older versions used directories: one of those is removed.)
+lock_take() {  # lock_take <path> <pid>: 0 when it is (now) ours
+    local o; o=$(readlink "$1" 2>/dev/null)
+    [ "$o" = "$2" ] && return 0
+    if [ -n "$o" ] && ! kill -0 "$o" 2>/dev/null; then rm -f "$1"; fi
+    [ -d "$1" ] && [ ! -L "$1" ] && rm -rf "$1"
+    ln -s "$2" "$1" 2>/dev/null
+}
+lock_drop() { [ "$(readlink "$1" 2>/dev/null)" = "$2" ] && rm -f "$1"; return 0; }   # lock_drop <path> <pid>: only our own
+# One sync at a time over all panels of this machine (and the CLI). store_sync returns 2 when another sync is running.
 store_sync() {
-    local lock=$DATA_DIR/sync.lock rc owner=""
+    local lock=$DATA_DIR/sync.lock rc
     mkdir -p "$DATA_DIR"
-    if ! mkdir "$lock" 2>/dev/null; then
-        [ -r "$lock/pid" ] && read -r owner < "$lock/pid"
-        if { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } || [ -n "$(find "$lock" -maxdepth 0 -mmin +3 2>/dev/null)" ]; then
-            rm -rf "$lock"; mkdir "$lock" 2>/dev/null || return 2
-        else return 2; fi
-    fi
-    echo "$$" > "$lock/pid"
+    lock_take "$lock" "$$" || return 2
     store_sync_run; rc=$?
-    [ "$(cat "$lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$lock"    # only our own lock
+    lock_drop "$lock" "$$"
     return $rc
 }
 store_summary() {  # one line for the settings screen: where the data lives and whether it is in step
@@ -379,7 +430,8 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     for k in TEXT DIM FRAME SELECTION ACCENT NOW WAITING REVIEW LATER DONE ERROR; do
         cfg_var v "COLOR_$k" ""; [ -n "$v" ] || continue; v=$(hex_rgb "$v") || continue
         case "$k" in
-            TEXT) L="${esc}[1m$(rgb "$v")"; LSEL=$L ;; DIM) D=$(rgb "$v") ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m" ;;
+            TEXT) L="${esc}[1m$(rgb "$v")"; LSEL=$L; TITLE=$L; TITLESEL=$L; DESC="${esc}[3m$(rgb "$v")"; DESCSEL=$DESC ;;
+            DIM) D=$(rgb "$v"); DSEL=$D ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m" ;;
             ACCENT) S=$(rgb "$v") ;; NOW) C=$(rgb "$v") ;; WAITING) Y=$(rgb "$v") ;; REVIEW) BLUE=$(rgb "$v") ;;
             LATER) R=$(rgb "$v") ;; DONE) GREEN=$(rgb "$v") ;; ERROR) NN=$(rgb "$v") ;;
         esac
@@ -625,8 +677,8 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
         HERDR_V=$(herdr --version 2>/dev/null | awk '{print $NF}')
         # how this machine is called in the lists: HOST_LABEL in the config, else "Mac" on macOS, else the short host name
         cfg_var HOST HOST_LABEL ""
-        [ -n "$HOST" ] || HOST=$([ "$(uname -s)" = Darwin ] && echo Mac || { hostname -s 2>/dev/null || uname -n; })
-        HOST=${HOST%%.*}; HOST=${HOST//[[:cntrl:]]/}; HOST=${HOST:-local}
+        [ -n "$HOST" ] || { HOST=$([ "$(uname -s)" = Darwin ] && echo Mac || { hostname -s 2>/dev/null || uname -n; }); HOST=${HOST%%.*}; }
+        HOST=${HOST//[[:cntrl:]]/}; HOST=${HOST:-local}
         HAS_MACHINES=$([ -n "$(herdr machine list 2>/dev/null)" ] && echo 1 || echo 0)
     fi
 }
@@ -695,13 +747,9 @@ remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND 
     done
 }
 # One panel per machine collects (herdr is asked once, not once per panel); the others only read the files. The collector is
-# whoever holds $SHARED_DIR/collector.lock (its pid inside); when that process is gone, another panel takes over.
+# whoever holds $SHARED_DIR/collector.lock; when that process is gone, another panel takes over.
 collector_lead() {  # collector_lead <main pid>: 0 when this panel is the collector
-    local lock=$SHARED_DIR/collector.lock owner=""
-    [ -r "$lock/pid" ] && read -r owner < "$lock/pid"
-    [ "$owner" = "$1" ] && return 0
-    [ -n "$owner" ] && kill -0 "$owner" 2>/dev/null && return 1       # somebody else is alive and leads
-    rm -rf "$lock"; mkdir "$lock" 2>/dev/null || return 1; echo "$1" > "$lock/pid"
+    lock_take "$SHARED_DIR/collector.lock" "$1"
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local n=0 every_l every_r
@@ -721,7 +769,9 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             n=$(( n + 1 ))
         else n=0; fi
         local w=0; while [ "$w" -lt "$every_l" ]; do              # wait in 1 s steps: a poke (agent event, CLI change) ends it
-            [ -e "$SHARED_DIR/poke" ] && { rm -f "$SHARED_DIR/poke"; break; }; sleep 1; w=$(( w + 1 )); done
+            if [ -e "$SHARED_DIR/poke" ] && [ "$(readlink "$SHARED_DIR/collector.lock" 2>/dev/null)" = "$1" ]; then
+                rm -f "$SHARED_DIR/poke"; break                     # only the collector takes the poke (the others would swallow it)
+            fi; sleep 1; w=$(( w + 1 )); done
     done
 }
 
@@ -785,21 +835,21 @@ group() {  # group <CAPTION> [colour]: a status caption; everything below starts
 topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> [compact 1]
     # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
     local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n
-    clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 ))
+    local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
         bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$DSEL" ;; esac   # muted (done) titles: readable
     fi
-    printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - ${#t} )) "" "$X"
-    [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - ${#d} )) "" "$X"
+    printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+    [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
     [ -n "$who$st$tm" ] || { [ "${9:-}" = 1 ] || printf '\n'; return 0; }
     room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
-    n=$(( ${#who} + ${#st} + ${#tm} + (${#who} > 0 && ${#st} > 0 ? 3 : 0) + (${#tm} > 0 && ${#who}${#st} != 00 ? 3 : 0) ))
-    if [ "$n" -gt "$room" ]; then tm=""; n=$(( ${#who} + ${#st} + (${#who} > 0 && ${#st} > 0 ? 3 : 0) )); fi
+    local ww sw; [ -n "$who" ] && clip_set who "$who" "$room"; dw_set ww "$who"; dw_set sw "$st"
+    n=$(( ww + sw + ${#tm} + (ww > 0 && sw > 0 ? 3 : 0) + (${#tm} > 0 && ww + sw > 0 ? 3 : 0) ))
+    if [ "$n" -gt "$room" ]; then tm=""; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) )); fi
     if [ "$n" -gt "$room" ]; then
-        if [ -n "$who" ]; then clip_set st "$st" $(( room - ${#who} - 3 )); else clip_set st "$st" "$room"; fi
-        [ -n "$st" ] || clip_set who "$who" "$room"
-        n=$(( ${#who} + ${#st} + (${#who} > 0 && ${#st} > 0 ? 3 : 0) ))
+        if [ -n "$who" ]; then clip_set st "$st" $(( room - ww - 3 )); else clip_set st "$st" "$room"; fi
+        dw_set sw "$st"; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) ))
     fi
     printf '%s  %s∟ ' "$bg" "$gc"
     [ -n "$who" ] && printf '%s%s' "$wc" "$who"
@@ -890,13 +940,14 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
             [ "$m" = "${machines[$k]}" ] || continue
             case "$st" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
             name_color_set nc "$name"; clip_set label "$name" $(( cw - 2 ))
-            cell="$ic$X $nc$label$X"; plain=$(( ${#label} + 2 ))
+            cell="$ic$X $nc$label$X"; dw_set plain "$label"; plain=$(( plain + 2 ))
             case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; nb=$(( nb + 1 )) ;; esac
         done
         [ $(( nf + nb )) -gt 0 ] || continue
         # a caption for the machine when several machines are listed
         if [ "$nm" -gt 1 ]; then                              # a divider with the machine's name ("── Omarchy ─────"); only machines with agents
-            local cap=${machines[$k]} rest; rest=$(( ${#RULE_LINE} - 4 - ${#cap} )); [ "$rest" -lt 1 ] && rest=1
+            local cap rest cw2; clip_set cap "${machines[$k]}" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"
+            rest=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest" -lt 1 ] && rest=1
             # (braces around the colours: bash 3.2 takes the first byte of a "─" right after $B into the variable name)
             lines[$n]="  ${B}──${X} ${D}${cap}${X} ${B}${RULE_LINE:0:$rest}${X}"; lc[$n]=0; n=$(( n + 1 ))
         fi
@@ -907,6 +958,7 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
         done
     done
     shown=$n; [ "$shown" -gt "$maxr" ] && shown=$maxr
+    if [ -n "$want" ]; then echo "$maxr"; else echo "$shown"; fi > "$RUN_DIR/agrows" 2>/dev/null   # the rows shown: where a drag starts
     for (( r = 0; r < n; r++ )); do
         if [ "$r" -lt "$shown" ]; then printf '%s\n' "${lines[$r]}"; else hidden=$(( hidden + lc[$r] )); fi
     done
@@ -917,13 +969,45 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
 agent_footer() {
     # saved machines exist but are not asked: say so, and where to change it
     if [ "$U_REMOTE" != on ] && [ "${HAS_MACHINES:-0}" = 1 ]; then
-        printf '\n  %sRemote agents off · , settings%s\n' "$D" "$X"
+        printf '\n  %s%s%s\n' "$D" "$(clip "Remote agents off · , settings" $(( ${COLS:-44} - 4 )))" "$X"
     fi
 }
-clip_set() {  # clip_set <var> <text> <max columns>: cut with a … when longer (plain text only)
-    local _ct=$2
-    if [ "$3" -lt 1 ]; then _ct=""; elif [ "${#_ct}" -gt "$3" ]; then _ct="${_ct:0:$(( $3 - 1 ))}…"; fi
-    printf -v "$1" '%s' "$_ct"
+dw_set() {  # dw_set <var> <text>: the columns the text takes on the terminal (East Asian wide characters and emoji 2,
+    # combining marks 0). ASCII is counted at once; the rest byte by byte in the C locale (bash 3.2 has no wcwidth).
+    local _s=$2 _n _x=0 _i _b _c _d _cp
+    _n=${#_s}
+    case "$_s" in *[![:ascii:]]*) ;; *) printf -v "$1" '%s' "$_n"; return ;; esac
+    local LC_ALL=C; _s=${_s//[[:ascii:]]/}
+    for (( _i = 0; _i < ${#_s}; _i++ )); do
+        printf -v _b '%d' "'${_s:_i:1}"; [ "$_b" -lt 0 ] && _b=$(( _b + 256 ))
+        if [ "$_b" -ge 240 ]; then _x=$(( _x + 1 )); _i=$(( _i + 3 ))
+        elif [ "$_b" -ge 224 ]; then
+            printf -v _c '%d' "'${_s:_i+1:1}"; printf -v _d '%d' "'${_s:_i+2:1}"; [ "$_c" -lt 0 ] && _c=$(( _c + 256 )); [ "$_d" -lt 0 ] && _d=$(( _d + 256 ))
+            _cp=$(( ((_b & 15) << 12) | ((_c & 63) << 6) | (_d & 63) )); _i=$(( _i + 2 ))
+            if (( (_cp >= 0x1100 && _cp <= 0x115F) || (_cp >= 0x2E80 && _cp <= 0xA4CF && _cp != 0x303F) || (_cp >= 0xAC00 && _cp <= 0xD7A3) || (_cp >= 0xF900 && _cp <= 0xFAFF) || (_cp >= 0xFE30 && _cp <= 0xFE4F) || (_cp >= 0xFF00 && _cp <= 0xFF60) || (_cp >= 0xFFE0 && _cp <= 0xFFE6) )); then _x=$(( _x + 1 ))
+            elif (( (_cp >= 0x200B && _cp <= 0x200F) || (_cp >= 0xFE00 && _cp <= 0xFE0F) || (_cp >= 0x20D0 && _cp <= 0x20FF) )); then _x=$(( _x - 1 )); fi
+        elif [ "$_b" -ge 192 ]; then
+            printf -v _c '%d' "'${_s:_i+1:1}"; [ "$_c" -lt 0 ] && _c=$(( _c + 256 ))
+            _cp=$(( ((_b & 31) << 6) | (_c & 63) )); _i=$(( _i + 1 ))
+            (( _cp >= 0x300 && _cp <= 0x36F )) && _x=$(( _x - 1 ))
+        fi
+    done
+    printf -v "$1" '%s' $(( _n + _x ))
+}
+clip_set() {  # clip_set <var> <text> <max columns>: cut with a … when wider (plain text only; a wide character counts 2)
+    local _ct=$2 _w _o="" _i _c _cw _u=0
+    if [ "$3" -lt 1 ]; then printf -v "$1" '%s' ""; return; fi
+    case "$_ct" in *[![:ascii:]]*) ;; *) [ "${#_ct}" -gt "$3" ] && _ct="${_ct:0:$(( $3 - 1 ))}…"; printf -v "$1" '%s' "$_ct"; return ;; esac
+    dw_set _w "$_ct"; [ "$_w" -le "$3" ] && { printf -v "$1" '%s' "$_ct"; return; }
+    for (( _i = 0; _i < ${#_ct}; _i++ )); do
+        _c=${_ct:_i:1}; dw_set _cw "$_c"; [ $(( _u + _cw )) -gt $(( $3 - 1 )) ] && break
+        _o=$_o$_c; _u=$(( _u + _cw ))
+    done
+    printf -v "$1" '%s' "${_o}…"
+}
+pad_set() {  # pad_set <var> <text> <columns>: the text, filled with spaces to that many columns (printf %-Ns counts bytes)
+    local _w _p; dw_set _w "$2"; _p=$(( $3 - _w )); [ "$_p" -lt 0 ] && _p=0
+    printf -v "$1" '%s%*s' "$2" "$_p" ""
 }
 clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
 view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
@@ -952,7 +1036,8 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
         content=$(( avail - 1 ))
         while IFS= read -r line; do case "$line" in $'\001'*) sel=$n; line=${line#$'\001'} ;; esac; tl[$n]=$line; n=$(( n + 1 )); done <<< "$topics"
         [ "$sel" = -1 ] && sel=0
-        off=$(( sel + 2 - content )); [ "$off" -lt 0 ] && off=0; [ "$off" -gt $(( th - content )) ] && off=$(( th - content ))
+        local sh=1; while [ "$sh" -lt 4 ] && [ $(( sel + sh )) -lt "$n" ] && [ -n "${tl[$(( sel + sh ))]}" ]; do sh=$(( sh + 1 )); done
+        off=$(( sel + sh - content )); [ "$off" -gt "$sel" ] && off=$sel; [ "$off" -lt 0 ] && off=0; [ "$off" -gt $(( th - content )) ] && off=$(( th - content ))
         for (( i = off; i < off + content; i++ )); do printf '%s\n' "${tl[$i]}"; done
         printf ' %s↑↓ %d more lines%s\n' "$D" $(( th - content )) "$X"
     else                                # hardly any room: as many topic lines as fit, never more than the pane
@@ -968,20 +1053,21 @@ wrap_print() {  # wrap_print <indent> <colour> <text>
     local ind=$1 col=$2 width=$(( ${COLS:-44} - 2 - $1 )) line="" word pad
     printf -v pad '%*s' "$ind" ''
     set -f
+    local ww lw=0
     for word in $3; do
-        [ "${#word}" -gt "$width" ] && clip_set word "$word" "$width"     # a path or URL that cannot break
-        if [ -z "$line" ]; then line=$word
-        elif [ $(( ${#line} + 1 + ${#word} )) -le "$width" ]; then line="$line $word"
-        else printf '%s%s%s%s\n' "$pad" "$col" "$line" "$X"; line=$word; fi
+        dw_set ww "$word"; [ "$ww" -gt "$width" ] && { clip_set word "$word" "$width"; dw_set ww "$word"; }   # a path or URL that cannot break
+        if [ -z "$line" ]; then line=$word; lw=$ww
+        elif [ $(( lw + 1 + ww )) -le "$width" ]; then line="$line $word"; lw=$(( lw + 1 + ww ))
+        else printf '%s%s%s%s\n' "$pad" "$col" "$line" "$X"; line=$word; lw=$ww; fi
     done
     set +f
     [ -n "$line" ] && printf '%s%s%s%s\n' "$pad" "$col" "$line" "$X"
 }
 set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [extra indent]: label left, value right-aligned
-    local sel=$1 label=$2 vp=$3 vc=$4 ind=${5:-0} w=$(( ${COLS:-44} - 2 )) pad
-    clip_set label "$label" $(( w - 5 - ind - ${#vp} ))
-    pad=$(( w - 4 - ind - ${#label} - ${#vp} )); [ "$pad" -lt 1 ] && pad=1
-    if [ "$sel" = 1 ]; then printf '%s   %s%*s%s%s%*s%s%s%s\n' "$SELBG" "$LSEL" "$ind" "" "$label" "$X$SELBG" "$pad" "" "$vc" "$SELBG " "$X"
+    local sel=$1 label=$2 vp=$3 vc=$4 ind=${5:-0} w=$(( ${COLS:-44} - 2 )) pad lw vw
+    dw_set vw "$vp"; clip_set label "$label" $(( w - 5 - ind - vw )); dw_set lw "$label"
+    pad=$(( w - 4 - ind - lw - vw )); [ "$pad" -lt 1 ] && pad=1
+    if [ "$sel" = 1 ]; then printf '\001%s   %s%*s%s%s%*s%s%s%s\n' "$SELBG" "$LSEL" "$ind" "" "$label" "$X$SELBG" "$pad" "" "$vc" "$SELBG " "$X"
     else printf '   %*s%s%s%s%*s%s\n' "$ind" "" "$D" "$label" "$X" "$pad" "" "$vc"; fi
 }
 
@@ -1060,8 +1146,8 @@ bhote_hotkeys() {  # every key, grouped by screen
 }
 hk_group() { printf '\n  %s%s%s\n' "$D" "$1" "$X"; }
 hk() {  # hk <keys> <what>
-    local w=$(( ${COLS:-44} - 18 )) t; clip_set t "$2" "$w"
-    printf '   %s%-12s%s %s\n' "$C" "$1" "$X" "$t"
+    local w=$(( ${COLS:-44} - 18 )) t k; clip_set t "$2" "$w"; pad_set k "$1" 12
+    printf '   %s%s%s %s\n' "$C" "$k" "$X" "$t"
 }
 store_cycle() {  # step the data location through: local, then every saved machine (→ / space forward, ← back)
     local opts=(local) id label host prof enabled cur i n k=$1 dir=1
@@ -1081,6 +1167,13 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
         DOWN|j) SET_IDX=$(( (${SET_IDX:-0} + 1) % n )) ;;
         " "|ENTER|LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
             if [ "$kind" = choice ]; then store_cycle "$k"; return; fi
+            if [ "$kind" = num ]; then                               # ← → change it; space and Enter do nothing here
+                [ "$k" = LEFT ] || [ "$k" = RIGHT ] || return
+                setting_row "$key"; local lo=${S_TYPE#int:}; lo=${lo%%:*}
+                v=$(num_or "$(cfg_get "$key" "$S_DEF")" "$S_DEF")
+                if [ "$k" = RIGHT ]; then v=$(( v + 1 )); else v=$(( v > lo ? v - 1 : lo )); fi
+                setting_check "$key" "$v" 2>/dev/null && cfg_set "$key" "$v"; return
+            fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || { [ "$key" = SETUP ] && SETTINGS_GO=setup || SETTINGS_GO=hotkeys; }; return; fi
             if [ "$kind" = enum ]; then                              # step through the allowed values
                 setting_row "$key"; local vals cur2 nxt="" prev="" first="" last="" found=0 x IFS=:
@@ -1099,13 +1192,6 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                           *) cfg_set MACHINES_OFF "${off:+$off,}$key" ;;
                       esac ;;
             esac ;;
-        LEFT|RIGHT) row=${SET_ROWS[${SET_IDX:-0}]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}
-            if [ "$kind" = num ]; then
-                setting_row "$key"; local lo=${S_TYPE#int:}; lo=${lo%%:*}
-                v=$(num_or "$(cfg_get "$key" "$S_DEF")" "$S_DEF")
-                if [ "$k" = RIGHT ]; then v=$(( v + 1 )); else v=$(( v > lo ? v - 1 : lo )); fi
-                setting_check "$key" "$v" 2>/dev/null && cfg_set "$key" "$v"
-            fi ;;
     esac
 }
 
@@ -1167,9 +1253,11 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     case "$b$x$y" in *[!0-9]*) return ;; esac
     case "$b" in 64|65|66|67) return ;; esac                 # the wheel does nothing (it must not move the selection)
     div=$(cat "$RUN_DIR/divrow" 2>/dev/null); div=$(num_or "$div" 0)
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then DRAG=1; return; fi
-    if [ "$DRAG" = 1 ] && [ "$2" = M ] && [ "$b" = 32 ]; then       # moving with the button held: the agents start below row y
-        DRAG_ROWS=$(( ${ROWS:-40} - y - 4 )); MOUSE_KEY=DRAG; return
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
+        DRAG=1; DRAG_Y0=$y; DRAG_R0=$(num_or "$(cat "$RUN_DIR/agrows" 2>/dev/null)" 1); return
+    fi
+    if [ "$DRAG" = 1 ] && [ "$2" = M ] && [ "$b" = 32 ]; then       # moving with the button held: up = more agent rows
+        DRAG_ROWS=$(( DRAG_R0 + DRAG_Y0 - y )); [ "$DRAG_ROWS" -lt 1 ] && DRAG_ROWS=1; MOUSE_KEY=DRAG; return
     fi
     if [ "$DRAG" = 1 ] && [ "$2" = m ]; then
         DRAG=0; [ -n "$DRAG_ROWS" ] && cfg_set AGENT_ROWS "$(agent_rows_clamp "$DRAG_ROWS")"; DRAG_ROWS=""; MOUSE_KEY=DRAG
@@ -1262,7 +1350,7 @@ ask() {  # ask <label> [text to start with] [max length]: the editor on the last
             $'\027') ed_word_left; ed_cut "$ED_TO" "$ED_CUR" ;;   # Ctrl-W
             [[:cntrl:]]) ;;
             *) if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then    # bash 3.2 reads one BYTE: collect the rest of a UTF-8 character
-                   LC_ALL=C printf -v b '%d' "'$ch"; n=0
+                   LC_ALL=C printf -v b '%d' "'$ch"; [ "$b" -lt 0 ] && b=$(( b + 256 )); n=0   # bash 3.2: bytes >= 0x80 come back negative
                    [ "$b" -ge 192 ] && n=1; [ "$b" -ge 224 ] && n=2; [ "$b" -ge 240 ] && n=3
                    while [ "$n" -gt 0 ] && IFS= read -rsn1 -t 1 k3 </dev/tty; do ch="$ch$k3"; n=$(( n - 1 )); done
                fi
@@ -1277,9 +1365,10 @@ ask() {  # ask <label> [text to start with] [max length]: the editor on the last
     return 0
 }
 ask_draw() {  # ask_draw <label>: the prompt row with ED_BUF; the part around the cursor when it is longer than the room
-    local rows=${ROWS:-40} w=$(( ${COLS:-44} - 1 )) room cnt="" off a b pre mid post col
+    local rows=${ROWS:-40} w=$(( ${COLS:-44} - 1 )) room cnt="" off a b pre mid post col lab lw
     [ -n "${ASK_MAX:-}" ] && cnt="$(( ASK_MAX - ${#ED_BUF} )) left"   # how many characters are left, on the right
-    room=$(( w - 3 - ${#1} - 1 - ${#cnt} - 1 )); [ "$room" -lt 4 ] && room=4
+    clip_set lab "$1" $(( w - 3 - ${#cnt} - 2 - 12 )); dw_set lw "$lab"   # a long label (a title in "Delete ...?") leaves room to type
+    room=$(( w - 3 - lw - 1 - ${#cnt} - 1 )); [ "$room" -lt 4 ] && room=4
     off=0; [ "$ED_CUR" -gt "$room" ] && off=$(( ED_CUR - room ))   # scroll so that the cursor stays visible
     a=$ED_CUR; b=$ED_CUR; [ "$ED_ANC" -ge 0 ] && { a=$ED_ANC; [ "$a" -gt "$b" ] && { a=$ED_CUR; b=$ED_ANC; }; }
     [ "$a" -lt "$off" ] && a=$off; [ "$b" -lt "$off" ] && b=$off
@@ -1287,12 +1376,13 @@ ask_draw() {  # ask_draw <label>: the prompt row with ED_BUF; the part around th
     post=${post:0:$(( room - ${#pre} - ${#mid} ))}
     printf '\033[%d;1H\033[2K%s%*s' "$rows" "$SELBG" "$w" ""
     [ -n "$cnt" ] && printf '\033[%d;%dH%s%s' "$rows" $(( w - ${#cnt} )) "$D" "$cnt"
-    printf '\033[%d;1H%s%s▶ %s%s%s%s\033[7m%s\033[27m%s' "$rows" "$SELBG" "$ORANGE" "$L" "$1" "$X$SELBG$L" "$pre" "$mid" "$post"
-    col=$(( 3 + ${#1} + ED_CUR - off )); printf '\033[%d;%dH' "$rows" "$col"   # "▶ " is 2 columns, the label starts in column 3
+    printf '\033[%d;1H%s%s▶ %s%s%s%s\033[7m%s\033[27m%s' "$rows" "$SELBG" "$ORANGE" "$L" "$lab" "$X$SELBG$L" "$pre" "$mid" "$post"
+    col=$(( 3 + lw + ED_CUR - off )); printf '\033[%d;%dH' "$rows" "$col"   # "▶ " is 2 columns, the label starts in column 3
 }
 menu_line() {  # menu_line <selected: 1 or empty> <text>: a choice; the selected one is a bar over the whole width
     local w=$(( ${COLS:-44} - 2 )) t; clip_set t "$2" $(( w - 4 ))
-    if [ -n "$1" ]; then printf '%s   %s%s%*s%s\n' "$SELBG" "$LSEL" "$t" $(( w - 3 - ${#t} )) "" "$X"
+    local tw; dw_set tw "$t"
+    if [ -n "$1" ]; then printf '\001%s   %s%s%*s%s\n' "$SELBG" "$LSEL" "$t" $(( w - 3 - tw )) "" "$X"
     else printf '   %s%s%s\n' "$D" "$t" "$X"; fi
 }
 MENU_ITEMS=()                                                  # "key|label", made for the selected topic (menu_build)
@@ -1316,7 +1406,7 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     printf '  %s%s%s' "$sc" "$st" "$X"
     if [ "$st" = waiting ] && [ -n "$wf" ]; then ago_set age "${ws:-$NOW}"; printf ' %s·%s %s%s%s %s· %s%s' "$D" "$X" "$BLUE" "$wf" "$X" "$D" "$age" "$X"; fi
     printf '\n'
-    [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ $D· $am$X}"
+    [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ ${D}· $am$X}"
     printf '\n'; rule
     printf '\n  %sACTIONS%s\n' "$D" "$X"
     for (( i = 0; i < ${#MENU_ITEMS[@]}; i++ )); do
@@ -1383,7 +1473,7 @@ agent_taken() {  # agent_taken <machine> <pane>: already working on another open
 PICK_MODE=start
 pick_build() {  # PICK_MAP = indexes into AG_LINES of the free agents (for a transfer: not the agent that has the topic now)
     local i m id st name task sm="" sp="" f; PICK_MAP=()
-    if [ "$PICK_MODE" = transfer ]; then f=$(sel_file); [ -n "$f" ] && { sm=$(topic_get "$f" agent_machine "$HOST"); sp=$(topic_get "$f" agent_pane); }; fi
+    if [ "$PICK_MODE" = transfer ]; then f=$(sel_file); [ -n "$f" ] && { sm=$(topic_get "$f" agent_machine); sp=$(topic_get "$f" agent_pane); }; fi
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
         [ -n "$sp" ] && [ "$m" = "$sm" ] && [ "$id" = "$sp" ] && continue
@@ -1412,8 +1502,14 @@ bhote_pick() {
     printf ' %s↑↓ choose · →/⏎ start · ←/esc back%s\n' "$D" "$X"
 }
 # ── talking to agents: the live state of one agent pane, and a prompt to it (both through herdr, --machine for other machines)
-agent_live() {  # agent_live <machine> <pane>: LIVE_ST (idle|done|working|blocked|gone|noagent), LIVE_SESS, LIVE_CWD
-    local opt=() out; [ "$1" = "$HOST" ] || opt=(--machine "$1")
+machine_known() {  # machine_known <label>: this machine, or a machine saved in herdr (a label from another machine's view is not)
+    [ -n "$1" ] || return 1; [ "$1" = "$HOST" ] && return 0
+    herdr machine list 2>/dev/null | awk -F'\t' -v l="$1" '$2 == l { f = 1 } END { exit !f }'
+}
+agent_live() {  # agent_live <machine> <pane>: LIVE_ST (idle|done|working|blocked|gone|noagent|unknown), LIVE_SESS, LIVE_CWD
+    local opt=() out; LIVE_SESS=""; LIVE_CWD=""
+    machine_known "$1" || { LIVE_ST=unknown; return 0; }
+    [ "$1" = "$HOST" ] || opt=(--machine "$1")
     out=$(herdr "${opt[@]}" pane list 2>/dev/null | jq -r --arg p "$2" '[.result.panes[] | select(.pane_id == $p)][0]
         | if . == null then "gone" elif (.agent // "") == "" then "noagent" else
           [(.agent_status // ""), ((.agent_session.value // "") | tostring | gsub("[^A-Za-z0-9-]"; "")), ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0001-\u001f]"; ""))] | join("\u001f") end' 2>/dev/null)
@@ -1421,10 +1517,13 @@ agent_live() {  # agent_live <machine> <pane>: LIVE_ST (idle|done|working|blocke
     case "$out" in *"$US"*) out=${out#*$US}; LIVE_SESS=${out%%$US*}; LIVE_CWD=${out#*$US} ;; esac
     [ -n "$LIVE_ST" ] || LIVE_ST=gone
 }
-agent_send() {  # agent_send <machine> <pane> <text>: a prompt to that agent (in the background: herdr waits for nothing here)
-    local opt=(); [ "$1" = "$HOST" ] || opt=(--machine "$1")
+AGENT_SEND_SYNC=""                                              # the CLI waits for herdr and reports a failure; the panel does not wait
+agent_send() {  # agent_send <machine> <pane> <text>: a prompt to that agent
+    local opt=(); machine_known "$1" || return 1; [ "$1" = "$HOST" ] || opt=(--machine "$1")
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
-    ( herdr "${opt[@]}" agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 ) &
+    if [ -n "$AGENT_SEND_SYNC" ]; then
+        herdr "${opt[@]}" agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 || { echo "bhote: herdr could not send the prompt to $1/$2" >&2; return 1; }
+    else ( herdr "${opt[@]}" agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 ) & fi
 }
 how_to_finish() {  # how_to_finish <id>: the sentence every agent gets about reporting back
     local h="when you are finished, run \`bhote review $1\` so that I check it"
@@ -1439,45 +1538,56 @@ transfer_start() {  # transfer_start <topic file> <from machine> <from pane> <fr
     local f=$1 id title to_ref
     agent_live "$5" "$6"; case "$LIVE_ST" in idle|done) ;; *) echo "bhote: $7 is not free ($LIVE_ST)" >&2; return 1 ;; esac
     local to_cwd=$LIVE_CWD
-    agent_live "$2" "$3"; case "$LIVE_ST" in gone|noagent) echo "bhote: $4 is no agent any more" >&2; return 1 ;; esac
-    id=$(topic_get "$f" id); title=$(topic_get "$f" title); to_ref="$5/$6"
+    agent_live "$2" "$3"; case "$LIVE_ST" in
+        gone|noagent) echo "bhote: $4 is no agent any more" >&2; return 1 ;;
+        blocked) echo "bhote: $4 is waiting for an answer (permission?): answer it first" >&2; return 1 ;;
+        unknown) echo "bhote: $2 is not a machine herdr knows here" >&2; return 1 ;;
+    esac
+    id=$(topic_id "$f"); title=$(topic_get "$f" title); to_ref="$5/$6"
+    local undo; undo=$(mktemp "$RUN_DIR/undo.XXXXXX") && cp "$f" "$undo"
     topic_set "$f" status now; topic_set "$f" waiting_for ""
     topic_set "$f" transfer_to "$to_ref"; topic_set "$f" transfer_to_name "$7"; topic_set "$f" transfer_from "$2/$3"
     topic_set "$f" agent "$4"; topic_set "$f" agent_machine "$2"; topic_set "$f" agent_pane "$3"
-    agent_send "$2" "$3" "Steal & Transfer (bhote topic $id, $title): stop here and hand this work over to $7. 1) Commit everything on your current branch (do not create a new branch); put a handover into the commit message body: the goal, what is done, what is open, the next steps, how to test. 2) If the repository has a remote, push the branch. 3) Run: bhote handover $id --to $to_ref --branch \"\$(git rev-parse --abbrev-ref HEAD)\" --commit \"\$(git rev-parse HEAD)\". 4) If ${to_cwd:-the folder of the other agent} is another worktree of this repository, free the branch afterwards with git switch --detach. Then stop."
-    : > "$STORE_DIRTY"
+    if ! agent_send "$2" "$3" "Steal & Transfer (bhote topic $id: $title): stop here and hand this work over to $7. 1) Commit everything on your current branch (do not create a new branch; only on a detached HEAD create one: git switch -c bhote-$id); put a handover into the commit message body: the goal, what is done, what is open, the next steps, how to test. 2) If the repository has a remote, push the branch. 3) Note the branch and the commit: b=\$(git rev-parse --abbrev-ref HEAD); c=\$(git rev-parse HEAD). 4) If ${to_cwd:-the folder of the other agent} is another worktree of this repository, free the branch with git switch --detach. 5) Run: bhote handover $id --to '$to_ref' --branch \"\$b\" --commit \"\$c\". Then stop."; then
+        [ -s "$undo" ] && cp "$undo" "$f" && topic_set "$f" transfer_to ""     # back as it was (newer, so that it wins a merge)
+        rm -f "$undo"; return 1
+    fi
+    rm -f "$undo"; : > "$STORE_DIRTY"
 }
 transfer_finish() {  # transfer_finish <topic file> <to machine/pane> <branch> <commit>: the target agent takes over
     local f=$1 id title tm tp name from b c
-    id=$(topic_get "$f" id); title=$(topic_get "$f" title); tm=${2%%/*}; tp=${2#*/}
+    id=$(topic_id "$f"); title=$(topic_get "$f" title); tm=${2%%/*}; tp=${2#*/}
     name=$(topic_get "$f" transfer_to_name "$tp"); from=$(topic_get "$f" agent "the other agent")
     b=${3//[!A-Za-z0-9._\/-]/}; c=${4//[!A-Za-z0-9]/}
-    agent_live "$tm" "$tp"; case "$LIVE_ST" in gone|noagent) echo "bhote: $name is no agent any more" >&2; return 1 ;; esac
+    agent_live "$tm" "$tp"; case "$LIVE_ST" in gone|noagent|unknown) echo "bhote: $name is no agent any more" >&2; return 1 ;; esac
+    local get="git switch $b"; case "$b" in ''|HEAD) get="git switch --detach ${c:-<commit>}" ;; esac   # no branch: the commit itself
+    # first the prompt: when it does not arrive, the topic stays with the transfer (the handover can be run again)
+    agent_send "$tm" "$tp" "Steal & Transfer: take over \"$title\" (bhote topic $id) from $from. The work is on branch ${b:-?} (commit ${c:0:12}): if there is a remote, git fetch; then $get; read the handover with git log -1 ${c:-HEAD}; then continue the work. $(how_to_finish "$id")." || return 1
     topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$tm"; topic_set "$f" agent_pane "$tp"; topic_set "$f" agent_session "$LIVE_SESS"
     topic_set "$f" delegated "$(date +%s)"; topic_set "$f" status now
     topic_set "$f" transfer_to ""; topic_set "$f" transfer_to_name ""; topic_set "$f" transfer_from ""
     topic_set "$f" handover_branch "$b"; topic_set "$f" handover_commit "$c"
-    agent_send "$tm" "$tp" "Steal & Transfer: take over \"$title\" (bhote topic $id) from $from. The work is on branch ${b:-?} (commit ${c:0:12}): if there is a remote, git fetch; then git switch ${b:-<branch>}; read the handover with git log -1 ${c:-HEAD}; then continue the work. $(how_to_finish "$id")."
     notify "Transferred" "$title → $name" done
     : > "$STORE_DIRTY"
 }
 delegation_text() {  # delegation_text <file>: the prompt an agent gets: the topic, and how it reports back
     local f=$1 id title desc how
-    id=$(topic_get "$f" id); title=$(topic_get "$f" title); desc=$(topic_get "$f" description)
+    id=$(topic_id "$f"); title=$(topic_get "$f" title); desc=$(topic_get "$f" description)
     printf '%s%s (bhote topic %s: %s.)' "$title" "${desc:+. $desc}" "$id" "$(how_to_finish "$id")"
 }
 pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt through herdr) and mark it started; or transfer it
     local f m id st name task opt=() title desc live sess; f=$(sel_file); [ -n "$f" ] || return 0
     if [ "$PICK_MODE" = transfer ]; then
+        [ "$1" -ge 1 ] || return 0                                  # (index -1 would be the LAST agent in bash 4)
         pick_build; [ -n "${PICK_MAP[$(( $1 - 1 ))]:-}" ] || return 0
         IFS=$US read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]}]}"
-        transfer_start "$f" "$(topic_get "$f" agent_machine "$HOST")" "$(topic_get "$f" agent_pane)" "$(topic_get "$f" agent agent)" "$m" "$id" "$name" 2>/dev/null
+        transfer_start "$f" "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)" "$(topic_get "$f" agent agent)" "$m" "$id" "$name" 2>/dev/null
         return 0
     fi
     if [ "$1" -gt 0 ]; then
         pick_build
-        IFS=$US read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]:-0}]}"
         [ -n "${PICK_MAP[$(( $1 - 1 ))]:-}" ] || return 0
+        IFS=$US read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]}]}"
         agent_state_set st "$m" "$id"; case "$st" in idle|done) ;; *) return 0 ;; esac     # taken in the meantime: change nothing
         [ "$m" = "$HOST" ] || opt=(--machine "$m")
         # the lists are a few seconds old: right before typing, ask herdr itself that this pane still runs a FREE agent
@@ -1486,12 +1596,13 @@ pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt throug
         st=${live%%$US*}; sess=""; case "$live" in *"$US"*) sess=${live#*$US} ;; esac
         case "$st" in idle|done) ;; *) return 0 ;; esac
     fi
-    topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" agent ""
+    topic_set "$f" status now; topic_set "$f" waiting_for ""
     if [ "$1" -gt 0 ]; then
         topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
         topic_set "$f" agent_session "$sess"; topic_set "$f" delegated "$(date +%s)"
-        title=$(delegation_text "$f")
-        ( herdr "${opt[@]}" agent prompt "$id" "$title" >/dev/null 2>&1 ) &
+        agent_send "$m" "$id" "Your bhote topic: $(delegation_text "$f")"
+    else
+        local k; for k in agent agent_machine agent_pane agent_session delegated; do topic_set "$f" "$k" ""; done
     fi
     : > "$STORE_DIRTY"
 }
@@ -1500,7 +1611,7 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
     menu_build "$f"; k=${MENU_ITEMS[$1]%%|*}
     case "$k" in
         start) PICK_MODE=start; PICK_IDX=0; view=pick; return 0 ;;     # the picker of free agents (view is bhote_main's variable)
-        transfer) PICK_MODE=transfer; PICK_IDX=0; view=pick; return 0 ;;
+        transfer) PICK_MODE=transfer; PICK_IDX=1; view=pick; return 0 ;;
         resume) topic_resume "$f" ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
            topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)" ;;
@@ -1517,8 +1628,8 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
 }
 topic_resume() {  # topic_resume <file>: a waiting topic of an agent: the wait is over, the agent goes on (a prompt through herdr)
     local f=$1 id title wf desc am ap ag
-    id=$(topic_get "$f" id); title=$(topic_get "$f" title); wf=$(topic_get "$f" waiting_for); desc=$(topic_get "$f" description)
-    am=$(topic_get "$f" agent_machine "$HOST"); ap=$(topic_get "$f" agent_pane); ag=$(topic_get "$f" agent)
+    id=$(topic_id "$f"); title=$(topic_get "$f" title); wf=$(topic_get "$f" waiting_for); desc=$(topic_get "$f" description)
+    am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane); ag=$(topic_get "$f" agent)
     topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" delegated "$(date +%s)"
     [ -n "$ap" ] || return 0
     agent_live "$am" "$ap"; case "$LIVE_ST" in gone|noagent) echo "bhote: ${ag:-the agent} is not there any more" >&2; return 0 ;; esac
@@ -1585,8 +1696,8 @@ w_screen() {  # w_screen <step> <TITLE>: a clean screen with the progress dots a
 }
 w_say() { local col=${2:-$D} COLS=$(( W + 4 )); wrap_print 2 "$col" "$1"; }          # a paragraph, wrapped at the left edge
 w_mark() {  # w_mark <colour> <mark> <name> <detail>: aligned check lines (mark, name in 16 columns, detail cut to the edge)
-    local n d; clip_set n "$3" 16; clip_set d "${4:-}" $(( W - 19 )); w_log "$2 $3: ${4:-}"
-    printf '  %s%s%s %-16s %s%s%s\n' "$1" "$2" "$X" "$n" "$D" "$d" "$X"
+    local n d; clip_set n "$3" 16; pad_set n "$n" 16; clip_set d "${4:-}" $(( W - 19 )); w_log "$2 $3: ${4:-}"
+    printf '  %s%s%s %s %s%s%s\n' "$1" "$2" "$X" "$n" "$D" "$d" "$X"
 }
 w_ok()   { w_mark "$GREEN" "✓" "$@"; }
 w_bad()  { w_mark "$NN" "✗" "$@"; }
@@ -1595,8 +1706,9 @@ w_opt()  { local COLS=$(( W + 4 )); printf '  %s%s%s' "$C" "$1" "$X"; wrap_print
 w_line() { printf '\n'; }
 w_read() {  # w_read <var> <prompt> [default]: one answer (cooked terminal); q ends the wizard
     local __wr_a __wr_q __wr_w __wr_line="" __wr_first=1 __wr_room=$(( W - 2 ))
+    local __wr_ws; read -r -a __wr_ws <<< "$2"                 # split into words (no globbing: a * in the text stays a *)
     printf '\n'
-    for __wr_w in $2; do                                       # word wrap: the first line after "▶ ", the others under the text
+    for __wr_w in ${__wr_ws[@]+"${__wr_ws[@]}"}; do             # word wrap: the first line after "▶ ", the others under the text
         if [ -z "$__wr_line" ]; then __wr_line=$__wr_w
         elif [ $(( ${#__wr_line} + 1 + ${#__wr_w} )) -le "$__wr_room" ]; then __wr_line="$__wr_line $__wr_w"
         else
@@ -1627,9 +1739,9 @@ w_key() {  # w_key <allowed keys, e.g. "ynsq">: waits for one of them or Enter (
     W_KEY=$k
 }
 w_yn() {  # w_yn <question> <Y|N>: 0 yes, 1 no, 2 skip (s), 3 quit (q); only y, n, Enter, s and q are taken
-    local hint="Y/n" __q __w __line="" __first=1 __room=$(( W - 7 )); [ "$2" = N ] && hint="y/N"
-    printf '\n'
-    for __w in $1; do
+    local hint="Y/n" __q __w __ws __line="" __first=1 __room=$(( W - 7 )); [ "$2" = N ] && hint="y/N"
+    read -r -a __ws <<< "$1"; printf '\n'
+    for __w in ${__ws[@]+"${__ws[@]}"}; do
         if [ -z "$__line" ]; then __line=$__w
         elif [ $(( ${#__line} + 1 + ${#__w} )) -le "$__room" ]; then __line="$__line $__w"
         else if [ "$__first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$__line" "$X"; __first=0; else printf '    %s%s%s\n' "$L" "$__line" "$X"; fi; __line=$__w; fi
@@ -1664,9 +1776,22 @@ w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a passw
     if [ "$rc" = 0 ]; then w_ok "done"; else w_bad "failed" "exit $rc"; fi
     return $rc
 }
+W_RPATH='PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; '   # (expanded on the other machine)
 w_ssh() {  # w_ssh <machine label> <sh script>: on the other machine, through the ssh target herdr saved for it (asks for a password if needed)
     local host; host=$(store_host "$1"); case "$host" in ''|-*|*[!A-Za-z0-9._@:%-]*) return 1 ;; esac
-    ssh -o ConnectTimeout=8 "$host" "sh -lc $(printf '%q' "$2")"
+    "${BHOTE_SSH:-ssh}" -n -o ConnectTimeout=8 "$host" "sh -lc $(printf '%q' "$W_RPATH$2")"    # -n: no stdin (it would eat a loop's input)
+}
+w_ts() {  # w_ts <args>: the Tailscale CLI, also the one inside the macOS app (not on PATH there)
+    local t; t=$(command -v tailscale 2>/dev/null)
+    [ -n "$t" ] || { [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ] && t=/Applications/Tailscale.app/Contents/MacOS/Tailscale; }
+    [ -n "$t" ] || return 127; "$t" "$@"
+}
+w_has_ts() { command -v tailscale >/dev/null 2>&1 || [ -x /Applications/Tailscale.app/Contents/MacOS/Tailscale ]; }
+w_share() {  # w_share <part>: where a part of bhote lives (herdr-plugin, integrations/...): this checkout or a package's share folder
+    local d s; s=$(w_self_dir)
+    for d in "$s" "$s/../share/bhote" /usr/share/bhote /usr/local/share/bhote /opt/homebrew/share/bhote; do
+        [ -e "$d/$1" ] && { (cd "$d" && pwd); return 0; }
+    done; return 1
 }
 w_rbhote() { printf 'b=$(command -v bhote || echo "$HOME/.local/bin/bhote"); "$b" %s' "$1"; }   # bhote on the other machine
 w_self_dir() {  # the folder of this checkout (bhote is usually a link in ~/.local/bin)
@@ -1686,25 +1811,30 @@ w_machines() { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US r
 w_hosts() {
     local t
     {
-        if command -v tailscale >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-            tailscale status --json 2>/dev/null | jq -r '(.Self.UserID) as $me | [.Peer[]? | select(.UserID == $me)          # only your own devices (a tailnet can share others)
+        if w_has_ts && command -v jq >/dev/null 2>&1; then
+            w_ts status --json 2>/dev/null | jq -r '(.Self.UserID) as $me | [.Peer[]? | select(.UserID == $me)          # only your own devices (a tailnet can share others)
                 | select((.OS // "") as $o | ($o != "iOS" and $o != "android" and $o != "tvOS"))]
                 | sort_by(if .Online then 0 else 1 end)[] | ((.DNSName // "") | rtrimstr(".")) + "\u001fTailscale · " + (.OS // "?") + " · " + (.TailscaleIPs[0] // "") + (if .Online then "" else " · offline" end)' 2>/dev/null
         fi
         if [ -r "$HOME/.ssh/config" ]; then awk 'tolower($1) == "host" { for (i = 2; i <= NF; i++) if ($i !~ /[*?!]/) print $i "\037~/.ssh/config" }' "$HOME/.ssh/config"; fi
         if command -v dns-sd >/dev/null 2>&1; then
+            # a Bonjour service name ("Flo's MacBook") is not a host name: dns-sd -L tells the host behind it
             t=$(mktemp "$RUN_DIR/mdns.XXXXXX"); dns-sd -B _ssh._tcp local. > "$t" 2>/dev/null & local p=$!; sleep 2; kill "$p" 2>/dev/null; wait "$p" 2>/dev/null
-            awk '$2 == "Add" { n = ""; for (i = 7; i <= NF; i++) n = n (n ? " " : "") $i; gsub(/ /, "-", n); print n ".local\037local network (Bonjour)" }' "$t"
+            awk '$2 == "Add" { n = ""; for (i = 7; i <= NF; i++) n = n (n ? " " : "") $i; if (!s[n]++) print n }' "$t" | head -6 | while IFS= read -r n; do
+                ( r=$(mktemp "$RUN_DIR/mdnsl.XXXXXX"); dns-sd -L "$n" _ssh._tcp local. > "$r" 2>/dev/null & q=$!; sleep 1.5; kill "$q" 2>/dev/null; wait "$q" 2>/dev/null
+                  awk '/can be reached at/ { for (i = 1; i < NF; i++) if ($i == "at") { h = $(i + 1); sub(/:[0-9]+$/, "", h); sub(/\.$/, "", h); print h "\037local network (Bonjour)"; exit } }' "$r"
+                  rm -f "$r" ) &
+            done; wait; rm -f "$t"
         elif command -v avahi-browse >/dev/null 2>&1; then
             avahi-browse -tpr _ssh._tcp 2>/dev/null | awk -F';' '$1 == "=" && $3 == "IPv4" { print $7 "\037local network (Avahi)" }'
         fi
-    } | awk -F'\037' '$1 != "" && !seen[$1]++' | w_not_saved | head -9 | w_reach
+    } | awk -F'\037' '$1 ~ /^[A-Za-z0-9][A-Za-z0-9._-]*$/ && !seen[$1]++' | w_not_saved | head -9 | w_reach   # plain host names only
 }
 w_reach() {  # every candidate is tried at once (ssh, 3 s): the answer goes into its description, reachable ones first
     local h w i=0 n r rest dir; dir=$(mktemp -d "$RUN_DIR/reach.XXXXXX")
     while IFS=$US read -r h w; do
         [ -n "$h" ] || continue; i=$(( i + 1 )); printf '%s\n%s\n' "$h" "$w" > "$dir/$i.in"
-        ( out=$(ssh -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=accept-new "$USER@$h" true 2>&1); rc=$?
+        ( out=$("${BHOTE_SSH:-ssh}" -n -o BatchMode=yes -o ConnectTimeout=3 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$dir/$i.kh" "$USER@$h" true 2>&1); rc=$?
           case "$rc:$out" in 0:*) echo "0 ssh ok" ;; *ermission*|*publickey*) echo "1 needs a password" ;; *) echo "2 not reachable" ;; esac > "$dir/$i.out" ) &
     done
     wait
@@ -1716,10 +1846,10 @@ w_reach() {  # every candidate is tried at once (ssh, 3 s): the answer goes into
 }
 w_saved_shorts() {  # the short names (and Tailscale IPs) of the machines herdr has saved already
     local label host en ip
-    while IFS=$US read -r label host en; do
+    while IFS=$US read -r label host en <&3; do
         host=${host#*@}; printf '%s\n' "$(printf '%s' "${host%%.*}" | tr '[:upper:]' '[:lower:]')"
-        command -v tailscale >/dev/null 2>&1 && { ip=$(tailscale ip -4 "${host%%.*}" 2>/dev/null | head -1); [ -n "$ip" ] && printf '%s\n' "$ip"; }
-    done <<< "$(w_machines)"
+        w_has_ts && { ip=$(w_ts ip -4 "${host%%.*}" 2>/dev/null | head -1); [ -n "$ip" ] && printf '%s\n' "$ip"; }
+    done 3<<< "$(w_machines)"
 }
 w_not_saved() {  # filter for w_hosts: drop candidates that are saved machines already (same short name or Tailscale IP)
     local saved; saved=" $(w_saved_shorts | tr '\n' ' ') "
@@ -1729,10 +1859,11 @@ w_not_saved() {  # filter for w_hosts: drop candidates that are saved machines a
 }
 w_self_targets() {  # how the others can reach THIS machine: Tailscale name, local network name, IP address
     local u=$USER ts ln ip
-    if command -v tailscale >/dev/null 2>&1; then ts=$(tailscale status --json 2>/dev/null | jq -r '(.Self.DNSName // "") | rtrimstr(".")' 2>/dev/null); [ -n "$ts" ] && printf '%s@%s\037Tailscale (works from anywhere in your tailnet)\n' "$u" "$ts"; fi
+    if w_has_ts; then ts=$(w_ts status --json 2>/dev/null | jq -r '(.Self.DNSName // "") | rtrimstr(".")' 2>/dev/null); [ -n "$ts" ] && printf '%s@%s\037Tailscale (works from anywhere in your tailnet)\n' "$u" "$ts"; fi
     if [ "$(uname -s)" = Darwin ]; then ln=$(scutil --get LocalHostName 2>/dev/null); [ -n "$ln" ] && printf '%s@%s.local\037local network name (same Wi-Fi/LAN)\n' "$u" "$ln"
         ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
-    else ln=$(hostname 2>/dev/null); [ -n "$ln" ] && printf '%s@%s\037host name\n' "$u" "$ln"; ip=$(hostname -I 2>/dev/null | awk '{print $1}'); fi
+    else ln=$(hostname 2>/dev/null); [ -n "$ln" ] && printf '%s@%s\037host name\n' "$u" "$ln"; ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit } }')   # (no hostname -I on Arch)
+        [ -n "$ip" ] || ip=$(hostname -I 2>/dev/null | awk '{print $1}'); fi
     [ -n "$ip" ] && printf '%s@%s\037IP address (can change)\n' "$u" "$ip"
 }
 w_pick() {  # w_pick <var> <question> <US-separated lines>: a numbered list; a number picks, anything else is taken as typed
@@ -1751,7 +1882,7 @@ w_pick() {  # w_pick <var> <question> <US-separated lines>: a numbered list; a n
     printf -v "$_v" '%s' "$_a"
 }
 w_probe() {  # w_probe <ssh target>: can we get there? W_PROBE = ok | password | unknown | refused | unreachable | other
-    local out; out=$(ssh -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new "$1" true 2>&1); local rc=$?
+    local out; out=$("${BHOTE_SSH:-ssh}" -n -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=accept-new "$1" true 2>&1); local rc=$?
     if [ $rc = 0 ]; then W_PROBE=ok; return 0; fi
     case "$out" in
         *"ermission denied"*|*"publickey"*) W_PROBE=password ;;
@@ -1775,7 +1906,7 @@ w_probe_say() {  # what the probe means, in one line
 w_remote_knows() {  # w_remote_knows <machine label>: does that machine have THIS one saved in herdr? 0 yes, 1 no, 2 cannot tell
     # (herdr does not run `machine list` through --machine; this asks the other side over ssh, read-only, never for a password)
     local host list; host=$(store_host "$1"); case "$host" in ''|-*|*[!A-Za-z0-9._@:%-]*) return 2 ;; esac
-    list=$(ssh -o BatchMode=yes -o ConnectTimeout=6 "$host" 'sh -lc "herdr machine list"' 2>/dev/null) || return 2
+    list=$("${BHOTE_SSH:-ssh}" -n -o BatchMode=yes -o ConnectTimeout=6 "$host" "sh -lc $(printf '%q' "${W_RPATH}herdr machine list")" 2>/dev/null) || return 2
     printf '%s\n' "$list" | awk -F'\t' -v h="$HOST" '$2 == h { f = 1 } END { exit !f }' && return 0
     return 1
 }
@@ -1789,13 +1920,13 @@ setup_step_checks() {
     command -v bhote >/dev/null 2>&1 && w_ok "bhote command" "$(command -v bhote | sed "s#^$HOME#~#")" || w_warn "bhote command" "not on PATH (install.sh links ~/.local/bin/bhote)"
     for t in gzip base64 perl; do command -v "$t" >/dev/null 2>&1 && w_ok "$t" "" || w_warn "$t" "missing: some extras are off"; done
     if w_inbound_ssh; then w_ok "ssh into here" "open (other machines can reach $HOST)"; else w_warn "ssh into here" "closed: step 4 can switch it on"; fi
-    if command -v tailscale >/dev/null 2>&1 && tailscale status >/dev/null 2>&1; then w_ok "Tailscale" "on (machines are found by name)"
+    if w_has_ts && w_ts status >/dev/null 2>&1; then w_ok "Tailscale" "on (machines are found by name)"
     else w_warn "Tailscale" "not running: machines are found in the local network only"; fi
     if herdr plugin list 2>/dev/null | grep -q 'bhote.panel'; then w_ok "herdr plugin" "bhote.panel"
     else
         w_bad "herdr plugin" "not linked: no autostart, no events, no sync through herdr"
-        dir=$(w_self_dir)
-        if [ -d "$dir/herdr-plugin" ]; then w_yn "Link the plugin from $dir/herdr-plugin?" Y; r=$?; [ $r = 3 ] && return
+        dir=$(w_share herdr-plugin)
+        if [ -n "$dir" ]; then w_yn "Link the plugin from $dir/herdr-plugin?" Y; r=$?; [ $r = 3 ] && return
             [ $r = 0 ] && w_run "herdr plugin link" herdr plugin link "$dir/herdr-plugin"; fi
     fi
     if [ -f "$hook" ]; then
@@ -1811,7 +1942,7 @@ setup_step_checks() {
             fi
         fi
     else w_warn "Claude Code" "no ~/.claude/settings.json: the hook is skipped"; fi
-    local sk="$HOME/.claude/skills/bhote" src; src="$(w_self_dir)/integrations/claude/skills/bhote"
+    local sk="$HOME/.claude/skills/bhote" src; src="$(w_share integrations/claude/skills/bhote)/integrations/claude/skills/bhote"
     if [ -e "$sk/SKILL.md" ]; then w_ok "Claude skill" "agents create waiting topics"
     elif [ -d "$HOME/.claude" ] && [ -f "$src/SKILL.md" ]; then
         w_warn "Claude skill" "not installed: agents do not create waiting topics"
@@ -1823,8 +1954,12 @@ setup_step_checks() {
 setup_step_name() {
     w_screen 2 "THIS MACHINE"
     w_say "How this machine is called in the agent lists. Other machines must know it by the same name (herdr machine label)."
-    local n; w_read n "Name of this machine:" "$HOST"; [ "$W_QUIT" = 1 ] && return
+    local n old=$HOST f; w_read n "Name of this machine:" "$HOST"; [ "$W_QUIT" = 1 ] && return
     n=${n//[!A-Za-z0-9 ._-]/}; [ -n "$n" ] && { cfg_set HOST_LABEL "$n"; HOST=$n; w_ok "name" "$n"; }
+    if [ -n "$n" ] && [ "$n" != "$old" ]; then
+        for f in "$TOPIC_DIR"/*.topic; do [ -f "$f" ] && [ "$(topic_get "$f" agent_machine)" = "$old" ] && topic_set "$f" agent_machine "$n"; done
+        [ -n "$(w_machines)" ] && w_warn "renamed" "machines that saved $old: rename it there (herdr)"
+    fi
     w_continue
 }
 setup_add_machine() {  # setup_add_machine <host or user@host>: user, test, label, no duplicates, herdr machine add
@@ -1853,10 +1988,10 @@ setup_step_machines() {
         w_screen 3 "OTHER MACHINES"
         w_say "The machines herdr knows (herdr machine list). bhote reaches them through herdr: their agents, and the topics."; w_line
         local any=0
-        while IFS=$US read -r label host en; do
+        while IFS=$US read -r label host en <&3; do
             any=1
             if herdr --machine "$label" pane list >/dev/null 2>&1; then w_ok "$label" "$host · reachable"; else w_warn "$label" "$host · not reachable now"; fi
-        done <<< "$(w_machines)"
+        done 3<<< "$(w_machines)"
         [ "$any" = 1 ] || w_warn "none yet" "add one to see its agents here"
         w_yn "Add a machine?" N; r=$?; [ $r = 3 ] && return; [ $r = 0 ] || break
         w_screen 3 "ADD A MACHINE"
@@ -1880,14 +2015,15 @@ w_wait_ssh() {  # w_wait_ssh <seconds>: until ssh is open here (checked every se
     printf '\n'; return 1
 }
 setup_open_ssh() {  # ssh into this machine is closed: switch it on here (sudo asks for the password itself), or open the settings
-    local c
+    local c unit=sshd
+    [ "$(uname -s)" = Darwin ] || systemctl cat sshd.service >/dev/null 2>&1 || unit=ssh
     w_say "Other machines can reach $HOST only when ssh is open here."
     w_line
     if [ "$(uname -s)" = Darwin ]; then
         w_opt 1 "switch on Remote Login now (sudo asks for your Mac password; bhote never sees it)"
         w_opt 2 "open System Settings › Sharing; I switch on Remote Login there"
     else
-        w_opt 1 "start the ssh server now (sudo systemctl enable --now sshd; sudo asks for your password)"
+        w_opt 1 "start the ssh server now (sudo systemctl enable --now $unit; sudo asks for your password)"
         w_opt 2 "I start it myself in another terminal"
     fi
     w_opt 3 "skip it"
@@ -1896,7 +2032,7 @@ setup_open_ssh() {  # ssh into this machine is closed: switch it on here (sudo a
         1) if [ "$(uname -s)" = Darwin ]; then
                # systemsetup needs Full Disk Access for the terminal on current macOS; launchd starts the same ssh service without it
                w_run "sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist" sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist
-           else w_run "sudo systemctl enable --now sshd" sudo systemctl enable --now sshd; fi
+           else w_run "sudo systemctl enable --now $unit" sudo systemctl enable --now "$unit"; fi
            w_wait_ssh 10 ;;
         2) [ "$(uname -s)" = Darwin ] && open "x-apple.systempreferences:com.apple.Sharing-Settings.extension" 2>/dev/null
            w_wait_ssh 180 ;;
@@ -1909,7 +2045,7 @@ setup_step_twoway() {
     w_screen 4 "THE OTHER WAY ROUND"
     w_say "So that the other machines see the agents of this one, and topics can travel both ways, they must know this machine too."; w_line
     local label host en r tgt key fp ak="$HOME/.ssh/authorized_keys" known
-    while IFS=$US read -r label host en; do
+    while IFS=$US read -r label host en <&3; do
         [ -n "$label" ] || continue
         w_remote_knows "$label"; case $? in
             0) w_ok "$label" "knows $HOST already"; continue ;;
@@ -1933,12 +2069,13 @@ setup_step_twoway() {
         key=$(w_ssh "$label" 'for f in ~/.ssh/id_ed25519.pub ~/.ssh/id_ecdsa.pub ~/.ssh/id_rsa.pub; do [ -f "$f" ] && { head -1 "$f"; exit 0; }; done; exit 3'); r=$?
         if [ $r = 3 ]; then
             w_warn "key of $label" "none yet"
-            w_yn "Create an ssh key on $label (ed25519, no passphrase)?" Y || { w_say "Without a key $label cannot log in here: it is skipped."; continue; }
+            w_yn "Create an ssh key on $label (ed25519, no passphrase)?" Y; r=$?; [ $r = 3 ] && return
+            [ $r = 0 ] || { w_say "Without a key $label cannot log in here: it is skipped."; w_continue; continue; }
             key=$(w_ssh "$label" 'ssh-keygen -q -t ed25519 -N "" -f ~/.ssh/id_ed25519 </dev/null && head -1 ~/.ssh/id_ed25519.pub')
         fi
-        case "$key" in "ssh-ed25519 "*|"ecdsa-sha2-"*|"ssh-rsa "*) ;; *) w_bad "key of $label" "could not be read"; w_continue; continue ;; esac
-        key=${key//[[:cntrl:]]/}
-        fp=$(printf '%s\n' "$key" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
+        key=$(printf '%s\n' "$key" | tr -d '\r' | grep -E '^(ssh-ed25519|ecdsa-sha2-nistp[0-9]+|ssh-rsa) [A-Za-z0-9+/]+=*( [^[:cntrl:]]*)?$' | head -1)   # a login banner may come first
+        fp=$([ -n "$key" ] && printf '%s\n' "$key" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}')
+        [ -n "$fp" ] || { w_bad "key of $label" "could not be read"; w_continue; continue; }
         w_line; w_say "The key of $label:" "$L"; printf '  %s%s%s\n' "$C" "${fp:-?}" "$X"
         w_yn "Allow $label to log in to $HOST with this key (added to ~/.ssh/authorized_keys)?" N; r=$?; [ $r = 3 ] && return
         if [ $r != 0 ]; then
@@ -1946,15 +2083,19 @@ setup_step_twoway() {
             w_continue; continue
         fi
         mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"; touch "$ak" && chmod 600 "$ak"
-        grep -qxF "$key" "$ak" 2>/dev/null || printf '%s\n' "$key" >> "$ak"
+        local blob; blob=$(printf '%s' "$key" | awk '{print $2}')
+        if ! awk -v b="$blob" '{ for (i = 1; i <= NF; i++) if ($i == b) f = 1 } END { exit !f }' "$ak" 2>/dev/null; then
+            [ -s "$ak" ] && [ -n "$(tail -c1 "$ak")" ] && printf '\n' >> "$ak"     # the last line may lack its newline
+            printf '%s\n' "$key" >> "$ak"
+        fi
         w_ok "key of $label" "allowed here"
         # 4) does it work from there? then let herdr there save this machine
-        if w_ssh "$label" "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 $(printf '%q' "$tgt") true" >/dev/null 2>&1; then
+        if w_ssh "$label" "ssh -n -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 $(printf '%q' "$tgt") true" >/dev/null 2>&1; then
             w_ok "$label → $HOST" "ssh works"
         else w_bad "$label → $HOST" "ssh does not work (address? firewall?)"; w_continue; continue; fi
         w_yn "Save $HOST as a machine in herdr on $label?" Y; r=$?; [ $r = 3 ] && return
         [ $r = 0 ] && w_run "on $label: herdr machine add --label $HOST $tgt" w_ssh "$label" "herdr machine add --label $(printf '%q' "$HOST") $(printf '%q' "$tgt")"
-    done <<< "$(w_machines)"
+    done 3<<< "$(w_machines)"
     w_continue
 }
 setup_step_topics() {
@@ -1965,14 +2106,16 @@ setup_step_topics() {
     w_choose c "Choose:" 123 "$([ "$cur" = remote ] && { [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3; } || echo 1)" || return
     case "$c" in
         1) cfg_set STORE local; w_ok "topics" "only here" ;;
-        2|3) while IFS=$US read -r label host en; do labels="${labels:+$labels, }$label"; done <<< "$(w_machines)"
+        2|3) while IFS=$US read -r label host en <&3; do labels="${labels:+$labels, }$label"; done 3<<< "$(w_machines)"
              [ -n "$labels" ] || { w_bad "no machine" "add one in step 3 first"; w_continue; return; }
              w_read m "Which machine ($labels):" "$(cfg_get STORE_MACHINE "${labels%%,*}")"; [ "$W_QUIT" = 1 ] && return
              store_host "$m" >/dev/null; [ -n "$(store_host "$m")" ] || { w_bad "$m" "is not a saved herdr machine"; w_continue; return; }
              if [ "$c" = 2 ]; then cfg_set STORE remote STORE_MACHINE "$m" SYNC_VIA herdr
                  w_ok "topics" "in step with $m through herdr"
                  w_say "Through herdr each side pulls from the other, so $m must pull from $HOST too."
-                 w_yn "Set that up on $m now (bhote config there, through ssh)?" Y; r=$?; [ $r = 3 ] && return
+                 w_remote_knows "$m"; r=$?
+                 if [ $r = 1 ]; then w_warn "$m" "does not know $HOST: it cannot pull from here (step 4)"; r=1
+                 else w_yn "Set that up on $m now (bhote config there, through ssh)?" Y; r=$?; [ $r = 3 ] && return; fi
                  [ $r = 0 ] && w_run "on $m: bhote config set STORE remote · STORE_MACHINE $HOST · SYNC_VIA herdr" \
                      w_ssh "$m" "$(w_rbhote "config set STORE remote") && $(w_rbhote "config set STORE_MACHINE $(printf '%q' "$HOST")") && $(w_rbhote "config set SYNC_VIA herdr")" >/dev/null
              else cfg_set STORE remote STORE_MACHINE "$m" SYNC_VIA ssh; w_ok "topics" "in step with $m through ssh"; fi
@@ -1997,7 +2140,7 @@ setup_step_behaviour() {
     w_yn "herdr notifications (ready for review, done, waiting too long)?" "$([ "$(cfg_get NOTIFY on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set NOTIFY on ;; 1) cfg_set NOTIFY off ;; esac
     w_read h "Remind a waiting topic after how many hours (0 = never):" "$(cfg_get WAIT_REMIND 24)"; [ "$W_QUIT" = 1 ] && return
-    setting_check WAIT_REMIND "$h" 2>/dev/null && cfg_set WAIT_REMIND "$h"
+    setting_check WAIT_REMIND "$h" 2>/dev/null && cfg_set WAIT_REMIND "$(num_or "$h" "$h")"
     w_yn "Does an agent whose workspace runs tests count as busy?" "$([ "$(cfg_get TESTS_BUSY off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set TESTS_BUSY on ;; 1) cfg_set TESTS_BUSY off ;; esac
     w_line
@@ -2020,7 +2163,7 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
     w_ok "autostart" "$(cfg_get AUTOSTART on)"
     local label host en n known
-    while IFS=$US read -r label host en; do
+    while IFS=$US read -r label host en <&3; do
         [ -n "$label" ] || continue
         printf '\n  %s%s%s\n' "$R" "$label" "$X"
         n=$(herdr --machine "$label" pane list 2>/dev/null | jq '[.result.panes[] | select(.agent)] | length' 2>/dev/null)
@@ -2030,7 +2173,7 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
             1) w_warn "$label → $HOST" "does not know it (step 4)" ;;
             *) w_warn "$label → $HOST" "cannot tell" ;;
         esac
-    done <<< "$(w_machines)"
+    done 3<<< "$(w_machines)"
     if [ "$(cfg_get STORE local)" = remote ]; then
         store_sync >/dev/null 2>&1; case $? in 0) w_ok "topics merge" "works" ;; 2) w_warn "topics merge" "busy, it runs again by itself" ;; *) w_bad "topics merge" "$(store_summary)" ;; esac
     fi
@@ -2038,7 +2181,8 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
     w_continue
 }
 bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
-    local st; W_QUIT=0; ask_drain                              # keys typed before it opened must not answer its first questions
+    local st old_int; W_QUIT=0; ask_drain                      # keys typed before it opened must not answer its first questions
+    old_int=$(trap -p INT); trap 'W_QUIT=1' INT                 # Ctrl-C ends the wizard (and only the wizard)
     COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     w_log "==== setup on $HOST (bhote $VERSION)"
@@ -2047,6 +2191,7 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     done
     cfg_set SETUP_DONE "$(date +%Y-%m-%d)"
     HEAD_GRAD=""                                            # the list makes its own again
+    if [ -n "$old_int" ]; then eval "$old_int"; else trap - INT; fi
     printf '\033[H\033[2J'
 }
 setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
@@ -2054,12 +2199,13 @@ setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
         "$(command -v jq >/dev/null 2>&1 && echo true || echo false)" "$(command -v herdr >/dev/null 2>&1 && echo true || echo false)" \
         "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo true || echo false)" "$(grep -q 'bhote current' "$HOME/.claude/settings.json" 2>/dev/null && echo true || echo false)"
     local label host en first=1 known
-    while IFS=$US read -r label host en; do
+    while IFS=$US read -r label host en <&3; do
         [ -n "$label" ] || continue
-        w_remote_knows "$label"; case $? in 0) known=true ;; 1) known=false ;; *) known=null ;; esac
+        local reach=false; herdr --machine "$label" pane list >/dev/null 2>&1 && reach=true
+        known=null; [ "$reach" = true ] && { w_remote_knows "$label"; case $? in 0) known=true ;; 1) known=false ;; esac; }
         [ "$first" = 1 ] || printf ','; first=0
-        printf '{"label":%s,"reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$(herdr --machine "$label" pane list >/dev/null 2>&1 && echo true || echo false)" "$known"
-    done <<< "$(w_machines)"
+        printf '{"label":%s,"reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$reach" "$known"
+    done 3<<< "$(w_machines)"
     printf '],"setup_done":%s}\n' "$(json_opt "$(cfg_get SETUP_DONE '')")"
 }
 
@@ -2074,19 +2220,17 @@ bhote_main() {
     if [ -n "${BHOTE_ONCE:-}" ] || [ ! -t 0 ]; then
         AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote
         collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
-        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); ui_load; bhote_draw "$view"; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
+        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); ui_load; bhote_draw "$view" | tr -d '\001'; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
     fi
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
     # never set up on this machine: the wizard opens once, in the first panel only (herdr may start several at a time)
     if [ -z "$(cfg_get SETUP_DONE '')" ]; then
-        local sl=$SHARED_DIR/setup.lock so=""                 # the lock holds the pid of the panel that shows the wizard
-        [ -r "$sl/pid" ] && read -r so < "$sl/pid"
-        if { [ -n "$so" ] && ! kill -0 "$so" 2>/dev/null; } || { [ -d "$sl" ] && [ -z "$so" ]; }; then rm -rf "$sl"; fi   # its panel is gone
-        if mkdir "$sl" 2>/dev/null; then
-            echo "$$" > "$sl/pid"; printf '\033]2;Bhote\007'
+        local sl=$SHARED_DIR/setup.lock                       # the panel that shows the wizard holds it
+        if lock_take "$sl" "$$"; then
+            printf '\033]2;Bhote\007'
             # the welcome screen comes first and says what a key does now; too small for it: straight into the setup
-            if splash_fits; then SETUP_PENDING=1; PROMPT_TEXT="PRESS ANY KEY TO START SETUP"; else bhote_setup; rm -rf "$sl"; fi
+            if splash_fits; then SETUP_PENDING=1; PROMPT_TEXT="PRESS ANY KEY TO START SETUP"; else bhote_setup; lock_drop "$sl" "$$"; fi
         fi
     fi
     local pids="" stty_saved
@@ -2098,9 +2242,7 @@ bhote_main() {
         trap '' INT TERM HUP QUIT USR1 WINCH                  # once, and not interrupted by the next signal
         kill $pids 2>/dev/null
         [ -n "$stty_saved" ] && stty "$stty_saved" </dev/tty 2>/dev/null
-        [ "$(cat "$SHARED_DIR/collector.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$SHARED_DIR/collector.lock"
-        [ "$(cat "$DATA_DIR/sync.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$DATA_DIR/sync.lock"
-        [ "$(cat "$SHARED_DIR/setup.lock/pid" 2>/dev/null)" = "$$" ] && rm -rf "$SHARED_DIR/setup.lock"
+        lock_drop "$SHARED_DIR/collector.lock" "$$"; lock_drop "$DATA_DIR/sync.lock" "$$"; lock_drop "$SHARED_DIR/setup.lock" "$$"
         rm -rf "$RUN_DIR"
         printf '%s\033[0m\033[?25h\033[?1049l\033]2;\007' "$MOUSE_OFF" 2>/dev/null   # mouse off, colours, cursor, normal screen, title
     }
@@ -2123,7 +2265,7 @@ bhote_main() {
         elif [ "$anim" = 1 ]; then anim=0; dog_animate "$view"; fi
         [ "$view" = splash ] && [ -z "${SPLASH_SINCE:-}" ] && SPLASH_SINCE=$SECONDS
         [ "$view" = splash ] || SPLASH_SINCE=""
-        tmo=2; [ "$view" = splash ] && tmo=1
+        tmo=1                                                  # (the 2 s checks below and the auto-close need a short timeout)
         key=""; IFS= read -rsn1 -t "$tmo" key 2>/dev/null; rc=$?
         [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
         if [ "$key" = $'\033' ]; then      # an arrow key (ESC [ A..D, ESC O A..D), a mouse report, another sequence, or a lone Esc
@@ -2136,14 +2278,26 @@ bhote_main() {
                     case "$k3" in [0123456789\;\<\=\>\?\ \!\"\#\$\%\&\'\(\)\*\+\,\-\.\/]) ;; *) [ "$k2" = O ] || [ -z "$seq" ] || k3="x$k3"; break ;; esac   # (no [@-~]: a range follows the locale)
                     [ "$k2" = O ] && break; seq="$seq$k3"; [ "${#seq}" -gt 24 ] && break
                 done
+                if [ "$k2" = "[" ] && [ -z "$seq" ] && [ "$k3" = M ]; then        # X10 mouse: three raw bytes follow
+                    IFS= read -rsn1 -t 1 k3; IFS= read -rsn1 -t 1 k3; IFS= read -rsn1 -t 1 k3; k3=M
+                fi
                 case "$k3" in A) key=UP ;; B) key=DOWN ;; C) key=RIGHT ;; D) key=LEFT ;; *) key="" ;; esac
                 case "$seq" in "<"*) mouse_event "${seq#<}" "${k3#x}"; key=$MOUSE_KEY ;; esac      # SGR mouse: < b ; x ; y M|m
             elif [ -z "$k2" ]; then key=ESC
             else key=""; fi                                    # Alt+key: nothing
         fi
-        if [ "${SETUP_PENDING:-}" = 1 ] && [ "$view" = splash ] && [ -n "$key" ] && [ "$key" != DRAG ]; then
-            panel_setup; SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; rm -rf "$SHARED_DIR/setup.lock"
-            view=main; redraw=1; key=""
+        if [ "${SETUP_PENDING:-}" = 1 ]; then
+            if [ "$view" != splash ]; then                     # the pane got too small for the welcome screen: next start
+                SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; lock_drop "$SHARED_DIR/setup.lock" "$$"
+            elif [ -n "$key" ] && [ "$key" != DRAG ]; then
+                case "$key" in
+                    q|Q) exit 0 ;;                               # quit, the setup comes again next time
+                    ESC) ;;                                      # not now: the list, the setup comes again next time
+                    *) panel_setup ;;
+                esac
+                SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; lock_drop "$SHARED_DIR/setup.lock" "$$"
+                view=main; redraw=1; key=""
+            fi
         fi
         if [ "$view" = settings ]; then
             case "$key" in
@@ -2230,10 +2384,15 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
     fi
     ui_load
     frame=$(bhote_draw "$1")
-    while IFS= read -r line; do
+    local fl=() n=0 sel=-1 off=0 rows=${ROWS:-40} i
+    while IFS= read -r line; do case "$line" in $'\001'*) sel=$n; line=${line#$'\001'} ;; esac; fl[$n]=$line; n=$(( n + 1 )); done <<< "$frame"
+    if [ "$n" -gt "$rows" ] && [ "$sel" -ge 0 ]; then         # taller than the pane (a long menu, settings): follow the selection
+        off=$(( sel - rows / 2 )); [ "$off" -gt $(( n - rows )) ] && off=$(( n - rows )); [ "$off" -lt 0 ] && off=0
+    fi
+    for (( i = off; i < n && i < off + rows; i++ )); do
         [ "$first" = 1 ] || out="${out}"$'\n'; first=0
-        out="${out}${line}"$'\033[K'
-    done <<< "$frame"
+        out="${out}${fl[$i]}"$'\033[K'
+    done
     printf '\033[H%s\033[J' "$out"
 }
 
@@ -2241,6 +2400,11 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
 # here is also merged with the data location at once (best effort: offline it stays local and is merged later).
 json_str() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\r' | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }')"; }
 title_has() { local r=1; shopt -s nocasematch; [[ $1 == *"$2"* ]] && r=0; shopt -u nocasematch; return $r; }   # case-insensitive, multibyte-safe
+topic_ref_sync() {  # topic_ref_sync <ref>: like topic_ref, but when nothing matches and a replica exists, merge once and look again
+    local r; topic_ref "$1" && return 0; r=$?
+    [ "$r" = 1 ] && [ -z "${BHOTE_NO_SYNC:-}" ] && [ "$(cfg_get STORE local)" = remote ] || return $r
+    store_sync >/dev/null 2>&1; topic_ref "$1" 2>/dev/null
+}
 topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bhote list`, an id (prefix), or part of the title.
     local ref=$1 i hits=0 hit="" low
     topics_load
@@ -2259,7 +2423,10 @@ topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bho
     if [ "$hits" = 1 ]; then printf '%s' "$hit"; return 0; fi
     if [ "$hits" = 0 ]; then echo "bhote: no topic matches '$ref'" >&2; return 1; fi
     echo "bhote: '$ref' matches $hits topics, be more specific:" >&2
-    for (( i = 0; i < T_N; i++ )); do title_has "${T_TITLE[$i]}" "$low" && echo "  $(( i + 1 ))  ${T_TITLE[$i]}" >&2; done
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_ID[$i]}" in "$ref"*) echo "  $(( i + 1 ))  ${T_TITLE[$i]}  (id ${T_ID[$i]})" >&2; continue ;; esac
+        title_has "${T_TITLE[$i]}" "$low" && echo "  $(( i + 1 ))  ${T_TITLE[$i]}" >&2
+    done
     return 2
 }
 notify() {  # notify <title> <body> [sound: done|request|none]: a herdr notification, never blocking, never failing
@@ -2269,10 +2436,17 @@ notify() {  # notify <title> <body> [sound: done|request|none]: a herdr notifica
     return 0
 }
 poke() { : > "$SHARED_DIR/poke" 2>/dev/null; return 0; }   # the collector looks at once instead of after its interval
+is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
+    [ -n "${CLAUDECODE:-}" ] && return 0
+    [ -n "${HERDR_PANE_ID:-}" ] || return 1
+    [ -n "$(herdr pane list 2>/dev/null | jq -r --arg p "$HERDR_PANE_ID" '[.result.panes[] | select(.pane_id == $p)][0].agent // empty' 2>/dev/null)" ]
+}
 agent_note() {  # agent_note <file>: when an agent runs the command, remember which one (its herdr session and pane)
     [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -n "${HERDR_PANE_ID:-}" ] || return 0
     [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && topic_set "$1" agent_session "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}"
-    [ -n "${HERDR_PANE_ID:-}" ] && [ -z "$(topic_get "$1" agent_pane)" ] && topic_set "$1" agent_pane "${HERDR_PANE_ID//[!A-Za-z0-9:_-]/}"
+    if [ -n "${HERDR_PANE_ID:-}" ] && [ -z "$(topic_get "$1" agent_pane)" ]; then
+        bhote_info; topic_set "$1" agent_pane "${HERDR_PANE_ID//[!A-Za-z0-9:_-]/}"; topic_set "$1" agent_machine "$HOST"   # a pane id alone repeats on every machine
+    fi
     return 0
 }
 # An agent's status changed (the herdr plugin passes the event as HERDR_PLUGIN_EVENT_JSON, or on stdin). When an agent that
@@ -2286,11 +2460,14 @@ cli_event() {
         | map(tostring | gsub("[^A-Za-z0-9:_-]"; "")) | map(if . == "" then "-" else . end) | join(" ")' 2>/dev/null)"
     poke
     case "$st" in done|idle) ;; *) return 0 ;; esac
+    [ "$(cfg_get STORE local)" = remote ] && store_sync >/dev/null 2>&1   # the topic may have been handed out on the other machine
     [ "$pane" = - ] && pane=""; [ "$sess" = - ] && sess=""
     topics_load; now=$(date +%s)
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_STATUS[$i]}" = now ] || continue
-        if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ]; }; then
+        # the session decides when both sides know it; a pane alone only on this machine, and only with no other session on record
+        if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } \
+           || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && { [ -z "$sess" ] || [ -z "${T_AS[$i]}" ]; }; }; then
             [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 5 ] || continue      # the idle right after handing it over is not "finished"
             f=${T_FILE[$i]}; topic_set "$f" status review
             notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request
@@ -2305,7 +2482,8 @@ cli_current() {
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in now|review|waiting) ;; *) continue ;; esac
         if { [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ "${T_AS[$i]}" = "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}" ]; } \
-           || { [ -n "${HERDR_PANE_ID:-}" ] && [ "${T_AP[$i]}" = "$HERDR_PANE_ID" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ]; }; then hit=${T_FILE[$i]}; break; fi
+           || { [ -n "${HERDR_PANE_ID:-}" ] && [ "${T_AP[$i]}" = "$HERDR_PANE_ID" ] && [ "${T_AM[$i]}" = "$HOST" ] \
+                && { [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -z "${T_AS[$i]}" ]; }; }; then hit=${T_FILE[$i]}; break; fi
     done
     if [ -z "$hit" ]; then [ -n "$json" ] && printf 'null\n'; return 0; fi
     if [ -n "$json" ]; then topic_json "$hit"; printf '\n'; return 0; fi
@@ -2342,41 +2520,53 @@ cli_agents() {  # bhote agents [--json]
     [ -n "$json" ] && printf '['
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        tid=""; for (( t = 0; t < T_N; t++ )); do [ "${T_STATUS[$t]}" != done ] && [ "${T_AM[$t]:-$HOST}" = "$m" ] && [ "${T_AP[$t]}" = "$id" ] && { tid=${T_ID[$t]}; break; }; done
+        tid=""; for (( t = 0; t < T_N; t++ )); do [ "${T_STATUS[$t]}" != done ] && [ "${T_AM[$t]}" = "$m" ] && [ "${T_AP[$t]}" = "$id" ] && { tid=${T_ID[$t]}; break; }; done
         if [ -n "$json" ]; then
             [ "$first" = 1 ] || printf ','; first=0
             local free=false; case "$st" in idle|done) free=true ;; esac   # (not inside $( ): bash 3.2 misreads a case there)
             printf '{"n":%s,"machine":%s,"pane":%s,"status":%s,"name":%s,"task":%s,"free":%s,"topic":%s}' "$(( i + 1 ))" "$(json_str "$m")" "$(json_str "$id")" \
                 "$(json_str "$st")" "$(json_str "$name")" "$(json_opt "$task")" "$free" "$(json_opt "$tid")"
-        else printf '%3s  %-8s %-9s %s%s\n' "$(( i + 1 ))" "$m" "$st" "$name" "${task:+  · $task}"; fi
+        else local mp; pad_set mp "$m" 8; printf '%3s  %s %-9s %s%s\n' "$(( i + 1 ))" "$mp" "$st" "$name" "${task:+  · $task}"; fi
     done
     if [ -n "$json" ]; then printf ']\n'; fi
     return 0
 }
 cli_transfer() {  # bhote transfer <from agent> <to agent> [--topic <ref>]
-    local from="" to="" tref="" f fm fp fn fs ft tm tp tn rc
-    while [ $# -gt 0 ]; do case "$1" in --topic|-t) tref=${2:-}; shift ;; *) if [ -z "$from" ]; then from=$1; else to=$1; fi ;; esac; shift; done
+    local from="" to="" tref="" f fm fp fn fs ft tm tp tn rc made=""
+    while [ $# -gt 0 ]; do case "$1" in
+        --topic|-t) tref=${2:-}; shift ;;
+        -*) echo "bhote: unknown option '$1' for transfer" >&2; return 1 ;;
+        *) if [ -z "$from" ]; then from=$1; elif [ -z "$to" ]; then to=$1; else echo "bhote: transfer takes two agents" >&2; return 1; fi ;;
+    esac; shift; done
     [ -n "$from" ] && [ -n "$to" ] || { echo "bhote: transfer <from agent> <to agent> [--topic <ref>] (bhote agents lists them)" >&2; return 1; }
     cli_agents_load
     agent_ref "$from" || return $?; fm=$AR_M; fp=$AR_P; fn=$AR_NAME; ft=$AR_TASK
     agent_ref "$to" || return $?; tm=$AR_M; tp=$AR_P; tn=$AR_NAME
     [ "$fm/$fp" = "$tm/$tp" ] && { echo "bhote: an agent cannot take over from itself" >&2; return 1; }
-    if [ -n "$tref" ]; then f=$(topic_ref "$tref") || return $?
+    if [ -n "$tref" ]; then f=$(topic_ref_sync "$tref") || return $?
     else                                                       # the topic of the source agent, or a new one for its work
         local i; f=""; for (( i = 0; i < T_N; i++ )); do
             case "${T_STATUS[$i]}" in now|review|waiting) ;; *) continue ;; esac
-            [ "${T_AM[$i]:-$HOST}" = "$fm" ] && [ "${T_AP[$i]}" = "$fp" ] && { f=${T_FILE[$i]}; break; }
+            [ "${T_AM[$i]}" = "$fm" ] && [ "${T_AP[$i]}" = "$fp" ] && { f=${T_FILE[$i]}; break; }
         done
-        if [ -z "$f" ]; then topic_new "${ft:-Work of $fn}" "" "" || return 1; f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; fi
+        if [ -z "$f" ]; then topic_new "${ft:-Work of $fn}" "" "" || return 1; f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; made=1; fi
     fi
-    transfer_start "$f" "$fm" "$fp" "$fn" "$tm" "$tp" "$tn" || return 1
+    transfer_start "$f" "$fm" "$fp" "$fn" "$tm" "$tp" "$tn" || { [ -n "$made" ] && rm -f "$f"; return 1; }
     cli_done; topics_load; cli_show "$f" $json
 }
 cli_handover() {  # bhote handover <topic> [--to <machine/pane>] [--branch <b>] [--commit <c>]: the source agent is done; the target takes over
     local ref="" to="" b="" c="" f
-    while [ $# -gt 0 ]; do case "$1" in --to) to=${2:-}; shift ;; --branch) b=${2:-}; shift ;; --commit) c=${2:-}; shift ;; *) ref=$1 ;; esac; shift; done
-    f=$(topic_ref "$ref") || return $?
-    [ -n "$to" ] || to=$(topic_get "$f" transfer_to)
+    while [ $# -gt 0 ]; do case "$1" in
+        --to) to=${2:-}; shift ;; --branch) b=${2:-}; shift ;; --commit) c=${2:-}; shift ;;
+        -*) echo "bhote: unknown option '$1' for handover" >&2; return 1 ;;
+        *) [ -z "$ref" ] || { echo "bhote: handover takes one topic (quote --to when the machine name has spaces)" >&2; return 1; }; ref=$1 ;;
+    esac; shift; done
+    [ -n "$ref" ] || { echo "bhote: handover needs a topic" >&2; return 1; }
+    f=$(topic_ref_sync "$ref") || return $?
+    local want; want=$(topic_get "$f" transfer_to)
+    [ -n "$want" ] || { echo "bhote: no transfer is pending for this topic" >&2; return 1; }
+    [ -n "$to" ] || to=$want
+    [ "$to" = "$want" ] || { echo "bhote: this topic goes to $want, not $to" >&2; return 1; }
     case "$to" in */*) ;; *) echo "bhote: handover needs --to <machine/pane> (the command you got says it)" >&2; return 1 ;; esac
     case "$to" in *[!A-Za-z0-9._:/\ -]*) echo "bhote: odd characters in --to" >&2; return 1 ;; esac
     bhote_info; transfer_finish "$f" "$to" "$b" "$c" || return 1
@@ -2401,6 +2591,7 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
         set) [ $# -ge 3 ] || { echo "bhote: config set <KEY> <value>" >&2; return 1; }
              shift 2; v="$*"
              setting_check "$key" "$v" || return 1
+             case "$S_TYPE" in int:*) v=$(num_or "$v" "$v") ;; esac     # stored plain: 007 is 7
              cfg_set "$key" "$v"
              case "$key" in STORE|STORE_MACHINE) : > "$STORE_DIRTY" ;; esac
              cli_config get "$key" ;;
@@ -2430,18 +2621,19 @@ topic_n() {  # topic_n <file>: its number in `bhote list --all` (1-based); needs
 topic_json() {  # topic_json <file>
     local f=$1 st wf ag am ap as agent=null
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane)
+    case "$st" in now|waiting|review|later|done) ;; *) st=now ;; esac
     as=$(topic_get "$f" agent_session)
     [ "$st" = waiting ] || wf=""
     [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")")
     printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"created":%s,"updated":%s}' \
-        "$(json_str "$(topic_get "$f" id)")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
+        "$(json_str "$(topic_id "$f")")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
         "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" \
         "$(json_num "$(topic_get "$f" created)")" "$(json_num "$(topic_get "$f" updated)")"
 }
 cli_show() {  # cli_show <file> [--json]
     local f=$1 id title st wf ws desc ag
     if [ "${2:-}" = --json ]; then [ -n "${T_N:-}" ] || topics_load; topic_json "$f"; printf '\n'; return 0; fi
-    id=$(topic_get "$f" id); title=$(topic_get "$f" title); st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for)
+    id=$(topic_id "$f"); title=$(topic_get "$f" title); st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for)
     ws=$(topic_get "$f" waiting_since 0); desc=$(topic_get "$f" description); ag=$(topic_get "$f" agent)
     printf '%s\n  status: %s\n  id: %s\n' "$title" "$st" "$id"
     if [ -n "$desc" ]; then printf '  description: %s\n' "$desc"; fi
@@ -2479,11 +2671,13 @@ Settings: ~/.config/bhote/config (or in the panel: ",").
 HELP
 }
 bhote_cli() {
-    local cmd=${1:-} a json="" args=(); shift
+    local a json="" args=()
+    for a in "$@"; do if [ "$a" = --json ]; then json=--json; else args[${#args[@]}]=$a; fi; done   # --json anywhere, also first
+    set -- ${args[@]+"${args[@]}"}
+    local cmd=${1:-}; [ $# -gt 0 ] && shift
+    AGENT_SEND_SYNC=1                                               # a command waits for herdr and says when a prompt failed
     harden_perms
     trap 'rm -rf "$RUN_DIR"' EXIT
-    for a in "$@"; do if [ "$a" = --json ]; then json=--json; else args[${#args[@]}]=$a; fi; done   # --json anywhere
-    set -- ${args[@]+"${args[@]}"}
     case "$cmd" in
         help|-h|--help) bhote_help ;;
         config) cli_config "$@" ;;
@@ -2502,18 +2696,21 @@ bhote_cli() {
                       --status|-s) st=${2:-}; shift ;;
                       --desc|-d) desc=${2:-}; shift ;;
                       @?*) who=${1#@} ;;
+                      --) shift; title="${title:+$title }$*"; break ;;
+                      -?*) echo "bhote: unknown option '$1' for add (a title starting with - goes after --)" >&2; return 1 ;;
                       *) title="${title:+$title }$1" ;;
                   esac; shift
               done
+              case "$st" in ''|now|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, review, later, done" >&2; return 1 ;; esac
+              [ "$st" = waiting ] && [ -z "$who" ] && { echo "bhote: waiting needs a name (@Name or -w Name)" >&2; return 1; }
               [ "${#desc}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
               topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
               f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
-              if [ -n "${CLAUDECODE:-}${HERDR_PANE_ID:-}" ]; then          # created by an agent: it is that agent's topic
+              if is_agent; then                                     # created by an agent: it is that agent's topic
                   bhote_info; agent_note "$f"; topic_set "$f" agent_machine "$HOST"
                   [ -n "${HERDR_WORKSPACE_ID:-}" ] && topic_set "$f" agent "$(herdr workspace list 2>/dev/null | jq -r --arg w "$HERDR_WORKSPACE_ID" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // "agent"' 2>/dev/null)"
               fi
-              case "$st" in ''|now|waiting) ;; later|done|review) topic_set "$f" status "$st" ;;
-                  *) echo "bhote: --status is one of now, review, later, done" >&2 ;; esac
+              case "$st" in later|done|review) topic_set "$f" status "$st" ;; esac
               cli_done; topics_load; cli_show "$f" $json ;;
         list|ls) local all="" only="" i first=1
               while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --status|-s) only=${2:-}; shift ;; *) echo "bhote: unknown option '$1' for list" >&2; return 1 ;; esac; shift; done
@@ -2536,14 +2733,15 @@ bhote_cli() {
         show) local f; f=$(topic_ref "${1:-}") || return $?; topics_load; cli_show "$f" $json ;;
         done|now|review|later|wait|rename|desc|rm)
               local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
-              f=$(topic_ref "$ref") || return $?; shift
+              f=$(topic_ref_sync "$ref") || return $?; shift
               case "$cmd" in
-                  done) if [ -n "${CLAUDECODE:-}" ] && [ "$(cfg_get AGENT_CAN_CLOSE on)" != on ]; then   # an agent may only hand it over
+                  done) local ag_call=""; is_agent && ag_call=1
+                        if [ -n "$ag_call" ] && [ "$(cfg_get AGENT_CAN_CLOSE on)" != on ]; then   # an agent may only hand it over
                             echo "bhote: agents may not close topics here (AGENT_CAN_CLOSE=off): set to review" >&2; topic_set "$f" status review
                             notify "Ready for review" "$(topic_get "$f" title)" request
-                        else topic_set "$f" status done; [ -n "${CLAUDECODE:-}" ] && notify "Done" "$(topic_get "$f" title)" done; fi
+                        else topic_set "$f" status done; [ -n "$ag_call" ] && notify "Done" "$(topic_get "$f" title)" done; fi
                         agent_note "$f"; poke ;;
-                  review) topic_set "$f" status review; agent_note "$f"; [ -n "${CLAUDECODE:-}" ] && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
+                  review) topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
                   now) if [ "$(topic_get "$f" status)" = waiting ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ -z "${CLAUDECODE:-}" ] && [ "${1:-}" != --quiet ]; then
                            bhote_info; topic_resume "$f"            # the wait is over: its agent gets told and goes on
                        else topic_set "$f" status now; topic_set "$f" waiting_for ""; fi ;;
@@ -2551,7 +2749,7 @@ bhote_cli() {
                   wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }
                         topic_set "$f" status waiting; topic_set "$f" waiting_for "$*"; topic_set "$f" waiting_since "$(date +%s)" ;;
                   rename) [ -n "${1:-}" ] || { echo "bhote: rename needs a title" >&2; return 1; }; topic_set "$f" title "$*" ;;
-                  rm) local rid; rid=$(topic_get "$f" id); topic_set "$f" deleted 1 ;;
+                  rm) local rid; rid=$(topic_id "$f"); topic_set "$f" deleted 1 ;;
                   desc) local dd="$*"; [ "${#dd}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
                         topic_set "$f" description "$*" ;;
               esac

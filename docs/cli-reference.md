@@ -34,7 +34,9 @@ Commands that act on one topic take a `<ref>`, resolved in this order:
 2. **An id**, exactly, or **the start of an id** when that start is unique.
 3. **A part of the title**, case-insensitive (also for non-ASCII letters).
 
-When a ref matches more than one topic, nothing changes: the candidates are listed on stderr and the exit code is `2`.
+When a ref matches more than one topic (by the start of the id or by the title), nothing changes: the candidates are
+listed on stderr and the exit code is `2`. With a replica machine, a ref that matches nothing locally makes bhote merge once
+and look again (a topic handed out on the other machine).
 
 ```console
 $ bhote show re
@@ -49,13 +51,14 @@ Numbers shift when topics change. For anything that runs later (a script, an age
 
 ### `bhote add <title> [options]`
 
-Creates a topic. Words without a leading dash form the title.
+Creates a topic. Words without a leading dash form the title; a title that starts with a dash goes after `--`
+(`bhote add -- -x flag`). An unknown option is exit `1`, and nothing is created.
 
 | Option | |
 |---|---|
 | `-d`, `--desc <text>` | Description, at most 140 characters (longer text is cut, with a warning). |
 | `@Name`, `-w`, `--waiting <Name>` | The topic waits for Name; `waiting_since` is now. |
-| `-s`, `--status <now\|later\|done>` | Initial status (default `now`, or `waiting` with a name). |
+| `-s`, `--status <now\|waiting\|review\|later\|done>` | Initial status (default `now`, or `waiting` with a name; `waiting` needs a name). Another value is exit `1`. |
 
 ```console
 $ bhote add Price list approval @Alex
@@ -156,12 +159,14 @@ for `transfer`. `--json`: an array of `{"n", "machine", "pane", "status", "name"
 
 [Steal & Transfer](steal-and-transfer.md): `<from>` commits its work on its branch with a handover and hands it to `<to>`
 (a free agent). Agent refs: a number from `bhote agents`, `machine/pane`, a pane id, or a part of the name (exit `2` when
-that matches several). Prints the topic.
+that matches several). The source must not wait for an answer, the target must be free. Prints the topic. Exit `1` when
+herdr cannot send the prompt; nothing changes then.
 
 ### `bhote handover <topic> --to <machine/pane> --branch <b> --commit <c>`
 
 Run by the source agent of a transfer (its prompt contains the exact command): the topic goes to the target agent, which
-gets the branch, the commit and the instruction to go on.
+gets the branch, the commit and the instruction to go on. Exit `1` when no transfer is pending for the topic, when `--to`
+names another agent than the transfer, or with a second topic word (quote `--to` when a machine name has spaces).
 
 ### `bhote current`
 
@@ -183,7 +188,12 @@ refresh at once.
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.1.0` (`--json`: `{"version":"0.1.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
-`--help`) prints the short usage.
+`--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
+
+### `bhote setup [--json]`
+
+The [setup wizard](setup.md) in this terminal. With `--json` it only reports what is in place:
+`{"machine", "jq", "herdr", "plugin", "claude_hook", "machines": [{"label", "reachable", "knows_this_machine"}], "setup_done"}`.
 
 ### `bhote` (no arguments)
 

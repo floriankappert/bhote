@@ -11,7 +11,8 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 |---|---|---|---|
 | `STORE` | `local` | Data location | `remote` keeps a replica of the topics on `STORE_MACHINE` ([data and sync](data-and-sync.md)). |
 | `STORE_MACHINE` | | Data location | The label of a saved herdr machine (`herdr machine list`). |
-| `REMOTE_AGENTS` | `off` | Load remote agents over SSH | List the agents of the saved herdr machines, too. |
+| `SYNC_VIA` | `herdr` | Sync through | How topics travel to `STORE_MACHINE`: `herdr` (through herdr's own connection; each side pulls from the other) or `ssh` (bhote's own ssh; push and pull). See [data and sync](data-and-sync.md). |
+| `REMOTE_AGENTS` | `off` | Remote agents (via herdr) | List the agents of the saved herdr machines, too (herdr asks them over its ssh connection). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
 | `REMOTE_EVERY` | `10` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
@@ -28,6 +29,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AGENT_ROWS` | automatic | drag the `═══` divider | Height of the agent area in rows. |
 | `DONE_MAX` | `7` | | Done topics shown in the list before `+n more`. |
 | `HOST_LABEL` | `Mac` on macOS, else the host name | | How this machine is called in agent lists. Should match the label other machines use for it in `herdr machine list`. |
+| `SETUP_DONE` | | | The date the [setup wizard](setup.md) ran on this machine. Empty: it opens at the next start (`bhote config unset SETUP_DONE` brings it back). |
 | `NAME_COLORS` | | | Colour agents by part of their name: `api=teal,web=mauve` (case-insensitive, first match wins). Colours: `red teal peach mauve blue green yellow`. |
 
 Numbers that are not plain digits fall back to their default. Values never contain control characters (they are removed when

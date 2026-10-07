@@ -37,10 +37,11 @@ when the prompt offers it). If you are blocked, use `bhote wait <id> "<who>"`.
 ## Steal & Transfer
 
 When a prompt starts with "Steal & Transfer (bhote topic <id>…): stop here and hand this work over", do exactly its
-steps: commit everything on the **current** branch (no new branch) with a handover in the commit message body (goal, what
-is done, what is open, next steps, how to test), push if there is a remote, run the `bhote handover …` command it gives
-you, free the branch with `git switch --detach` if the other agent works in another worktree of the repository, then
-stop. When a prompt says "Steal & Transfer: take over …", switch to the branch it names, read the handover with
+steps, in this order: commit everything on the **current** branch (no new branch; only on a detached HEAD create the one
+it names) with a handover in the commit message body (goal, what is done, what is open, next steps, how to test), push if
+there is a remote, note the branch and the commit, free the branch with `git switch --detach` if the other agent works in
+another worktree of the repository, then run the `bhote handover …` command it gives you and stop. When a prompt says
+"Steal & Transfer: take over …", switch to the branch (or the commit) it names, read the handover with
 `git log -1 <commit>`, and continue.
 
 ## Useful

@@ -11,6 +11,8 @@ class Bhote < Formula
   def install
     bin.install "bhote"
     (pkgshare/"herdr-plugin").install Dir["herdr-plugin/*"]
+    (pkgshare/"integrations").install Dir["integrations/*"]
+    doc.install Dir["docs/*"]
   end
 
   def caveats

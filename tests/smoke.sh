@@ -19,11 +19,13 @@ check settings "Settings"
 fit() {  # fit <cols> <rows> <view>
     local t; t=$(mktemp -d); : > "$t/c"
     for i in 1 2 3 4 5 6 7 8 9 10 11 12; do BHOTE_CONFIG=$t/c BHOTE_DATA=$t/d bash ./bhote add "A fairly long topic title number $i" >/dev/null; done
+    BHOTE_CONFIG=$t/c BHOTE_DATA=$t/d bash ./bhote add "日本語のとても長いタイトル 🎉 Grüße aus Köln und noch mehr Text" -d "説明 説明 説明 説明 説明 説明 説明 説明" >/dev/null
     BHOTE_CONFIG=$t/c BHOTE_DATA=$t/d BHOTE_ONCE=1 BHOTE_COLS=$1 BHOTE_ROWS=$2 BHOTE_VIEW=$3 LC_ALL=en_US.UTF-8 bash ./bhote \
       | sed 's/\x1b\[[0-9;]*[mK]//g' | python3 -c "
-import sys
+import sys, unicodedata
+def w(l): return sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in l)
 L=sys.stdin.read().split('\n'); L=L[:-1] if L and L[-1]=='' else L
-ok=max(len(l) for l in L)<$1-1 and ('$3'!='main' or len(L)==$2)
+ok=max(w(l) for l in L)<$1-1 and ('$3'!='main' or len(L)==$2)
 sys.exit(0 if ok else 1)" && echo "ok   fit $3 $1x$2" || { echo "FAIL fit $3 $1x$2"; fail=1; }
     rm -rf "$t"
 }
