@@ -29,4 +29,7 @@ sys.exit(0 if ok else 1)" && echo "ok   fit $3 $1x$2" || { echo "FAIL fit $3 $1x
 }
 for size in "44 40" "36 24" "44 87"; do set -- $size; fit "$1" "$2" main; fit "$1" "$2" settings; done
 BHOTE_SOURCE_ONLY= bash ./bhote setup --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "machines" in d and "plugin" in d' && echo "ok   setup --json" || { echo "FAIL setup --json"; fail=1; }
+# the welcome screen at its narrowest: every line inside the frame (a wrapped line shifts the blinking prompt)
+w=$(BHOTE_ONCE=1 BHOTE_VIEW=splash BHOTE_COLS=42 BHOTE_ROWS=39 LC_ALL=en_US.UTF-8 bash ./bhote | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().split("\n")))')
+[ "$w" -le 42 ] && echo "ok   splash fits 42 columns" || { echo "FAIL splash is $w wide at 42 columns"; fail=1; }
 exit $fail
