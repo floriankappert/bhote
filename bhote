@@ -1303,18 +1303,33 @@ menu_build() {  # menu_build <file>
     [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
     MENU_ITEMS=("${MENU_ITEMS[@]}" "wait|Waiting for ..." "later|Park for later" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
 }
-bhote_menu() {  # the action menu of the selected topic
-    local f i title; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
+bhote_menu() {  # the topic's page: title and description in full (wrapped), its status, then the numbered actions
+    local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
     menu_build "$f"
-    clip_set title "$(topic_get "$f" title '(untitled)')" $(( ${COLS:-44} - 8 ))
-    printf '\n %s▸ %s%s\n' "$ORANGE" "$L$title" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "$(topic_get "$f" status now) · $(topic_get "$f" waiting_for -)" $(( ${COLS:-44} - 3 )))" "$X"
-    rule; printf '\n'
+    st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ws=$(topic_get "$f" waiting_since); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine)
+    case "$st" in now) sc=$ORANGE ;; waiting) sc=$Y ;; review) sc=$BLUE ;; later) sc=$R ;; done) sc=$GREEN ;; *) sc=$D ;; esac
+    printf '\n  %sTITLE%s\n' "$D" "$X"
+    wrap_print 2 "$TITLE" "$(topic_get "$f" title '(untitled)')"
+    printf '\n  %sDESCRIPTION%s\n' "$D" "$X"
+    line=$(topic_get "$f" description); if [ -n "$line" ]; then wrap_print 2 "$DESC" "$line"; else printf '  %s– (d adds one)%s\n' "$D" "$X"; fi
+    printf '\n  %sSTATUS%s\n' "$D" "$X"
+    printf '  %s%s%s' "$sc" "$st" "$X"
+    if [ "$st" = waiting ] && [ -n "$wf" ]; then ago_set age "${ws:-$NOW}"; printf ' %s·%s %s%s%s %s· %s%s' "$D" "$X" "$BLUE" "$wf" "$X" "$D" "$age" "$X"; fi
+    printf '\n'
+    [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ $D· $am$X}"
+    printf '\n'; rule
+    printf '\n  %sACTIONS%s\n' "$D" "$X"
     for (( i = 0; i < ${#MENU_ITEMS[@]}; i++ )); do
-        menu_line "$([ "$i" = "${MENU_IDX:-0}" ] && echo 1)" "${MENU_ITEMS[$i]#*|}"
+        sl=""; [ "$i" = "${MENU_IDX:-0}" ] && sl=1
+        menu_num_line "$sl" "$(( i + 1 ))" "${MENU_ITEMS[$i]#*|}"
     done
     printf '\n'; rule
-    printf ' %s↑↓ choose · →/⏎ do it · ←/esc back%s\n' "$D" "$X"
+    printf '  %s%s%s\n' "$D" "$(clip "↑↓ 1-9 choose · ⏎ do it · esc back" $(( ${COLS:-44} - 4 )))" "$X"
+}
+menu_num_line() {  # menu_num_line <selected 1|""> <number> <text>: an action with its number key; the selected one on the bar
+    local w=$(( ${COLS:-44} - 2 )) t; clip_set t "$3" $(( w - 6 ))
+    if [ -n "$1" ]; then printf '%s  %s%s%s  %s%s%*s%s\n' "$SELBG" "$C" "$2" "$X$SELBG" "$LSEL" "$t" $(( w - 5 - ${#t} )) "" "$X"
+    else printf '  %s%s%s  %s%s%s\n' "$C" "$2" "$X" "$L" "$t" "$X"; fi
 }
 # ── suggestions: what the running agents work on (the "task" of each agent pane) and is not a topic yet. "a" lists them; adopting one
 # makes it a topic that is already assigned to that agent. "x" dismisses one for good (kept in $DATA_DIR/dismissed).
@@ -2162,6 +2177,8 @@ bhote_main() {
                 UP|k) f=$(sel_file); [ -n "$f" ] && menu_build "$f"; MENU_IDX=$(( (MENU_IDX + ${#MENU_ITEMS[@]} - 1) % ${#MENU_ITEMS[@]} )); redraw=1 ;;
                 DOWN|j) f=$(sel_file); [ -n "$f" ] && menu_build "$f"; MENU_IDX=$(( (MENU_IDX + 1) % ${#MENU_ITEMS[@]} )); redraw=1 ;;
                 ENTER|RIGHT) if menu_do "$MENU_IDX"; then :; else view=main; fi; redraw=1 ;;
+                [1-9]) f=$(sel_file); [ -n "$f" ] && menu_build "$f"
+                       if [ "$key" -le "${#MENU_ITEMS[@]}" ]; then MENU_IDX=$(( key - 1 )); if menu_do "$MENU_IDX"; then :; else view=main; fi; fi; redraw=1 ;;
                 ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
             esac
         else
