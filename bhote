@@ -510,6 +510,9 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
 # drawing used to start cost 5 to 15 ms; a key press took 300 ms.)
 ui_load() {
     local line st="" f
+    if [ -z "${HEAD_GRAD:-}" ]; then                         # once: one colour per character costs a process each
+        HEAD_GRAD=$(gradient "Bhote v$VERSION"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
+    fi
     [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
     NOW=$(( NOW_BASE + SECONDS ))
     cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
@@ -632,18 +635,20 @@ WORD
 # ── the topic list: after the start screen the dog shrinks into the header. The topics are SAMPLE DATA for now.
 TEAL=$S; ORANGE=$C
 SELBG=""; [ "$color" = 1 ] && SELBG="${esc}[48;2;49;50;68m"      # the highlighted row: the sidebar's active-row colour
-rule() { printf ' %s%s%s\n' "$B" "${RULE_LINE:-────────────────────────────────────────}" "$X"; }
-group() { printf '\n  %s%s%s\n' "$D" "$1" "$X"; }
+rule() { printf '  %s%s%s\n' "$B" "${RULE_LINE:-───────────────────────────────────────}" "$X"; }   # from the same left edge as the text
+group() {  # group <CAPTION> [colour]: a status caption; everything below starts in the same column
+    printf '\n  %s%s%s\n' "${2:-$D}" "$1" "$X"
+}
 # One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
 # find it for scrolling (and strips it). Done entries are one muted line.
-topic_item() {  # topic_item <selected 0|1> <icon colour> <icon> <title colour> <title> <description> <meta> <compact 0|1>
-    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d m
-    clip_set t "$5" $(( w - 4 )); clip_set d "$6" $(( w - 4 )); clip_set m "$7" $(( w - 6 ))
+topic_item() {  # topic_item <selected 0|1> <meta colour> <unused> <title colour> <title> <description> <meta> <compact 0|1>
+    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d m mc=${2:-$D}
+    clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); clip_set m "$7" $(( w - 5 ))
     [ "$1" = 1 ] && { bg=$SELBG; mk=$'\001'; }
-    printf '%s%s %s%s%s %s%s%s%*s%s\n' "$mk" "$bg" "$2" "$3" "$X$bg" "$4" "$t" "$X$bg" $(( w - 3 - ${#t} )) "" "$X"
-    [ -n "$d" ] && printf '%s   %s%s%s%*s%s\n' "$bg" "$D" "$d" "$X$bg" $(( w - 3 - ${#d} )) "" "$X"
-    [ -n "$m" ] && printf '%s   %s∟ %s%s%*s%s\n' "$bg" "$D" "$m" "$X$bg" $(( w - 5 - ${#m} )) "" "$X"
+    printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$4" "$t" "$X$bg" $(( w - 2 - ${#t} )) "" "$X"
+    [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$D" "$d" "$X$bg" $(( w - 2 - ${#d} )) "" "$X"
+    [ -n "$m" ] && printf '%s  %s∟ %s%s%s%*s%s\n' "$bg" "$D" "$mc" "$m" "$X$bg" $(( w - 4 - ${#m} )) "" "$X"
     [ "$8" = 1 ] || printf '\n'
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
@@ -655,7 +660,7 @@ agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | 
     printf -v "$1" '%s' "$gone"
 }
 topics_block() {  # the topics, grouped by status (now, waiting, later, done); done ones are capped at DONE_MAX (default 7)
-    local i prev="" st label ic icon tc meta age ast desc cp sl ndone=0 hidden=0 max
+    local i prev="" st label lc ic icon tc meta age ast desc cp sl ndone=0 hidden=0 max
     num_set max "${U_DONE_MAX:-}" 7
     sel_index
     for (( i = 0; i < T_N; i++ )); do
@@ -665,24 +670,25 @@ topics_block() {  # the topics, grouped by status (now, waiting, later, done); d
             if [ "$ndone" -gt "$max" ] && [ "$i" != "$SEL_IDX" ]; then hidden=$(( hidden + 1 )); continue; fi
         fi
         if [ "$st" != "$prev" ]; then
-            case "$st" in now) label=NOW ;; waiting) label=WAITING ;; later) label=LATER ;; done) label=DONE ;; esac
-            group "$label"; prev=$st
+            case "$st" in now) label=NOW; lc=$ORANGE ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
+            group "$label" "$lc"; prev=$st
         fi
         case "$st" in
-            now) ic=$ORANGE; icon="◆"; ago_set meta "${T_UPD[$i]:-$NOW}"
+            now) ic=$D; icon=""; ago_set meta "${T_UPD[$i]:-$NOW}"
                  if [ -n "${T_AG[$i]}" ]; then      # given to an agent: say what that agent is doing now
                      agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
-                     case "$ast" in working) meta="${T_AG[$i]} · working" ;; testing) meta="${T_AG[$i]} · running tests" ;; blocked) meta="${T_AG[$i]} · needs you"; ic=$NN ;;
+                     case "$ast" in working) meta="${T_AG[$i]} · working"; ic=$ORANGE ;; testing) meta="${T_AG[$i]} · running tests"; ic=$ORANGE ;; blocked) meta="${T_AG[$i]} · needs you"; ic=$NN ;;
                          idle|done) meta="${T_AG[$i]} · finished"; ic=$GREEN; [ "$i" = "$SEL_IDX" ] && meta="$meta · x = done" ;; *) meta="${T_AG[$i]} · gone" ;; esac
                  fi ;;
-            waiting) ic=""; icon=" "; ago_set age "${T_WSINCE[$i]:-$NOW}"; meta="${T_WFOR[$i]:-?} · $age" ;;
-            later) ic=$D; icon="○"; ago_set meta "${T_UPD[$i]:-$NOW}" ;;
-            done) ic=$D; icon="✓"; tc=$D; meta=""; desc=""; cp=1 ;;                 # muted, one line, no gap
+            waiting) ic=$D; icon=""; ago_set age "${T_WSINCE[$i]:-$NOW}"; meta="${T_WFOR[$i]:-?} · $age" ;;
+            review) ic=$BLUE; icon=""; ago_set age "${T_UPD[$i]:-$NOW}"; meta="${T_AG[$i]:+${T_AG[$i]} · }ready for review · $age" ;;
+            later) ic=$D; icon=""; ago_set meta "${T_UPD[$i]:-$NOW}" ;;
+            done) ic=$D; icon=""; tc=$D; meta=""; desc=""; cp=1 ;;                  # muted, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
         topic_item "$sl" "$ic" "$icon" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$meta" "$cp"
     done
-    [ "$hidden" -gt 0 ] && printf '   %s+%d more%s\n' "$D" "$hidden" "$X"
+    [ "$hidden" -gt 0 ] && printf '  %s+%d more%s\n' "$D" "$hidden" "$X"
     [ "$T_N" -gt 0 ] || printf '\n  %sno topics yet · n adds one%s\n\n' "$D" "$X"
 }
 name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS rule (part-of-name=colour) that matches, else plain
@@ -698,15 +704,15 @@ name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS r
     printf -v "$1" '%s' "$_col"
 }
 agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse)
-    local w=$(( ${COLS:-44} - 4 )) l r
+    local w=$(( ${COLS:-44} - 5 )) l r
     l=$(( (w - 5) / 2 )); r=$(( w - 5 - l ))
-    printf ' %s%s%s ═══ %s%s%s\n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X"
+    printf '  %s%s%s ═══ %s%s%s\n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X"
 }
 agents_block() {  # two columns: the free agents (idle, done) on the left, the busy ones on the right; the colours follow the herdr sidebar
     local i m id st name task ic nc label cw maxr rows shown hidden r left right lpad f=() b=() fw=() bw=() nf=0 nb=0 cell plain
     maxr=$(( ${ROWS:-40} - 21 )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
-    cw=$(( (${COLS:-44} - 3) / 2 ))
+    cw=$(( (${COLS:-44} - 4) / 2 ))
     if [ "$AG_N" -gt 0 ]; then
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
@@ -724,19 +730,19 @@ agents_block() {  # two columns: the free agents (idle, done) on the left, the b
         rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
         shown=$rows; [ "$shown" -gt "$maxr" ] && shown=$maxr
         agent_divider
-        printf '  %s%-*s%s%s\n' "$D" $(( cw )) "FREE" "BUSY" "$X"
+        printf '  %s%-*s%s%s%s\n' "$GREEN" $(( cw + 1 )) "FREE" "$X$ORANGE" "BUSY" "$X"
         [ -n "$want" ] && shown=$maxr                           # a dragged height stays, also with fewer agents
         for (( r = 0; r < shown; r++ )); do
             left=${f[$r]:-}; right=${b[$r]:-}; lpad=$(( cw - ${fw[$r]:-0} ))
-            printf ' %s%*s %s\n' "$left" "$lpad" "" "$right"
+            printf '  %s%*s %s\n' "$left" "$lpad" "" "$right"
         done
         hidden=0; [ "$nf" -gt "$shown" ] && hidden=$(( nf - shown )); [ "$nb" -gt "$shown" ] && hidden=$(( hidden + nb - shown ))
-        [ "$hidden" -gt 0 ] && printf ' %s+%d more agents%s\n' "$D" "$hidden" "$X"
+        [ "$hidden" -gt 0 ] && printf '  %s+%d more agents%s\n' "$D" "$hidden" "$X"
     else agent_divider
     fi
     # saved machines exist but are not asked: say so, and where to change it
     if [ "$U_REMOTE" != on ] && [ "${HAS_MACHINES:-0}" = 1 ]; then
-        printf '\n %sRemote agents off · , settings%s\n' "$D" "$X"
+        printf '\n  %sRemote agents off · , settings%s\n' "$D" "$X"
     fi
 }
 clip_set() {  # clip_set <var> <text> <max columns>: cut with a … when longer (plain text only)
@@ -745,16 +751,16 @@ clip_set() {  # clip_set <var> <text> <max columns>: cut with a … when longer 
     printf -v "$1" '%s' "$_ct"
 }
 clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
-view_head() {  # one line: name, version, tagline; then a rule (the dog lives on the welcome screen only)
-    local t; clip_set t "Bhote v$VERSION - Agent & Work Management" $(( ${COLS:-44} - 3 ))
-    printf '\n %s%s%s%s%s\n' "$L" "${t:0:$(( 6 + ${#VERSION} + 1 ))}" "$X$D" "${t:$(( 6 + ${#VERSION} + 1 ))}" "$X"
+view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
+    local name="Bhote v$VERSION" t; clip_set t " - Agent & Work Management" $(( ${COLS:-44} - 5 - ${#name} ))
+    printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X"
     rule
 }
 view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
     agents_block
     rule
     local sg=""; suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} new"
-    printf ' %s%s%s' "$D" "$(clip "↑↓ move · , settings$sg" $(( ${COLS:-44} - 3 )))" "$X"
+    printf '  %s%s%s' "$D" "$(clip "↑↓ move · , settings$sg" $(( ${COLS:-44} - 4 )))" "$X"
 }
 count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution on text full of escapes and UTF-8 is very slow in bash 3.2)
     local _n=0 _l; while IFS= read -r _l; do _n=$(( _n + 1 )); done <<< "$2"; printf -v "$1" '%s' "$_n"
@@ -1266,7 +1272,7 @@ term_size() {
     TOO_SMALL=0; { [ "$REAL_COLS" -lt "$MIN_COLS" ] || [ "$REAL_ROWS" -lt "$MIN_ROWS" ]; } && TOO_SMALL=1
     COLS=$REAL_COLS; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; [ "$COLS" -lt "$MIN_COLS" ] && COLS=$MIN_COLS
     ROWS=$REAL_ROWS; splash_geometry
-    RULE_LINE=$(hline $(( COLS - 4 )))
+    RULE_LINE=$(hline $(( COLS - 5 )))
 }
 harden_perms() {  # data, config and their folders: this user only (older versions created them open)
     mkdir -p "$TOPIC_DIR" "$(dirname "$CONFIG_FILE")" 2>/dev/null
@@ -1280,7 +1286,7 @@ bhote_main() {
     if [ -n "${BHOTE_ONCE:-}" ] || [ ! -t 0 ]; then
         AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote
         collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
-        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 4 ))); ui_load; bhote_draw "$view"; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
+        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); ui_load; bhote_draw "$view"; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
     fi
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
