@@ -1463,6 +1463,12 @@ w_yn() {  # w_yn <question> <Y|N>: 0 yes, 1 no, 2 skip (s), 3 quit (q); only y, 
         q) printf '%send%s\n' "$D" "$X"; W_QUIT=1; return 3 ;;
     esac
 }
+w_choose() {  # w_choose <var> <prompt> <allowed keys, e.g. 123> <default>: one key from the list (Enter = default, q ends)
+    printf '\n  %s▶%s %s%s%s %s[%s]%s ' "$C" "$X" "$L" "$2" "$X" "$D" "$4" "$X"
+    w_key "${3}q"
+    case "$W_KEY" in ENTER) W_KEY=$4 ;; q) W_QUIT=1; printf '%send%s\n' "$D" "$X"; return 1 ;; esac
+    printf '%s%s%s\n' "$GREEN" "$W_KEY" "$X"; printf -v "$1" '%s' "$W_KEY"
+}
 w_continue() { printf '\n  %sq end the setup · ⏎ next%s ' "$D" "$X"; w_key q; [ "$W_KEY" = q ] && W_QUIT=1; printf '\n'; return 0; }
 w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a password here), then says how it went
     printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; shift
@@ -1680,7 +1686,7 @@ setup_open_ssh() {  # ssh into this machine is closed: switch it on here (sudo a
         w_opt 2 "I start it myself in another terminal"
     fi
     w_opt 3 "skip it"
-    w_read c "Choose 1, 2 or 3:" 1; [ "$W_QUIT" = 1 ] && return 1
+    w_choose c "Choose:" 123 1 || return 1
     case "$c" in
         1) if [ "$(uname -s)" = Darwin ]; then
                w_run "sudo systemsetup -setremotelogin on" sudo systemsetup -setremotelogin on \
@@ -1749,7 +1755,7 @@ setup_step_topics() {
     w_say "Where your topics live. The local copy is always the working copy; another machine can hold a replica."; w_line
     w_opt 1 "only on this machine"; w_opt 2 "in step with a machine, through herdr (recommended)"; w_opt 3 "in step with a machine, through ssh"
     local c m labels="" label host en r cur; cfg_var cur STORE local
-    w_read c "Choose 1, 2 or 3:" "$([ "$cur" = remote ] && { [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3; } || echo 1)"; [ "$W_QUIT" = 1 ] && return
+    w_choose c "Choose:" 123 "$([ "$cur" = remote ] && { [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3; } || echo 1)" || return
     case "$c" in
         1) cfg_set STORE local; w_ok "topics" "only here" ;;
         2|3) while IFS=$US read -r label host en; do labels="${labels:+$labels, }$label"; done <<< "$(w_machines)"
