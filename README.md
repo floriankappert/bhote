@@ -6,7 +6,7 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 - Topics are `now`, `waiting` (for a name, with a date), `later` or `done`, each with an optional description.
 - Agents of every herdr tab are listed in two columns: **free** (idle/done) on the left, **busy** on the right.
 - Start a topic on a free agent: bhote sends the title and description to its pane (`herdr pane run`, with `--machine` for agents on another machine).
-- Agents' tasks that are no topic yet are suggested (`a`); a finished agent is marked, `d` closes its topic.
+- Agents' tasks that are no topic yet are suggested (`a`); a finished agent is marked, `x` closes its topic.
 - Topics are plain files; they can be kept in sync with a second machine over ssh (opt-in).
 - A CLI to create and close topics from scripts and chats.
 
@@ -30,7 +30,8 @@ right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the c
 | `→` / `⏎`, `←` / `esc` | open the topic menu / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |
-| `d` | mark done |
+| `e` / `d` | edit the title / the description (Esc cancels) |
+| `x` | mark done |
 | `a` | topics suggested from what the running agents work on |
 | `,` | settings · `S` welcome screen · `q` quit |
 

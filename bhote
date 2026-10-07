@@ -672,7 +672,7 @@ topics_block() {  # the topics, grouped by status (now, waiting, later, done); d
                  if [ -n "${T_AG[$i]}" ]; then      # given to an agent: say what that agent is doing now
                      agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
                      case "$ast" in working) meta="${T_AG[$i]} · working" ;; testing) meta="${T_AG[$i]} · running tests" ;; blocked) meta="${T_AG[$i]} · needs you"; ic=$NN ;;
-                         idle|done) meta="${T_AG[$i]} · finished"; ic=$GREEN; [ "$i" = "$SEL_IDX" ] && meta="$meta · d = done" ;; *) meta="${T_AG[$i]} · gone" ;; esac
+                         idle|done) meta="${T_AG[$i]} · finished"; ic=$GREEN; [ "$i" = "$SEL_IDX" ] && meta="$meta · x = done" ;; *) meta="${T_AG[$i]} · gone" ;; esac
                  fi ;;
             waiting) ic=""; icon=" "; ago_set age "${T_WSINCE[$i]:-$NOW}"; meta="${T_WFOR[$i]:-?} · $age" ;;
             later) ic=$D; icon="○"; ago_set meta "${T_UPD[$i]:-$NOW}" ;;
@@ -850,15 +850,16 @@ bhote_settings() {
     printf '\n'; rule
     printf ' %s%s%s\n' "$D" "$(clip "↑↓ select · space/⏎ toggle" $(( ${COLS:-44} - 3 )))" "$X"
     printf ' %s%s%s\n' "$D" "$(clip "←→ change · , or esc back" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "list: ⏎ open · n new · s start · d done" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "a from agents · S welcome · q quit" $(( ${COLS:-44} - 3 )))" "$X"
+    printf ' %s%s%s\n' "$D" "$(clip "list: ⏎ open · n new · e/d edit · x done" $(( ${COLS:-44} - 3 )))" "$X"
+    printf ' %s%s%s\n' "$D" "$(clip "s start · a from agents · q quit" $(( ${COLS:-44} - 3 )))" "$X"
 }
 bhote_hotkeys() {  # every key, grouped by screen
     local k
     printf '\n %sHotkeys%s\n' "$L" "$X"; rule
     hk_group "LIST"
     hk "↑↓ jk wheel" "move"; hk "→ ⏎" "open the topic menu"; hk "n" "new topic (Title; description @Name)"
-    hk "s" "start on a free agent"; hk "d" "mark done"; hk "a" "suggestions from agents"
+    hk "e" "edit the title"; hk "d" "edit the description"
+    hk "s" "start on a free agent"; hk "x" "mark done"; hk "a" "suggestions from agents"
     hk "," "settings"; hk "S" "welcome screen"; hk "q" "quit"
     hk_group "MENUS AND PICKERS"
     hk "↑↓" "choose"; hk "→ ⏎" "do it"; hk "← esc" "back"; hk "x" "dismiss a suggestion"
@@ -1373,7 +1374,11 @@ bhote_main() {
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 S) splash_fits && view=splash; redraw=1 ;;
                 a|A) if [ "$view" = main ]; then view=suggest; SUG_IDX=0; redraw=1; fi ;;
-                d|D) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && topic_set "$f" status done; redraw=1; fi ;;
+                x|X) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && topic_set "$f" status done; redraw=1; fi ;;   # check it off
+                e|E) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the title
+                         if [ -n "$f" ] && ask "Title: " "$(topic_get "$f" title)" && [ -n "$ANSWER" ]; then topic_set "$f" title "$ANSWER"; fi; redraw=1; fi ;;
+                d|D) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the description
+                         if [ -n "$f" ] && ask "Description: " "$(topic_get "$f" description)" "$DESC_MAX"; then topic_set "$f" description "$ANSWER"; fi; redraw=1; fi ;;
                 n|N) if [ "$view" = main ]; then prompt_new_topic; redraw=1; else view=main; redraw=1; fi ;;
                 ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_IDX=0; redraw=1 ;;
                 UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; fi ;;      # on the start screen the wheel does nothing
