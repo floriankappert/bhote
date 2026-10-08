@@ -1756,9 +1756,9 @@ topic_resume() {  # topic_resume <file>: a waiting topic of an agent: the wait i
     agent_live "$am" "$ap"; case "$LIVE_ST" in gone|noagent) echo "bhote: ${ag:-the agent} is not there any more" >&2; return 0 ;; esac
     agent_send "$am" "$ap" "The wait is over${wf:+ ($wf)}: $title${desc:+. Go on with: $desc} (bhote topic $id: $(how_to_finish "$id"))."
 }
-prompt_new_topic() {  # "Title", "Title; description", "Title @Name" or "Title > Name" (= waiting for Name); the new topic gets selected
+prompt_new_topic() {  # [text to start with] "Title", "Title; description", "Title @Name" or "Title > Name" (= waiting for Name); the new topic gets selected
     local title who="" desc=""
-    ask "Topic: "
+    ask "Topic: " "${1:-}" || return 1
     title=$ANSWER
     case "$title" in *" @"*) who=${title##* @}; title=${title% @*} ;; *" > "*) who=${title##* > }; title=${title% > *} ;; esac   # the name goes last
     case "$title" in *";"*) desc=${title#*;}; title=${title%%;*} ;; esac
@@ -2860,7 +2860,8 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
     for (( r = off; r < off + room && r < ${#rl[@]}; r++ )); do out+="${rl[$r]}"$'\033[K\n'; done
     [ "$n" -gt 0 ] || out+=$(printf '   %snothing matches%s' "$D" "$X")$'\033[K\n'
     out+=$'\033[J'
-    printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$([ -n "$3" ] && printf '%s' "$S" || printf '%s' "$D")" "$(clip "${3:-↑↓ choose · ⏎ jump · esc close}" $(( w - 1 )))" "$X"
+    local hint="↑↓ choose · ⏎ jump · ^n new topic · esc close"; [ "$n" = 0 ] && [ -n "$1" ] && hint="⏎ new topic \"$1\" · esc close"
+    printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$([ -n "$3" ] && printf '%s' "$S" || printf '%s' "$D")" "$(clip "${3:-$hint}" $(( w - 1 )))" "$X"
 }
 panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus (through herdr's socket: by pane id)
     local act tab pan sock=${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}
@@ -2888,7 +2889,8 @@ find_act() {  # find_act <item>: 0 = done (close), 1 = stay (FIND_NOTE says why)
 }
 find_main() {
     [ -t 0 ] && [ -t 1 ] || { echo "bhote: find needs a terminal (bind it as a herdr popup: settings › Find key)" >&2; return 1; }
-    local q="" sel=0 c k2 k3 r _s note=""
+    local q="" sel=0 c k2 k3 r _s note="" k
+    read -r ROWS COLS < <(stty size </dev/tty 2>/dev/null); ROWS=${ROWS:-20}; COLS=${COLS:-60}   # (ask draws on the last row)
     if [ -n "$(find "$AGENT_LOCAL" -mmin -1 2>/dev/null)" ]; then :                 # the panels' lists are fresh: no herdr round trip
     else AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote; collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote; fi
     ui_load; topics_load; find_items; find_filter ""
@@ -2899,6 +2901,17 @@ find_main() {
         [ "$sel" -ge "${#FI_HIT[@]}" ] && sel=$(( ${#FI_HIT[@]} - 1 )); [ "$sel" -lt 0 ] && sel=0
         find_draw "$q" "$sel" "$note"; note=""
         IFS= read -rsn1 c </dev/tty || break
+        if [ "$c" = $'\016' ] || { [ -z "$c" ] && [ "${#FI_HIT[@]}" = 0 ] && [ -n "$q" ]; }; then
+            # Ctrl-N (or Enter when nothing matches): a new topic, the search text to start with ("Title; description @Name")
+            read -r ROWS COLS < <(stty size </dev/tty 2>/dev/null)
+            if prompt_new_topic "$q"; then
+                poke; topics_load; find_items; q=""; find_filter ""; sel=0
+                for (( k = 0; k < ${#FI_HIT[@]}; k++ )); do [ "${FI_REF[${FI_HIT[$k]}]}" = "$NEW_TOPIC_ID" ] && { sel=$k; break; }; done
+                note="added · ⏎ shows it in the panel"
+            fi
+            printf '%s\033[?25l' "$MOUSE_OFF"; trap - USR1           # ask leaves mouse reports on: here they would arrive as typing
+            continue
+        fi
         case "$c" in
             "") [ "${#FI_HIT[@]}" -gt 0 ] || continue
                 find_act "${FI_HIT[$sel]}"; r=$?
@@ -2912,7 +2925,7 @@ find_main() {
                 esac ;;
             $'\177'|$'\010') q=${q%?}; find_filter "$q"; sel=0 ;;
             $'\025') q=""; find_filter ""; sel=0 ;;                 # Ctrl-U
-            $'\020') sel=$(( sel - 1 )) ;; $'\016') sel=$(( sel + 1 )) ;;   # Ctrl-P / Ctrl-N
+            $'\020') sel=$(( sel - 1 )) ;;                         # Ctrl-P
             $'\t') sel=$(( sel + 1 )) ;;
             [[:cntrl:]]) ;;
             *) [ "${#q}" -lt 60 ] && q="$q$c"; find_filter "$q"; sel=0 ;;
