@@ -169,6 +169,8 @@ mf=$TOPIC_DIR/menutest.topic; printf 'id=menutest\ntitle=Menu\nstatus=done\nupda
 case "${MENU_ITEMS[*]}" in *"start|"*|*"wait|"*|*"slack|"*|*"done|"*) bad "done menu: ${MENU_ITEMS[*]}" ;; *"reopen|"*"next|"*"later|"*"delete|"*) ok "menu: a done topic can be reopened, moved, renamed, deleted" ;; *) bad "done menu: ${MENU_ITEMS[*]}" ;; esac
 printf 'id=menutest\ntitle=Menu\nstatus=later\nupdated=1\ndeleted=0\n' > "$mf"; menu_build "$mf"
 case "${MENU_ITEMS[*]}" in *"later|"*) bad "later menu offers Park for later" ;; *) ok "menu: a parked topic cannot be parked again" ;; esac
+printf 'id=menutest\ntitle=Menu\nstatus=now\nupdated=1\ndeleted=0\ntransfer_to=Mac/w2:p1\ntransfer_to_name=server\n' > "$mf"; menu_build "$mf"
+case "${MENU_ITEMS[0]}" in "cancelxfer|Cancel the hand-over to server") ok "menu: a pending hand-over can be cancelled" ;; *) bad "cancel item: ${MENU_ITEMS[0]}" ;; esac
 rm -f "$mf"
 a1=$(COLS=40 menu_num_line "" 9 "Describe"); a2=$(COLS=40 menu_num_line "" 10 "Delete"); [ "${a1#*Describe}" != "$a1" ] && [ "$(printf '%s' "$a1" | sed 's/Describe.*//' | wc -c)" = "$(printf '%s' "$a2" | sed 's/Delete.*//' | wc -c)" ] && ok "menu: the text of 9 and 10 starts in the same column" || bad "menu numbers: [$a1] [$a2]"
 

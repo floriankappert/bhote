@@ -2067,6 +2067,7 @@ menu_build() {  # menu_build <file>
         return
     fi
     MENU_ITEMS=("start|Start with agent ...")
+    [ -n "$(topic_get "$f" transfer_to)" ] && MENU_ITEMS=("cancelxfer|Cancel the hand-over to $(topic_get "$f" transfer_to_name)" "${MENU_ITEMS[@]}")
     [ "$st" = waiting ] && [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="resume|The wait is over: $ag goes on"
     [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
     [ "$st" = next ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="next|Up next"
@@ -2484,8 +2485,13 @@ how_to_finish() {  # how_to_finish <id>: the sentence every agent gets about rep
 # (free) agent takes over that branch. bhote transfer starts it; the source agent reports with bhote handover; then the
 # target agent gets the topic. The topic remembers both ends while it travels (transfer_* keys).
 transfer_start() {  # transfer_start <topic file> <from machine> <from pane> <from name> <to machine> <to pane> <to name>
-    local f=$1 id title to_ref
+    local f=$1 id title to_ref tpj
     agent_live "$5" "$6"; case "$LIVE_ST" in idle|done) ;; *) echo "bhote: $7 is not free ($LIVE_ST)" >&2; return 1 ;; esac
+    # the target must work in the topic's project: another project's agent would not know what to do with it (only on purpose: TRANSFER_FORCE)
+    tpj=$(topic_get "$f" project)
+    if [ -n "$tpj" ] && [ "${TRANSFER_FORCE:-}" != 1 ]; then agent_meta "$5" "$6"
+        [ "$AM_PROJECT" = "$tpj" ] || { echo "bhote: $7 is not an agent of this topic's project ($(project_name "$tpj" || echo "$tpj")); to hand it over anyway: bhote transfer ... --force" >&2; return 3; }
+    fi
     local to_cwd=$LIVE_CWD
     agent_live "$2" "$3"; case "$LIVE_ST" in
         gone|noagent) echo "bhote: $4 is no agent any more" >&2; return 1 ;;
@@ -2530,8 +2536,13 @@ pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt throug
         [ "$1" -ge 1 ] || return 0                                  # (index -1 would be the LAST agent in bash 4)
         pick_build; [ -n "${PICK_MAP[$(( $1 - 1 ))]:-}" ] || return 0
         IFS=$US read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]}]}"
+        local warn="" tpj; tpj=$(topic_get "$f" project)
+        if [ -n "$tpj" ]; then agent_meta "$m" "$id"; [ "$AM_PROJECT" = "$tpj" ] || warn=" (NOT an agent of this topic's project!)"; fi
+        ask "Hand \"$(topic_get "$f" title)\" over from $(topic_get "$f" agent agent) to $name$warn? The source agent commits and stops. y/N: " || return 0   # a stray t and ⏎ must not start a hand-over
+        [ "$ANSWER" = y ] || [ "$ANSWER" = Y ] || return 0
+        [ -n "$warn" ] && TRANSFER_FORCE=1
         transfer_start "$f" "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)" "$(topic_get "$f" agent agent)" "$m" "$id" "$name" 2>/dev/null
-        return 0
+        TRANSFER_FORCE=""; return 0
     fi
     if [ "$1" -gt 0 ]; then
         pick_build
@@ -2576,6 +2587,7 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
                [ "$(cfg_get SLACK_WATCH off)" = on ] || FLASH_MSG="$FLASH_MSG (Slack monitor is off here: settings › Connections)"
            else FLASH_MSG="✗ ${perr#bhote: }"; fi
            FLASH_UNTIL=$(( SECONDS + 8 )); return 0 ;;
+        cancelxfer) topic_set "$f" transfer_to ""; topic_set "$f" transfer_to_name ""; topic_set "$f" transfer_from "" ;;
         reopen) topic_set "$f" status now; topic_set "$f" waiting_for "" ;;
         next) topic_set "$f" status next ;;
         later) topic_set "$f" status later ;;
@@ -4346,6 +4358,7 @@ cli_transfer() {  # bhote transfer <from agent> <to agent> [--topic <ref>]
     local from="" to="" tref="" f fm fp fn fs ft tm tp tn rc made=""
     while [ $# -gt 0 ]; do case "$1" in
         --topic|-t) tref=${2:-}; shift ;;
+        --force) TRANSFER_FORCE=1 ;;
         -*) echo "bhote: unknown option '$1' for transfer" >&2; return 1 ;;
         *) if [ -z "$from" ]; then from=$1; elif [ -z "$to" ]; then to=$1; else echo "bhote: transfer takes two agents" >&2; return 1; fi ;;
     esac; shift; done

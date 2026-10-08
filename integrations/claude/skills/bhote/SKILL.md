@@ -101,6 +101,10 @@ when the prompt offers it). If you are blocked, use `bhote wait <id> "<who>"`.
 
 ## Steal & Transfer
 
+**Never start a transfer yourself.** `bhote transfer` (and `bhote handover` without a prompt that asks for it) is for when the user
+explicitly tells you to move work to another agent, by name. "Done", "good" or "thanks" is not that. bhote refuses a target in
+another project of the topic; do not add `--force` on your own, ask the user. Hand-overs interrupt the other agent's work.
+
 When a prompt starts with "Steal & Transfer (bhote topic <id>…): stop here and hand this work over", do exactly its
 steps, in this order: commit everything on the **current** branch (no new branch; only on a detached HEAD create the one
 it names) with a handover in the commit message body (goal, what is done, what is open, next steps, how to test), push if

@@ -271,4 +271,12 @@ echo "$frame" | grep -q "∟ Fix the" && bad "a parked topic is shown behind the
   printf 'id=an-Laptop-beta\nkind=agentnum\ntitle=Laptop/beta\nnum=7\nupdated=1\ndeleted=0\n' > "$TOPIC_DIR/an-Laptop-beta.topic"; AN_AT=-999
   agent_code_set x Mac alpha; agent_code_set y Laptop beta; case "$x$y" in [A-Z][A-Z][A-Z]1[A-Z][A-Z][A-Z]7) ;; *) exit 1 ;; esac
   agent_ref "$(echo "$y" | tr '[:upper:]' '[:lower:]')" && [ "$AR_NAME" = beta ] ) && ok "agent numbers: a code (any case) finds the agent" || bad "agent code ref"
+# Steal & Transfer into another project is refused (only on purpose)
+( agent_live() { LIVE_ST=idle; LIVE_SESS=s1; LIVE_CWD=/x; }; notify() { :; }; agent_send() { :; }
+  rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Mac${US}w2:p1${US}t${US}a${US}${US}proj-ims${US}/y" > "$AGENT_META_L"; : > "$AGENT_META_R"
+  topic_new "Doorbell fix" "" ""; xf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$xf" project proj-omarchy; topic_set "$xf" agent_pane w3:p1; topic_set "$xf" agent_machine Mac
+  transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "IMS (main)" 2>/dev/null; [ $? = 3 ] || exit 1
+  [ -z "$(topic_get "$xf" transfer_to)" ] || exit 2
+  TRANSFER_FORCE=1 transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "IMS (main)" 2>/dev/null; [ -n "$(topic_get "$xf" transfer_to)" ] || exit 3
+  exit 0 ) && ok "transfer: an agent of another project is refused, unless forced" || bad "transfer project guard: step $?"
 rm -rf "$T"; exit $fail
