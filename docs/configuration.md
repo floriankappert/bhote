@@ -34,7 +34,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TEST_EVERY` | `60` | Test interval (s) | Seconds between two test checks. |
 | `TEST_LOCAL` · `TEST_GITHUB` · `TEST_CIRCLECI` | `on` | Local runs · GitHub Actions · CircleCI | The test monitor's modules. |
 | `TEST_STATUS_DIR` | `~/.cache/ims-test-status` | Status files | Folder with live test status files (one JSON per suite, as IMS writes them). |
-| `MONITOR_ROWS` | `5` | Entries shown | Entries each monitor shows. |
+| `MONITOR_ROWS` | `7` | Entries shown | Entries each monitor shows. |
 | `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN` or `~/.config/zsh/secrets.zsh`. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |
 | `THEME` | `terminal` | Colours | `terminal`: the terminal's own 16 colours, so bhote follows the terminal theme (and Omarchy's system theme) at once. `catppuccin`: exact truecolor values. |
