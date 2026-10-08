@@ -3,24 +3,23 @@
 *by Florian Kappert and Jakob Beyer*
 
 A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you work on, who you wait for) next to your
-**agents** (who is free, who is busy). A single bash script, about 44 columns wide, with a small sheepdog that guards the herd.
+**agents** (who is free, who is busy), on every machine you work on. A single bash script, about 44 columns wide, with a
+small sheepdog that guards the herd.
 
-- Topics are `now`, `waiting` (for a name, with a date), `later` or `done`, each with an optional description.
-- Agents of every herdr tab are listed by project, then machine; the icon says free (○ ✓) or busy (the dancing star).
-- Start a topic on a free agent: bhote sends the title and description to its pane (`herdr pane run`, with `--machine` for agents on another machine).
-- Agents' tasks that are no topic yet are suggested (`a`); a finished agent is marked, `x` closes its topic.
-- Topics are plain files; they can be kept in sync with a second machine over ssh (opt-in).
-- **Steal & Transfer**: an agent commits its state with a handover on its branch, and a free agent takes over ([how](docs/steal-and-transfer.md)).
-- Agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on.
-- **Projects**: agents are listed by project (and machine); an agent belongs to a project by its git repository (worktrees inherit), and the panel can list only its project's topics.
-- **GitHub**: the git branch a topic's agent works on, under the topic and in the search.
-- **Deployment and test monitor**: the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test
-  jobs, local runs through `bhote test run`, live status files) of your projects, five each, above the agents.
-- **Omarchy bar widget**: what waits for you, in the bar; a click jumps to the panel.
-- **Slack pins**: a waiting topic can carry a Slack channel, DM or thread; when someone writes there, it goes to review. Claude Code (its Slack connector) does the reading, so bhote needs no Slack token.
-- Themes: follows your terminal colours (and Omarchy's system theme) by default, or exact Catppuccin colours, each role overridable.
-- A setup wizard on the first start: machines in both directions, sync through herdr, notifications.
-- A CLI (every command with `--json`) to create and close topics from scripts and agents.
+- **Topics** move through `now`, `next`, `waiting` (for a name, with a date), `review`, `later` and `done`, each with an optional description.
+  The panel shows what is on (review, now, next, waiting); the last done topics sit in their own area, with the agent that did them.
+- **Agents of all machines** in one list, grouped by project: working ones in Claude orange, ones that need you in red, idle ones grey,
+  with the topic each works on. Every agent has a fixed number on its machine (`MAC4`, `OMR1`), also a ref for the CLI.
+- **Start a topic on a free agent** (`s`): bhote sends title and description to its pane. With `AUTO_ASSIGN` a `now` topic is started by itself on the next free agent of its project.
+- **Review topics by themselves:** an agent that asks you a question or waits for an answer gets a review topic (`Question from <agent>`); it goes when the agent works again (`AUTO_REVIEW`).
+- **Waiting:** agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on. A waiting topic can carry a **Slack pin** (channel, DM or thread); when someone writes there, it goes to review. Claude Code and its Slack connector do the reading, so bhote needs no Slack token.
+- **Steal & Transfer:** an agent commits its state with a handover on its branch, and a free agent takes over ([how](docs/steal-and-transfer.md)).
+- **Projects:** an agent belongs to a project by its git repository (worktrees inherit); the panel can list only its project's topics. **GitHub:** the branch a topic's agent works on.
+- **Deployment and test monitor:** the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test jobs, local runs through `bhote test run`, live status files) of your projects, seven each, with progress bars, above the agents.
+- **Search from anywhere in herdr** (the find key, e.g. `ctrl+alt+t`): all agents and topics, `⏎` jumps there, `ctrl+n` adds a topic.
+- **Topics are plain files**, kept in sync with a second machine through herdr's own connection (opt-in); **update notice** when a newer version is out.
+- **Omarchy bar widget**, themes (terminal colours or Catppuccin, each role overridable), a **setup wizard** and the Claude skill `/bhote-install`.
+- A **CLI** (every command with `--json`) to create and close topics from scripts and agents.
 
 ## Install
 
@@ -59,6 +58,8 @@ ln -s /usr/share/bhote/omarchy-plugin ~/.config/omarchy/plugins/bhote.bar && oma
 git clone https://github.com/floriankappert/bhote && cd bhote && ./install.sh
 ```
 
+After an update, `bhote reload` restarts the panels of the machine (never type into a running panel: keys act as hotkeys there).
+
 `install.sh` links `~/.local/bin/bhote` (update with `git pull`) and, when herdr is present, the plugin `bhote.panel`, which
 opens the panel on the right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the config switches that
 off; the action "Bhote: open panel" opens it by hand). On Omarchy it also links the bar widget `bhote.bar`: the
@@ -70,7 +71,7 @@ panel in herdr (right click: the search). `bhote bar` prints the same as Waybar-
 | key | does |
 |---|---|
 | `↑↓` / `jk` | move |
-| `⏎` | jump to the topic's agent in herdr (in another tab the focus stays in the bhote panel there, the topic selected; no agent: the topic's page) |
+| `⏎` | jump to the topic's agent in herdr (in another tab the focus goes to the bhote panel there; no agent: the topic's page) |
 | `→`, `←` / `esc` | the topic's page / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |
@@ -78,39 +79,46 @@ panel in herdr (right click: the search). `bhote bar` prints the same as Waybar-
 | `e` / `d` | edit the title / the description (Esc cancels) |
 | `x` | mark done |
 | `a` | topics suggested from what the running agents work on |
-| `,` | settings · `S` welcome screen · `q` quit |
-| click an agent | focus it in herdr (on another machine: selected there, switch to it in herdr) |
+| `,` | settings · `S` welcome screen · `w` the new wizard steps · `q` quit |
+| click an agent | focus it in herdr (on another machine: selected there; the panel says which keys switch to it) |
 | find key (e.g. `ctrl+alt+t`, ⌘T) | search all agents and topics, jump there (`bhote find` as a herdr popup) |
-| herdr prefix, `t` | jump from the agent to the panel and back (a herdr key for the plugin action `bhote.panel.focus`; shown bottom right) |
+| herdr prefix, `t` | jump from the agent to the panel and back (the plugin action `bhote.panel.focus`; the keys are shown bottom right) |
+
+The full list is in [the panel](docs/panel.md).
 
 ## CLI
 
 ```
 bhote add <title> [-d <text>] [@Name]   new topic          bhote list [--all] [--json] [--status s]
-bhote show <ref> [--json]               one topic          bhote done|now|later <ref>
-bhote wait <ref> <Name>                 waiting for Name   bhote rename|desc <ref> <text>    bhote rm <ref>
-bhote sync                              merge with the data location
+bhote show <ref> [--json]               one topic          bhote now|next|review|later|done <ref>
+bhote wait <ref> <Name>                 waiting for Name   bhote slack <ref> <pin|off>   bhote rename|desc <ref> <text>   bhote rm <ref>
+bhote agents                            the agents, numbered (MAC4)        bhote transfer <from> <to>   Steal & Transfer
 bhote deploys · bhote tests             the monitors        bhote test run -- <cmd>   a test run they see
-bhote monitor detect                    each project's CI    bhote bar                 a status bar line (JSON)
+bhote sync · bhote config               merge now · read and change the settings
+bhote setup · bhote skills install      the wizard · the Claude skills        bhote update · bhote reload   newer version · restart panels
+bhote find · bhote bar                  the search · a status bar line (JSON)
 ```
 
-`<ref>` is the number from `bhote list`, an id, or a part of the title.
+`<ref>` is the number from `bhote list`, an id, or a part of the title. Everything is in the [CLI reference](docs/cli-reference.md).
 
 ## Settings
 
-Stored in `~/.config/bhote/config` (`KEY=value`, never sourced); the panel's settings screen (`,`) edits the common ones.
+Stored in `~/.config/bhote/config` (`KEY=value`, never sourced); the panel's settings screen (`,`) edits them, `bhote config list`
+shows all. The most used; every key is in [configuration](docs/configuration.md):
 
 | key | default | meaning |
 |---|---|---|
 | `STORE`, `STORE_MACHINE` | `local` | keep a replica on a saved herdr machine (`STORE=remote`, `STORE_MACHINE=<label>`) |
 | `REMOTE_AGENTS` | `off` | also list the agents of the saved herdr machines (opens ssh connections, only when `on`) |
-| `MACHINES_OFF` | | saved machines that stay out |
-| `TESTS_BUSY` | `off` | an agent whose workspace runs tests counts as busy (reads the `tests` workspace token) |
-| `SPLASH_AUTOCLOSE`, `SPLASH_SECONDS` | `on`, `15` | the welcome screen closes by itself |
-| `HOST_LABEL` | `Mac` / host name | how this machine is called in the lists |
-| `NAME_COLORS` | | colour agents by part of their name, e.g. `api=teal,web=mauve` |
+| `AUTO_ASSIGN` | `off` | a `now` topic is started by itself on the next free agent of its project |
+| `AUTO_REVIEW` | `on` | an agent's question becomes a review topic |
+| `SLACK_WATCH` | `off` | watch the Slack pins of waiting topics |
+| `DEPLOY_MONITOR`, `TEST_MONITOR` | `off` | the deployment and test monitor |
+| `FIND_KEY`, `JUMP_KEY` | | the herdr keys for the search and for jumping between agent and panel |
+| `THEME` | `terminal` | `terminal` or `catppuccin` |
 | `AUTOSTART` | `on` | the herdr plugin opens the panel at start |
-| `LOCAL_EVERY`, `REMOTE_EVERY` | `3`, `10` | seconds between agent queries |
+| `HOST_LABEL` | `Mac` / host name | how this machine is called in the lists |
+| `LOCAL_EVERY`, `REMOTE_EVERY` | `3`, `5` | seconds between agent queries |
 
 Data lives in `${XDG_DATA_HOME:-~/.local/share}/bhote/topics` (one small file per topic). With a replica machine, the local copy
 stays the working copy; the newer `updated` wins per topic, deletions travel as tombstones, and while the machine is not

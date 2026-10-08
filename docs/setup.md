@@ -18,9 +18,14 @@ in place and changes nothing (it asks a machine over ssh only when herdr reaches
 | 4 The other way round | Makes the other machines know this one, so that they see its agents and topics travel both ways (below). |
 | 5 Topics | Only here, or in step with a machine through herdr (recommended) or ssh; sets up the other side (through herdr only when it knows this machine, step 4), then merges once. |
 | 6 Remote agents | Show the agents of the other machines. |
-| 7 Agents and notifications | May an agent close its topic, herdr notifications, the waiting reminder, tests = busy. |
-| 8 The panel | Autostart with herdr, the animation. |
-| 9 Done | A summary. |
+| 7 Projects | Which agents belong to which project (by repository or workspace; the agent list and `AUTO_ASSIGN` go by it). |
+| 8 Monitors | The deployment and test monitor, their connections (GitHub, CircleCI) and each project's CI. |
+| 9 Agents and notifications | May an agent close its topic, herdr notifications, the waiting reminder, tests = busy, auto-assign, the Slack watch. |
+| 10 The panel | Autostart with herdr, the find and jump keys. |
+| 11 Done | A summary. |
+
+When a new version brings new settings, the head of the panel says *New Features Available · w Start Wizard*; `w` runs only the
+new steps. `/bhote-install` (the Claude Code skill, put there by `bhote skills install`) does the same without the interactive questions.
 
 ## The other way round, in detail
 

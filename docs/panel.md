@@ -19,8 +19,9 @@ is selected.
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
-| `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one |
+| `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one (asks first; warns when the target belongs to another project) |
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
+| `w` | the setup wizard's new steps, when the head says *New Features Available* |
 | `,` | settings (the full key list is under *Hotkeys* there; *Connections* holds the data location, remote agents, the Slack monitor and the machine codes; *Setup wizard* runs the wizard again) · `S` welcome screen · `q` quit |
 
 The find key (settings › *Find key*, e.g. `ctrl+alt+t`, on the Mac ⌘T) opens a search popup over all agents and topics:
@@ -45,7 +46,11 @@ description shows how many of its 140 characters are left.
 ## Agents
 
 Agents are listed by project (the panel's own project first, those without one last), in two columns; the icon says the
-state as in the herdr sidebar (`✶` busy, `◉` needs you, `✓` done, `○` idle). When the agents of more than one machine are
+state as in the herdr sidebar (`✶` busy, `◉` needs you, `✓` done, `○` idle). Inside a project the working agents come first
+(in Claude orange as a whole name), then those that need you (red), then idle ones (grey); the project captions are coloured
+by `PROJECT_COLORS`. Behind an agent's name stands the topic it works on (seven characters at most; not a parked one).
+Every agent has a number of its own on its machine (`MAC4`, `OMR1`, kept for good; shown in the list, behind done topics and
+as a ref in `bhote agents` and `bhote transfer`). When the agents of more than one machine are
 listed, each name carries its machine's **code** in front: `MAC|IMS (main)`, `OMR|root` (a session in the home folder,
 named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
 `OMR`, MacBook Pro `MBP`), unique over all machines; settings › *Connections* › *Code of …* and the setup wizard set one by

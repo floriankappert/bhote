@@ -6,9 +6,12 @@ context, when another machine or worktree should continue, or when you need the 
 
 ## Start it
 
-- **In the panel:** select the topic, press `t` (or `→` › *Transfer to another agent …*), pick a free agent.
-- **From the command line:** `bhote transfer <from> <to> [--topic <ref>]`. `<from>` and `<to>` are agents from
-  `bhote agents`: a number, `machine/pane` (`Omarchy/w4:p1`), a pane id, or a part of the name. Without `--topic` bhote
+- **In the panel:** select the topic, press `t` (or `→` › *Transfer to another agent …*), pick a free agent. The panel
+  asks before it starts, and warns when the target belongs to another project than the topic. A pending hand-over can be
+  cancelled from the topic's page.
+- **From the command line:** `bhote transfer <from> <to> [--topic <ref>] [--force]`. `<from>` and `<to>` are agents from
+  `bhote agents`: a number or a code (`MAC4`), `machine/pane` (`Omarchy/w4:p1`), a pane id, or a part of the name. A target of
+  another project is refused unless you add `--force`. Without `--topic` bhote
   takes the topic of the source agent, or creates one from its current task.
 
 The target must be free (idle or done), and checked live right before anything is sent. A source agent that waits for an
@@ -32,6 +35,8 @@ answer (a permission prompt) is refused: answer it first. When the prompt cannot
 
 Everything travels through herdr (`herdr agent prompt`, with `--machine` for agents on another machine), so a transfer can
 go from the Mac to a Linux box and back. The handover lives in git, where the code is.
+
+Agents never start a hand-over on their own: the skill tells them to do it only when you ask.
 
 The agents learn the procedure from the bhote skill for Claude Code (`integrations/claude/skills/bhote`, installed by the
 setup wizard).

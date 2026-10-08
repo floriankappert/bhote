@@ -27,6 +27,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `GITHUB_BRANCHES` | `on` | GitHub: agent branches | The git branch the agent of a topic works on, as a line under the topic (and inline in the search). Each machine reads it for its own agents from their working folder (`.git`, worktrees too) and writes it into the topic when it changes. |
 | `SLACK_WATCH` | `off` | Watch Slack pins (Claude) | This machine watches the Slack channels pinned to waiting topics (`bhote slack`) through Claude Code and its Slack connector, and sets a topic to review when someone else writes. One machine is enough. |
 | `SLACK_EVERY` | `120` | Slack interval (s) | Seconds between two Slack checks; each is one short Claude call (Haiku), and only while a waiting topic (or one Slack put under review) has a pin. |
+| `CLAUDE_CONFIG_DIR` | | Claude profile | The Claude Code profile the Slack watch (and the wizard) runs in: its folder, e.g. `~/.claude2`. Empty: the one of this process, else `~/.claude`. Set it when the Slack connector lives in a second profile. |
 | `DEPLOY_MONITOR` | `off` | Deployment monitor | The last deployments of the projects above the agents ([monitors](monitors.md)). |
 | `DEPLOY_EVERY` | `60` | Deploy interval (s) | Seconds between two deployment checks. |
 | `DEPLOY_GITHUB` · `DEPLOY_CIRCLECI` | `on` | GitHub Actions · CircleCI | The deployment monitor's modules. |
@@ -48,6 +49,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TOPICS_SCOPE` | `all` | Topics shown | `project`: the panel lists the topics of its project (the project of the agent in its herdr tab) and those without one; `all`: every topic. |
 | `DONE_MAX` | `7` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
 | `HOST_LABEL` | `Mac` on macOS, else the host name | | How this machine is called in agent lists. Should match the label other machines use for it in `herdr machine list`. |
+| `HERDR_KEYS_MACHINE` | `any` | Keys of machine | The machine whose herdr you type into: the jump key and prefix shown in the panel are read from the `config.toml` of that machine (and shown as on its keyboard: Option on a Mac, Alt elsewhere). `any`: this machine. |
 | `JUMP_KEY` | | Jump key (herdr) | The herdr key that jumps between the agent and the bhote panel of the tab (e.g. `prefix+t`; `off` removes it). bhote writes it into herdr's `config.toml` (a block between `# >>> bhote` and `# <<< bhote`) and reloads herdr; a key herdr refuses changes nothing. |
 | `FIND_KEY` | | Find key (herdr) | The herdr key that opens `bhote find` as a popup (e.g. `ctrl+alt+t`; on macOS a terminal can send it for ⌘T). Written the same way. |
 | `SETUP_DONE` | | | The date the [setup wizard](setup.md) ran on this machine. Empty: it opens at the next start (`bhote config unset SETUP_DONE` brings it back). |

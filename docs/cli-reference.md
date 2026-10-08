@@ -183,14 +183,16 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 
 ### `bhote agents`
 
-The agents herdr knows (this machine, and the saved machines when `REMOTE_AGENTS=on`), numbered. The numbers are agent refs
-for `transfer`. `--json`: an array of `{"n", "machine", "pane", "status", "name", "task", "free", "topic"}`.
+The agents herdr knows (this machine, and the saved machines when `REMOTE_AGENTS=on`), numbered. Every agent also has a
+code of its own: its machine's code and a number (`MAC4`, `OMR1`), handed out by the agent's machine and kept for good (it is
+shown in the agent list and behind done topics). The numbers and the codes are agent refs for `transfer`. `--json`: an array
+of `{"n", "code", "machine", "pane", "status", "name", "task", "free", "topic"}`.
 
-### `bhote transfer <from> <to> [--topic <ref>]`
+### `bhote transfer <from> <to> [--topic <ref>] [--force]`
 
 [Steal & Transfer](steal-and-transfer.md): `<from>` commits its work on its branch with a handover and hands it to `<to>`
-(a free agent). Agent refs: a number from `bhote agents`, `machine/pane`, a pane id, or a part of the name (exit `2` when
-that matches several). The source must not wait for an answer, the target must be free. Prints the topic. Exit `1` when
+(a free agent). Agent refs: a number or a code (`MAC4`) from `bhote agents`, `machine/pane`, a pane id, or a part of the name
+(exit `2` when that matches several). A target that belongs to another project than the topic is refused; `--force` does it anyway. The source must not wait for an answer, the target must be free. Prints the topic. Exit `1` when
 herdr cannot send the prompt; nothing changes then.
 
 ### `bhote handover <topic> --to <machine/pane> --branch <b> --commit <c>`
@@ -247,10 +249,24 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 
 ### `bhote version` · `bhote help`
 
-`bhote skills [install]` copies the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`, `~/.claude*`) and says to continue with `/bhote-install`. `bhote update` asks GitHub whether a newer version is out and prints the command that updates this installation.
-
 `bhote version` prints `bhote 0.5.8` (`--json`: `{"version":"0.5.8"}`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
+
+### `bhote skills [install]`
+
+Copies the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`,
+`~/.claude*`) and says to continue with `/bhote-install`.
+
+### `bhote update`
+
+Asks GitHub whether a newer version is out and prints the command that updates this installation (brew, `git pull`,
+pacman). The panel also says so, checked every 6 hours (`UPDATE_CHECK`).
+
+### `bhote reload`
+
+Restarts the bhote panels of this machine, for example after an update. It ends each panel itself and starts bhote again
+only in a pane that is a plain shell afterwards; it never types into a pane that still runs something. Prints how many
+panels it restarted and how many it left alone.
 
 ### `bhote setup [--json]`
 
