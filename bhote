@@ -2919,9 +2919,9 @@ mon_age() {  # mon_age <seconds ago>: 40s, 5m, 3h, 2d
     local a=$1; [ "$a" -lt 0 ] && a=0
     if [ "$a" -lt 60 ]; then printf '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf '%dh' $(( a / 3600 )); else printf '%dd' $(( a / 86400 )); fi
 }
-mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ▰▰▱▱▱▱ (MB_FILLED = the filled cells)
-    local _f=$(( $2 * $4 / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
-    for (( _i = 0; _i < $4; _i++ )); do [ "$_i" -lt "$_f" ] && _b="$_b▰" || _b="$_b▱"; done
+mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_FILLED = the cells to colour)
+    local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
+    for (( _i = 0; _i < $4; _i++ )); do _b="$_b■"; done
     printf -v "$1" '%s' "$_b"
 }
 mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a subshell
@@ -2939,7 +2939,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
         [ "$n" -lt "$max" ] || { more=$(( more + 1 )); continue; }
         bar=""
         case "$st" in
-            running) ic="${ORANGE}✶"; tx="running"; case "$d:$tot" in *[!0-9:]*|:*|*:) ;; *) [ "$tot" -gt 0 ] && { pct=$(( d * 100 / tot )); mon_bar_set bar "$d" "$tot" 6; tx="$bar $pct%"; } ;; esac ;;
+            running) ic="${ORANGE}✶"; tx="running"; case "$d:$tot" in *[!0-9:]*|:*|*:) ;; *) [ "$tot" -gt 0 ] && { pct=$(( d * 100 / tot )); mon_bar_set bar "$d" "$tot" 5; tx="$bar $pct%"; } ;; esac ;;
             queued) ic="${D}◌"; tx="queued" ;; approval) ic="${Y}⏸"; tx="approval" ;; ok) ic="${GREEN}✓"; tx="" ;;
             failed) ic="${NN}✗"; tx="failed" ;; *) ic="${D}⊘"; tx="canceled" ;;
         esac
@@ -2960,24 +2960,6 @@ monitors_block() {  # both monitors (when on), above the agents
     local r dm tm; cfg_var r MONITOR_ROWS 7; num_set r "$r" 7; cfg_var dm DEPLOY_MONITOR off; cfg_var tm TEST_MONITOR off
     [ "$dm" = on ] && monitor_block deploys "$r"
     [ "$tm" = on ] && monitor_block tests "$r"
-    return 0
-}
-cli_monitor_line() {  # bhote monitor line: the running deployments and tests as one line with bars (for a status line; reads the lists, never fetches)
-    local kind t pj lb st d tot note url out="" now bar f
-    now=$(date +%s)
-    for kind in deploys tests; do
-        [ -r "$SHARED_DIR/$kind.list" ] || continue
-        while IFS=$US read -r t pj lb st d tot note url; do
-            [ "$st" = running ] || continue
-            case "$t" in ''|*[!0-9]*) continue ;; esac; [ $(( now - t )) -lt 21600 ] || continue
-            pj=${pj//[![:print:]]/}; lb=${lb//[![:print:]]/}
-            out="$out${out:+  }$( [ "$kind" = deploys ] && echo Deploy || echo Test) $pj · $lb"
-            case "$d:$tot" in *[!0-9:]*|:*|*:) ;; *) if [ "$tot" -gt 0 ]; then
-                mon_bar_set bar "$d" "$tot" 5; f=$MB_FILLED; bar=${bar//▰/■}; bar=${bar//▱/■}
-                out="$out $(printf '\033[38;2;217;119;87m%s\033[38;5;240m%s\033[0m' "${bar:0:f}" "${bar:f}") $(( d * 100 / tot ))%"; fi ;; esac
-        done < "$SHARED_DIR/$kind.list"
-    done
-    [ -n "$out" ] && printf '%s\n' "$out"
     return 0
 }
 cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now when the list is older than its interval)
@@ -4555,7 +4537,7 @@ bhote_cli() {
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
-        monitor) if [ "${1:-}" = line ]; then cli_monitor_line; else bhote_info; cli_monitor "$@"; fi ;;                              # (the Omarchy bar widget, any Waybar-style bar)
+        monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg pin="" proj=""
