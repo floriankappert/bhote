@@ -26,6 +26,17 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 
 Needs bash 3.2+, `jq` and herdr. macOS and Linux.
 
+**Recommended: install it, then let Claude Code finish the setup.** Two commands, then one word in a Claude Code session:
+
+```sh
+brew install floriankappert/bhote/bhote      # Arch/Omarchy and other Linux: see below
+bhote skills install                         # the Claude Code skills bhote and bhote-install, in every Claude profile
+```
+
+In Claude Code: **`/bhote-install`**. The skill installs the herdr plugin, the Omarchy bar widget, the Claude hook and skills,
+the settings, the connection to your other machines and the deployment and test monitor, and checks each step. (The
+interactive wizard `bhote setup` does the same by hand.)
+
 **macOS** (Homebrew):
 
 ```sh

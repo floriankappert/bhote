@@ -20,6 +20,10 @@ class Bhote < Formula
     <<~EOS
       To open the panel automatically next to your agents when herdr starts:
         herdr plugin link #{opt_pkgshare}/herdr-plugin
+
+      Let Claude Code do the rest of the setup (plugins, hooks, machines, monitors):
+        bhote skills install
+        then, in Claude Code: /bhote-install
     EOS
   end
 

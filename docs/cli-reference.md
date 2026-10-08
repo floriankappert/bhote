@@ -247,6 +247,8 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 
 ### `bhote version` · `bhote help`
 
+`bhote skills [install]` copies the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`, `~/.claude*`) and says to continue with `/bhote-install`. `bhote update` asks GitHub whether a newer version is out and prints the command that updates this installation.
+
 `bhote version` prints `bhote 0.5.1` (`--json`: `{"version":"0.5.1"}`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 

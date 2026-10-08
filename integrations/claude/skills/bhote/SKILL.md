@@ -128,6 +128,13 @@ bhote transfer <machine/pane> <machine/pane> --topic <id>     # from, to
   with `herdr --machine <label> pane list | jq '.result.panes[] | select(.pane_id=="<pane>") | {agent_status, cwd}'`.
   Wait for `idle`/`done` before the transfer.
 
+## bhote is not set up yet
+
+If `bhote setup --json` shows something missing (`plugin`, `claude_hook` false, no machines), or the user has just installed
+bhote (`brew install floriankappert/bhote/bhote`, `pacman`, `install.sh`) and wants it working: continue with the skill
+**bhote-install** (`/bhote-install`). It installs and sets up everything through the CLI. Without the skill in this Claude
+profile run `bhote skills install` first.
+
 ## Useful
 
 ```sh

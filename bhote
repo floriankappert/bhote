@@ -3033,6 +3033,23 @@ monitors_block() {  # both monitors (when on), above the agents
     [ "$tm" = on ] && monitor_block tests "$r"
     return 0
 }
+cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote-install into every Claude profile (copies)
+    local sd d n dirs=() seen=" " done_n=0 prof
+    sd=$(w_share integrations/claude/skills) || { echo "bhote: the skills are not part of this installation" >&2; return 1; }
+    sd=$sd/integrations/claude/skills
+    for d in "${CLAUDE_CONFIG_DIR:-}" "$HOME"/.claude "$HOME"/.claude[0-9a-zA-Z_-]*; do
+        [ -n "$d" ] && [ -d "$d" ] || continue; case "$seen" in *" $d "*) continue ;; esac; seen="$seen$d "; dirs[${#dirs[@]}]=$d
+    done
+    [ ${#dirs[@]} -gt 0 ] || { dirs[0]=${CLAUDE_CONFIG_DIR:-$HOME/.claude}; mkdir -p "${dirs[0]}"; }
+    for prof in "${dirs[@]}"; do
+        for n in bhote bhote-install; do
+            [ -f "$sd/$n/SKILL.md" ] || continue
+            mkdir -p "$prof/skills/$n" && cp "$sd/$n/SKILL.md" "$prof/skills/$n/SKILL.md" && { printf 'skill %s -> %s\n' "$n" "${prof/#$HOME/~}/skills/$n"; done_n=$(( done_n + 1 )); }
+        done
+    done
+    [ "$done_n" -gt 0 ] || return 1
+    printf 'Now open Claude Code and say: /bhote-install  (it sets up the rest: herdr plugin, hooks, machines, monitors).\n'
+}
 cli_update() {  # bhote update: asks GitHub now; prints whether there is a newer version and the command that updates
     update_fetch || { echo "bhote: could not ask GitHub (offline?)" >&2; return 1; }
     update_load
@@ -4582,6 +4599,8 @@ bhote — topics and agents next to herdr.
   bhote bar                          one status bar line (Waybar-style JSON)
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
+  bhote skills [install]             put the Claude Code skills bhote and bhote-install into every Claude profile (then /bhote-install)
+  bhote update                       is there a newer version, and the command that updates it
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
@@ -4613,6 +4632,7 @@ bhote_cli() {
         current) bhote_info; cli_current ;;
         bar) cli_bar ;;
         update) cli_update ;;
+        skills) cli_skills "$@" ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
