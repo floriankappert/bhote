@@ -1540,7 +1540,7 @@ ask() {  # ask <label> [text to start with] [max length]: the editor on the last
     return 0
 }
 ask_draw() {  # ask_draw <label>: the prompt row with ED_BUF; the part around the cursor when it is longer than the room
-    local rows=${ROWS:-40} w=$(( ${COLS:-44} - 1 )) room cnt="" off a b pre mid post col lab lw
+    local rows=${ASK_ROW:-${ROWS:-40}} w=$(( ${COLS:-44} - 1 )) room cnt="" off a b pre mid post col lab lw
     [ -n "${ASK_MAX:-}" ] && cnt="$(( ASK_MAX - ${#ED_BUF} )) left"   # how many characters are left, on the right
     clip_set lab "$1" $(( w - 3 - ${#cnt} - 2 - 12 )); dw_set lw "$lab"   # a long label (a title in "Delete ...?") leaves room to type
     room=$(( w - 3 - lw - 1 - ${#cnt} - 1 )); [ "$room" -lt 4 ] && room=4
@@ -1575,9 +1575,9 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ws=$(topic_get "$f" waiting_since); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine)
     case "$st" in now) sc=$ORANGE ;; next) sc=$S ;; waiting) sc=$Y ;; review) sc=$BLUE ;; later) sc=$R ;; done) sc=$GREEN ;; *) sc=$D ;; esac
     printf '\n  %sTITLE%s\n' "$D" "$X"
-    wrap_print 2 "$TITLE" "$(topic_get "$f" title '(untitled)')"
+    field_block title "$TITLE" "$(topic_get "$f" title '(untitled)')"
     printf '\n  %sDESCRIPTION%s\n' "$D" "$X"
-    line=$(topic_get "$f" description); if [ -n "$line" ]; then wrap_print 2 "$DESC" "$line"; else printf '  %s– (d adds one)%s\n' "$D" "$X"; fi
+    line=$(topic_get "$f" description); if [ -n "$line" ]; then field_block description "$DESC" "$line"; else field_block description "$D" "– (⏎ adds one)"; fi
     printf '\n  %sSTATUS%s\n' "$D" "$X"
     printf '  %s%s%s' "$sc" "$st" "$X"
     if [ "$st" = waiting ] && [ -n "$wf" ]; then ago_set age "${ws:-$NOW}"; printf ' %s·%s %s%s%s %s· %s%s' "$D" "$X" "$BLUE" "$wf" "$X" "$D" "$age" "$X"; fi
@@ -1590,7 +1590,28 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
         menu_num_line "$sl" "$(( i + 1 ))" "${MENU_ITEMS[$i]#*|}"
     done
     printf '\n'; rule
-    printf '  %s%s%s\n' "$D" "$(clip "↑↓ 1-9 choose · ⏎ do it · esc back" $(( ${COLS:-44} - 4 )))" "$X"
+    printf '  %s%s%s\n' "$D" "$(clip "↑↓ 1-9 choose · ⏎ do it / edit · esc back" $(( ${COLS:-44} - 4 )))" "$X"
+}
+# Title and description on the topic page are choices, too (MENU_IDX -2 and -1, above the actions): on the bar when chosen,
+# and edited in place (EDIT_FIELD): the field is then one line, marked with \002 so that bhote_paint knows its row (EDIT_ROW)
+# and the editor opens right there.
+field_block() {  # field_block <title|description> <colour> <text>
+    local l w=$(( ${COLS:-44} - 2 )) lw mk="" sel="" first=1
+    case "$1:${MENU_IDX:-0}" in title:-2|description:-1) sel=1; mk=$'\001' ;; esac
+    if [ "${EDIT_FIELD:-}" = "$1" ]; then printf '%s\002%s%*s%s\n' "$mk" "$SELBG" "$w" "" "$X"; return; fi
+    while IFS= read -r l; do
+        l=${l//$X/}
+        if [ -n "$sel" ]; then dw_set lw "$l"; printf '%s%s%s%s%*s%s\n' "$mk" "$SELBG" "$LSEL" "$l" $(( w - lw )) "" "$X"; mk=""
+        else printf '%s%s%s\n' "$2" "$l" "$X"; fi
+    done <<< "$(wrap_print 2 "" "$3")"
+}
+menu_edit_field() {  # menu_edit_field <title|description>: the editor where the field stands; Enter keeps, Esc throws away
+    local f fld=$1 cur; f=$(sel_file); [ -n "$f" ] || return 0
+    cur=$(topic_get "$f" "$fld")
+    EDIT_FIELD=$fld; EDIT_ROW=""; bhote_paint menu
+    if [ "$fld" = title ]; then ASK_ROW=$EDIT_ROW ask "" "$cur" && [ -n "$ANSWER" ] && topic_set "$f" title "$ANSWER"
+    else ASK_ROW=$EDIT_ROW ask "" "$cur" "$DESC_MAX" && topic_set "$f" description "$ANSWER"; fi
+    EDIT_FIELD=""; EDIT_ROW=""
 }
 menu_num_line() {  # menu_num_line <selected 1|""> <number> <text>: an action with its number key; the selected one on the bar
     local w=$(( ${COLS:-44} - 2 )) t; clip_set t "$3" $(( w - 6 ))
@@ -2533,9 +2554,14 @@ bhote_main() {
             esac
         elif [ "$view" = menu ]; then       # the action menu of the selected topic
             case "$key" in
-                UP|k) f=$(sel_file); [ -n "$f" ] && menu_build "$f"; MENU_IDX=$(( (MENU_IDX + ${#MENU_ITEMS[@]} - 1) % ${#MENU_ITEMS[@]} )); redraw=1 ;;
-                DOWN|j) f=$(sel_file); [ -n "$f" ] && menu_build "$f"; MENU_IDX=$(( (MENU_IDX + 1) % ${#MENU_ITEMS[@]} )); redraw=1 ;;
-                ENTER|RIGHT) if menu_do "$MENU_IDX"; then :; else view=main; fi; redraw=1 ;;
+                UP|k) f=$(sel_file); [ -n "$f" ] && menu_build "$f"                    # title (-2), description (-1), then the actions
+                      MENU_IDX=$(( MENU_IDX - 1 )); [ "$MENU_IDX" -lt -2 ] && MENU_IDX=$(( ${#MENU_ITEMS[@]} - 1 )); redraw=1 ;;
+                DOWN|j) f=$(sel_file); [ -n "$f" ] && menu_build "$f"
+                      MENU_IDX=$(( MENU_IDX + 1 )); [ "$MENU_IDX" -ge "${#MENU_ITEMS[@]}" ] && MENU_IDX=-2; redraw=1 ;;
+                ENTER|RIGHT) case "$MENU_IDX" in
+                                 -2) menu_edit_field title ;; -1) menu_edit_field description ;;
+                                 *) if menu_do "$MENU_IDX"; then :; else view=main; fi ;;
+                             esac; redraw=1 ;;
                 [1-9]) f=$(sel_file); [ -n "$f" ] && menu_build "$f"
                        if [ "$key" -le "${#MENU_ITEMS[@]}" ]; then MENU_IDX=$(( key - 1 )); if menu_do "$MENU_IDX"; then :; else view=main; fi; fi; redraw=1 ;;
                 ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
@@ -2601,7 +2627,11 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
     ui_load
     frame=$(bhote_draw "$1")
     local fl=() n=0 sel=-1 off=0 rows=${ROWS:-40} i
-    while IFS= read -r line; do case "$line" in $'\001'*) sel=$n; line=${line#$'\001'} ;; esac; fl[$n]=$line; n=$(( n + 1 )); done <<< "$frame"
+    while IFS= read -r line; do
+        case "$line" in $'\001'*) sel=$n; line=${line#$'\001'} ;; esac
+        case "$line" in $'\002'*) EDIT_LINE=$n; line=${line#$'\002'} ;; esac   # the field being edited (menu_edit_field)
+        fl[$n]=$line; n=$(( n + 1 ))
+    done <<< "$frame"
     if [ "$n" -gt "$rows" ] && [ "$sel" -ge 0 ]; then         # taller than the pane (a long menu, settings): follow the selection
         off=$(( sel - rows / 2 )); [ "$off" -gt $(( n - rows )) ] && off=$(( n - rows )); [ "$off" -lt 0 ] && off=0
     fi
@@ -2609,6 +2639,7 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
         [ "$first" = 1 ] || out="${out}"$'\n'; first=0
         out="${out}${fl[$i]}"$'\033[K'
     done
+    [ -n "${EDIT_LINE:-}" ] && { EDIT_ROW=$(( EDIT_LINE - off + 1 )); EDIT_LINE=""; }
     printf '\033[H%s\033[J' "$out"
 }
 

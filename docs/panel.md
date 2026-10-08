@@ -13,7 +13,7 @@ is selected.
 | Key | List |
 |---|---|
 | `↑` `↓` `j` `k` | move |
-| `→` `⏎` | the topic's menu (start with agent, waiting for, park, done, rename, describe, delete) |
+| `→` `⏎` | the topic's page: title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |
