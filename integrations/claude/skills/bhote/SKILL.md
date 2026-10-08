@@ -1,6 +1,6 @@
 ---
 name: bhote
-description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, and when you are told to hand your work over (Steal & Transfer).
+description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, and when you are told to hand your work over (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
 ---
 
 # bhote: topics next to herdr
@@ -41,6 +41,22 @@ bhote review <id>
 
 When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
 Do not use `-w` for the user: waiting is for other people and things.
+
+## Slack: pin a channel, DM or thread
+
+The user can pin Slack to a topic ("create a topic for X and pin Karen's Slack channel"). bhote then watches it while the
+topic waits: when someone else writes there, the topic goes to review with that message. Someone's "Slack channel" is
+the DM with them (`@Name`). Such a topic usually waits for that person:
+
+```sh
+bhote add "<title>" -w "Karen" --slack "@Karen" --json      # a new topic
+bhote slack <ref> "@Karen" --json                          # pin on an existing topic (bhote wait <ref> "Karen" if it does not wait yet)
+bhote slack <ref> off --json                               # unpin
+```
+
+`<pin>` is `@person` (the DM), `#channel`, or a Slack link (a channel, a DM, or a message: a message link watches its
+thread). `@` and `#` take a few seconds: bhote asks Claude Code to look them up. When bhote says SLACK_WATCH is off, tell
+the user that one machine needs it on (`bhote config set SLACK_WATCH on` where Claude Code has the Slack connector).
 
 ## When you were given a topic
 

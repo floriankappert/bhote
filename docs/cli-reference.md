@@ -106,9 +106,23 @@ agent it was
 (`CLAUDE_CODE_SESSION_ID`, `HERDR_PANE_ID`). With `AGENT_CAN_CLOSE=off` an agent cannot close a topic: its `done` becomes
 `review` (with a note on stderr, exit `0`), and you check it off.
 
-### `bhote wait <ref> <Name>`
+### `bhote wait <ref> <Name> [--slack <pin>]`
 
-The topic waits for Name from now on (`status: waiting`, `waiting_since` = now). Exit `1` without a name.
+The topic waits for Name from now on (`status: waiting`, `waiting_since` = now). Exit `1` without a name. With `--slack`
+it also pins Slack (see below); a topic that is pinned already waits again from now on (older messages do not count).
+
+### `bhote slack <ref> <pin | off>`
+
+Pins a Slack channel, DM or thread on the topic. `<pin>` is a Slack link (copy link of a channel, a DM or a message; a
+message link, also of a reply, watches its thread), `#channel` or `@person` (their DM). `#` and `@` are looked up through
+Claude Code (a few seconds); exit `1` when there is no clear match. `off` unpins. `bhote add … --slack <pin>` pins on a
+new topic.
+
+The pin is watched while the topic **waits**, by the machine with `SLACK_WATCH=on` (see configuration): every
+`SLACK_EVERY` seconds bhote asks Claude Code (`claude -p`, Haiku, only the read-only tools of its Slack connector; bhote
+keeps no Slack token) for newer messages. A message from someone else sets the topic to `review`, with a herdr
+notification; the message (sender and up to 300 characters) is in `slack.message` and on the topic page. Your own
+messages only move the watch on.
 
 ### `bhote rename <ref> <title>`
 
@@ -223,6 +237,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session"}` (each may be null). |
+| `slack` | object \| null | A Slack pin: `{"channel", "thread", "label", "message"}`; `message` is the last one from someone else (sender: text), while in review. |
 | `created` | integer \| null | |
 | `updated` | integer \| null | Last change; the newer one wins in a merge. |
 

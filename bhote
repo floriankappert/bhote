@@ -972,7 +972,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
                      [ -n "${T_SL[$i]}" ] && { state="Slack monitor active (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
             review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
-                    [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]}; sc=$S; } ;;   # an answer in Slack
+                    [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]// ¶ / }; sc=$S; } ;;   # an answer in Slack
             next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
             done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
@@ -1699,7 +1699,7 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     if [ -n "$(topic_get "$f" slack_channel)" ] || [ -n "$(topic_get "$f" slack_msg)" ]; then   # the pin and the answer that came in
         printf '\n  %sSLACK%s\n' "$D" "$X"
         line=$(topic_get "$f" slack_label); [ -n "$line" ] && printf '  %s%s%s%s\n' "$S" "$line" "$X" "$( [ "$st" = waiting ] && printf ' %s· monitor active%s' "$D" "$X")"
-        line=$(topic_get "$f" slack_msg); [ -n "$line" ] && wrap_print 2 "$L" "$line"
+        line=$(topic_get "$f" slack_msg); [ -n "$line" ] && slack_msg_print "$line"
     fi
     printf '\n'; rule
     printf '\n  %sACTIONS%s\n' "$D" "$X"
@@ -1722,6 +1722,19 @@ field_block() {  # field_block <title|description> <colour> <text>
         if [ -n "$sel" ]; then dw_set lw "$l"; printf '%s%s%s%s%*s%s\n' "$mk" "$SELBG" "$LSEL" "$l" $(( w - lw )) "" "$X"; mk=""
         else printf '%s%s%s\n' "$2" "$l" "$X"; fi
     done <<< "$(wrap_print 2 "" "$3")"
+}
+slack_msg_print() {  # slack_msg_print <who: text>: the sender, then each paragraph (¶) wrapped; a bullet line hangs behind its •
+    local who=${1%%: *} txt=${1#*: } p rest
+    [ "$who" = "$1" ] && { who=""; txt=$1; }
+    [ -n "$who" ] && printf '\n  %s%s%s\n' "$BLUE" "$(clip "$who" $(( ${COLS:-44} - 4 )))" "$X"
+    rest=$txt
+    while [ -n "$rest" ]; do
+        p=${rest%% ¶ *}; [ "$p" = "$rest" ] && rest="" || rest=${rest#* ¶ }
+        p=${p#"${p%%[! ]*}"}; [ -n "$p" ] || continue
+        case "$p" in "• "*|"- "*|"* "*) p=${p#"• "}; p=${p#"- "}; p=${p#"* "}
+            printf '  %s•%s ' "$S" "$X"; wrap_print 4 "$DESC" "$p" | sed '1s/^    //' ;;
+            *) wrap_print 2 "$DESC" "$p" ;; esac
+    done
 }
 menu_edit_field() {  # menu_edit_field <title|description>: the editor where the field stands; Enter keeps, Esc throws away
     local f fld=$1 cur; f=$(sel_file); [ -n "$f" ] || return 0
@@ -2062,7 +2075,7 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
         .pins[]? | select(.topic | test("^[A-Za-z0-9_-]+$")) | . as $p
         | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")))] | sort_by(.ts | tonumber)) as $m
         | (if $me == "" then null else ([$m[] | select(.user != $me)] | last) end) as $o   # (who I am unknown: only move on)
-        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | clean | plain | .[0:300]) else "" end)] | join("\u001f")' 2>/dev/null)"
+        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | gsub("\\r"; "") | gsub("\\n+"; " ¶ ") | clean | plain | .[0:300]) else "" end)] | join("\u001f")' 2>/dev/null)"
     printf 'ok %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"
     poke
 }
@@ -3148,7 +3161,8 @@ topic_json() {  # topic_json <file>
     [ "$st" = waiting ] || wf=""
     [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")")
     local sch slack=null; sch=$(topic_get "$f" slack_channel)
-    [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg)")")
+    [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
+/g')")")
     printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"created":%s,"updated":%s}' \
         "$(json_str "$(topic_id "$f")")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
         "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" "$slack" \
@@ -3164,7 +3178,8 @@ cli_show() {  # cli_show <file> [--json]
     if [ -n "$ag" ]; then printf '  agent: %s (%s)\n' "$ag" "$(topic_get "$f" agent_machine)"; fi
     if [ "$st" = waiting ] && [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
     if [ -n "$(topic_get "$f" slack_channel)" ]; then printf '  slack: %s%s\n' "$(topic_get "$f" slack_label)" "$( [ "$st" = waiting ] && echo " (watched)")"; fi
-    if [ "$st" = review ] && [ -n "$(topic_get "$f" slack_msg)" ]; then printf '  slack message: %s\n' "$(topic_get "$f" slack_msg)"; fi
+    if [ "$st" = review ] && [ -n "$(topic_get "$f" slack_msg)" ]; then printf '  slack message: %s\n' "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
+    /g')"; fi
     return 0
 }
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
