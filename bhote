@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.4.0}
+VERSION=${BHOTE_VERSION:-0.5.0}
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
 NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
@@ -90,6 +90,18 @@ NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
 SLACK_WATCH|off|bool|Watch the Slack channels pinned to waiting topics, from this machine (through Claude Code and its Slack connector; one machine is enough): a new message from someone else sets the topic to review
 SLACK_EVERY|120|int:30:3600|Seconds between two Slack checks (one short Claude call each, only while a waiting topic has a pin)
+DEPLOY_MONITOR|off|bool|Deployment monitor: the last deployments of the projects (GitHub Actions, CircleCI) above the agents
+DEPLOY_EVERY|60|int:15:3600|Seconds between two deployment checks
+DEPLOY_GITHUB|on|bool|Deployment monitor: GitHub Actions (through gh and its login)
+DEPLOY_CIRCLECI|on|bool|Deployment monitor: CircleCI (its API v2, with the CircleCI token)
+TEST_MONITOR|off|bool|Test monitor: the last test runs (local runs, CI test jobs) above the agents
+TEST_EVERY|60|int:15:3600|Seconds between two test checks
+TEST_LOCAL|on|bool|Test monitor: local runs (bhote test run -- <command>) and live status files
+TEST_GITHUB|on|bool|Test monitor: the test jobs of GitHub Actions
+TEST_CIRCLECI|on|bool|Test monitor: the test jobs of CircleCI
+TEST_STATUS_DIR|~/.cache/ims-test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok, as IMS writes them)
+MONITOR_ROWS|5|int:1:20|Entries each monitor shows in the panel
+CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
 THEME|terminal|enum:terminal:catppuccin|Colours: terminal (follows the terminal and system theme) or catppuccin (exact colours)
 ANIMATION|on|bool|The dog on the welcome screen blinks and pants
@@ -890,6 +902,7 @@ auto_assign() {
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
+    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
         kill -0 "$1" 2>/dev/null || exit 0                   # the panel is gone (also after kill -9): stop, never loop on alone
@@ -913,6 +926,14 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             if [ "$(cfg_get SLACK_WATCH off)" = on ] && ! { [ -n "$slack_pid" ] && kill -0 "$slack_pid" 2>/dev/null; }; then
                 cfg_var every_k SLACK_EVERY 120; num_set every_k "$every_k" 120
                 [ $(( SECONDS - last_k )) -ge "$every_k" ] && { last_k=$SECONDS; ( slack_check ) & slack_pid=$!; }   # in the background: a call takes seconds
+            fi
+            if [ "$(cfg_get DEPLOY_MONITOR off)" = on ] && ! { [ -n "$dep_pid" ] && kill -0 "$dep_pid" 2>/dev/null; }; then
+                cfg_var every_d DEPLOY_EVERY 60; num_set every_d "$every_d" 60
+                [ $(( SECONDS - last_d )) -ge "$every_d" ] && { last_d=$SECONDS; ( monitor_fetch deploys ) & dep_pid=$!; }
+            fi
+            if [ "$(cfg_get TEST_MONITOR off)" = on ] && ! { [ -n "$tst_pid" ] && kill -0 "$tst_pid" 2>/dev/null; }; then
+                cfg_var every_t TEST_EVERY 60; num_set every_t "$every_t" 60
+                [ $(( SECONDS - last_t )) -ge "$every_t" ] && { last_t=$SECONDS; ( monitor_fetch tests ) & tst_pid=$!; }
             fi
             remind_waiting
             auto_assign
@@ -1387,7 +1408,9 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     while [ "$dh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
         dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
     done
-    avail=$(( ${ROWS:-40} - hh - bh - dh ))
+    local mblk mh=0; mblk=$(monitors_block); [ -n "$mblk" ] && count_lines mh "$mblk"
+    [ "$mh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh - mh )) -lt $(( th < 6 ? th : 6 )) ] && { mblk=""; mh=0; }   # low: no monitors
+    avail=$(( ${ROWS:-40} - hh - bh - dh - mh ))
     case "$th:$topics" in *"the agents are bored"*) [ "$th" -gt "$avail" ] && {   # no room for the bored agents: their line only
         topics=$(BORED_SMALL=1 topics_block); count_lines th "$topics"; } ;; esac
     printf '%s\n' "$head"
@@ -1406,6 +1429,7 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     fi
     for (( i = 0; i < pad; i++ )); do printf '\n'; done
     [ "$dh" -gt 0 ] && printf '%s\n' "${dblk//$'\001'/}"
+    [ "$mh" -gt 0 ] && printf '%s\n' "$mblk"
     echo $(( ${ROWS:-40} - bh + 1 )) > "$RUN_DIR/divrow" 2>/dev/null     # the divider is the first line of the bottom part
     printf '%s' "$bottom"
 }
@@ -1451,6 +1475,20 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         SET_ROWS[${#SET_ROWS[@]}]="bool|GITHUB_BRANCHES|GitHub: agent branches"
         SET_ROWS[${#SET_ROWS[@]}]="bool|SLACK_WATCH|Slack monitor (Claude)"
         [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
+        SET_ROWS[${#SET_ROWS[@]}]="info|GH|GitHub (gh)"           # the monitors and their connections
+        SET_ROWS[${#SET_ROWS[@]}]="secret|CIRCLECI_TOKEN|CircleCI token"
+        SET_ROWS[${#SET_ROWS[@]}]="bool|DEPLOY_MONITOR|Deployment monitor"
+        if [ "$(cfg_get DEPLOY_MONITOR off)" = on ]; then
+            SET_ROWS[${#SET_ROWS[@]}]="sbool|DEPLOY_GITHUB|GitHub Actions"; SET_ROWS[${#SET_ROWS[@]}]="sbool|DEPLOY_CIRCLECI|CircleCI"
+            SET_ROWS[${#SET_ROWS[@]}]="num|DEPLOY_EVERY|Deploy interval (s)"
+        fi
+        SET_ROWS[${#SET_ROWS[@]}]="bool|TEST_MONITOR|Test monitor"
+        if [ "$(cfg_get TEST_MONITOR off)" = on ]; then
+            SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_LOCAL|Local runs"; SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_GITHUB|GitHub Actions"
+            SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_CIRCLECI|CircleCI"; SET_ROWS[${#SET_ROWS[@]}]="text|TEST_STATUS_DIR|Status files"
+            SET_ROWS[${#SET_ROWS[@]}]="num|TEST_EVERY|Test interval (s)"
+        fi
+        { [ "$(cfg_get DEPLOY_MONITOR off)" = on ] || [ "$(cfg_get TEST_MONITOR off)" = on ]; } && SET_ROWS[${#SET_ROWS[@]}]="num|MONITOR_ROWS|Entries shown"
         machine_codes_load; local mi                            # the machines' codes (MAC|name in the agent list)
         for (( mi = 0; mi < MC_N; mi++ )); do SET_ROWS[${#SET_ROWS[@]}]="mcode|${MC_NAME[$mi]//|/}|Code of ${MC_NAME[$mi]//|/}"; done
         return
@@ -1461,7 +1499,9 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         SET_ROWS[${#SET_ROWS[@]}]="projnew|NEW|+ New project"; return
     fi
     if [ "${SET_PAGE:-main}" = project ]; then              # one project: rename, its agents (a check pins the agent's repository), delete
-        SET_ROWS=("pact|rename|Rename"); local ai am ap ast an at
+        SET_ROWS=("pact|rename|Rename" "pci|ci|CI (deployments, tests)"); local ai am ap ast an at
+        [ -n "$(topic_get "$TOPIC_DIR/$SET_PROJ.topic" ci)" ] && SET_ROWS[${#SET_ROWS[@]}]="ptext|deploy_branches|Deploy branches" \
+            && SET_ROWS[${#SET_ROWS[@]}]="ptext|deploy_names|Deploy workflows/jobs" && SET_ROWS[${#SET_ROWS[@]}]="ptext|test_names|Test jobs"
         for (( ai = 0; ai < AG_N; ai++ )); do IFS=$US read -r am ap ast an at <<< "${AG_LINES[$ai]}"; SET_ROWS[${#SET_ROWS[@]}]="pagent|$am$US$ap|$an · $am"; done
         SET_ROWS[${#SET_ROWS[@]}]="pact|delete|Delete this project"; return
     fi
@@ -1501,7 +1541,7 @@ bhote_settings() {
         row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
         [ "$i" = "$cur" ] && sel=1
         case "$kind" in
-            bool) setting_row "$key"; def=${S_DEF:-off}; cfg_var v "$key" $def
+            bool|sbool) setting_row "$key"; def=${S_DEF:-off}; cfg_var v "$key" $def; [ "$kind" = sbool ] && ind=2
                   if [ "$v" = on ]; then vp="[x]"; vc="${GREEN}[x]${X}"; else vp="[ ]"; vc="${D}[ ]${X}"; fi ;;
             choice) cfg_var v STORE local
                   if [ "$v" = remote ]; then cfg_var v STORE_MACHINE '?'; vp="‹ $v ›"; else vp="‹ local ›"; fi; vc="${C}${vp}${X}" ;;
@@ -1518,6 +1558,12 @@ bhote_settings() {
             key) if [ "$key" = FIND_KEY ]; then vp=${FIND_KEY_SHOW:-off}; else vp=${FOCUS_KEY:-off}; fi; vc="${C}${vp}${X}" ;;
             enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
             prefer) ind=2; cfg_var v "$key" any; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
+            info) [ -n "${GH_INFO:-}" ] || { if gh_ok; then GH_INFO="✓ $(gh_user)"; else GH_INFO="not logged in"; fi; }
+                  vp=$GH_INFO; vc="${D}${vp}${X}" ;;
+            secret) if v=$(circleci_token_from); then vp="set"; vc="${GREEN}set${X}"; else vp="not set"; vc="${D}not set${X}"; fi ;;
+            text) setting_row "$key"; cfg_var v "$key" "$S_DEF"; clip_set vp "${v:--}" 22; vc="${C}${vp}${X}" ;;
+            pci) local pcv; pcv=$(topic_get "$TOPIC_DIR/$SET_PROJ.topic" ci); vp="${pcv:-none} ›"; [ -z "$pcv" ] && vp="detect ›"; clip_set vp "$vp" 26; vc="${D}${vp}${X}" ;;
+            ptext) clip_set vp "$(topic_get "$TOPIC_DIR/$SET_PROJ.topic" "$key")" 24; [ -n "$vp" ] || vp="auto"; vc="${C}${vp}${X}" ;;
             mcode) machine_code_set v "$key"; local mx; for (( mx = 0; mx < MC_N; mx++ )); do [ "${MC_NAME[$mx]}" = "$key" ] && break; done
                   if [ "${MC_SET[$mx]:-0}" = 1 ]; then vp=$v; vc="${C}${v}${X}"; else vp="$v auto"; vc="${C}${v}${X}${D} auto${X}"; fi ;;
         esac
@@ -1535,6 +1581,11 @@ bhote_settings() {
             TOPICS_SCOPE) wrap_print 5 "$D" "project: only the topics of the project of this tab's agent (and those without one)." ;;
             SETUP) wrap_print 5 "$D" "Every step again: change it, or skip what is set." ;;
             GITHUB_BRANCHES) wrap_print 5 "$D" "The branch a topic's agent works on, under the topic and in the search." ;;
+            GH) wrap_print 5 "$D" "GitHub Actions for the monitors, through gh and its own login (gh auth login)." ;;
+            CIRCLECI_TOKEN) wrap_print 5 "$D" "$(v=$(circleci_token_from) && printf 'From %s. ' "$v")⏎ type one: circleci.com › User settings › Personal API tokens (kept in the bhote config, 0600)." ;;
+            DEPLOY_MONITOR) wrap_print 5 "$D" "The last deployments above the agents. Each project's CI: Settings › Projects › <name> › CI." ;;
+            TEST_MONITOR) wrap_print 5 "$D" "The last test runs above the agents: CI test jobs, live status files, and local runs (bhote test run -- <command>)." ;;
+            ci) [ -n "${MON_MSG:-}" ] && wrap_print 5 "$D" "$MON_MSG" || wrap_print 5 "$D" "$(monitor_describe "$TOPIC_DIR/$SET_PROJ.topic"). ⏎ find it again from the repository." ;;
             SLACK_WATCH) wrap_print 5 "$D" "Pinned Slack channels of waiting topics, read through Claude Code. One machine is enough." ;;
             REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
             JUMP_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = JUMP_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Jumps from the agent to this panel and back.')" ;;
@@ -1626,6 +1677,21 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || case "$key" in SETUP) SETTINGS_GO=setup ;; CONNECTIONS) SETTINGS_GO=connections ;; PROJECTS) SETTINGS_GO=projects ;; *) SETTINGS_GO=hotkeys ;; esac; return; fi
             case "$kind" in
+                info) return ;;
+                secret) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                      if ask "CircleCI token (empty: remove it from the config): " "" 200; then
+                          if setting_check "$key" "$ANSWER" 2>/dev/null; then cfg_set "$key" "${ANSWER//[!A-Za-z0-9_-]/}"; fi
+                      fi; return ;;
+                text) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                      local tv; setting_row "$key"; cfg_var tv "$key" "$S_DEF"
+                      ask "${row#*|}: " "$tv" 200 && setting_check "$key" "$ANSWER" 2>/dev/null && cfg_set "$key" "$ANSWER"; return ;;
+                pci) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                      MON_MSG="Looking at the repository ..."
+                      if monitor_detect_save "$TOPIC_DIR/$SET_PROJ.topic"; then MON_MSG="Found: $(monitor_describe "$TOPIC_DIR/$SET_PROJ.topic")."
+                      else MON_MSG="Not found: ${MD_WHY:-no CI}."; fi; return ;;
+                ptext) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                      local pf5="$TOPIC_DIR/$SET_PROJ.topic"
+                      ask "${row#*|} (empty: auto): " "$(topic_get "$pf5" "$key")" 300 && { topic_set "$pf5" "$key" "${ANSWER//[[:cntrl:]]/}"; : > "$STORE_DIRTY"; }; return ;;
                 mcode) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
                       local mcur; machine_codes_load; machine_code_set mcur "$key"; MC_MSG_FOR=$key
                       if ask "Code of $key (3 letters, empty = from the name): " "$mcur" 3; then
@@ -1655,7 +1721,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                 if [ "$k" = LEFT ]; then cfg_set "$key" "$prev"; else cfg_set "$key" "$nxt"; fi; : > "$STORE_DIRTY"; return
             fi
             [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
-                bool) setting_row "$key"; cur=${S_DEF:-off}
+                bool|sbool) setting_row "$key"; cur=${S_DEF:-off}
                       [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
                 machine) off=$(cfg_get MACHINES_OFF '')
                       case ",$off,"  in
@@ -2536,6 +2602,305 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
     poke
 }
 
+# ── the deployment and the test monitor (DEPLOY_MONITOR, TEST_MONITOR): the last deployments and test runs of the projects,
+# above the agents. A project carries its CI in its record (synced like the project): ci = github:<owner/repo> or
+# circleci:<gh/owner/repo>, deploy_branches (github: main; circleci: develop=Staging,main=Production), deploy_names (github:
+# "Backend Deployment=Server,…" workflow=label; circleci: deploy job names; empty: every name with "deploy" in it) and
+# test_names (job names; empty: every job with "test" in it, on CircleCI also "build"). monitor_detect finds them from the
+# repository on GitHub. The connections: GitHub Actions through gh (its own login), CircleCI through its API v2 with a token.
+# The collector of a machine with a monitor on fetches every DEPLOY_EVERY / TEST_EVERY seconds in the background and writes
+# $SHARED_DIR/deploys.list and tests.list, newest first: time US project US label US state US done US total US note US url
+# (state: running, queued, approval, ok, failed, canceled). Local test runs: `bhote test run -- <command>` (any framework;
+# the summary line of Minitest, Vitest, RSpec, pytest and bhote's own tests is read) and live status files (TEST_STATUS_DIR,
+# one JSON per suite as IMS writes them).
+MON_DIR="$DATA_DIR/testruns"
+circleci_token() {  # the CircleCI token: CIRCLECI_TOKEN in the config, in the environment, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh
+    local t; cfg_var t CIRCLECI_TOKEN ""
+    [ -n "$t" ] || t=${CIRCLECI_TOKEN:-${CIRCLE_TOKEN:-}}
+    [ -n "$t" ] || t=$(sed -n "s/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}CIRCLECI_TOKEN=[\"']\{0,1\}\([A-Za-z0-9_-]*\).*/\2/p" "$HOME/.config/zsh/secrets.zsh" 2>/dev/null | head -1)
+    printf '%s' "${t//[!A-Za-z0-9_-]/}"
+}
+circleci_token_from() {  # where the token comes from (for the settings and the setup), or 1
+    local t; cfg_var t CIRCLECI_TOKEN ""; [ -n "$t" ] && { echo "bhote config"; return 0; }
+    [ -n "${CIRCLECI_TOKEN:-${CIRCLE_TOKEN:-}}" ] && { echo "environment"; return 0; }
+    [ -n "$(circleci_token)" ] && { echo "~/.config/zsh/secrets.zsh"; return 0; }
+    return 1
+}
+circleci_get() {  # circleci_get <API v2 path>: its JSON; 1 without a token or on an error. The token goes to curl on stdin (never on a command line)
+    local t; t=$(circleci_token); [ -n "$t" ] || return 1
+    case "$1" in *[!A-Za-z0-9/_.?=\&-]*) return 1 ;; esac
+    printf 'header = "Circle-Token: %s"\n' "$t" | curl -sf --max-time 8 -K - "https://circleci.com/api/v2/$1"
+}
+gh_ok() {  # 0 when gh is there and logged in (asked once per process)
+    [ -n "${GH_OK:-}" ] && return "$GH_OK"
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then GH_OK=0; else GH_OK=1; fi
+    return "$GH_OK"
+}
+gh_user() { gh api user --jq .login 2>/dev/null; }
+mon_label() {  # mon_label <name> <map "a=A,b=B">: the label of a workflow or job (its map entry, else the name without "Deployment"/"deploy-")
+    local n=$1 e IFS=,
+    for e in $2; do [ "${e%%=*}" = "$n" ] && { [ "${e#*=}" != "$e" ] && printf '%s' "${e#*=}" || printf '%s' "$n"; return 0; }; done
+    unset IFS; n=${n% Deployment}; n=${n% deployment}; n=${n#deploy-}; n=${n#Run }; printf '%s' "$n"
+}
+mon_match() {  # mon_match <name> <map> <default word(s), regex>: 0 when the name is in the map (or, with an empty map, matches the words)
+    local e IFS=,
+    if [ -n "$2" ]; then for e in $2; do [ "${e%%=*}" = "$1" ] && return 0; done; return 1; fi
+    unset IFS; printf '%s' "$1" | grep -qiE "$3"
+}
+mon_deploy_branches() {  # stdin: a CircleCI config.yml -> branch=Label,… of its deploy jobs (filters: branches: only:)
+    awk '
+        function ind(l) { match(l, /^ */); return RLENGTH }
+        function emit(b,   l, bs, i) { l = tolower(job) ~ /prod/ ? "Production" : (tolower(job) ~ /stag/ ? "Staging" : job)
+            n = split(b, bs, ","); for (i = 1; i <= n; i++) if (bs[i] != "" && !(bs[i] in seen)) { seen[bs[i]] = 1; out = out (out ? "," : "") bs[i] "=" l } }
+        BEGIN { jind = -1 }
+        /^workflows:/ { wf = 1; next }
+        wf && /^[^ #]/ { wf = 0 }
+        !wf { next }
+        {
+            i = ind($0)
+            if ($0 ~ /^ *- *[A-Za-z0-9_-]+:? *$/ && (jind < 0 || i <= jind)) {   # a job of a workflow (not a list inside one)
+                s = $0; sub(/^ *- */, "", s); gsub(/[ :]/, "", s); job = (tolower(s) ~ /deploy/) ? s : ""; jind = i; want = 0; next }
+            if (job == "") next
+            if (want && $0 ~ /^ *- /) { v = $0; sub(/^ *- */, "", v); gsub(/["\047 ]/, "", v); emit(v); next }
+            if ($0 ~ /only:/) { v = $0; sub(/.*only: */, "", v); gsub(/[]["\047 ]/, "", v); if (v == "") { want = 1; next }; want = 0; emit(v); next }
+            if ($0 ~ /^ *[A-Za-z_-]+:/) want = 0
+        }
+        END { print out }'
+}
+monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAMES, MD_TESTS from its GitHub repository; 1 when there is none
+    local pf=$1 repos k slug y def
+    MD_CI=""; MD_BRANCHES=""; MD_NAMES=""; MD_TESTS=""; MD_WHY=""
+    repos=$(topic_get "$pf" repos); slug=""
+    local IFS=,; for k in $repos; do case "$k" in github.com/*/*) slug=${k#github.com/}; break ;; esac; done; unset IFS
+    [ -n "$slug" ] || { MD_WHY="no GitHub repository pinned"; return 1; }
+    gh_ok || { MD_WHY="gh is not logged in (gh auth login)"; return 1; }
+    y=$(gh api "repos/$slug/contents/.circleci/config.yml" --jq .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null)
+    if [ -n "$y" ]; then                                       # CircleCI: the deploy jobs and the branches they run on
+        MD_CI="circleci:gh/$slug"
+        MD_BRANCHES=$(printf '%s\n' "$y" | mon_deploy_branches)
+        return 0
+    fi
+    local wfs; wfs=$(gh workflow list -R "$slug" --json name --jq '.[].name' 2>/dev/null)
+    [ -n "$wfs" ] || { MD_WHY="no CI found (no .circleci/config.yml, no GitHub workflows)"; return 1; }
+    MD_CI="github:$slug"                                       # GitHub Actions: the workflows called "…deploy…", on the default branch
+    MD_NAMES=$(printf '%s\n' "$wfs" | grep -i deploy | awk '{ l = $0; sub(/ [Dd]eployment$/, "", l); printf "%s%s=%s", (n++ ? "," : ""), $0, l }')
+    def=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null)
+    MD_BRANCHES=${def:-main}
+    return 0
+}
+monitor_detect_save() {  # monitor_detect_save <project file>: detects and writes the keys; 1 when nothing was found
+    monitor_detect "$1" || return 1
+    topic_set "$1" ci "$MD_CI"; topic_set "$1" deploy_branches "$MD_BRANCHES"; topic_set "$1" deploy_names "$MD_NAMES"
+    : > "$STORE_DIRTY"
+}
+monitor_describe() {  # monitor_describe <project file>: one line: where its CI is and what is watched
+    local ci br nm; ci=$(topic_get "$1" ci); br=$(topic_get "$1" deploy_branches); nm=$(topic_get "$1" deploy_names)
+    [ -n "$ci" ] || { printf 'no CI'; return; }
+    case "$ci" in
+        github:*) if [ -n "$nm" ]; then printf 'GitHub Actions %s · deploys on %s: %s' "${ci#github:}" "${br:-main}" "$(printf '%s' "$nm" | awk -v RS=, -F= 'NF { printf "%s%s", (n++ ? ", " : ""), ($2 != "" ? $2 : $1) }')"
+                  else printf 'GitHub Actions %s · no deploy workflow' "${ci#github:}"; fi ;;
+        circleci:*) printf 'CircleCI %s · %s' "${ci#circleci:}" "$(printf '%s' "${br:-every branch}" | sed 's/,/, /g; s/=/ → /g')" ;;
+    esac
+}
+mon_iso() { jq -r 'sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601' 2>/dev/null <<< "\"$1\""; }   # ISO time -> Unix seconds
+mon_line() {  # mon_line <time> <project> <label> <state> <done> <total> <note> <url>: one entry
+    local a out="" i=0; for a in "$@"; do i=$(( i + 1 )); out="$out${a//[[:cntrl:]]/ }"; [ "$i" -lt $# ] && out="$out$US"; done
+    printf '%s\n' "$out"
+}
+deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>
+    local runs id wf st cc cr br url title t s d tot
+    runs=$(gh run list -R "$2" --limit 20 --json databaseId,workflowName,status,conclusion,createdAt,headBranch,displayTitle,url 2>/dev/null) || return 1
+    while IFS=$US read -r id wf st cc cr br title url; do
+        case ",${3:-main}," in *",$br,"*) ;; *) continue ;; esac
+        mon_match "$wf" "$4" deploy || continue
+        case "$st:$cc" in
+            completed:success) s=ok ;; completed:failure|completed:timed_out|completed:startup_failure) s=failed ;; completed:cancelled) s=canceled ;;
+            completed:*) continue ;; waiting:*) s=approval ;; in_progress:*) s=running ;; *) s=queued ;;
+        esac
+        d=""; tot=""
+        if [ "$s" = running ]; then read -r d tot < <(gh run view "$id" -R "$2" --json jobs --jq '[.jobs[].steps[]] | "\(map(select(.status == "completed")) | length) \(length)"' 2>/dev/null); fi
+        case "$title" in *" from "*/*) title=${title##* from }; title=${title#*/} ;; esac
+        mon_line "$(mon_iso "$cr")" "$1" "$(mon_label "$wf" "$4")" "$s" "$d" "$tot" "$title" "$url"
+    done < <(printf '%s' "$runs" | jq -r '.[] | [.databaseId, .workflowName, .status, .conclusion, .createdAt, .headBranch, .displayTitle, .url] | map(tostring | gsub("[\u0000-\u001f]"; " ")) | join("\u001f")')
+}
+circleci_state() {  # a workflow's status -> ours (empty: leave it out)
+    case "$1" in success) echo ok ;; failed|error|unauthorized) echo failed ;; failing|running) echo running ;; on_hold) echo approval ;; canceled) echo canceled ;; *) ;; esac
+}
+circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline its first workflow: wid US status US created US number US subject US branch US jobs JSON
+    local q="project/$1/pipeline" pid num subj br wj
+    [ -n "$2" ] && q="$q?branch=$2"
+    while IFS=$US read -r pid num subj br; do
+        [ -n "$pid" ] || continue
+        wj=$(circleci_get "pipeline/$pid/workflow") || continue
+        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '.items[0] // empty | [.id, .status, .created_at, $n, $s, $b] | join("\u001f")'
+    done < <(circleci_get "$q" | jq -r --argjson k "$3" '.items[:$k][] | [.id, (.number | tostring), ((.vcs.commit.subject // "") | gsub("[\u0000-\u001f]"; " ")), (.vcs.branch // "")] | join("\u001f")' 2>/dev/null)
+}
+deploys_circleci() {  # deploys_circleci <project> <slug> <branch=Label,…> <job names>
+    local e b lab wid st cr num subj br s jobs d tot
+    while IFS= read -r e; do
+        b=${e%%=*}; lab=${e#*=}; [ -n "$b" ] || continue
+        while IFS=$US read -r wid st cr num subj br; do
+            s=$(circleci_state "$st"); [ -n "$s" ] || continue
+            jobs=$(circleci_get "workflow/$wid/job") || continue
+            printf '%s' "$jobs" | jq -e --arg m "${4:-}" '[.items[] | select(if $m == "" then (.name | test("deploy|approv"; "i")) else (.name as $n | $m | split(",") | map(split("=")[0]) | index($n)) end)] | length > 0' >/dev/null 2>&1 || continue
+            read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select(.status | test("success|failed|canceled|not_run|infrastructure_fail|timedout"))] as $f | "\($f | length) \(.items | length)"')
+            mon_line "$(mon_iso "$cr")" "$1" "$lab" "$s" "$d" "$tot" "${subj:0:60}" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+        done < <(circleci_workflows "$2" "$b" 2)
+    done <<< "$(printf '%s' "${3:-}" | tr ',' '\n')"
+}
+tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jobs of the last runs (a run's jobs are read once per state)
+    local runs id wf st up br url jf j s n f p
+    runs=$(gh run list -R "$2" --limit 8 --json databaseId,workflowName,status,updatedAt,headBranch,url 2>/dev/null) || return 1
+    mkdir -p "$SHARED_DIR/ghjobs" 2>/dev/null
+    while IFS=$US read -r id wf st up br url; do
+        jf="$SHARED_DIR/ghjobs/$id-${up//[!0-9]/}"
+        [ -s "$jf" ] || { gh run view "$id" -R "$2" --json jobs > "$jf.tmp" 2>/dev/null && mv "$jf.tmp" "$jf"; rm -f "$jf.tmp"; }
+        j=$(jq -r --arg m "${3:-}" '[.jobs[] | select(if $m == "" then (.name | test("test"; "i")) else (.name as $n | $m | split(",") | index($n | sub(" \\([0-9]+/[0-9]+\\)$"; ""))) end)]
+            | select(length > 0) | [ (if any(.status != "completed") then "running" elif any(.conclusion == "failure" or .conclusion == "timed_out") then "failed"
+                elif all(.conclusion == "success" or .conclusion == "skipped") then "ok" else "canceled" end),
+              (map(select(.status == "completed")) | length), length, (.[0].name | sub(" \\([0-9]+/[0-9]+\\)$"; "")), (map(.startedAt) | min) ] | map(tostring) | join("\u001f")' "$jf" 2>/dev/null)
+        [ -n "$j" ] || continue
+        IFS=$US read -r s f n p st <<< "$j"
+        mon_line "$(mon_iso "$st")" "$1" "$p" "$s" "$f" "$n" "$br" "$url"
+    done < <(printf '%s' "$runs" | jq -r '.[] | [.databaseId, .workflowName, .status, .updatedAt, .headBranch, .url] | map(tostring) | join("\u001f")')
+    find "$SHARED_DIR/ghjobs" -type f -mmin +1440 -delete 2>/dev/null
+}
+tests_circleci() {  # tests_circleci <project> <slug> <job names>: the test jobs of the last pipelines (any branch)
+    local wid st cr num subj br jobs j s d tot nm
+    while IFS=$US read -r wid st cr num subj br; do
+        jobs=$(circleci_get "workflow/$wid/job") || continue
+        j=$(printf '%s' "$jobs" | jq -r --arg m "${3:-}" '[.items[] | select(if $m == "" then (.name | test("test|build"; "i")) else (.name as $n | $m | split(",") | index($n)) end)]
+            | select(length > 0) | [ (if any(.status == "running" or .status == "queued" or .status == "blocked") then "running" elif any(.status == "failed" or .status == "infrastructure_fail" or .status == "timedout") then "failed"
+                elif all(.status == "success") then "ok" else "canceled" end), (map(select(.status != "running" and .status != "queued" and .status != "blocked")) | length), length, .[0].name ] | map(tostring) | join("\u001f")' 2>/dev/null)
+        [ -n "$j" ] || continue
+        IFS=$US read -r s d tot nm <<< "$j"
+        mon_line "$(mon_iso "$cr")" "$1" "$nm" "$s" "$d" "$tot" "$br" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+    done < <(circleci_workflows "$2" "" 4)
+}
+tests_local() {  # the local runs (bhote test run) and the live status files (TEST_STATUS_DIR)
+    local f dir now line
+    now=$(date +%s)
+    for f in "$MON_DIR"/*.run; do
+        [ -f "$f" ] || continue
+        local st="" en="" ex="" pj="" nm="" sm="" tr="" pid=""
+        while IFS= read -r line; do case "$line" in started=*) st=${line#*=} ;; ended=*) en=${line#*=} ;; exit=*) ex=${line#*=} ;; project=*) pj=${line#*=} ;; name=*) nm=${line#*=} ;; summary=*) sm=${line#*=} ;; tree=*) tr=${line#*=} ;; pid=*) pid=${line#*=} ;; esac; done < "$f"
+        local s=running; if [ -n "$en" ]; then [ "$ex" = 0 ] && s=ok || s=failed; elif [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then s=canceled; fi
+        mon_line "$st" "${pj:-$tr}" "$nm" "$s" "" "" "$sm" ""
+    done
+    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/ims-test-status"); dir=${dir/#\~/$HOME}
+    for f in "$dir"/*.json; do
+        [ -f "$f" ] || continue
+        jq -r --argjson now "$now" '
+            select(.tree and .suite and .startedAt) | ((.updatedAt // .startedAt) / 1000 | floor) as $up
+            | (if .ok == true then "ok" elif .ok == false then "failed" elif ($now - $up) > 30 then "canceled" else "running" end) as $s
+            | [(.startedAt / 1000 | floor), .tree, .suite, $s, (.done // ""), (.total // ""),
+               ((if (.failed // 0) > 0 then "\(.failed) failed · " else "" end) + "\(.passed // 0) passed"), ""] | map(tostring) | join("\u001f")' "$f" 2>/dev/null
+    done
+}
+monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project with CI (and the local runs); the list, newest first
+    local kind=$1 out tmp i ci br nm tn pn
+    [ "$kind" = deploys ] || [ "$kind" = tests ] || return 1
+    tmp=$(mktemp "$RUN_DIR/mon.XXXXXX") || return 1
+    projects_load
+    {
+        for (( i = 0; i < P_N; i++ )); do
+            ci=$(topic_get "${P_FILE[$i]}" ci); [ -n "$ci" ] || continue
+            br=$(topic_get "${P_FILE[$i]}" deploy_branches); nm=$(topic_get "${P_FILE[$i]}" deploy_names); tn=$(topic_get "${P_FILE[$i]}" test_names); pn=${P_NAME[$i]}
+            case "$kind:$ci" in
+                deploys:github:*) [ "$(cfg_get DEPLOY_GITHUB on)" = on ] && gh_ok && deploys_github "$pn" "${ci#github:}" "$br" "$nm" ;;
+                deploys:circleci:*) [ "$(cfg_get DEPLOY_CIRCLECI on)" = on ] && deploys_circleci "$pn" "${ci#circleci:}" "$br" "$nm" ;;
+                tests:github:*) [ "$(cfg_get TEST_GITHUB on)" = on ] && gh_ok && tests_github "$pn" "${ci#github:}" "$tn" ;;
+                tests:circleci:*) [ "$(cfg_get TEST_CIRCLECI on)" = on ] && tests_circleci "$pn" "${ci#circleci:}" "$tn" ;;
+            esac
+        done
+        [ "$kind" = tests ] && [ "$(cfg_get TEST_LOCAL on)" = on ] && tests_local
+    } 2>/dev/null | grep -E "^[0-9]+$US" | sort -t "$US" -k1,1nr | head -50 > "$tmp"
+    mv "$tmp" "$SHARED_DIR/$kind.list"; printf '%s\n' "$(date +%s)" > "$SHARED_DIR/$kind.at"
+    poke
+}
+test_summary() {  # test_summary <log>: the result line of the usual frameworks, short (412 passed · 2 failed)
+    tail -n 80 "$1" 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | awk '
+        /[0-9]+ runs?, [0-9]+ assertions?/ { r = $0; sub(/^.*[^0-9]([0-9]+ runs?)/, "\\1", r); split(r, a, /, */); m = a[1] " · " a[3] " · " a[4] }   # Minitest
+        /^ *Tests +[0-9]/ { v = $0; sub(/^ *Tests +/, "", v); sub(/ *\(.*$/, "", v); gsub(/ *\| */, " · ", v); m = v }                           # Vitest
+        /[0-9]+ examples?, [0-9]+ failures?/ { v = $0; sub(/^.*[^0-9]([0-9]+ examples?)/, "\\1", v); m = v }                                  # RSpec
+        /^=+ .*[0-9]+ (passed|failed).* =+$/ { v = $0; gsub(/^=+ | =+$/, "", v); m = v }                                                     # pytest
+        /^ok   / { ok++ } /^FAIL / { fl++ }                                                                                                # bhote
+        END { if (m == "" && (ok || fl)) m = ok " ok" (fl ? " · " fl " FAIL" : ""); print substr(m, 1, 60) }'
+}
+cli_test_run() {  # bhote test run [-n <name>] -- <command>: runs it as it is (output, exit code), and the test monitor sees the run
+    local name="" id f log rc tree rk
+    while [ $# -gt 0 ]; do case "$1" in -n|--name) name=${2:-}; shift ;; --) shift; break ;; *) break ;; esac; shift; done
+    [ $# -gt 0 ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }
+    [ -n "$name" ] || name=$(printf '%s ' "$@" | cut -c1-40 | sed 's/ $//')
+    mkdir -p "$MON_DIR"; chmod 700 "$MON_DIR" 2>/dev/null
+    id="$(date +%s)-$$"; f="$MON_DIR/$id.run"; log=$(mktemp "$RUN_DIR/test.XXXXXX")
+    tree=${PWD##*/}; git_repo_key_set rk "$PWD"; projects_load; project_for "$rk" "" && tree=$(project_name "$PROJ_ID")
+    printf 'started=%s\nproject=%s\ntree=%s\nname=%s\npid=%s\n' "$(date +%s)" "${tree//[[:cntrl:]]/}" "${PWD##*/}" "${name//[[:cntrl:]]/}" "$$" > "$f"
+    "$@" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
+    printf 'ended=%s\nexit=%s\nsummary=%s\n' "$(date +%s)" "$rc" "$(test_summary "$log")" >> "$f"
+    rm -f "$log"; ls -t "$MON_DIR"/*.run 2>/dev/null | tail -n +101 | while IFS= read -r f; do rm -f "$f"; done   # the last 100
+    poke; return "$rc"
+}
+mon_age() {  # mon_age <seconds ago>: 40s, 5m, 3h, 2d
+    local a=$1; [ "$a" -lt 0 ] && a=0
+    if [ "$a" -lt 60 ]; then printf '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf '%dh' $(( a / 3600 )); else printf '%dd' $(( a / 86400 )); fi
+}
+monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last entries (nothing when the monitor is off or has none)
+    local kind=$1 max=$2 cap t pj lb st d tot note url n=0 ic tx right lw rw left now w=$(( ${COLS:-44} - 4 ))
+    case "$kind" in deploys) cap="Deployments" ;; *) cap="Tests" ;; esac
+    [ -s "$SHARED_DIR/$kind.list" ] || return 0
+    now=$(date +%s)
+    local rest; rest=$(( ${#RULE_LINE} - 4 - ${#cap} )); [ "$rest" -lt 1 ] && rest=1
+    printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$cap" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
+    while IFS=$US read -r t pj lb st d tot note url && [ "$n" -lt "$max" ]; do
+        case "$st" in
+            running) ic="${ORANGE}✶"; tx="running"; [ -n "$d" ] && [ -n "$tot" ] && [ "$tot" -gt 0 ] 2>/dev/null && tx="$(( d * 100 / tot ))%" ;;
+            queued) ic="${D}◌"; tx="queued" ;; approval) ic="${Y}⏸"; tx="approval" ;; ok) ic="${GREEN}✓"; tx="" ;;
+            failed) ic="${NN}✗"; tx="failed" ;; *) ic="${D}⊘"; tx="canceled" ;;
+        esac
+        [ "$kind" = tests ] && [ -n "$note" ] && [ "$st" != running ] && tx=$note
+        [ -z "$tx" ] && [ -n "$note" ] && tx=${note:0:18}           # a deployment that went through: where it came from
+        right="${tx:+$tx · }$(mon_age $(( now - t )))"; dw_set rw "$right"
+        clip_set left "$pj · $lb" $(( w - rw - 3 )); dw_set lw "$left"
+        printf '  %s%s %s%s%*s%s%s%s\n' "$ic" "$X" "$L" "$left" $(( w - 2 - lw - rw )) "" "$D" "$right" "$X"
+        n=$(( n + 1 ))
+    done < "$SHARED_DIR/$kind.list"
+}
+monitors_block() {  # both monitors (when on), above the agents
+    local r; num_set r "$(cfg_get MONITOR_ROWS 5)" 5
+    [ "$(cfg_get DEPLOY_MONITOR off)" = on ] && monitor_block deploys "$r"
+    [ "$(cfg_get TEST_MONITOR off)" = on ] && monitor_block tests "$r"
+    return 0
+}
+cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now when the list is older than its interval)
+    local kind=$1 at every t pj lb st d tot note url first=1
+    cfg_var every "$( [ "$kind" = deploys ] && echo DEPLOY_EVERY || echo TEST_EVERY)" 60; num_set every "$every" 60
+    read -r at 2>/dev/null < "$SHARED_DIR/$kind.at"; num_set at "${at:-0}" 0
+    [ $(( $(date +%s) - at )) -ge "$every" ] && monitor_fetch "$kind"
+    [ -n "$json" ] && printf '['
+    while IFS=$US read -r t pj lb st d tot note url; do
+        [ -n "$t" ] || continue
+        if [ -n "$json" ]; then [ "$first" = 1 ] || printf ','; first=0
+            printf '{"time":%s,"project":%s,"label":%s,"state":%s,"done":%s,"total":%s,"note":%s,"url":%s}' "$t" "$(json_str "$pj")" "$(json_str "$lb")" "$(json_str "$st")" "${d:-null}" "${tot:-null}" "$(json_opt "$note")" "$(json_opt "$url")"
+        else printf '%-9s %-20s %-16s %s %s\n' "$st" "${pj:0:20}" "${lb:0:16}" "$(mon_age $(( $(date +%s) - t )))" "$note"; fi
+    done < "$SHARED_DIR/$kind.list" 2>/dev/null
+    [ -n "$json" ] && printf ']\n'
+    return 0
+}
+cli_monitor() {  # bhote monitor [detect [<project>] | check]
+    local sub=${1:-} pf i
+    case "$sub" in
+        detect) projects_load
+            for (( i = 0; i < P_N; i++ )); do
+                [ -n "${2:-}" ] && { pf=$(project_ref "$2") || return $?; [ "$pf" = "${P_FILE[$i]}" ] || continue; }
+                if monitor_detect_save "${P_FILE[$i]}"; then printf '%s: %s\n' "${P_NAME[$i]}" "$(monitor_describe "${P_FILE[$i]}")"
+                else printf '%s: %s\n' "${P_NAME[$i]}" "${MD_WHY:-nothing found}"; fi
+            done ;;
+        check|"") monitor_fetch deploys; monitor_fetch tests; cli_monitor_list deploys; cli_monitor_list tests ;;
+        *) echo "bhote: monitor detect [<project>] | check" >&2; return 1 ;;
+    esac
+}
+
 # ── run. BHOTE_ONCE=1 prints a view once and exits (BHOTE_VIEW=splash|main|settings picks it); otherwise it runs as a panel:
 # the start screen first, any key moves on to the topic list (the dog shrinks), "s" shows the start screen again, "," the
 # settings, "q" quits. On a short terminal it starts with the list. The window title says "Bhote" so that herdr's
@@ -2573,7 +2938,7 @@ harden_perms() {  # data, config and their folders: this user only (older versio
 # ── the setup wizard. On the first start of every machine it opens by itself (once; one panel only), later from the settings
 # ("Setup wizard") or as `bhote setup`. Every step explains itself and asks first; Enter takes the [default], s skips a step,
 # q ends the setup. It never asks for a password: when ssh needs one, ssh asks for it itself, and bhote never sees it.
-W_STEPS=10; W_QUIT=0
+W_STEPS=11; W_QUIT=0
 W_LOG="$DATA_DIR/setup.log"                                   # what the wizard did and saw: every check, every command and its output
 w_log() { mkdir -p "$DATA_DIR" 2>/dev/null; printf '%s %s\n' "$(date '+%F %T')" "${*//[[:cntrl:]]/}" >> "$W_LOG" 2>/dev/null; }
 w_width() { W=$(( ${COLS:-44} - 4 )); [ "$W" -lt 26 ] && W=26; [ "$W" -gt 72 ] && W=72; }
@@ -3092,8 +3457,53 @@ setup_step_projects() {  # projects: create them, and give each agent here witho
     w_continue
 }
 setup_sum_projects() { local i; projects_load; [ "$P_N" -gt 0 ] || { w_warn "projects" "none yet"; return; }; for (( i = 0; i < P_N; i++ )); do w_ok "${P_NAME[$i]}" "$(printf '%s' "${P_REPOS[$i]}" | sed 's/,/, /g')${P_WS[$i]:+ ws:${P_WS[$i]}}"; done; }
+setup_step_monitors() {  # the deployment and the test monitor: on or off, which modules, the connections, each project's CI
+    w_screen 8 "MONITORS" || return
+    local r tok from i dep tst
+    w_say "Two optional blocks above the agents: the last deployments (Deployment monitor) and the last test runs (Test monitor) of your projects."
+    w_line
+    if gh_ok; then w_ok "GitHub" "gh, logged in as $(gh_user)"; else w_warn "GitHub" "gh missing or not logged in (gh auth login): no GitHub Actions"; fi
+    if from=$(circleci_token_from); then w_ok "CircleCI" "token from $from"; else w_warn "CircleCI" "no token"; fi
+    w_line
+    yn_set() { [ "$2" = 0 ] && cfg_set "$1" on; [ "$2" = 1 ] && cfg_set "$1" off; return 0; }   # (s skips: the value stays)
+    w_yn "Deployment monitor (GitHub Actions, CircleCI)?" "$( [ "$(cfg_get DEPLOY_MONITOR off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    [ $r = 2 ] && { [ "$(cfg_get DEPLOY_MONITOR off)" = on ] && r=0 || r=1; }
+    if [ $r = 0 ]; then dep=on; cfg_set DEPLOY_MONITOR on
+        gh_ok && { w_yn "  … through GitHub Actions?" Y; r=$?; [ $r = 3 ] && return; yn_set DEPLOY_GITHUB $r; }
+        w_yn "  … through CircleCI?" "$(circleci_token_from >/dev/null && echo Y || echo N)"; r=$?; [ $r = 3 ] && return; yn_set DEPLOY_CIRCLECI $r
+    else dep=off; cfg_set DEPLOY_MONITOR off; fi
+    w_yn "Test monitor (local runs, status files, CI test jobs)?" "$( [ "$(cfg_get TEST_MONITOR off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    [ $r = 2 ] && { [ "$(cfg_get TEST_MONITOR off)" = on ] && r=0 || r=1; }
+    if [ $r = 0 ]; then tst=on; cfg_set TEST_MONITOR on
+        w_yn "  … local runs (bhote test run -- <command>) and status files?" Y; r=$?; [ $r = 3 ] && return; yn_set TEST_LOCAL $r
+        gh_ok && { w_yn "  … test jobs of GitHub Actions?" Y; r=$?; [ $r = 3 ] && return; yn_set TEST_GITHUB $r; }
+        w_yn "  … test jobs of CircleCI?" "$(circleci_token_from >/dev/null && echo Y || echo N)"; r=$?; [ $r = 3 ] && return; yn_set TEST_CIRCLECI $r
+    else tst=off; cfg_set TEST_MONITOR off; fi
+    [ "$dep" = on ] || [ "$tst" = on ] || { w_continue; return; }
+    if { [ "$(cfg_get DEPLOY_CIRCLECI on)" = on ] && [ "$dep" = on ]; } || { [ "$(cfg_get TEST_CIRCLECI on)" = on ] && [ "$tst" = on ]; }; then
+        if ! circleci_token_from >/dev/null; then
+            w_say "CircleCI needs a personal API token: circleci.com › User settings › Personal API tokens. It is kept in the bhote config (only you can read it)."
+            w_read tok "CircleCI token (empty: later):" ""; [ "$W_QUIT" = 1 ] && return
+            tok=${tok//[!A-Za-z0-9_-]/}; [ -n "$tok" ] && { cfg_set CIRCLECI_TOKEN "$tok"; w_ok "CircleCI" "token saved"; }
+        fi
+    fi
+    w_line; w_say "Each project's CI, found from its repository on GitHub:"
+    projects_load
+    for (( i = 0; i < P_N; i++ )); do
+        if monitor_detect "${P_FILE[$i]}"; then
+            local was; was=$(topic_get "${P_FILE[$i]}" ci)
+            topic_set "${P_FILE[$i]}" ci "$MD_CI"; topic_set "${P_FILE[$i]}" deploy_branches "$MD_BRANCHES"
+            [ "$was" = "$MD_CI" ] && [ -n "$(topic_get "${P_FILE[$i]}" deploy_names)" ] || topic_set "${P_FILE[$i]}" deploy_names "$MD_NAMES"   # (names set by hand stay)
+            w_ok "${P_NAME[$i]}" "$(monitor_describe "${P_FILE[$i]}")"
+        else w_warn "${P_NAME[$i]}" "${MD_WHY:-no CI}"; fi
+    done
+    : > "$STORE_DIRTY"
+    w_say "Change it in Settings › Projects › <name>. Agents run local tests through bhote test run (the bhote skill tells them)."
+    w_continue
+}
+setup_sum_monitors() { w_ok "deployments" "$(cfg_get DEPLOY_MONITOR off)"; w_ok "tests" "$(cfg_get TEST_MONITOR off)"; }
 setup_step_behaviour() {
-    w_screen 8 "AGENTS AND NOTIFICATIONS" || return
+    w_screen 9 "AGENTS AND NOTIFICATIONS" || return
     local r h
     w_say "When you hand a topic to an agent, it reports back with bhote review (you check it) or bhote done."
     w_yn "May an agent close its topic itself?" "$([ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
@@ -3133,7 +3543,7 @@ setup_step_behaviour() {
     w_continue
 }
 setup_step_panel() {
-    w_screen 9 "THE PANEL" || return
+    w_screen 10 "THE PANEL" || return
     local r
     w_yn "Open the panel next to your agents when herdr starts?" "$([ "$(cfg_get AUTOSTART on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTOSTART on ;; 1) cfg_set AUTOSTART off ;; esac
@@ -3161,7 +3571,7 @@ setup_step_panel() {
     w_continue
 }
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
-    w_screen 10 "DONE" || return
+    w_screen 11 "DONE" || return
     w_ok "machine" "$HOST"
     w_ok "topics" "$([ "$(cfg_get STORE local)" = remote ] && printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" || echo 'only here')"
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
@@ -3190,7 +3600,7 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     w_log "==== setup on $HOST (bhote $VERSION)"
-    local steps=(checks name machines twoway topics agents projects behaviour panel done); W_IDX=0
+    local steps=(checks name machines twoway topics agents projects monitors behaviour panel done); W_IDX=0
     while [ "$W_IDX" -lt "${#steps[@]}" ]; do               # each step: ⏎ change · → skip & next · ← back · q abort
         W_NAME=${steps[$W_IDX]}; W_QUIT=0; W_JUMP=""; W_GATE=1
         "setup_step_$W_NAME"
@@ -3709,7 +4119,7 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
         list|ls)
             if [ -n "$json" ]; then printf '['; fi
             while IFS= read -r line; do
-                k=${line%%|*}; setting_row "$k"; cfg_var v "$k" "$S_DEF"
+                k=${line%%|*}; setting_row "$k"; cfg_var v "$k" "$S_DEF"; [ "$S_TYPE" = secret ] && [ -n "$v" ] && v="(set)"
                 if [ -n "$json" ]; then
                     [ "$first" = 1 ] || printf ','; first=0
                     printf '{"key":%s,"value":%s,"default":%s,"type":%s,"description":%s}' "$(json_str "$k")" "$(json_opt "$v")" "$(json_opt "$S_DEF")" "$(json_str "$S_TYPE")" "$(json_str "$S_DESC")"
@@ -3717,7 +4127,7 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
             done <<< "$SETTINGS"
             if [ -n "$json" ]; then printf ']\n'; fi ;;
         get) setting_row "$key" || { echo "bhote: unknown setting '$key' (bhote config list)" >&2; return 1; }
-             cfg_var v "$key" "$S_DEF"
+             cfg_var v "$key" "$S_DEF"; [ "$S_TYPE" = secret ] && [ -n "$v" ] && v="(set)"   # (a secret is never printed)
              if [ -n "$json" ]; then printf '{"key":%s,"value":%s,"default":%s}\n' "$(json_str "$key")" "$(json_opt "$v")" "$(json_opt "$S_DEF")"; else printf '%s\n' "$v"; fi ;;
         set) [ $# -ge 3 ] || { echo "bhote: config set <KEY> <value>" >&2; return 1; }
              shift 2; v="$*"
@@ -3980,6 +4390,10 @@ bhote — topics and agents next to herdr.
   bhote current                      the topic of the agent that asks (for a Claude Code SessionStart hook)
   bhote agents                       the agents of herdr (numbered: refs for transfer)
   bhote transfer <from> <to> [-t <topic>]   Steal & Transfer: <from> commits and hands its work over to <to>
+  bhote deploys | bhote tests        the deployment / test monitor (newest first)
+  bhote test run [-n <name>] -- <command>   run tests so that the test monitor sees them
+  bhote monitor detect [<project>]   find each project's CI (GitHub Actions, CircleCI) from its repository
+  bhote bar                          one status bar line (Waybar-style JSON)
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
@@ -4011,7 +4425,11 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
-        bar) bhote_info; cli_bar ;;                              # (the Omarchy bar widget, any Waybar-style bar)
+        bar) bhote_info; cli_bar ;;
+        deploys) bhote_info; cli_monitor_list deploys ;;
+        tests) bhote_info; cli_monitor_list tests ;;
+        test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
+        monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg pin="" proj=""

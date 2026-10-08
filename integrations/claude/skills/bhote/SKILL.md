@@ -56,6 +56,16 @@ A topic belongs to the commit when it is yours (`bhote current`), when its `agen
 or when its title or description names the work the commit contains. Leave a topic whose work the commit only starts
 or does not touch, and topics of other repositories. Say in one line which topics you closed.
 
+## When you run tests
+
+When the test monitor is on (`bhote config get TEST_MONITOR` says `on`), run test commands through bhote, so that the user
+sees the run in the panel; output and exit code stay the command's own:
+
+```sh
+bhote test run -- bin/rails test test/models/user_test.rb
+bhote test run -n server -- npm run test:server
+```
+
 ## Slack: pin a channel, DM or thread
 
 The user can pin Slack to a topic ("create a topic for X and pin Karen's Slack channel"). bhote then watches it while the

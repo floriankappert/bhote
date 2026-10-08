@@ -2,7 +2,7 @@
 class Bhote < Formula
   desc "Topics and agents side panel for the herdr terminal workspace manager"
   homepage "https://github.com/floriankappert/bhote"
-  url "https://github.com/floriankappert/bhote.git", tag: "v0.4.0"
+  url "https://github.com/floriankappert/bhote.git", tag: "v0.5.0"
   license "MIT"
   head "https://github.com/floriankappert/bhote.git", branch: "main"
 
@@ -12,6 +12,7 @@ class Bhote < Formula
     bin.install "bhote"
     (pkgshare/"herdr-plugin").install Dir["herdr-plugin/*"]
     (pkgshare/"integrations").install Dir["integrations/*"]
+    (pkgshare/"omarchy-plugin").install Dir["omarchy-plugin/*"]
     doc.install Dir["docs/*"]
   end
 

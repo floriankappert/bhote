@@ -14,6 +14,9 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 - Agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on.
 - **Projects**: agents are listed by project (and machine); an agent belongs to a project by its git repository (worktrees inherit), and the panel can list only its project's topics.
 - **GitHub**: the git branch a topic's agent works on, under the topic and in the search.
+- **Deployment and test monitor**: the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test
+  jobs, local runs through `bhote test run`, live status files) of your projects, five each, above the agents.
+- **Omarchy bar widget**: what waits for you, in the bar; a click jumps to the panel.
 - **Slack pins**: a waiting topic can carry a Slack channel, DM or thread; when someone writes there, it goes to review. Claude Code (its Slack connector) does the reading, so bhote needs no Slack token.
 - Themes: follows your terminal colours (and Omarchy's system theme) by default, or exact Catppuccin colours, each role overridable.
 - A setup wizard on the first start: machines in both directions, sync through herdr, notifications.
@@ -76,6 +79,8 @@ bhote add <title> [-d <text>] [@Name]   new topic          bhote list [--all] [-
 bhote show <ref> [--json]               one topic          bhote done|now|later <ref>
 bhote wait <ref> <Name>                 waiting for Name   bhote rename|desc <ref> <text>    bhote rm <ref>
 bhote sync                              merge with the data location
+bhote deploys · bhote tests             the monitors        bhote test run -- <cmd>   a test run they see
+bhote monitor detect                    each project's CI    bhote bar                 a status bar line (JSON)
 ```
 
 `<ref>` is the number from `bhote list`, an id, or a part of the title.
@@ -106,6 +111,6 @@ reachable bhote works offline and merges later.
 bhote opens no connection to another machine unless you switch it on. Names that arrive from a replica are validated before they
 become files; control characters are stripped from everything shown or sent; private (0700) scratch and shared folders; one
 panel per machine collects agent data, the others read its result. `tests/` holds the checks (`bash tests/smoke.sh`,
-`cli.sh`, `agents.sh`, `store.sh`).
+`cli.sh`, `agents.sh`, `store.sh`, `slack.sh`, `monitor.sh`).
 
 MIT licensed. Documentation: [docs/](docs/README.md) — start with the [CLI reference](docs/cli-reference.md).

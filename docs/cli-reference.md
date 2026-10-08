@@ -216,6 +216,27 @@ Called by the [herdr plugin](herdr-plugin.md) on `pane.agent_status_changed` wit
 not reported back itself, the topic goes to `review` and a herdr notification says so. Every event also makes the panels
 refresh at once.
 
+### `bhote deploys` · `bhote tests`
+
+The entries of the [deployment and test monitor](monitors.md), newest first (`--json`: `time`, `project`, `label`,
+`state` running|queued|approval|ok|failed|canceled, `done`, `total`, `note`, `url`). Fetched first when older than
+`DEPLOY_EVERY` / `TEST_EVERY`.
+
+### `bhote test run [-n <name>] -- <command>`
+
+Runs the command as it is (output and exit code unchanged) and records the run for the test monitor, with the result line
+of Minitest, Vitest, RSpec, pytest or bhote's own tests.
+
+### `bhote monitor detect [<project>]` · `bhote monitor check`
+
+`detect` finds each project's CI from its repository on GitHub (GitHub Actions deploy workflows, or CircleCI deploy jobs and
+their branches) and writes it into the project. `check` fetches both monitors now and prints them.
+
+### `bhote bar`
+
+One line for a status bar, Waybar-style JSON: `text` (the dog and the number of things for you), `tooltip`, `class`
+(attention, busy, idle) and the counts. The Omarchy bar widget `bhote.bar` shows it.
+
 ### `bhote find`
 
 Search all agents (every machine) and topics: type to filter (every word must appear), `↑↓` choose, `⏎` jump, `Esc`
@@ -226,7 +247,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 
 ### `bhote version` · `bhote help`
 
-`bhote version` prints `bhote 0.4.0` (`--json`: `{"version":"0.4.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
+`bhote version` prints `bhote 0.5.0` (`--json`: `{"version":"0.5.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote setup [--json]`
