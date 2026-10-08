@@ -38,7 +38,7 @@ w=$(BHOTE_ONCE=1 BHOTE_VIEW=splash BHOTE_COLS=42 BHOTE_ROWS=39 LC_ALL=en_US.UTF-
 b=$(mktemp -d); : > "$b/c"; bv() { BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d BHOTE_ONCE=1 BHOTE_COLS=36 BHOTE_ROWS=$1 BHOTE_VIEW=main LC_ALL=en_US.UTF-8 bash ./bhote; }
 bv 30 | grep -q "the agents are bored" && ok_b=1 || ok_b=0
 BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d bash ./bhote add "Ship it" >/dev/null; BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d bash ./bhote done 1 >/dev/null
-o=$(bv 30); case "$o" in *"zZ"*"the agents are bored"*"DONE"*"Ship it"*) ;; *) ok_b=0 ;; esac
+o=$(bv 30); case "$o" in *"zZ"*"the agents are bored"*"Done"*"Ship it"*) ;; *) ok_b=0 ;; esac
 o=$(bv 15); case "$o" in *zZ*) ok_b=0 ;; esac                    # (never a cut-off picture)
 BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d bash ./bhote add "Real work" -s now >/dev/null; bv 30 | grep -q "bored" && ok_b=0
 [ "$ok_b" = 1 ] && echo "ok   main: bored agents when nothing is open, not cut off when low, gone with work" || { echo "FAIL main: bored agents"; fail=1; }

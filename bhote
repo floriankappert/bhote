@@ -1112,7 +1112,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
         for j in ${dn[@]+"${dn[@]}"}; do [ "${T_ID[$j]}" = "$SEL_ID" ] && { idx[$n]=$j; n=$(( n + 1 )); break; }; done
     fi
     [ "$n" -gt 0 ] || return 0
-    group DONE "$GREEN"
+    dash_caption Done
     for (( k = 0; k < n; k++ )); do
         i=${idx[$k]}; ago_set tm "${T_UPD[$i]:-${NOW:-0}}"                  # when it was checked off (its last change), on the right
         clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 7 - ${#tm} )); dw_set tw "$t"
@@ -1201,6 +1201,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         for mm in "${pmach[@]}"; do machine_offline "$mm" && { machine_code_set cc "$mm"; pname="$pname · ${cc:-$mm} ◐ reconnecting"; }; done   # (as herdr says it)
         clip_set cap "$pname" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"; rest2=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest2" -lt 1 ] && rest2=1
         # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
+        [ "$n" -gt 0 ] && { lines[$n]=""; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 )); }   # air above every section but the first (a terminal has no half lines)
         if [ "$pm" = "-" ]; then pcol=$D; else project_color_set pcol "$pname"; fi
         lines[$n]="  ${MUTED}┈┈${X} ${BOLD}${pcol}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
         lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
@@ -2950,6 +2951,10 @@ update_command() {  # the command that updates bhote the way it was installed he
     if [ -n "$d" ] && git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then echo "git -C ${d/#$HOME/~} pull"; return; fi
     echo "install the new version the way you installed bhote (see the README)"
 }
+dash_caption() {  # dash_caption <text>: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests)
+    local rest; rest=$(( ${#RULE_LINE} - 4 - ${#1} )); [ "$rest" -lt 1 ] && rest=1
+    printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
+}
 mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_FILLED = the cells to colour)
     local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
     for (( _i = 0; _i < $4; _i++ )); do _b="$_b■"; done
@@ -2964,8 +2969,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     case "$kind" in deploys) cap="Deployments" ;; *) cap="Tests" ;; esac
     [ -s "$SHARED_DIR/$kind.list" ] || return 0
     [ -n "${NOW:-}" ] || NOW=$(date +%s)
-    local rest; rest=$(( ${#RULE_LINE} - 4 - ${#cap} )); [ "$rest" -lt 1 ] && rest=1
-    printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$cap" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
+    dash_caption "$cap"
     while IFS=$US read -r t pj lb st d tot note url; do
         [ "$n" -lt "$max" ] || { more=$(( more + 1 )); continue; }
         bar=""
