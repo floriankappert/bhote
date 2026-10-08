@@ -105,7 +105,7 @@ TEST_CIRCLECI|on|bool|Test monitor: the test jobs of CircleCI
 TEST_STATUS_DIR|~/.cache/ims-test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok, as IMS writes them)
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
-AUTO_REVIEW|on|bool|An agent that hands its turn back (a question, a choice to make) and has no topic gets a review topic of its own; it goes when the agent works again
+AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends its turn with a question gets a review topic of its own (the question is its description); it goes when the agent works again
 MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -4137,6 +4137,19 @@ push_peers() {
     done
     lock_drop "$lock" "$$"
 }
+pane_question_text() {  # pane_question_text: stdin = the pane's text; prints the agent's last line when it ends with a question (above the input box, footers skipped)
+    awk '{ l[NR] = $0 }
+        END { box = 0; n2 = 0
+            for (i = NR; i >= 1; i--) if (l[i] ~ /^(─)+$/) { n2++; if (n2 == 2) { box = i; break } }
+            if (box == 0) box = NR + 1
+            for (i = box - 1; i >= 1; i--) {
+                t = l[i]; gsub(/^[ \t]+|[ \t\r]+$/, "", t)
+                if (t == "" || t ~ /^(✻|✽|✶|✢|※|\*|·)( |$)/ || t ~ /^(⏵|⏸)/) continue
+                sub(/^(●|⏺) */, "", t)
+                if (t ~ /\?[)"\047”»]*$/) print t
+                exit
+            } }'
+}
 cli_event() {
     local ev pane st sess i f now; ev=${HERDR_PLUGIN_EVENT_JSON:-}; [ -n "$ev" ] || ev=$(head -c 65536)
     command -v jq >/dev/null 2>&1 || return 0
@@ -4171,16 +4184,23 @@ cli_event() {
             esac
         fi
     done
-    # no topic at all and the agent hands the turn back (or waits for an answer): a review topic of its own, gone when it works again
+    # no topic at all and the agent waits for an answer (blocked) or ends its turn with a question: a review topic of its own, gone when it works again
+    local ask=""
     if [ "$st" != working ] && [ "$hit" = 0 ] && [ "$prev" = working ] && [ -n "$pane" ] && [ "$(cfg_get AUTO_REVIEW on)" = on ]; then
+        if [ "$st" = blocked ]; then ask="needs your answer"
+        elif [ "${BHOTE_FAKE_QUESTION+x}" = x ]; then ask=$BHOTE_FAKE_QUESTION
+        else ask=$(herdr pane read "$pane" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text); fi
+    fi
+    if [ -n "$ask" ]; then
         local line m_ aid ast anm atask; anm=""; atask=""
         for line in "$AGENT_LOCAL"; do [ -r "$line" ] && while IFS=$US read -r m_ aid ast anm atask; do [ "$m_" = "$HOST" ] && [ "$aid" = "$pane" ] && break; anm=""; atask=""; done < "$line"; done
         anm=${anm:-agent}
-        if topic_new "Your turn: ${anm//[[:cntrl:]]/}" "" "${atask//[[:cntrl:]]/}"; then
+        [ "$ask" = "needs your answer" ] && atask="needs your answer" || atask=$ask            # the question itself is the description
+        if topic_new "Question from ${anm//[[:cntrl:]]/}" "" "${atask//[[:cntrl:]]/}"; then
             f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
             topic_set "$f" status review; topic_set "$f" auto 1; topic_set "$f" agent "$anm"; topic_set "$f" agent_machine "$HOST"; topic_set "$f" agent_pane "$pane"
             [ -n "$sess" ] && topic_set "$f" agent_session "${sess//[^A-Za-z0-9-]/}"
-            notify "Your turn" "$anm" request
+            notify "Question from $anm" "${atask:0:80}" request
         fi
     fi
     return 0
