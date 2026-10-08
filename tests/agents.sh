@@ -126,4 +126,12 @@ grep -q -- "--machine Laptop plugin action invoke changed --plugin bhote.panel" 
 cfg_set PUSH_STATES off; : > "$FAKE_LOG"; HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w1:p1","agent_status":"idle"}}' cli_event
 grep -q "invoke changed" "$FAKE_LOG" && bad "pushed although PUSH_STATES=off" || ok "push: PUSH_STATES=off keeps quiet"
 rm -f "$SHARED_DIR/remote.due"; ( bhote_cli remote-changed ); [ -e "$SHARED_DIR/remote.due" ] && ok "remote-changed: the collector asks the other machines at once" || bad "remote.due missing"
+# a slow merge (over herdr a few seconds) must not hold up a push: the collector merges in the background
+: > "$SHARED_DIR/agents.remote.tmp.99999"; touch -t 202001010000 "$SHARED_DIR/agents.remote.tmp.99999"
+( store_sync() { sleep 3; }; collect_local() { :; }; collect_remote() { :; }
+  sleep 30 & P=$!; rm -f "$SHARED_DIR/collector.lock" "$SHARED_DIR/remote.due"; collector "$P" & C=$!
+  sleep 1; : > "$SHARED_DIR/remote.due"; : > "$SHARED_DIR/poke"; sleep 0.8
+  [ -e "$SHARED_DIR/remote.due" ] && r=1 || r=0; kill "$C" "$P" 2>/dev/null; wait "$C" "$P" 2>/dev/null; exit $r ) \
+  && ok "collector: a push is taken while a slow merge runs" || bad "collector: the push waited for the merge"
+[ -e "$SHARED_DIR/agents.remote.tmp.99999" ] && bad "an old temp list was left" || ok "collector: old temp lists of a killed collector are removed"
 rm -rf "$T"; exit $fail

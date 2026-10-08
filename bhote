@@ -811,7 +811,8 @@ auto_assign() {
     done
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
-    local every_l every_r last_r=-999999 w
+    local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" w
+    find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
         kill -0 "$1" 2>/dev/null || exit 0                   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
@@ -823,9 +824,13 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
                 [ "$remote_due" = 1 ] && collect_remote
             elif [ -s "$AGENT_REMOTE" ]; then : > "$AGENT_REMOTE.tmp.$$"; agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"; fi
-            # the data location: at once after a local change, otherwise as often as the remote agents
-            if [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; store_sync; [ $? = 2 ] && : > "$STORE_DIRTY"
-            elif [ "$remote_due" = 1 ]; then store_sync; fi
+            # the data location: at once after a local change, otherwise every REMOTE_EVERY seconds (its own clock: a push of
+            # the other machine's agents does not move it). In the background: over herdr a merge takes a few seconds, and an
+            # agent push must not wait for it. One at a time (its pid: in a subshell $$ is ours, so the lock alone cannot tell)
+            if [ -n "$sync_pid" ] && kill -0 "$sync_pid" 2>/dev/null; then :
+            elif [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; last_s=$SECONDS
+                ( store_sync; [ $? = 2 ] && : > "$STORE_DIRTY" ) & sync_pid=$!
+            elif [ $(( SECONDS - last_s )) -ge "$every_r" ]; then last_s=$SECONDS; ( store_sync ) & sync_pid=$!; fi
             remind_waiting
             auto_assign
         fi
