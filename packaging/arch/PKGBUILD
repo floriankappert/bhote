@@ -1,6 +1,6 @@
 # Maintainer: Florian Kappert
 pkgname=bhote
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
 pkgdesc='Topics and agents side panel for the herdr terminal workspace manager'
 arch=('any')

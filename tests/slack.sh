@@ -76,7 +76,7 @@ lay=$(echo "$page" | sed -n '/^  Akrur$/,/^  2\./p')
 # waits again: the message goes, from now on; the same message again changes nothing
 B wait "$id" Legal >/dev/null; [ "$(topic_get "$f" status)" = waiting ] && [ -z "$(topic_get "$f" slack_msg)" ] && ok "wait again: the message goes, the pin stays" || bad "rewait"
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)
-echo "$frame" | grep -q "for Legal · Slack monitor active (channel)" && ok "panel: a waiting topic shows its pin" || bad "panel waiting line: $(echo "$frame" | grep -A2 Contract)"
+echo "$frame" | grep -q "for Legal · Slack monitor (channel)" && ok "panel: a waiting topic shows its pin" || bad "panel waiting line: $(echo "$frame" | grep -A2 Contract)"
 slack_check; [ "$(topic_get "$f" status)" = waiting ] && ok "watch: an old message does not come back" || bad "old message re-triggered"
 # Claude fails: nothing changes, the state says so
 : > "$FAKE_ANSWER"; before=$(cat "$f"); slack_check

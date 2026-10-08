@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.2.0}
+VERSION=${BHOTE_VERSION:-0.3.0}
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
 NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
@@ -878,7 +878,7 @@ bhote_splash() {
 ████▀  █   █  ▀███▀    █    █████
 WORD
     blank
-    mid "Agent & Work Management" "${D}Agent & Work Management${X}"
+    mid "Herd Management" "${D}Herd Management${X}"
     mid "by Florian Kappert" "${D}by Florian Kappert${X}"
     blanks "$SG2"
     splash_prompt_row                                       # right under the wordmark; the gaps are all the same size
@@ -970,7 +970,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
                          idle|done) state=finished; sc=$GREEN; [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;; *) state=gone; sc=$D ;; esac
                  fi ;;
             waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
-                     [ -n "${T_SL[$i]}" ] && { state="Slack monitor active (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
+                     [ -n "${T_SL[$i]}" ] && { state="Slack monitor (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
             review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
                     [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]// ¶ / }; state=${state//\`/}; state=${state//\*/}; sc=$S; } ;;   # an answer in Slack
             next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
@@ -1123,7 +1123,7 @@ pad_set() {  # pad_set <var> <text> <columns>: the text, filled with spaces to t
 }
 clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
 view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
-    local name="Bhote v$VERSION" t; clip_set t " - Agent & Work Management" $(( ${COLS:-44} - 5 - ${#name} ))
+    local name="Bhote v$VERSION" t; clip_set t " - Herd Management" $(( ${COLS:-44} - 5 - ${#name} ))
     printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X"
     rule
 }
@@ -1698,7 +1698,7 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ ${D}· $am$X}"
     if [ -n "$(topic_get "$f" slack_channel)" ] || [ -n "$(topic_get "$f" slack_msg)" ]; then   # the pin and the answer that came in
         printf '\n  %sSLACK%s\n' "$D" "$X"
-        line=$(topic_get "$f" slack_label); [ -n "$line" ] && printf '  %s%s%s%s\n' "$S" "$line" "$X" "$( [ "$st" = waiting ] && printf ' %s· monitor active%s' "$D" "$X")"
+        line=$(topic_get "$f" slack_label); [ -n "$line" ] && printf '  %s%s%s%s\n' "$S" "$line" "$X" "$( [ "$st" = waiting ] && printf ' %s· monitor%s' "$D" "$X")"
         line=$(topic_get "$f" slack_msg); [ -n "$line" ] && slack_msg_print "$line"
     fi
     printf '\n'; rule
