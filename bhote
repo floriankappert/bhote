@@ -2052,10 +2052,12 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
         fi
     done <<< "$(printf '%s' "$j" | jq -r --arg me "$me" '
         def clean: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
+        def plain: gsub("<@[A-Z0-9]+\\|(?<n>[^>]+)>"; "@\(.n)") | gsub("<[!#@][^>|]*\\|(?<n>[^>]+)>"; "\(.n)") | gsub("<(?<u>https?:[^>|]+)\\|(?<t>[^>]+)>"; .t)
+            | gsub("<(?<u>https?:[^>]+)>"; .u) | gsub("<@[A-Z0-9]+>"; "@someone") | gsub("[*_~`]"; "") | gsub("  +"; " ");   # Slack markup out
         .pins[]? | select(.topic | test("^[A-Za-z0-9_-]+$")) | . as $p
         | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")))] | sort_by(.ts | tonumber)) as $m
         | (if $me == "" then null else ([$m[] | select(.user != $me)] | last) end) as $o   # (who I am unknown: only move on)
-        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | clean | .[0:100]) else "" end)] | join("\u001f")' 2>/dev/null)"
+        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | clean | plain | .[0:100]) else "" end)] | join("\u001f")' 2>/dev/null)"
     printf 'ok %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"
     poke
 }
