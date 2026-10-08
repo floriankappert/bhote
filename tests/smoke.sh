@@ -34,4 +34,9 @@ BHOTE_SOURCE_ONLY= bash ./bhote setup --json | python3 -c 'import json,sys; d=js
 # the welcome screen at its narrowest: every line inside the frame (a wrapped line shifts the blinking prompt)
 w=$(BHOTE_ONCE=1 BHOTE_VIEW=splash BHOTE_COLS=42 BHOTE_ROWS=39 LC_ALL=en_US.UTF-8 bash ./bhote | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | python3 -c 'import sys; print(max(len(l) for l in sys.stdin.read().split("\n")))')
 [ "$w" -le 42 ] && echo "ok   splash fits 42 columns" || { echo "FAIL splash is $w wide at 42 columns"; fail=1; }
+# in colour the news link is a terminal hyperlink (OSC 8) with a dotted underline, and the line still fits
+s=$(BHOTE_FORCE_COLOR=1 BHOTE_ONCE=1 BHOTE_VIEW=splash BHOTE_COLS=42 BHOTE_ROWS=39 LC_ALL=en_US.UTF-8 bash ./bhote)
+case "$s" in *$'\033[4:4m\033]8;;https://github.com/floriankappert/bhote/'*$'\033\\see GitHub\033]8;;\033\\\033[24m'*) echo "ok   splash: 'see GitHub' is a dotted link" ;; *) echo "FAIL splash: no news link"; fail=1 ;; esac
+w=$(printf '%s' "$s" | python3 -c 'import re,sys; t=re.sub(r"\x1b\]8;;[^\x1b]*\x1b\\|\x1b\[[0-9;:]*[A-Za-z]", "", sys.stdin.read()); print(max(len(l) for l in t.split("\n")))')
+[ "$w" -le 42 ] && echo "ok   splash fits 42 columns in colour" || { echo "FAIL splash is $w wide in colour"; fail=1; }
 exit $fail

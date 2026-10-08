@@ -25,6 +25,8 @@ SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows wit
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.2.0}
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
+NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
+NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
 
 # ── settings: ~/.config/bhote/config, plain KEY=value lines (never sourced). Everything that reaches beyond this machine
 # is OFF until the user switches it on in the settings screen (","): bhote must not open SSH connections unasked.
@@ -875,7 +877,10 @@ WORD
     blanks "$SG2"
     splash_prompt_row                                       # right under the wordmark; the gaps are all the same size
     if [ -n "$NEWS" ]; then                                  # cut to the frame: a wrapped line would push the whole screen up
-        local nw; clip_set nw "$NEWS" $(( INNER - 8 )); mid "NEW: $nw" "${GREEN}NEW:${X} ${D}${nw}${X}"; blanks $(( SG3 - 1 ))
+        local nw sh; clip_set nw "$NEWS" $(( INNER - 8 )); sh="${D}${nw}${X}"
+        case "$nw" in *"$NEWS_LINK"*) [ "$color" = 1 ] && [ -n "$NEWS_LINK" ] && [ -n "$NEWS_URL" ] &&   # (only when not cut off)
+            sh="${D}${nw%%"$NEWS_LINK"*}${esc}[4:4m${esc}]8;;${NEWS_URL}${esc}\\${NEWS_LINK}${esc}]8;;${esc}\\${esc}[24m${nw#*"$NEWS_LINK"}${X}" ;; esac
+        mid "NEW: $nw" "${GREEN}NEW:${X} ${sh}"; blanks $(( SG3 - 1 ))
     else blanks "$SG3"; fi
     local mv=${#host} vv t   # the four lines are one block: centred as a whole, values start in one column
     for vv in "${herdr_v:-?}" "$agents" "$T_N$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
