@@ -28,7 +28,7 @@ type, choose, `⏎` jumps there; `x` (`ctrl+x` once something is typed) checks a
 `ctrl+n` adds a topic (the search text is its start). `⏎` on a topic opens its page here in the panel.
 
 Click an agent in the agent area to focus it in herdr. An agent on another machine is selected there; herdr lets only its
-client switch machines, so the key line says to switch to that machine in herdr.
+client switch machines, so the key line says so, with the keys (herdr 0.9.3 has no call that switches its window to another machine).
 
 From anywhere in herdr, the key bound to `bhote.panel.focus` ([herdr plugin](herdr-plugin.md), e.g. prefix then `t`) jumps
 to the panel and back; the panel shows it bottom right (`Ctrl+B|T ⇄` (the keys as they are on the keyboard of the machine you type on: Ctrl+Option+T on a Mac, Ctrl+Alt+T elsewhere)).

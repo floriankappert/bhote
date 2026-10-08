@@ -1474,7 +1474,9 @@ agent_jump() {  # agent_jump <machine> <pane>
     else
         machine_known "$1" || return 1
         ( herdr --machine "$1" agent focus "$2" >/dev/null 2>&1 & )
-        FLASH_MSG="selected on $1: switch to $1 in herdr"; FLASH_UNTIL=$(( SECONDS + 6 ))
+        # herdr has no call that switches its window to another machine: the agent is focused over there, the switch is yours
+        local _kw; key_pretty _kw "prefix+w"
+        FLASH_MSG="focused on $1 · to go there: $_kw, pick it, ⏎"; FLASH_UNTIL=$(( SECONDS + 10 ))
     fi
 }
 view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
