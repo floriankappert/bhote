@@ -50,6 +50,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `JUMP_KEY` | | Jump key (herdr) | The herdr key that jumps between the agent and the bhote panel of the tab (e.g. `prefix+t`; `off` removes it). bhote writes it into herdr's `config.toml` (a block between `# >>> bhote` and `# <<< bhote`) and reloads herdr; a key herdr refuses changes nothing. |
 | `FIND_KEY` | | Find key (herdr) | The herdr key that opens `bhote find` as a popup (e.g. `ctrl+alt+t`; on macOS a terminal can send it for ⌘T). Written the same way. |
 | `SETUP_DONE` | | | The date the [setup wizard](setup.md) ran on this machine. Empty: it opens at the next start (`bhote config unset SETUP_DONE` brings it back). |
+| `PROJECT_COLORS` | `marketing=pink,ims=teal,bilendo=yellow,bhote=green,micro=mauve` | | Colour of the project captions in the agent list: part-of-name=colour, first match wins (`red teal peach mauve blue green yellow pink orange grey`); other projects are grey. A working agent is orange as a whole, one that needs you red, an idle one grey. |
 | `NAME_COLORS` | | | Colour agents by part of their name: `api=teal,web=mauve` (case-insensitive, first match wins). Colours: `red teal peach mauve blue green yellow`. |
 
 Numbers that are not plain digits fall back to their default. Values never contain control characters (they are removed when

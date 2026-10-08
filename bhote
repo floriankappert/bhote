@@ -119,6 +119,7 @@ TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of
 DONE_MAX|7|int:0:999|The last done topics shown above the agents (0: none)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
 NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve
+PROJECT_COLORS|marketing=pink,ims=teal,bilendo=yellow,bhote=green,micro=mauve|text|Colour of the project captions in the agent list: part-of-name=colour (red teal peach mauve blue green yellow pink orange grey), first match wins; other projects are grey
 COLOR_TEXT||color|Override: text (#rrggbb)
 COLOR_DIM||color|Override: dim text
 COLOR_FRAME||color|Override: lines and frames
@@ -453,11 +454,12 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
-    [ "$color" = 1 ] || { TEAL=""; ORANGE=""; return 0; }
+    PINK=""; Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
+    [ "$color" = 1 ] || { TEAL=""; ORANGE=""; PINK=""; return 0; }
+    ORANGE=""
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
-        R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135")
+        R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135"); PINK=$(rgb "245;194;231"); ORANGE=$(rgb "217;119;87")   # (ORANGE: Claude's own, not Catppuccin's peach)
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
         Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; MUTED=$(rgb "69;71;90")
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
@@ -466,7 +468,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135"); GRAD_ANSI=""
     else                                                     # the terminal's palette: magenta, red, cyan, yellow, ...
         R="${esc}[35m"; NN="${esc}[31m"; S="${esc}[36m"; C="${esc}[33m"; L="${esc}[1;39m"; D="${esc}[90m"; B=$D
-        Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
+        PINK="${esc}[95m"; ORANGE="${esc}[38;5;173m"; Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
         SELBG="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
@@ -478,11 +480,11 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         case "$k" in
             TEXT) L="${esc}[1m$(rgb "$v")"; LSEL=$L; TITLE=$L; TITLESEL=$L; DESC="${esc}[3m$(rgb "$v")"; DESCSEL=$DESC ;;
             DIM) D=$(rgb "$v"); DSEL=$D ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m" ;;
-            ACCENT) S=$(rgb "$v") ;; NOW) C=$(rgb "$v") ;; WAITING) Y=$(rgb "$v") ;; REVIEW) BLUE=$(rgb "$v") ;;
+            ACCENT) S=$(rgb "$v") ;; NOW) C=$(rgb "$v"); ORANGE=$C ;; WAITING) Y=$(rgb "$v") ;; REVIEW) BLUE=$(rgb "$v") ;;
             LATER) R=$(rgb "$v") ;; DONE) GREEN=$(rgb "$v") ;; ERROR) NN=$(rgb "$v") ;;
         esac
     done
-    MUTED=${MUTED:-$B}; TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
+    MUTED=${MUTED:-$B}; TEAL=$S; ORANGE=${ORANGE:-$C}; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
     TITLE=${TITLE:-$L}; TITLESEL=${TITLESEL:-$LSEL}
 }
 theme_sig() {  # theme_sig <var>: the settings the colours come from, as one string (a change re-applies the theme)
@@ -1165,6 +1167,17 @@ name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS r
     fi
     printf -v "$1" '%s' "$_col"
 }
+project_color_set() {  # project_color_set <var> <project name>: its colour from PROJECT_COLORS (part-of-name=colour, first match), else grey
+    local _r _p _c _col="$D" _rules
+    cfg_var _rules PROJECT_COLORS "marketing=pink,ims=teal,bilendo=yellow,bhote=green,micro=mauve"
+    while IFS= read -r _r; do
+        _p=${_r%%=*}; _c=${_r#*=}; [ -n "$_p" ] || continue
+        shopt -s nocasematch; if [[ $2 == *"$_p"* ]]; then shopt -u nocasematch
+            case "$_c" in red) _col=$NN ;; teal) _col=$S ;; peach) _col=$C ;; mauve) _col=$R ;; blue) _col=$BLUE ;; green) _col=$GREEN ;; yellow) _col=$Y ;; pink) _col=$PINK ;; orange) _col=$ORANGE ;; grey|gray) _col=$D ;; esac; break; fi
+        shopt -u nocasematch
+    done <<< "${_rules//,/$'\n'}"
+    printf -v "$1" '%s' "$_col"
+}
 agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse)
     local w=$(( ${COLS:-44} - 5 )) l r
     l=$(( (w - 5) / 2 )); r=$(( w - 5 - l ))
@@ -1211,10 +1224,10 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         for mm in "${pmach[@]}"; do machine_offline "$mm" && { machine_code_set cc "$mm"; pname="$pname · ${cc:-$mm} ◐ reconnecting"; }; done   # (as herdr says it)
         clip_set cap "$pname" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"; rest2=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest2" -lt 1 ] && rest2=1
         # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
-        if [ "$pm" = "-" ]; then lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
-        else lines[$n]="  ${MUTED}┈┈${X} ${L}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"; fi
+        if [ "$pm" = "-" ]; then pcol=$D; else project_color_set pcol "$pname"; fi
+        lines[$n]="  ${MUTED}┈┈${X} ${BOLD}${pcol}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
         lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
-        local cells=() cid=() cwid=() nc2=0 pre plen rk rkst
+        local cells=() cid=() cwid=() nc2=0 pre plen rk rkst pcol
         for rk in 0 1 2; do                                    # inside a project: the active ones first (orange), then those that need you (red), then the idle (grey)
         for mm in "${machines[@]}"; do
             pre=""; plen=0; [ "$nm" -gt 1 ] && { machine_code_set pre "$mm"; [ -n "$pre" ] && { pre="$pre|"; plen=${#pre}; }; }   # MAC|name
@@ -1226,7 +1239,8 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                 case "$st" in working|testing) rkst=0 ;; blocked) rkst=1 ;; *) rkst=2 ;; esac; [ "$rkst" = "$rk" ] || continue
                 case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; *) ic="${D}○" ;; esac
                 [ -n "$pre" ] && case "$name" in "$mm / "*) name=${name#"$mm / "} ;; esac   # (MAC|Mac / root says it twice)
-                name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 - plen ))
+                case "$st" in working|testing) nc=$ORANGE ;; blocked) nc=$NN ;; *) nc=$D ;; esac   # the whole agent: orange at work, red when it needs you, grey idle
+                clip_set label "$name" $(( cw - 3 - plen ))
                 if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
                 dw_set plain "$label"; cells[$nc2]="$ic$X ${pre:+$D$pre$X}$nc$label$X"; cwid[$nc2]=$(( plain + plen + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
             done
