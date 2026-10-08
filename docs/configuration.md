@@ -19,6 +19,8 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
 | `REMOTE_EVERY` | `10` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
 | `TESTS_BUSY` | `off` | Running tests = agent busy | An agent whose herdr workspace runs tests (its `tests` token starts with `◌`) counts as busy. |
+| `AUTO_ASSIGN` | `off` | Auto-assign now topics | A running (`now`) topic without an agent goes to the next free agent by itself, 20 s after its last change (time to add a description); the agent is checked live first and you get a notification. It runs once per machine: with two machines sharing topics, switch it on on one of them. |
+| `AUTO_ASSIGN_MACHINE` | `any` | Prefer agents on | Whose free agents come first: `any` (this machine first) or a machine label; when none is free there, the others. |
 | `AGENT_CAN_CLOSE` | `on` | Agents may close topics | An agent may set its topic to done itself; `off`: only to review, you close it. |
 | `NOTIFY` | `on` | herdr notifications | herdr notifications when a topic is ready for review or done, and when a waiting topic waits too long. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |

@@ -188,8 +188,8 @@ refresh at once.
 ### `bhote find`
 
 Search all agents (every machine) and topics: type to filter (every word must appear), `↑↓` choose, `⏎` jump, `Esc`
-close. `x` checks the selected topic off (while nothing is typed; else `Ctrl-X`). `Ctrl-N` adds a topic, starting with the search text (`Title; description @Name` as in the panel); `⏎` does the same
-when nothing matches. The new topic is then selected. An agent is focused in herdr (on another machine it is selected there; switch to that machine in herdr). A topic opens
+close. `x` checks the selected topic off (while nothing is typed; else `Ctrl-X`). `Ctrl-N` adds a topic, starting with the search text (`Title; description @Name` as in the panel); `⏎` makes it at
+once from the search text when nothing matches. The new topic is then selected. An agent is focused in herdr (on another machine it is selected there; switch to that machine in herdr). A topic opens
 its page (title, description, status, actions) in the bhote panel of the tab, and the panel gets the focus. Meant for a herdr popup: settings ›
 *Find key* (`FIND_KEY`) binds it. Needs a terminal.
 

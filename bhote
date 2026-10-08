@@ -80,6 +80,8 @@ PANEL_MAX_WIDTH|60|int:30:300|The widest the panel pane may get in herdr (column
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|10|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|off|bool|An agent whose workspace runs tests counts as busy
+AUTO_ASSIGN|off|bool|A running (now) topic without an agent goes to the next free agent by itself, 20 s after its last change
+AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -763,6 +765,40 @@ remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND 
 collector_lead() {  # collector_lead <main pid>: 0 when this panel is the collector
     lock_take "$SHARED_DIR/collector.lock" "$1"
 }
+# Auto-assign (AUTO_ASSIGN=on): a running topic without an agent goes to the next free agent, 20 s after its last change (time
+# to add a description), the agents of AUTO_ASSIGN_MACHINE first (any: this machine). Each agent is asked live right before.
+# It runs in the collector, so once per machine: when two machines share the topics, switch it on on ONE of them.
+auto_assign() {
+    local on pref i k m id st name task f now used="" pass t pick sess SEL_ID=""
+    cfg_var on AUTO_ASSIGN off; [ "$on" = on ] || return 0
+    cfg_var pref AUTO_ASSIGN_MACHINE any; [ "$pref" = any ] && pref=$HOST
+    topics_load; now=$(date +%s)
+    AG_N=0; AG_LINES=()
+    for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do [ -r "$f" ] && while IFS= read -r t; do [ -n "$t" ] && { AG_LINES[$AG_N]=$t; AG_N=$(( AG_N + 1 )); }; done < "$f"; done
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = now ] && [ -z "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || continue
+        [ $(( now - $(num_or "${T_UPD[$i]}" "$now") )) -ge 20 ] || continue
+        pick=""
+        for pass in pref other; do
+            for (( k = 0; k < AG_N; k++ )); do
+                IFS=$US read -r m id st name task <<< "${AG_LINES[$k]}"
+                if [ "$pass" = pref ]; then [ "$m" = "$pref" ] || continue; else [ "$m" != "$pref" ] || continue; fi
+                case "$st" in idle|done) ;; *) continue ;; esac
+                case " $used " in *" $m/$id "*) continue ;; esac
+                agent_taken "$m" "$id" && continue
+                agent_live "$m" "$id"; case "$LIVE_ST" in idle|done) ;; *) continue ;; esac   # the lists are seconds old
+                pick="$m$US$id$US$name"; sess=$LIVE_SESS; break 2
+            done
+        done
+        [ -n "$pick" ] || return 0                             # no free agent now: the next round
+        IFS=$US read -r m id name <<< "$pick"; used="$used $m/$id"; f=${T_FILE[$i]}
+        [ "$(topic_get "$f" status)" = now ] && [ -z "$(topic_get "$f" agent_pane)" ] || continue   # changed meanwhile
+        topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
+        topic_set "$f" agent_session "$sess"; topic_set "$f" delegated "$now"
+        agent_send "$m" "$id" "Your bhote topic: $(delegation_text "$f")"
+        notify "Auto-assigned" "${T_TITLE[$i]} → $name" done
+    done
+}
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local n=0 every_l every_r
     while true; do
@@ -778,6 +814,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
                 [ $(( n % (every_r / every_l + 1) )) -eq 0 ] && collect_remote
             else : > "$AGENT_REMOTE"; fi
             remind_waiting
+            auto_assign
             n=$(( n + 1 ))
         else n=0; fi
         local w=0; while [ "$w" -lt "$every_l" ]; do              # wait in 1 s steps: a poke (agent event, CLI change) ends it
@@ -1216,6 +1253,8 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|AUTO_ASSIGN|Auto-assign now topics"
+    [ "$(cfg_get AUTO_ASSIGN off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|AUTO_ASSIGN_MACHINE|Prefer agents on"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
     SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
@@ -1247,6 +1286,7 @@ bhote_settings() {
             link) vp="›"; vc="${D}›${X}" ;;
             key) if [ "$key" = FIND_KEY ]; then vp=${FIND_KEY_SHOW:-off}; else vp=${FOCUS_KEY:-off}; fi; vc="${C}${vp}${X}" ;;
             enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
+            prefer) ind=2; cfg_var v "$key" any; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
         case "$key" in
@@ -1325,6 +1365,14 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                     else KEY_MSG=$(head -1 "$RUN_DIR/jkerr"); KEY_MSG=${KEY_MSG#bhote: }; KEY_MSG="Not changed: ${KEY_MSG:-herdr refused it}"; fi
                 fi
                 return
+            fi
+            if [ "$kind" = prefer ]; then                            # any, this machine, the saved machines (← → or space)
+                local opts=(any "$HOST") lb2 n2 cur3 i2 _id _h _p _e
+                while IFS=$US read -r _id lb2 _h _p _e; do lb2=${lb2//[[:cntrl:]]/}; [ -n "$lb2" ] && [ "$lb2" != "$HOST" ] && opts[${#opts[@]}]=$lb2; done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
+                cfg_var cur3 "$key" any; n2=${#opts[@]}
+                for (( i2 = 0; i2 < n2; i2++ )); do [ "${opts[$i2]}" = "$cur3" ] && break; done; [ "$i2" -ge "$n2" ] && i2=0
+                if [ "$k" = LEFT ]; then i2=$(( (i2 + n2 - 1) % n2 )); else i2=$(( (i2 + 1) % n2 )); fi
+                cfg_set "$key" "${opts[$i2]}"; return
             fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || { [ "$key" = SETUP ] && SETTINGS_GO=setup || SETTINGS_GO=hotkeys; }; return; fi
             if [ "$kind" = enum ]; then                              # step through the allowed values
@@ -1834,9 +1882,11 @@ topic_resume() {  # topic_resume <file>: a waiting topic of an agent: the wait i
     agent_send "$am" "$ap" "The wait is over${wf:+ ($wf)}: $title${desc:+. Go on with: $desc} (bhote topic $id: $(how_to_finish "$id"))."
 }
 prompt_new_topic() {  # [text to start with] "Title", "Title; description", "Title @Name" or "Title > Name" (= waiting for Name); the new topic gets selected
-    local title who="" desc=""
     ask "Topic: " "${1:-}" || return 1
-    title=$ANSWER
+    new_topic_from "$ANSWER"
+}
+new_topic_from() {  # new_topic_from <text>: the same syntax as the prompt, without asking; NEW_TOPIC_ID, and it gets selected
+    local title=$1 who="" desc=""
     case "$title" in *" @"*) who=${title##* @}; title=${title% @*} ;; *" > "*) who=${title##* > }; title=${title% > *} ;; esac   # the name goes last
     case "$title" in *";"*) desc=${title#*;}; title=${title%%;*} ;; esac
     title=${title%"${title##*[! ]}"}; desc=${desc#"${desc%%[! ]*}"}
@@ -2341,8 +2391,22 @@ setup_step_behaviour() {
     setting_check WAIT_REMIND "$h" 2>/dev/null && cfg_set WAIT_REMIND "$(num_or "$h" "$h")"
     w_yn "Does an agent whose workspace runs tests count as busy?" "$([ "$(cfg_get TESTS_BUSY off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set TESTS_BUSY on ;; 1) cfg_set TESTS_BUSY off ;; esac
+    w_say "Auto-assign: a topic you set to now (without an agent) goes to the next free agent by itself, 20 s after its last change. With two machines sharing topics, switch it on on one of them."
+    w_yn "Auto-assign now topics to the next free agent?" "$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    case $r in 0) cfg_set AUTO_ASSIGN on ;; 1) cfg_set AUTO_ASSIGN off ;; esac
+    if [ "$(cfg_get AUTO_ASSIGN off)" = on ]; then
+        local opts=(any "$HOST") lb _id _h _p _e c i keys="" def=1 cur
+        while IFS=$US read -r _id lb _h _p _e; do lb=${lb//[[:cntrl:]]/}; [ -n "$lb" ] && [ "$lb" != "$HOST" ] && opts[${#opts[@]}]=$lb; done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
+        cfg_var cur AUTO_ASSIGN_MACHINE any
+        for (( i = 0; i < ${#opts[@]} && i < 9; i++ )); do
+            [ "${opts[$i]}" = "$cur" ] && def=$(( i + 1 )); keys="$keys$(( i + 1 ))"
+            if [ "$i" = 0 ]; then w_opt 1 "any (this machine first)"; else w_opt "$(( i + 1 ))" "${opts[$i]}$([ "${opts[$i]}" = "$HOST" ] && echo ' (this machine)')"; fi
+        done
+        w_choose c "Prefer the agents on:" "$keys" "$def" || return
+        cfg_set AUTO_ASSIGN_MACHINE "${opts[$(( c - 1 ))]}"
+    fi
     w_line
-    w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"
+    w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "auto-assign" "$(cfg_get AUTO_ASSIGN off)$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && printf ', prefer %s' "$(cfg_get AUTO_ASSIGN_MACHINE any)")"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"
     w_continue
 }
 setup_step_panel() {
@@ -3005,9 +3069,12 @@ find_main() {
         find_draw "$q" "$sel" "$note"; note=""
         IFS= read -rsn1 c </dev/tty || break
         if [ "$c" = $'\016' ] || { [ -z "$c" ] && [ "${#FI_HIT[@]}" = 0 ] && [ -n "$q" ]; }; then
-            # Ctrl-N (or Enter when nothing matches): a new topic, the search text to start with ("Title; description @Name")
+            # Ctrl-N: a new topic in the editor, the search text to start with; Enter when nothing matches: made at once
+            # from the search text (both "Title; description @Name")
             read -r ROWS COLS < <(stty size </dev/tty 2>/dev/null)
-            if prompt_new_topic "$q"; then
+            local made=1
+            if [ "$c" = $'\016' ]; then prompt_new_topic "$q" || made=0; else new_topic_from "$q" || made=0; fi
+            if [ "$made" = 1 ]; then
                 poke; topics_load; find_items; q=""; find_filter ""; sel=0
                 for (( k = 0; k < ${#FI_HIT[@]}; k++ )); do [ "${FI_REF[${FI_HIT[$k]}]}" = "$NEW_TOPIC_ID" ] && { sel=$k; break; }; done
                 note="added · ⏎ shows it in the panel"
