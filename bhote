@@ -1258,8 +1258,9 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                     [ "${T_AP[$tj]}" = "$id" ] && [ "${T_AM[$tj]}" = "$m" ] || continue
                     case "${T_STATUS[$tj]}" in now|review|waiting|next) tt=${T_TITLE[$tj]}; break ;; esac
                 done
-                if [ -n "$tt" ] && [ $(( cw - 1 - cwid[$nc2] )) -ge 8 ]; then clip_set tt "$tt" $(( cw - 2 - cwid[$nc2] )); dw_set tw "$tt"
-                    cells[$nc2]="${cells[$nc2]} ${MUTED}∟ ${D}$tt$X"; cwid[$nc2]=$(( cwid[$nc2] + 3 + tw )); fi   # (the topic after the name, as far as it fits)
+                if [ -n "$tt" ] && [ $(( cw - 1 - cwid[$nc2] )) -ge 5 ]; then   # the topic after the name: a hint of seven characters at most, no elbow
+                    tw=$(( cw - 1 - cwid[$nc2] )); [ "$tw" -gt 7 ] && tw=7; clip_set tt "$tt" "$tw"; dw_set tw "$tt"
+                    cells[$nc2]="${cells[$nc2]} ${D}$tt$X"; cwid[$nc2]=$(( cwid[$nc2] + 1 + tw )); fi
                 cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
             done
         done

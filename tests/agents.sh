@@ -253,10 +253,10 @@ topic_set "$t2" project "$bil"; topic_set "$t2" updated 1; topic_set "$t1" agent
 # the agent list says which topic an agent works on (not for a parked one)
 cfg_set HOST_LABEL Mac; rm -f "$TOPIC_DIR"/*.topic; topic_new "Fix the export" "" ""; wt="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wt" agent_pane w1:p1; topic_set "$wt" agent_machine "$HOST"; topic_set "$wt" status now
 frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=70 BHOTE_ROWS=150 bash ./bhote </dev/null)
-echo "$frame" | grep -q "∟ Fix the" && ok "agent list: the topic an agent works on stands behind its name" || bad "no topic behind the agent"
+echo "$frame" | grep -q " Fix th…" && ok "agent list: the topic an agent works on stands behind its name" || bad "no topic behind the agent"
 topic_set "$wt" status later
 frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=70 BHOTE_ROWS=150 bash ./bhote </dev/null)
-echo "$frame" | grep -q "∟ Fix the" && bad "a parked topic is shown behind the agent" || ok "agent list: a parked topic is not shown"
+echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the agent" || ok "agent list: a parked topic is not shown"
 # agent numbers: a number of its own per agent on its machine, the same for good
 ( HOST=Mac; rm -f "$TOPIC_DIR"/*.topic; AN_AT=-999
   printf '%s\n' "Mac${US}w1:p1${US}idle${US}alpha${US}t" "Mac${US}w2:p1${US}idle${US}beta${US}t" > "$AGENT_LOCAL"; agentnum_assign
