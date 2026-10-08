@@ -1,6 +1,6 @@
 ---
 name: bhote
-description: Keep the user's bhote topics in step with your work. Use it when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, and when you are told to hand your work over (Steal & Transfer).
+description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, and when you are told to hand your work over (Steal & Transfer).
 ---
 
 # bhote: topics next to herdr
@@ -27,6 +27,20 @@ bhote add "Review of PR #1412" -w "Alex" -d "then merge and test the release not
 
 Keep the returned `id`. Tell the user in one sentence what you wait for, then stop or do other work. When the user marks
 the topic as `now` in bhote, you get a prompt "The wait is over …" with the description: continue from there.
+
+## When you hand the work back to the user
+
+Whenever you end a turn and the next step is the user's (check a result, decide, grant a permission, answer a question),
+the work belongs under review, also when nobody gave you a topic. Before you write the final message:
+
+```sh
+bhote current --json                       # your topic, or null
+bhote add "<the work, short>" -d "<what the user has to check or decide, at most 140 characters>" --json   # only when null
+bhote review <id>
+```
+
+When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
+Do not use `-w` for the user: waiting is for other people and things.
 
 ## When you were given a topic
 
