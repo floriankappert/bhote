@@ -14,6 +14,7 @@
     "waiting_for",
     "waiting_since",
     "agent",
+    "slack",
     "created",
     "updated"
   ],
@@ -44,7 +45,9 @@
     },
     "status": {
       "enum": [
-        "now", "next", "waiting",
+        "now",
+        "next",
+        "waiting",
         "review",
         "later",
         "done"
@@ -107,6 +110,53 @@
                 "null"
               ],
               "description": "The agent's session id (herdr agent_session, = CLAUDE_CODE_SESSION_ID). Stable across herdr restarts."
+            }
+          }
+        }
+      ]
+    },
+    "slack": {
+      "description": "A pinned Slack channel, DM or thread: watched while the topic waits (SLACK_WATCH); a message from someone else sets it to review. null: none.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "channel",
+            "thread",
+            "label",
+            "message"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string",
+              "pattern": "^[A-Z0-9]+$",
+              "description": "Channel id (C…, G…, D…) or a user id for the DM"
+            },
+            "thread": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+\\.[0-9]+$",
+              "description": "Thread ts, when a thread is watched"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "#channel, @person, channel, DM or thread"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The last message from someone else (who: text), while in review"
             }
           }
         }

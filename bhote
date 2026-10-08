@@ -87,6 +87,8 @@ AUTO_ASSIGN|off|bool|A running (now) topic without an agent goes to the next fre
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
+SLACK_WATCH|off|bool|Watch the Slack channels pinned to waiting topics, from this machine (through Claude Code and its Slack connector; one machine is enough): a new message from someone else sets the topic to review
+SLACK_EVERY|120|int:30:3600|Seconds between two Slack checks (one short Claude call each, only while a waiting topic has a pin)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
 THEME|terminal|enum:terminal:catppuccin|Colours: terminal (follows the terminal and system theme) or catppuccin (exact colours)
 ANIMATION|on|bool|The dog on the welcome screen blinks and pants
@@ -199,28 +201,28 @@ store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STAT
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, next, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
-    local f line k v id title st wf ws up del desc ag am ap as dl tn seen n=0 a_as a_dl a_tn s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm seen n=0 a_as a_dl a_tn a_sl a_sm s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
         [ -f "$f" ] || continue
-        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; seen=" "
+        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; seen=" "
         while IFS= read -r line; do
             k=${line%%=*}; v=${line#*=}
             case "$seen" in *" $k "*) continue ;; esac; seen="$seen$k "     # the FIRST value counts, everywhere (topic_get does the same)
-            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; esac
+            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; esac
         done < "$f"
         [ "$del" = 1 ] && continue
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
         case "$st" in now|next|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
-        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; n=$(( n + 1 ))
+        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; n=$(( n + 1 ))
     done
-    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=()
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=()
     for s in review now next waiting later done; do             # review first: it waits for you
         for (( i = 0; i < n; i++ )); do
             [ "${a_st[$i]}" = "$s" ] || continue
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
-            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; m=$(( m + 1 ))
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; m=$(( m + 1 ))
         done
     done
     T_N=$m
@@ -813,7 +815,7 @@ auto_assign() {
     done
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
-    local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" w
+    local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
         kill -0 "$1" 2>/dev/null || exit 0                   # the panel is gone (also after kill -9): stop, never loop on alone
@@ -833,6 +835,10 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             elif [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; last_s=$SECONDS
                 ( store_sync; [ $? = 2 ] && : > "$STORE_DIRTY" ) & sync_pid=$!
             elif [ $(( SECONDS - last_s )) -ge "$every_r" ]; then last_s=$SECONDS; ( store_sync ) & sync_pid=$!; fi
+            if [ "$(cfg_get SLACK_WATCH off)" = on ] && ! { [ -n "$slack_pid" ] && kill -0 "$slack_pid" 2>/dev/null; }; then
+                cfg_var every_k SLACK_EVERY 120; num_set every_k "$every_k" 120
+                [ $(( SECONDS - last_k )) -ge "$every_k" ] && { last_k=$SECONDS; ( slack_check ) & slack_pid=$!; }   # in the background: a call takes seconds
+            fi
             remind_waiting
             auto_assign
         fi
@@ -963,8 +969,10 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
                      case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
                          idle|done) state=finished; sc=$GREEN; [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;; *) state=gone; sc=$D ;; esac
                  fi ;;
-            waiting) who=${T_WFOR[$i]:-?}; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; } ;;
-            review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}" ;;
+            waiting) who=${T_WFOR[$i]:-?}; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
+                     [ -n "${T_SL[$i]}" ] && { state="slack ${T_SL[$i]}"; sc=$S; } ;;   # a pinned Slack channel is watched
+            review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
+                    [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]}; sc=$S; } ;;   # an answer in Slack
             next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
             done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
@@ -1301,6 +1309,8 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
         done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
         SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
     fi
+    SET_ROWS[${#SET_ROWS[@]}]="bool|SLACK_WATCH|Watch Slack pins (Claude)"
+    [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
@@ -1667,7 +1677,10 @@ menu_build() {  # menu_build <file>
     [ "$st" = waiting ] && [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="resume|The wait is over: $ag goes on"
     [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
     [ "$st" = next ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="next|Up next"
-    MENU_ITEMS=("${MENU_ITEMS[@]}" "wait|Waiting for ..." "later|Park for later" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+    MENU_ITEMS[${#MENU_ITEMS[@]}]="wait|Waiting for ..."
+    if [ -n "$(topic_get "$f" slack_channel)" ]; then MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: unpin $(topic_get "$f" slack_label)"
+    else MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: pin a channel ..."; fi
+    MENU_ITEMS=("${MENU_ITEMS[@]}" "later|Park for later" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
 }
 bhote_menu() {  # the topic's page: title and description in full (wrapped), its status, then the numbered actions
     local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
@@ -1911,7 +1924,12 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         transfer) PICK_MODE=transfer; PICK_IDX=1; view=pick; return 0 ;;
         resume) topic_resume "$f" ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
-           topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)" ;;
+           topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; slack_rewait "$f" ;;
+        slack) if [ -n "$(topic_get "$f" slack_channel)" ]; then slack_pin "$f" off; return 0; fi
+           ask "Slack link, #channel or @person: " || return 0; [ -n "$ANSWER" ] || return 0
+           case "$ANSWER" in \#*|@*) FLASH_MSG="asking Claude for $ANSWER ..."; FLASH_UNTIL=$(( SECONDS + 60 )); bhote_paint menu ;; esac
+           if slack_pin "$f" "$ANSWER" 2>/dev/null; then FLASH_MSG="Slack pinned: watched while it waits"; else FLASH_MSG="Slack: not found ($ANSWER)"; fi
+           FLASH_UNTIL=$(( SECONDS + 4 )); return 0 ;;
         next) topic_set "$f" status next ;;
         later) topic_set "$f" status later ;;
         done) topic_set "$f" status done ;;
@@ -1943,6 +1961,103 @@ new_topic_from() {  # new_topic_from <text>: the same syntax as the prompt, with
     case "$title" in *";"*) desc=${title#*;}; title=${title%%;*} ;; esac
     title=${title%"${title##*[! ]}"}; desc=${desc#"${desc%%[! ]*}"}
     topic_new "$title" "$who" "$desc" && SEL_ID=$NEW_TOPIC_ID
+}
+
+# ── Slack pins: a waiting topic can carry a Slack channel, DM or thread (slack_channel, slack_thread, slack_label). With
+# SLACK_WATCH=on the collector of this machine asks Claude Code every SLACK_EVERY seconds (claude -p, Haiku, only the read-only
+# Slack tools of its connector: bhote holds no Slack token) for messages newer than slack_seen; one from someone else sets the
+# topic to review (slack_msg: who and what). BHOTE_CLAUDE replaces the claude command (the tests use a fake).
+SLACK_TOOLS="mcp__claude_ai_Slack__slack_read_channel mcp__claude_ai_Slack__slack_read_thread mcp__claude_ai_Slack__slack_read_user_profile mcp__claude_ai_Slack__slack_search_channels mcp__claude_ai_Slack__slack_search_users"
+claude_json() {  # claude_json <prompt> [timeout s]: one headless Claude call with the Slack tools; prints the JSON of its answer
+    local cl=${BHOTE_CLAUDE:-claude} dir="$DATA_DIR/slack" out p k
+    command -v "$cl" >/dev/null 2>&1 || return 3
+    mkdir -p "$dir"; out=$(mktemp "$RUN_DIR/claude.XXXXXX")
+    # outside herdr's view (no agent in this pane) and not as a nested session; in a folder of its own (no project files)
+    ( cd "$dir" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID -u HERDR_SOCKET_PATH -u CLAUDECODE \
+        -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT "$cl" -p "$1" --model haiku --allowedTools $SLACK_TOOLS \
+        --no-session-persistence --output-format json ) > "$out" 2>/dev/null </dev/null & p=$!
+    ( trap 'kill "$w" 2>/dev/null; exit 0' TERM; sleep "${2:-120}" & w=$!; wait "$w"; kill "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & k=$!
+    wait "$p" 2>/dev/null; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null   # (the watchdog takes its sleep along: no output kept open)
+    jq -r 'select(.is_error != true) | .result // empty' "$out" 2>/dev/null | sed -e '/^```/d' | jq -c . 2>/dev/null; local rc=$?
+    rm -f "$out"; return $rc
+}
+slack_pin_parse() {  # slack_pin_parse <link | #channel | @person>: SP_CH, SP_TS (a thread), SP_LABEL; SP_NAME when Claude has to look it up
+    local a=$1 rest; SP_CH=""; SP_TS=""; SP_LABEL=""; SP_NAME=""
+    case "$a" in
+        http*://*.slack.com/archives/*)
+            rest=${a#*/archives/}; SP_CH=${rest%%[/?#]*}
+            case "$rest" in */p[0-9]*) SP_TS=${rest#*/p}; SP_TS=${SP_TS%%[!0-9]*}; [ "${#SP_TS}" -gt 6 ] && SP_TS="${SP_TS:0:${#SP_TS}-6}.${SP_TS:${#SP_TS}-6}" ;; esac
+            case "$a" in *thread_ts=*) SP_TS=${a#*thread_ts=}; SP_TS=${SP_TS%%[!0-9.]*} ;; esac   # a reply in a thread: its thread
+            case "$SP_CH" in D*) SP_LABEL="DM" ;; *) SP_LABEL="channel" ;; esac; [ -n "$SP_TS" ] && SP_LABEL="thread" ;;
+        \#?*|@?*) SP_NAME=$a; SP_LABEL=$a ;;
+        *) return 1 ;;
+    esac
+    case "$SP_CH" in *[!A-Z0-9]*) return 1 ;; esac; case "$SP_TS" in *[!0-9.]*) return 1 ;; esac
+    return 0
+}
+slack_resolve() {  # slack_resolve <#channel | @person>: SP_CH (a channel id, or a user id for the DM), through Claude
+    local j what
+    if [ "${1#@}" != "$1" ]; then what="user whose name or display name is '${1#@}' (slack_search_users)"
+    else what="channel named '${1#\#}' (slack_search_channels, public and private)"; fi
+    j=$(claude_json "Find the Slack $what. Reply with only JSON: {\"id\":\"<the id>\"} or {\"id\":null} when there is no clear match." 90) || return 1
+    SP_CH=$(printf '%s' "$j" | jq -r '.id // empty' 2>/dev/null)
+    case "$SP_CH" in ''|*[!A-Z0-9]*) SP_CH=""; return 1 ;; esac
+}
+slack_rewait() {  # slack_rewait <file>: waits again: no Slack message from before counts (the newer of now and the last seen one)
+    local f=$1 seen now; topic_set "$f" slack_msg ""
+    [ -n "$(topic_get "$f" slack_channel)" ] || return 0
+    seen=$(topic_get "$f" slack_seen 0); now="$(date +%s).000000"
+    awk -v a="$now" -v b="$seen" 'BEGIN { exit !(a + 0 > b + 0) }' && topic_set "$f" slack_seen "$now"
+    return 0
+}
+slack_pin() {  # slack_pin <file> <link | #channel | @person | off>: pins (or unpins) a Slack channel, DM or thread on the topic
+    local f=$1
+    if [ "$2" = off ] || [ "$2" = none ]; then
+        for k in slack_channel slack_thread slack_label slack_seen slack_msg; do topic_set "$f" "$k" ""; done; return 0
+    fi
+    slack_pin_parse "$2" || { echo "bhote: a Slack link (copy link), #channel or @person" >&2; return 1; }
+    if [ -n "$SP_NAME" ]; then slack_resolve "$SP_NAME" || { echo "bhote: Slack: $SP_NAME not found (or Claude Code with its Slack connector is not set up)" >&2; return 1; }; fi
+    topic_set "$f" slack_channel "$SP_CH"; topic_set "$f" slack_thread "$SP_TS"; topic_set "$f" slack_label "$SP_LABEL"
+    topic_set "$f" slack_seen "$(date +%s).000000"; topic_set "$f" slack_msg ""
+}
+slack_me() {  # slack_me: the Slack user id of this Claude connector (kept in $DATA_DIR/slack/me); SLACK_NAME = its name
+    local j id; SLACK_NAME=""
+    j=$(claude_json "Call slack_read_user_profile once (no user_id). Reply with only JSON: {\"id\":\"<user id>\",\"name\":\"<display name>\"}" 60) || return 1
+    id=$(printf '%s' "$j" | jq -r '.id // empty' 2>/dev/null); SLACK_NAME=$(printf '%s' "$j" | jq -r '.name // empty' 2>/dev/null | tr -d '[:cntrl:]')
+    case "$id" in ''|*[!A-Z0-9]*) return 1 ;; esac
+    mkdir -p "$DATA_DIR/slack"; printf '%s\n' "$id" > "$DATA_DIR/slack/me"
+}
+slack_check() {  # one round of the watch: every waiting topic with a pin, in one Claude call
+    local i f pins="" me j n=0 id st ts maxts who txt
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = waiting ] || continue; f=${T_FILE[$i]}
+        local ch th seen; ch=$(topic_get "$f" slack_channel); [ -n "$ch" ] || continue
+        th=$(topic_get "$f" slack_thread); seen=$(topic_get "$f" slack_seen 0)
+        pins="$pins${pins:+,}$(printf '{"topic":%s,"channel_id":%s,"thread_ts":%s,"oldest":%s}' "$(json_str "${T_ID[$i]}")" "$(json_str "$ch")" "$(json_opt "$th")" "$(json_str "$seen")")"; n=$(( n + 1 ))
+    done
+    [ "$n" -gt 0 ] || return 0
+    me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); [ -n "$me" ] || { slack_me && me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); }   # who I am: once
+    j=$(claude_json "You check Slack for new messages, read-only. For each pin in this list: when thread_ts is set, call slack_read_thread(channel_id, message_ts=thread_ts, oldest), else slack_read_channel(channel_id, oldest, limit 20). Pins: [$pins]. Reply with only JSON, no prose: {\"pins\":[{\"topic\":\"<topic>\",\"error\":<null or short text>,\"messages\":[{\"ts\":\"<ts>\",\"user\":\"<user id>\",\"name\":\"<display name>\",\"text\":\"<first 100 characters>\"}]}]}. List only messages newer than oldest, the thread parent never." 150)
+    if [ -z "$j" ]; then printf 'error %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"; return 1; fi
+    while IFS=$US read -r id maxts who txt; do
+        [ -n "$id" ] || continue; f="$TOPIC_DIR/$id.topic"; [ -f "$f" ] || continue
+        st=$(topic_get "$f" status); seen=$(topic_get "$f" slack_seen 0)
+        case "$maxts" in ''|*[!0-9.]*) continue ;; esac
+        awk -v a="$maxts" -v b="$seen" 'BEGIN { exit !(a + 0 > b + 0) }' || continue
+        topic_set "$f" slack_seen "$maxts"
+        if [ -n "$who" ] && [ "$st" = waiting ]; then             # someone else wrote: the topic waits for you now
+            topic_set "$f" status review; topic_set "$f" slack_msg "$who: $txt"
+            notify "Slack: $(topic_get "$f" title)" "$who: $txt" request
+        fi
+    done <<< "$(printf '%s' "$j" | jq -r --arg me "$me" '
+        def clean: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
+        .pins[]? | select(.topic | test("^[A-Za-z0-9_-]+$")) | . as $p
+        | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")))] | sort_by(.ts | tonumber)) as $m
+        | (if $me == "" then null else ([$m[] | select(.user != $me)] | last) end) as $o   # (who I am unknown: only move on)
+        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | clean | .[0:100]) else "" end)] | join("\u001f")' 2>/dev/null)"
+    printf 'ok %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"
+    poke
 }
 
 # ── run. BHOTE_ONCE=1 prints a view once and exits (BHOTE_VIEW=splash|main|settings picks it); otherwise it runs as a panel:
@@ -2457,8 +2572,18 @@ setup_step_behaviour() {
         w_choose c "Prefer the agents on:" "$keys" "$def" || return
         cfg_set AUTO_ASSIGN_MACHINE "${opts[$(( c - 1 ))]}"
     fi
+    w_say "Slack: a waiting topic can carry a Slack channel, DM or thread. When someone writes there, the topic goes to review. bhote asks Claude Code for it (its Slack connector, read-only; a short Haiku call every $(cfg_get SLACK_EVERY 120) s while a pin waits). One machine is enough."
+    if command -v "${BHOTE_CLAUDE:-claude}" >/dev/null 2>&1; then
+        w_yn "Watch pinned Slack channels from this machine?" "$([ "$(cfg_get SLACK_WATCH off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+        case $r in
+            0) w_say "Asking Claude Code for your Slack user (a few seconds) ..."
+               if slack_me; then cfg_set SLACK_WATCH on; w_ok "Slack" "connected as ${SLACK_NAME:-$(cat "$DATA_DIR/slack/me")}"
+               else cfg_set SLACK_WATCH off; w_bad "Slack" "Claude Code has no Slack connector here (claude.ai › Connectors › Slack), stays off"; fi ;;
+            1) cfg_set SLACK_WATCH off ;;
+        esac
+    else w_warn "Slack" "no claude command on this machine: the watch needs Claude Code with its Slack connector"; fi
     w_line
-    w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "auto-assign" "$(cfg_get AUTO_ASSIGN off)$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && printf ', prefer %s' "$(cfg_get AUTO_ASSIGN_MACHINE any)")"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"
+    w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "auto-assign" "$(cfg_get AUTO_ASSIGN off)$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && printf ', prefer %s' "$(cfg_get AUTO_ASSIGN_MACHINE any)")"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"; w_ok "slack watch" "$(cfg_get SLACK_WATCH off)"
     w_continue
 }
 setup_step_panel() {
@@ -3015,9 +3140,11 @@ topic_json() {  # topic_json <file>
     as=$(topic_get "$f" agent_session)
     [ "$st" = waiting ] || wf=""
     [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")")
-    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"created":%s,"updated":%s}' \
+    local sch slack=null; sch=$(topic_get "$f" slack_channel)
+    [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg)")")
+    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"created":%s,"updated":%s}' \
         "$(json_str "$(topic_id "$f")")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
-        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" \
+        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" "$slack" \
         "$(json_num "$(topic_get "$f" created)")" "$(json_num "$(topic_get "$f" updated)")"
 }
 cli_show() {  # cli_show <file> [--json]
@@ -3029,6 +3156,8 @@ cli_show() {  # cli_show <file> [--json]
     if [ -n "$desc" ]; then printf '  description: %s\n' "$desc"; fi
     if [ -n "$ag" ]; then printf '  agent: %s (%s)\n' "$ag" "$(topic_get "$f" agent_machine)"; fi
     if [ "$st" = waiting ] && [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
+    if [ -n "$(topic_get "$f" slack_channel)" ]; then printf '  slack: %s%s\n' "$(topic_get "$f" slack_label)" "$( [ "$st" = waiting ] && echo " (watched)")"; fi
+    if [ "$st" = review ] && [ -n "$(topic_get "$f" slack_msg)" ]; then printf '  slack message: %s\n' "$(topic_get "$f" slack_msg)"; fi
     return 0
 }
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
@@ -3213,10 +3342,13 @@ bhote — topics and agents next to herdr.
 
   bhote                              the panel
   bhote add <title> [options]        new topic   -d <text> description · @Name or -w Name waiting for Name · -s now|next|later|done
+                                     · --slack <pin> a Slack channel to watch while it waits
   bhote list [--all] [-s <status>]   the open topics (--all: also done ones), numbered
   bhote show <ref>                   one topic
   bhote now|next|review|later|done <ref>   start or resume · up next · ready for review · park · mark done
-  bhote wait <ref> <Name>            waiting for Name (from now)
+  bhote wait <ref> <Name> [--slack <pin>]   waiting for Name (from now)
+  bhote slack <ref> <pin|off>        pin a Slack channel, DM or thread: a message from someone else sets the waiting topic
+                                     to review (<pin>: a Slack link, #channel or @person; needs SLACK_WATCH on one machine)
   bhote rename <ref> <title>         new title
   bhote desc <ref> [<text>]          new description (at most 140 characters; none = remove it)
   bhote rm <ref>                     delete
@@ -3258,12 +3390,13 @@ bhote_cli() {
         current) bhote_info; cli_current ;;
         find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
-        add)  local title="" who="" st="" desc="" arg
+        add)  local title="" who="" st="" desc="" arg pin=""
               while [ $# -gt 0 ]; do
                   case "$1" in
                       --waiting|-w) who=${2:-}; shift ;;
                       --status|-s) st=${2:-}; shift ;;
                       --desc|-d) desc=${2:-}; shift ;;
+                      --slack) pin=${2:-}; shift ;;
                       @?*) who=${1#@} ;;
                       --) shift; title="${title:+$title }$*"; break ;;
                       -?*) echo "bhote: unknown option '$1' for add (a title starting with - goes after --)" >&2; return 1 ;;
@@ -3280,6 +3413,13 @@ bhote_cli() {
                   [ -n "${HERDR_WORKSPACE_ID:-}" ] && topic_set "$f" agent "$(herdr workspace list 2>/dev/null | jq -r --arg w "$HERDR_WORKSPACE_ID" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // "agent"' 2>/dev/null)"
               fi
               case "$st" in next|later|done|review) topic_set "$f" status "$st" ;; esac
+              [ -n "$pin" ] && { slack_pin "$f" "$pin" || echo "bhote: the topic is there, without the Slack pin" >&2; }
+              cli_done; topics_load; cli_show "$f" $json ;;
+        slack) local f; [ $# -ge 2 ] || { echo "bhote: slack <ref> <Slack link | #channel | @person | off>" >&2; return 1; }
+              f=$(topic_ref_sync "$1") || return $?
+              slack_pin "$f" "$2" || return 1
+              [ "$2" != off ] && [ "$(topic_get "$f" status)" != waiting ] && echo "bhote: pinned; it is watched while the topic waits (bhote wait)" >&2
+              [ "$2" != off ] && [ "$(cfg_get SLACK_WATCH off)" != on ] && echo "bhote: SLACK_WATCH is off on this machine (switch it on where Claude Code has the Slack connector)" >&2
               cli_done; topics_load; cli_show "$f" $json ;;
         list|ls) local all="" only="" i first=1
               while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --status|-s) only=${2:-}; shift ;; *) echo "bhote: unknown option '$1' for list" >&2; return 1 ;; esac; shift; done
@@ -3316,8 +3456,11 @@ bhote_cli() {
                        else topic_set "$f" status now; topic_set "$f" waiting_for ""; fi ;;
                   later) topic_set "$f" status later ;;
                   next) topic_set "$f" status next ;;
-                  wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }
-                        topic_set "$f" status waiting; topic_set "$f" waiting_for "$*"; topic_set "$f" waiting_since "$(date +%s)" ;;
+                  wait) local wpin="" wargs=()
+                        while [ $# -gt 0 ]; do case "$1" in --slack) wpin=${2:-}; shift ;; *) wargs[${#wargs[@]}]=$1 ;; esac; shift; done
+                        [ ${#wargs[@]} -gt 0 ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name> [--slack <link>])" >&2; return 1; }
+                        topic_set "$f" status waiting; topic_set "$f" waiting_for "${wargs[*]}"; topic_set "$f" waiting_since "$(date +%s)"
+                        if [ -n "$wpin" ]; then slack_pin "$f" "$wpin" || echo "bhote: waiting, without the Slack pin" >&2; else slack_rewait "$f"; fi ;;
                   rename) [ -n "${1:-}" ] || { echo "bhote: rename needs a title" >&2; return 1; }; topic_set "$f" title "$*" ;;
                   rm) local rid; rid=$(topic_id "$f"); topic_set "$f" deleted 1 ;;
                   desc) local dd="$*"; [ "${#dd}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
