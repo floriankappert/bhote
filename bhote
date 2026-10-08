@@ -2019,6 +2019,13 @@ menu_line() {  # menu_line <selected: 1 or empty> <text>: a choice; the selected
 MENU_ITEMS=()                                                  # "key|label", made for the selected topic (menu_build)
 menu_build() {  # menu_build <file>
     local f=$1 st ag; st=$(topic_get "$f" status now); ag=$(topic_get "$f" agent)
+    if [ "$st" = done ]; then                                    # a finished topic: take it up again, move it, or tidy it
+        [ "${P_N:-0}" -gt 0 ] || projects_load
+        MENU_ITEMS=("reopen|Reopen: work on it again" "next|Up next" "later|Park for later")
+        [ "$P_N" -gt 0 ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
+        MENU_ITEMS=("${MENU_ITEMS[@]}" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+        return
+    fi
     MENU_ITEMS=("start|Start with agent ...")
     [ "$st" = waiting ] && [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="resume|The wait is over: $ag goes on"
     [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
@@ -2028,7 +2035,8 @@ menu_build() {  # menu_build <file>
     [ "$P_N" -gt 0 ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
     if [ -n "$(topic_get "$f" slack_channel)" ]; then MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: unpin $(topic_get "$f" slack_label)"
     else MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: pin a channel ..."; fi
-    MENU_ITEMS=("${MENU_ITEMS[@]}" "later|Park for later" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+    [ "$st" = later ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="later|Park for later"
+    MENU_ITEMS=("${MENU_ITEMS[@]}" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
 }
 bhote_menu() {  # the topic's page: title and description in full (wrapped), its status, then the numbered actions
     local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
@@ -2111,8 +2119,8 @@ menu_edit_field() {  # menu_edit_field <title|description>: the editor where the
 }
 menu_num_line() {  # menu_num_line <selected 1|""> <number> <text>: an action with its number key; the selected one on the bar
     local w=$(( ${COLS:-44} - 2 )) t; clip_set t "$3" $(( w - 6 ))
-    if [ -n "$1" ]; then printf '%s  %s%s%s  %s%s%*s%s\n' "$SELBG" "$C" "$2" "$X$SELBG" "$LSEL" "$t" $(( w - 5 - ${#t} )) "" "$X"
-    else printf '  %s%s%s  %s%s%s\n' "$C" "$2" "$X" "$L" "$t" "$X"; fi
+    if [ -n "$1" ]; then printf '%s  %s%-2s%s %s%s%*s%s\n' "$SELBG" "$C" "$2" "$X$SELBG" "$LSEL" "$t" $(( w - 5 - ${#t} )) "" "$X"   # (the number in two columns: 10 and 11 line up)
+    else printf '  %s%-2s%s %s%s%s\n' "$C" "$2" "$X" "$L" "$t" "$X"; fi
 }
 # ── suggestions: what the running agents work on (the "task" of each agent pane) and is not a topic yet. "a" lists them; adopting one
 # makes it a topic that is already assigned to that agent. "x" dismisses one for good (kept in $DATA_DIR/dismissed).
@@ -2491,6 +2499,7 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
                [ "$(cfg_get SLACK_WATCH off)" = on ] || FLASH_MSG="$FLASH_MSG (Slack monitor is off here: settings › Connections)"
            else FLASH_MSG="✗ ${perr#bhote: }"; fi
            FLASH_UNTIL=$(( SECONDS + 8 )); return 0 ;;
+        reopen) topic_set "$f" status now; topic_set "$f" waiting_for "" ;;
         next) topic_set "$f" status next ;;
         later) topic_set "$f" status later ;;
         done) topic_set "$f" status done ;;
