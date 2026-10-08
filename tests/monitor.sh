@@ -126,13 +126,13 @@ out=$(cd "$T" && bash "$OLDPWD/bhote" test run -n unit -- sh -c 'echo "12 runs, 
 r=$(cat "$BHOTE_DATA"/testruns/*.run); echo "$r" | grep -q "^exit=3" && echo "$r" | grep -q "^summary=12 runs · 1 failures · 0 errors" && ok "test run: a record with the Minitest summary" || bad "run record: $r"
 printf 'Test Files  3 passed (3)\n      Tests  2 failed | 40 passed (42)\n' > "$T/v.log"; [ "$(test_summary "$T/v.log")" = "2 failed · 40 passed" ] && ok "summary: Vitest" || bad "vitest: $(test_summary "$T/v.log")"
 printf 'ok   a\nok   b\nFAIL c\n' > "$T/b.log"; [ "$(test_summary "$T/b.log")" = "2 ok · 1 FAIL" ] && ok "summary: bhote's own tests" || bad "bhote summary: $(test_summary "$T/b.log")"
-mkdir -p "$HOME/.cache/ims-test-status"; ms=$(( $(date +%s) * 1000 ))
-printf '{"tree":"web-wt1","suite":"server","done":5,"total":10,"passed":40,"failed":0,"startedAt":%s,"updatedAt":%s,"finished":false,"ok":null}' "$ms" "$ms" > "$HOME/.cache/ims-test-status/web-wt1.server.json"
-printf '{"tree":"web-wt1","suite":"client","done":9,"total":9,"passed":90,"failed":2,"startedAt":1000,"updatedAt":2000,"finished":true,"ok":false}' > "$HOME/.cache/ims-test-status/web-wt1.client.json"
+mkdir -p "$HOME/.cache/bhote/test-status"; ms=$(( $(date +%s) * 1000 ))
+printf '{"tree":"web-wt1","suite":"server","done":5,"total":10,"passed":40,"failed":0,"startedAt":%s,"updatedAt":%s,"finished":false,"ok":null}' "$ms" "$ms" > "$HOME/.cache/bhote/test-status/web-wt1.server.json"
+printf '{"tree":"web-wt1","suite":"client","done":9,"total":9,"passed":90,"failed":2,"startedAt":1000,"updatedAt":2000,"finished":true,"ok":false}' > "$HOME/.cache/bhote/test-status/web-wt1.client.json"
 l=$(tests_local)
 echo "$l" | grep -q "web-wt1${US}server${US}running${US}5${US}10" && echo "$l" | grep -q "web-wt1${US}client${US}failed${US}9${US}9${US}2 failed · 90 passed" && ok "status files: running with progress, failed with counts" || bad "status files: $l"
-printf '{"tree":"evil\\u001b[31m","suite":"s","done":"a[$(touch %s/pwned)]","total":"9","passed":1,"failed":0,"startedAt":%s,"updatedAt":%s,"ok":null}' "$T" "$ms" "$ms" > "$HOME/.cache/ims-test-status/evil.json"
-l=$(tests_local | grep evil); rm -f "$HOME/.cache/ims-test-status/evil.json"
+printf '{"tree":"evil\\u001b[31m","suite":"s","done":"a[$(touch %s/pwned)]","total":"9","passed":1,"failed":0,"startedAt":%s,"updatedAt":%s,"ok":null}' "$T" "$ms" "$ms" > "$HOME/.cache/bhote/test-status/evil.json"
+l=$(tests_local | grep evil); rm -f "$HOME/.cache/bhote/test-status/evil.json"
 case "$l" in *$'\033'*) bad "status file: escape code kept" ;; *) [ -n "$l" ] && ok "status file: control characters are cleaned" || bad "status file: dropped: $l" ;; esac
 printf 'x  3 runs, 9 assertions, 1 failures, 0 errors, 0 skips\n' > "$T/m.log"; [ "$(test_summary "$T/m.log")" = "3 runs · 1 failures · 0 errors" ] && ok "summary: Minitest after other text" || bad "minitest: $(test_summary "$T/m.log")"
 [ -e "$T/pwned" ] && bad "status file: a command ran" || ok "status file: a number field cannot run a command"

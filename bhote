@@ -102,12 +102,12 @@ TEST_EVERY|60|int:15:3600|Seconds between two test checks
 TEST_LOCAL|on|bool|Test monitor: local runs (bhote test run -- <command>) and live status files
 TEST_GITHUB|on|bool|Test monitor: the test jobs of GitHub Actions
 TEST_CIRCLECI|on|bool|Test monitor: the test jobs of CircleCI
-TEST_STATUS_DIR|~/.cache/ims-test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok, as IMS writes them)
+TEST_STATUS_DIR|~/.cache/bhote/test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok; the format is in docs/monitors.md)
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends its turn with a question gets a review topic of its own (the question is its description); it goes when the agent works again
 MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
-CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
+CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
 THEME|terminal|enum:terminal:catppuccin|Colours: terminal (follows the terminal and system theme) or catppuccin (exact colours)
 SPLASH_AUTOCLOSE|on|bool|The welcome screen closes by itself
@@ -120,7 +120,7 @@ TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of
 DONE_MAX|7|int:0:999|The last done topics shown above the agents (0: none)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
 NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve
-PROJECT_COLORS|marketing=pink,ims=teal,bilendo=yellow,bhote=green,micro=mauve|text|Colour of the project captions in the agent list: part-of-name=colour (red teal peach mauve blue green yellow pink orange grey), first match wins; other projects are grey
+PROJECT_COLORS||text|Colour of the project captions in the agent list: part-of-name=colour (red teal peach mauve blue green yellow pink orange grey), first match wins; other projects are grey
 COLOR_TEXT||color|Override: text (#rrggbb)
 COLOR_DIM||color|Override: dim text
 COLOR_FRAME||color|Override: lines and frames
@@ -1177,7 +1177,7 @@ name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS r
 }
 project_color_set() {  # project_color_set <var> <project name>: its colour from PROJECT_COLORS (part-of-name=colour, first match), else grey
     local _r _p _c _col="$D" _rules
-    cfg_var _rules PROJECT_COLORS "marketing=pink,ims=teal,bilendo=yellow,bhote=green,micro=mauve"
+    cfg_var _rules PROJECT_COLORS ""
     while IFS= read -r _r; do
         _p=${_r%%=*}; _c=${_r#*=}; [ -n "$_p" ] || continue
         shopt -s nocasematch; if [[ $2 == *"$_p"* ]]; then shopt -u nocasematch
@@ -2778,18 +2778,16 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
 # $SHARED_DIR/deploys.list and tests.list, newest first: time US project US label US state US done US total US note US url
 # (state: running, queued, approval, ok, failed, canceled). Local test runs: `bhote test run -- <command>` (any framework;
 # the summary line of Minitest, Vitest, RSpec, pytest and bhote's own tests is read) and live status files (TEST_STATUS_DIR,
-# one JSON per suite as IMS writes them).
+# one JSON per suite, see docs/monitors.md).
 MON_DIR="$DATA_DIR/testruns"
-circleci_token() {  # the CircleCI token: CIRCLECI_TOKEN in the config, in the environment, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh
+circleci_token() {  # the CircleCI token: CIRCLECI_TOKEN in the config, else in the environment
     local t; cfg_var t CIRCLECI_TOKEN ""
     [ -n "$t" ] || t=${CIRCLECI_TOKEN:-${CIRCLE_TOKEN:-}}
-    [ -n "$t" ] || t=$(sed -n "s/^[[:space:]]*\(export[[:space:]][[:space:]]*\)\{0,1\}CIRCLECI_TOKEN=[\"']\{0,1\}\([A-Za-z0-9_-]*\).*/\2/p" "$HOME/.config/zsh/secrets.zsh" 2>/dev/null | head -1)
     printf '%s' "${t//[!A-Za-z0-9_-]/}"
 }
 circleci_token_from() {  # where the token comes from (for the settings and the setup), or 1
     local t; cfg_var t CIRCLECI_TOKEN ""; [ -n "$t" ] && { echo "bhote config"; return 0; }
     [ -n "${CIRCLECI_TOKEN:-${CIRCLE_TOKEN:-}}" ] && { echo "environment"; return 0; }
-    [ -n "$(circleci_token)" ] && { echo "~/.config/zsh/secrets.zsh"; return 0; }
     return 1
 }
 circleci_get() {  # circleci_get <API v2 path>: its JSON; 1 without a token or on an error. The token goes to curl on stdin (never on a command line)
@@ -2976,7 +2974,7 @@ tests_local() {  # the local runs (bhote test run) and the live status files (TE
         local s=running; if [ -n "$en" ]; then [ "$ex" = 0 ] && s=ok || s=failed; elif [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then s=canceled; fi
         mon_line "$st" "${pj:-$tr}" "$nm" "$s" "" "" "$sm" ""
     done
-    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/ims-test-status"); dir=${dir/#\~/$HOME}
+    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
     for f in "$dir"/*.json; do
         [ -f "$f" ] || continue
         jq -r --argjson now "$now" '
@@ -3815,7 +3813,7 @@ setup_step_behaviour() {
     w_yn "Does an agent whose workspace runs tests count as busy?" "$([ "$(cfg_get TESTS_BUSY off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set TESTS_BUSY on ;; 1) cfg_set TESTS_BUSY off ;; esac
     w_head "Auto-assign"
-    w_say "Auto-assign: a topic you set to now goes to the next free agent of its project by itself, 20 s after its last change. The project decides which agent: a topic without one gets it from a project name in its title or description (\"Fix the IMS export\" → IMS); if there is none, nothing starts until you give it a project (topic page › Project). With two machines sharing topics, switch it on on one of them."
+    w_say "Auto-assign: a topic you set to now goes to the next free agent of its project by itself, 20 s after its last change. The project decides which agent: a topic without one gets it from a project name in its title or description (\"Fix the shop export\" → Shop); if there is none, nothing starts until you give it a project (topic page › Project). With two machines sharing topics, switch it on on one of them."
     w_yn "Auto-assign now topics to the next free agent?" "$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTO_ASSIGN on ;; 1) cfg_set AUTO_ASSIGN off ;; esac
     if [ "$(cfg_get AUTO_ASSIGN off)" = on ]; then

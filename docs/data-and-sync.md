@@ -15,7 +15,7 @@ created=1791399233
 updated=1791399233
 deleted=0
 description=
-agent=IMS (wt1)
+agent=Shop (wt1)
 agent_machine=Mac
 agent_pane=wA:p1
 ```
