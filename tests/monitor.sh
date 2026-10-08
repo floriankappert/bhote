@@ -151,6 +151,13 @@ NEWFEAT=1; COLS=60; view_head | grep -q "New Features Available · w Start Wizar
 NEWFEAT=0; view_head | grep -q "New Features" && bad "head: line without new features" || ok "head: no line when up to date"
 [ "$(step_level monitors)" -gt 1 ] && [ "$(step_level checks)" = 1 ] && ok "wizard: the monitor step is a level-2 step" || bad "step_level"
 
+# updates: the newest tag against this version; the head and the command that updates a checkout
+version_gt 0.5.10 0.5.9 && ! version_gt 0.5.1 0.5.1 && ! version_gt 0.4.9 0.5.0 && version_gt 1.0.0 0.9.9 && ok "update: versions compare numerically" || bad "version_gt"
+mkdir -p "$DATA_DIR"; printf 'checked=1\nlatest=9.9.9\n' > "$UPDATE_FILE"; update_load; [ "$UPD_LATEST" = 9.9.9 ] && ok "update: a newer version is noticed" || bad "update_load: $UPD_LATEST"
+printf 'checked=1\nlatest=0.0.1\n' > "$UPDATE_FILE"; update_load; [ -z "$UPD_LATEST" ] && ok "update: an older one is not" || bad "update_load old: $UPD_LATEST"
+printf 'latest=1.2.3; touch %s/pwn\n' "$T" > "$UPDATE_FILE"; update_load; [ -z "$UPD_LATEST" ] && [ ! -e "$T/pwn" ] && ok "update: a bad file is ignored" || bad "update_load bad"
+case "$(update_command)" in "git -C "*" pull"|*"pacman"*|"brew update"*) ok "update: a command for this install" ;; *) bad "update_command: $(update_command)" ;; esac
+
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"

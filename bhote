@@ -104,6 +104,7 @@ TEST_LOCAL|on|bool|Test monitor: local runs (bhote test run -- <command>) and li
 TEST_GITHUB|on|bool|Test monitor: the test jobs of GitHub Actions
 TEST_CIRCLECI|on|bool|Test monitor: the test jobs of CircleCI
 TEST_STATUS_DIR|~/.cache/ims-test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok, as IMS writes them)
+UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -748,6 +749,10 @@ ui_load() {
     U_STORE_STATE=$st
     local _sd _wl; cfg_var _sd SETUP_DONE ""; cfg_var _wl WIZARD_LEVEL ""; num_set _wl "$_wl" 1; NEWFEAT=0
     [ -n "$_sd" ] && [ "$_wl" -lt "$FEATURE_LEVEL" ] && NEWFEAT=1
+    local _uc; cfg_var _uc UPDATE_CHECK on; UPD_LATEST=""; [ "$_uc" = on ] && update_load
+    HEAD_ROWS=0; HEAD_NOTE=""
+    [ -n "$UPD_LATEST" ] && { [ -n "${UPD_CMD:-}" ] || UPD_CMD=$(update_command); HEAD_NOTE="⬆ Update available v$UPD_LATEST · , settings"; HEAD_ROWS=1; }
+    [ "$NEWFEAT" = 1 ] && HEAD_ROWS=$(( HEAD_ROWS + 1 ))
     STORE_TAG=""; [ "$U_STORE" = remote ] && [ "$st" = offline ] && STORE_TAG=" · offline"
     AG_N=0; AG_LINES=()
     for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do
@@ -921,11 +926,11 @@ auto_assign() {
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
-    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead
-    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
+    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999
+    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
-        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
+        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         lead=0
@@ -956,6 +961,9 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             if [ "$(cfg_get TEST_MONITOR off)" = on ] && ! { [ -n "$tst_pid" ] && kill -0 "$tst_pid" 2>/dev/null; }; then
                 cfg_var every_t TEST_EVERY 60; num_set every_t "$every_t" 60
                 [ $(( SECONDS - last_t )) -ge "$every_t" ] && { last_t=$SECONDS; ( monitor_fetch tests ) & tst_pid=$!; }
+            fi
+            if [ "$(cfg_get UPDATE_CHECK on)" = on ] && [ $(( SECONDS - last_u )) -ge 21600 ] && ! { [ -n "$upd_pid" ] && kill -0 "$upd_pid" 2>/dev/null; }; then
+                last_u=$SECONDS; ( update_fetch ) & upd_pid=$!                  # the first time at start, then every 6 hours
             fi
             remind_waiting
             auto_assign
@@ -1187,7 +1195,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     # with more than one machine each name has its machine's code in front (MAC|name). The icon says the state (as in the herdr
     # sidebar), muted when the machine does not answer. A project's agents come from their repo/project tokens (project_sync).
     local i k m id st raw off name task ic nc label cw maxr cell plain _ln n=0 shown hidden=0 r lines=() lc=() lid=() rid=()
-    maxr=$(( ${ROWS:-40} - 21 - ${NEWFEAT:-0} )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
+    maxr=$(( ${ROWS:-40} - 21 - ${HEAD_ROWS:-0} )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
     agent_divider
@@ -1317,6 +1325,7 @@ clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
 view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
     local name="Bhote v$VERSION" t; clip_set t " - Herd Management" $(( ${COLS:-44} - 5 - ${#name} ))
     printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X"
+    [ -n "${HEAD_NOTE:-}" ] && { clip_set t "$HEAD_NOTE" $(( ${COLS:-44} - 4 )); printf '  %s%s%s\n' "$GREEN" "$t" "$X"; }
     [ "${NEWFEAT:-0}" = 1 ] && { clip_set t "✦ New Features Available · w Start Wizard" $(( ${COLS:-44} - 4 )); printf '  %s%s%s\n' "$ORANGE" "$t" "$X"; }
     rule
 }
@@ -1563,6 +1572,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|UPDATE_CHECK|Check for updates"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
@@ -1581,6 +1591,10 @@ bhote_settings() {
     elif [ "${SET_PAGE:-main}" = connections ]; then printf '\n %sSettings › Connections%s\n' "$L" "$X"
     else printf '\n %sSettings%s  %s%s%s\n' "$L" "$X" "$D" "$(clip "${CONFIG_FILE/#$HOME/~}" $(( ${COLS:-44} - 13 )))" "$X"; fi
     rule; printf '\n'
+    if [ "${SET_PAGE:-main}" = main ]; then
+        if [ -n "${UPD_LATEST:-}" ]; then wrap_print 1 "$GREEN" "Update available: v$UPD_LATEST (this is v$VERSION). Run: ${UPD_CMD:-$(update_command)}"; printf '\n'
+        else printf ' %sbhote v%s%s\n\n' "$D" "$VERSION" "$X"; fi
+    fi
     for (( i = 0; i < ${#SET_ROWS[@]}; i++ )); do
         row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
         [ "$i" = "$cur" ] && sel=1
@@ -2919,6 +2933,40 @@ mon_age() {  # mon_age <seconds ago>: 40s, 5m, 3h, 2d
     local a=$1; [ "$a" -lt 0 ] && a=0
     if [ "$a" -lt 60 ]; then printf '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf '%dh' $(( a / 3600 )); else printf '%dd' $(( a / 86400 )); fi
 }
+# ── updates: the collector asks GitHub for the newest tag every 6 hours (UPDATE_CHECK); the answer is kept in UPDATE_FILE.
+UPDATE_FILE=$DATA_DIR/update; UPDATE_URL=https://github.com/floriankappert/bhote.git
+update_fetch() {  # asks for the newest version tag (a vX.Y.Z), writes UPDATE_FILE; 1 when it cannot be told
+    local out best tmp
+    out=$(with_timeout 25 git ls-remote --tags --refs "$UPDATE_URL") || return 1
+    best=$(printf '%s\n' "$out" | sed -n 's|.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$|\1|p' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+    [ -n "$best" ] || return 1
+    mkdir -p "$DATA_DIR"; tmp=$(mktemp "$DATA_DIR/update.XXXXXX") || return 1
+    printf 'checked=%s\nlatest=%s\n' "$(date +%s)" "$best" > "$tmp" && mv "$tmp" "$UPDATE_FILE"
+}
+version_gt() {  # version_gt <a> <b>: 0 when a is newer than b (x.y.z)
+    local a1 a2 a3 b1 b2 b3; IFS=. read -r a1 a2 a3 <<< "$1"; IFS=. read -r b1 b2 b3 <<< "$2"
+    num_set a1 "$a1" 0; num_set a2 "$a2" 0; num_set a3 "$a3" 0; num_set b1 "$b1" 0; num_set b2 "$b2" 0; num_set b3 "$b3" 0
+    [ $(( a1 * 1000000 + a2 * 1000 + a3 )) -gt $(( b1 * 1000000 + b2 * 1000 + b3 )) ]
+}
+update_load() {  # UPD_LATEST = the newer version there is, else empty (no subshell: it runs with every frame)
+    local _l _lt=""; UPD_LATEST=""
+    [ -r "$UPDATE_FILE" ] || return 0
+    while IFS= read -r _l; do case "$_l" in latest=*) _lt=${_l#latest=} ;; esac; done < "$UPDATE_FILE"
+    case "$_lt" in ''|*[!0-9.]*) return 0 ;; esac
+    version_gt "$_lt" "$VERSION" && UPD_LATEST=$_lt
+    return 0
+}
+update_command() {  # the command that updates bhote the way it was installed here
+    local p l d; p=$(command -v bhote 2>/dev/null); [ -n "$p" ] || p=$0
+    while [ -L "$p" ]; do l=$(readlink "$p"); case "$l" in /*) p=$l ;; *) p=$(dirname "$p")/$l ;; esac; done
+    case "$p" in
+        */Cellar/*|*/homebrew/*|*/linuxbrew/*) echo "brew update && brew upgrade bhote"; return ;;
+    esac
+    if command -v pacman >/dev/null 2>&1 && pacman -Qo "$p" >/dev/null 2>&1; then echo "makepkg -si in packaging/arch (pacman package bhote)"; return; fi
+    d=$(cd "$(dirname "$p")" 2>/dev/null && pwd)
+    if [ -n "$d" ] && git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then echo "git -C ${d/#$HOME/~} pull"; return; fi
+    echo "install the new version the way you installed bhote (see the README)"
+}
 mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_FILLED = the cells to colour)
     local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
     for (( _i = 0; _i < $4; _i++ )); do _b="$_b■"; done
@@ -2961,6 +3009,12 @@ monitors_block() {  # both monitors (when on), above the agents
     [ "$dm" = on ] && monitor_block deploys "$r"
     [ "$tm" = on ] && monitor_block tests "$r"
     return 0
+}
+cli_update() {  # bhote update: asks GitHub now; prints whether there is a newer version and the command that updates
+    update_fetch || { echo "bhote: could not ask GitHub (offline?)" >&2; return 1; }
+    update_load
+    if [ -n "$UPD_LATEST" ]; then printf 'Update available: v%s (this is v%s). Run: %s\n' "$UPD_LATEST" "$VERSION" "$(update_command)"
+    else printf 'bhote v%s is the newest version.\n' "$VERSION"; fi
 }
 cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now when the list is older than its interval)
     local kind=$1 at every t pj lb st d tot note url first=1
@@ -4534,6 +4588,7 @@ bhote_cli() {
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
         bar) cli_bar ;;
+        update) cli_update ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
