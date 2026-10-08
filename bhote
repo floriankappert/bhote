@@ -787,8 +787,8 @@ project_sync() {  # this machine's agents carry their repository and project as 
         ws=""; while IFS=$US read -r _m _id _st name _tk; do [ "$_id" = "$p" ] && { ws=$name; break; }; done < "$AGENT_LOCAL"
         project_for "$key" "$ws" || PROJ_ID=""
         [ "$key" = "$r" ] && [ "$PROJ_ID" = "$j" ] && continue
-        herdr pane report-metadata --source bhote $( [ -n "$key" ] && echo "--token repo=$key" || echo "--clear-token repo" ) \
-            $( [ -n "$PROJ_ID" ] && echo "--token project=$PROJ_ID" || echo "--clear-token project" ) "$p" >/dev/null 2>&1
+        herdr pane report-metadata "$p" --source bhote $( [ -n "$key" ] && echo "--token repo=$key" || echo "--clear-token repo" ) \
+            $( [ -n "$PROJ_ID" ] && echo "--token project=$PROJ_ID" || echo "--clear-token project" ) >/dev/null 2>&1   # (the pane first: herdr wants it so)
     done < "$AGENT_META_L"
     return 0
 }

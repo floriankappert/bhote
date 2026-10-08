@@ -153,7 +153,7 @@ mkdir -p "$T/prj"; git -C "$T/prj" init -q -b main; git -C "$T/prj" remote add o
 BHOTE_NO_SYNC=1 bhote_cli project add IMS >/dev/null; BHOTE_NO_SYNC=1 bhote_cli project pin IMS "$T/prj" >/dev/null
 printf 'Mac%sw1:p1%st1%sa%s%s%s%s%s\n' "$US" "$US" "$US" "$US" "" "$US" "" "$US" > "$AGENT_META_L"; sed -i.bak "s#\$#$T/prj#" "$AGENT_META_L"
 : > "$FAKE_LOG"; project_sync
-grep -q "report-metadata --source bhote --token repo=github.com/acme/ims --token project=proj-ims w1:p1" "$FAKE_LOG" && ok "projects: the agent gets its repo and project tokens" || bad "tokens: $(cat "$FAKE_LOG")"
+grep -q "report-metadata w1:p1 --source bhote --token repo=github.com/acme/ims --token project=proj-ims" "$FAKE_LOG" && ok "projects: the agent gets its repo and project tokens" || bad "tokens: $(cat "$FAKE_LOG")"
 sed -i.bak "s#${US}a${US}${US}${US}#${US}a${US}github.com/acme/ims${US}proj-ims${US}#" "$AGENT_META_L"; : > "$FAKE_LOG"; project_sync
 [ -s "$FAKE_LOG" ] && bad "tokens set again: $(cat "$FAKE_LOG")" || ok "projects: unchanged tokens are not set again"
 agent_meta Mac w1:p1 && [ "$AM_PROJECT" = proj-ims ] && [ "$AM_TAB" = t1 ] && ok "projects: agent_meta reads project and tab" || bad "agent_meta: $AM_PROJECT $AM_TAB"
