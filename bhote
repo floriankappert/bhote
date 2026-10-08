@@ -3593,6 +3593,7 @@ setup_step_behaviour() {
     w_say "When you hand a topic to an agent, it reports back with bhote review (you check it) or bhote done."
     w_yn "May an agent close its topic itself?" "$([ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AGENT_CAN_CLOSE on ;; 1) cfg_set AGENT_CAN_CLOSE off ;; esac
+    w_line
     w_say "Notifications: herdr pops up a short message when an agent hands a topic back for your review, when a topic is done, or when one has waited for your answer too long (the reminder time follows below)."
     w_yn "Show these notifications in herdr?" "$([ "$(cfg_get NOTIFY on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set NOTIFY on ;; 1) cfg_set NOTIFY off ;; esac
@@ -3600,6 +3601,7 @@ setup_step_behaviour() {
     setting_check WAIT_REMIND "$h" 2>/dev/null && cfg_set WAIT_REMIND "$(num_or "$h" "$h")"
     w_yn "Does an agent whose workspace runs tests count as busy?" "$([ "$(cfg_get TESTS_BUSY off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set TESTS_BUSY on ;; 1) cfg_set TESTS_BUSY off ;; esac
+    w_line
     w_say "Auto-assign: a topic you set to now (without an agent) goes to the next free agent by itself, 20 s after its last change. With two machines sharing topics, switch it on on one of them."
     w_yn "Auto-assign now topics to the next free agent?" "$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTO_ASSIGN on ;; 1) cfg_set AUTO_ASSIGN off ;; esac
@@ -3614,6 +3616,7 @@ setup_step_behaviour() {
         w_choose c "Prefer the agents on:" "$keys" "$def" || return
         cfg_set AUTO_ASSIGN_MACHINE "${opts[$(( c - 1 ))]}"
     fi
+    w_line
     w_say "Slack: a waiting topic can carry a Slack channel, DM or thread. When someone writes there, the topic goes to review. bhote asks Claude Code for it (its Slack connector, read-only; a short Haiku call every $(cfg_get SLACK_EVERY 120) s while a pin waits). One machine is enough."
     if command -v "${BHOTE_CLAUDE:-claude}" >/dev/null 2>&1; then
         w_yn "Watch pinned Slack channels from this machine?" "$([ "$(cfg_get SLACK_WATCH off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
