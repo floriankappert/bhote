@@ -1155,7 +1155,15 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
             if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null || cnt=$(( cnt + 1 )); else [ "${apj[$i]}" = "$pm" ] && cnt=$(( cnt + 1 )); fi
         done
         [ "$cnt" -gt 0 ] || continue
-        local cap cw2 rest2 pname; if [ "$pm" = "-" ]; then pname="no project"; else pname=$(project_name "$pm"); fi
+        local cap cw2 rest2 pname pmach=() npm=0 only=""; if [ "$pm" = "-" ]; then pname="no project"; else pname=$(project_name "$pm"); fi
+        for mm in "${machines[@]}"; do                         # the machines this project runs on: one only? then it goes into the caption
+            for (( i = 0; i < AG_N; i++ )); do
+                [ "${AG_LINES[$i]%%$US*}" = "$mm" ] || continue
+                if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
+                pmach[$npm]=$mm; npm=$(( npm + 1 )); break
+            done
+        done
+        [ "$npm" = 1 ] && [ "$nm" -gt 1 ] && { only=${pmach[0]}; pname="$pname · $only"; machine_offline "$only" && pname="$pname ◐"; }
         clip_set cap "$pname" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"; rest2=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest2" -lt 1 ] && rest2=1
         # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
         if [ "$pm" = "-" ]; then lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
@@ -1174,7 +1182,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                 dw_set plain "$label"; cells[$nc2]="$ic$X $nc$label$X"; cwid[$nc2]=$(( plain + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
             done
             [ "$nc2" -gt 0 ] || continue
-            if [ "$nm" -gt 1 ]; then                           # the machine, a sub-caption
+            if [ "$nm" -gt 1 ] && [ -z "$only" ]; then         # the machine, a sub-caption (when the project runs on more than one)
                 local away=""; machine_offline "$mm" && away=" ${ORANGE}◐ reconnecting${X}"
                 lines[$n]="    ${D}${mm}${X}${away}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
             fi
