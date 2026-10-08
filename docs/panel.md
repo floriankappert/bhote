@@ -31,7 +31,7 @@ Click an agent in the agent area to focus it in herdr. An agent on another machi
 client switch machines, so the key line says to switch to that machine in herdr.
 
 From anywhere in herdr, the key bound to `bhote.panel.focus` ([herdr plugin](herdr-plugin.md), e.g. prefix then `t`) jumps
-to the panel and back; the panel shows it bottom right (`^b t ⇄`).
+to the panel and back; the panel shows it bottom right (`Ctrl+B+T ⇄` (the keys as they are on the keyboard of the machine you type on: Ctrl+Option+T on a Mac, Ctrl+Alt+T elsewhere)).
 
 In menus and pickers: `↑↓` choose, `→`/`⏎` do it, `←`/`Esc` back; `x` dismisses a suggestion.
 

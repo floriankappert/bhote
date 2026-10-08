@@ -716,7 +716,7 @@ ui_load() {
     cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
     if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
-    if [ -n "${KEYS_CACHE:-}" ] && [ "$KEYS_CACHE" -nt "$RUN_DIR/keys.loaded" ]; then focus_key_set FOCUS_KEY; fi   # (the other machine's keys arrived or changed)
+    if [ -n "${KEYS_CACHE:-}" ] && [ "$KEYS_CACHE" -nt "$RUN_DIR/keys.loaded" ]; then focus_key_set FOCUS_KEY; cfg_var FIND_KEY_SHOW FIND_KEY off; key_pretty FIND_KEY_SHOW "$FIND_KEY_SHOW"; fi   # (the other machine's keys arrived or changed)
     local _sd _wl; cfg_var _sd SETUP_DONE ""; cfg_var _wl WIZARD_LEVEL ""; num_set _wl "$_wl" 1; NEWFEAT=0
     [ -n "$_sd" ] && [ "$_wl" -lt "$FEATURE_LEVEL" ] && NEWFEAT=1
     local _uc; cfg_var _uc UPDATE_CHECK on; UPD_LATEST=""; [ "$_uc" = on ] && update_load
@@ -1351,6 +1351,7 @@ keys_fetch() {  # the other machine's herdr config.toml into the cache (only whe
     local host tmp; keys_cache_set; [ -n "$KEYS_CACHE" ] || return 0
     host=$(store_host "$KEYS_MACHINE"); [ -n "$host" ] || return 1
     tmp=$(mktemp "$SHARED_DIR/herdr-keys.XXXXXX") || return 1
+    local os; os=$(store_sh "$host" 'uname -s' 2>/dev/null | head -1); case "$os" in Darwin|Linux) printf '%s\n' "$os" > "$KEYS_CACHE.os" ;; esac   # (before the config: that file's arrival reloads the keys)
     store_sh "$host" 'cat "${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml"' 2>/dev/null | head -c 200000 > "$tmp"
     if [ -s "$tmp" ] && ! cmp -s "$tmp" "$KEYS_CACHE" 2>/dev/null; then mv "$tmp" "$KEYS_CACHE"; else rm -f "$tmp"; fi
 }
@@ -1358,6 +1359,7 @@ focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when n
     local _k="" _p _cfg=$HERDR_CONFIG
     if [ "$HERDR_CONFIG" = "$HERDR_CONFIG_OWN" ]; then keys_cache_set; [ -n "$KEYS_CACHE" ] && _cfg=$KEYS_CACHE; fi   # (not when a scratch file is checked)
     HERDR_CONFIG_IN=$_cfg
+    KEYS_OS=$KEYS_OS_LOCAL; [ -n "$KEYS_CACHE" ] && [ -r "$KEYS_CACHE.os" ] && { read -r KEYS_OS < "$KEYS_CACHE.os"; } 2>/dev/null   # (the other machine's own system)
     if [ -r "$_cfg" ]; then
         _k=$(awk '
             function val(s, name) { if (!match(s, name " *= *\"[^\"]*\"")) return ""; s = substr(s, RSTART, RLENGTH); sub(/^[^"]*"/, "", s); sub(/"$/, "", s); return s }
@@ -1374,11 +1376,25 @@ focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when n
     [ -n "$KEYS_CACHE" ] && : > "$RUN_DIR/keys.loaded"
     key_pretty "$1" "$_k"
 }
-key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "^b t", "ctrl+alt+t" -> "^⌥t"
-    local _k=${2//[[:cntrl:]]/}
-    case "$_k" in off|none) _k="" ;; prefix+*) _k="${HERDR_PREFIX:-ctrl+b} ${_k#prefix+}" ;; esac
-    _k=${_k//ctrl+/^}; _k=${_k//shift+/⇧}; _k=${_k//alt+/⌥}; _k=${_k//cmd+/⌘}
-    printf -v "$1" '%s' "$_k"
+KEYS_OS_LOCAL=$(uname -s); KEYS_OS=$KEYS_OS_LOCAL      # the keyboard you type on decides the names: Mac (Control, Option, Command) or Linux
+key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "Ctrl+B+T", "ctrl+alt+t" -> "Ctrl+Option+T" on a Mac, "Ctrl+Alt+T" elsewhere
+    local _k=${2//[[:cntrl:]]/} _o="" _t _parts _i _mac=0; [ "${KEYS_OS:-}" = Darwin ] && _mac=1
+    case "$_k" in off|none|"") printf -v "$1" '%s' ""; return 0 ;; esac
+    _k=${_k//prefix/${HERDR_PREFIX:-ctrl+b}}
+    IFS=+ read -ra _parts <<< "$_k"
+    for (( _i = 0; _i < ${#_parts[@]}; _i++ )); do
+        _t=${_parts[$_i]}
+        case "$_t" in
+            ctrl|control) _t=Ctrl ;; shift) _t=Shift ;;
+            alt|option|opt) [ "$_mac" = 1 ] && _t=Option || _t=Alt ;;
+            cmd|command|super|meta|win) [ "$_mac" = 1 ] && _t=Cmd || _t=Super ;;
+            space) _t=Space ;; enter|return) _t=Enter ;; esc|escape) _t=Esc ;; tab) _t=Tab ;; backspace) _t=Backspace ;;
+            up|down|left|right|home|end|delete|insert|pageup|pagedown) _t="$(printf '%s' "${_t:0:1}" | tr '[:lower:]' '[:upper:]')${_t:1}" ;;
+            ?) _t=$(printf '%s' "$_t" | tr '[:lower:]' '[:upper:]') ;;
+        esac
+        _o="$_o${_o:++}$_t"
+    done
+    printf -v "$1" '%s' "$_o"
 }
 # The key is kept in a block of its own in herdr's config.toml ("# >>> bhote" .. "# <<< bhote"): bhote rewrites only that
 # block, and tools that regenerate the file can keep it (the dotfiles' term-theme does). herdr checks it on reload; a key it
