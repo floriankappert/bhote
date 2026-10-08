@@ -3,7 +3,7 @@
   "id": "bhote.bar",
   "name": "bhote",
   "version": "0.5.5",
-  "author": "Florian Kappert",
+  "author": "Florian Kappert, Jakob Beyer",
   "license": "MIT",
   "description": "bhote in the Omarchy bar: what waits for you (topics in review, agents that need an answer), the busy agents, and a click to the bhote panel in herdr.",
   "kinds": ["bar-widget"],

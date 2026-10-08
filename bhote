@@ -999,7 +999,7 @@ bhote_splash() {
 WORD
     blank
     mid "Herd Management" "${D}Herd Management${X}"
-    mid "by Florian Kappert" "${D}by Florian Kappert${X}"
+    mid "by Florian Kappert & Jakob Beyer" "${D}by Florian Kappert & Jakob Beyer${X}"
     blanks "$SG2"
     splash_prompt_row                                       # right under the wordmark; the gaps are all the same size
     if [ -n "$NEWS" ]; then                                  # cut to the frame: a wrapped line would push the whole screen up

@@ -1,6 +1,6 @@
 # bhote
 
-*by Florian Kappert*
+*by Florian Kappert and Jakob Beyer*
 
 A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you work on, who you wait for) next to your
 **agents** (who is free, who is busy). A single bash script, about 44 columns wide, with a small sheepdog that guards the herd.

@@ -1,6 +1,6 @@
 # bhote documentation
 
-*bhote by Florian Kappert — topics and agents side panel for herdr.*
+*bhote by Florian Kappert and Jakob Beyer — topics and agents side panel for herdr.*
 
 | | |
 |---|---|
