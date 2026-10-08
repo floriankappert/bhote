@@ -3104,14 +3104,17 @@ w_choose() {  # w_choose <var> <prompt> <allowed keys, e.g. 123> <default>: one 
     printf '%s%s%s\n' "$GREEN" "$W_KEY" "$X"; printf -v "$1" '%s' "$W_KEY"
 }
 w_button() { if [ "$color" = 1 ]; then printf '%s\033[7m %s \033[27m%s' "$L" "$1" "$X"; else printf '[ %s ]' "$1"; fi; }   # light on dark, inverted
-w_navbar() {  # w_navbar <first button> <skip 0|1> <back 0|1>: ⏎ <first> · → skip & next · ← back · q abort (what is not possible: dim)
-    local sk bk
+w_navbar() {  # w_navbar <first button> <skip 0|1> <back 0|1>: ← back · q abort on the left, ⏎ <first> · → skip & next on the right (what is not possible: dim)
+    local sk bk pad lw rw; w_width
     if [ "$2" = 1 ]; then sk="${L}→${X} skip & next"; else sk="${MUTED:-$D}→ skip & next${X}"; fi
     if [ "$3" = 1 ]; then bk="${L}←${X} back"; else bk="${MUTED:-$D}← back${X}"; fi
-    printf '  %s   %s   %s   %sq%s abort' "$(w_button "⏎ $1")" "$sk" "$bk" "$L" "$X"
+    lw=$(( 6 + 3 + 7 )); rw=$(( ${#1} + 4 + 3 + 13 ))                         # the visible widths: "← back   q abort", " ⏎ change    → skip & next"
+    [ "$color" = 1 ] || rw=$(( rw + 2 ))
+    pad=$(( W - lw - rw )); [ "$pad" -lt 2 ] && pad=2
+    printf '  %s   %s%*s%s   %s' "$bk" "${L}q${X} abort" "$pad" "" "$(w_button "⏎ $1")" "$sk"
 }
 w_continue() {  # the end of a step: ⏎ next, ← back (this step's start → the step before), q abort
-    printf '\n'; w_navbar next 0 "$( [ "${W_IDX:-0}" -gt 0 ] && echo 1 || echo 0)" | sed 's/→ skip \& next/          /'
+    printf '\n'; w_navbar next 0 "$( [ "${W_IDX:-0}" -gt 0 ] && echo 1 || echo 0)" | sed 's/→ skip \& next/             /'
     printf ' '; w_key "q<"
     case "$W_KEY" in q) W_QUIT=1; W_JUMP=quit ;; LEFT) [ "${W_IDX:-0}" -gt 0 ] && { W_QUIT=1; W_JUMP=back; } ;; esac
     printf '\n'; return 0
