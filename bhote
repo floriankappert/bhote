@@ -105,6 +105,7 @@ TEST_CIRCLECI|on|bool|Test monitor: the test jobs of CircleCI
 TEST_STATUS_DIR|~/.cache/ims-test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok, as IMS writes them)
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
+AUTO_REVIEW|on|bool|An agent that hands its turn back (a question, a choice to make) and has no topic gets a review topic of its own; it goes when the agent works again
 MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -198,6 +199,11 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     local f=$1 now old v=${3//[[:cntrl:]]/}; now=$(date +%s)      # no control character in a value: a newline would add keys
     [ "$2" = description ] && v=${v:0:$DESC_MAX}
     [ "$2" = title ] && v=${v:0:500}
+    if [ "$2" = status ] && [ "$v" != done ] && [ "$(topic_get "$f" status)" = done ]; then    # taken up again: the description says so (an agent given it knows it existed)
+        local dsc pre; dsc=$(topic_get "$f" description); pre="Reopened $(date +%Y-%m-%d)."
+        case "$dsc" in "Reopened "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) dsc=${dsc#Reopened ????-??-??}; dsc=${dsc#.}; dsc=${dsc# } ;; esac
+        topic_set "$f" description "$pre${dsc:+ $dsc}"
+    fi
     old=$(num_or "$(topic_get "$f" updated 0)" 0); [ "$now" -le "$old" ] && now=$(( old + 1 ))   # a change always counts as newer
     local tmp; tmp=$(mktemp "$f.XXXXXX") || return 1           # unique: the collector runs in a subshell with the same $$
     local x='^updated='; [ "$2" = status ] && [ "$v" != now ] && x='^updated=|^transfer_to=|^transfer_to_name=|^transfer_from='
@@ -4121,20 +4127,44 @@ cli_event() {
         | map(tostring | gsub("[^A-Za-z0-9:_-]"; "")) | map(if . == "" then "-" else . end) | join(" ")' 2>/dev/null)"
     poke
     push_peers                                                 # the other machines' panels show it at once, too
-    case "$st" in done|idle) ;; *) return 0 ;; esac
+    # the state this pane was in before (the first event after a start has none: an agent that was never busy is not "handing back")
+    local prev="" sf="$SHARED_DIR/evstate/${pane//[^A-Za-z0-9:_-]/}"
+    if [ -n "$pane" ] && [ "$pane" != - ]; then mkdir -p "$SHARED_DIR/evstate" 2>/dev/null; { read -r prev < "$sf"; } 2>/dev/null; printf '%s\n' "$st" > "$sf" 2>/dev/null; fi
+    case "$st" in done|idle|blocked|working) ;; *) return 0 ;; esac
     [ "$(cfg_get STORE local)" = remote ] && store_sync >/dev/null 2>&1   # the topic may have been handed out on the other machine
     [ "$pane" = - ] && pane=""; [ "$sess" = - ] && sess=""
     topics_load; now=$(date +%s)
+    local hit=0 auto
     for (( i = 0; i < T_N; i++ )); do
-        [ "${T_STATUS[$i]}" = now ] || continue
         # the session decides when both sides know it; a pane alone only on this machine, and only with no other session on record
         if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } \
            || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && { [ -z "$sess" ] || [ -z "${T_AS[$i]}" ]; }; }; then
-            [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 5 ] || continue      # the idle right after handing it over is not "finished"
-            f=${T_FILE[$i]}; topic_set "$f" status review
-            notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request
+            f=${T_FILE[$i]}
+            case "${T_STATUS[$i]}" in now|review|waiting|next) hit=1 ;; esac             # (it has a topic: no extra one)
+            case "$st" in
+                working)                                           # the user answered: what bhote put under review for it goes away or back
+                    if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
+                    elif [ "$(topic_get "$f" auto_back)" = 1 ] && [ "${T_STATUS[$i]}" = review ]; then topic_set "$f" status now; topic_set "$f" auto_back "" ; fi ;;
+                *)
+                    [ "${T_STATUS[$i]}" = now ] || continue
+                    [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 5 ] || continue      # the idle right after handing it over is not "finished"
+                    topic_set "$f" status review; topic_set "$f" auto_back 1
+                    notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request ;;
+            esac
         fi
     done
+    # no topic at all and the agent hands the turn back (or waits for an answer): a review topic of its own, gone when it works again
+    if [ "$st" != working ] && [ "$hit" = 0 ] && [ "$prev" = working ] && [ -n "$pane" ] && [ "$(cfg_get AUTO_REVIEW on)" = on ]; then
+        local line m_ aid ast anm atask; anm=""; atask=""
+        for line in "$AGENT_LOCAL"; do [ -r "$line" ] && while IFS=$US read -r m_ aid ast anm atask; do [ "$m_" = "$HOST" ] && [ "$aid" = "$pane" ] && break; anm=""; atask=""; done < "$line"; done
+        anm=${anm:-agent}
+        if topic_new "Your turn: ${anm//[[:cntrl:]]/}" "" "${atask//[[:cntrl:]]/}"; then
+            f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+            topic_set "$f" status review; topic_set "$f" auto 1; topic_set "$f" agent "$anm"; topic_set "$f" agent_machine "$HOST"; topic_set "$f" agent_pane "$pane"
+            [ -n "$sess" ] && topic_set "$f" agent_session "${sess//[^A-Za-z0-9-]/}"
+            notify "Your turn" "$anm" request
+        fi
+    fi
     return 0
 }
 # `bhote current`: the topic of the agent that asks (its Claude session, else its herdr pane). For a SessionStart hook: the

@@ -39,6 +39,10 @@ bhote add "<the work, short>" -d "<what the user has to check or decide, at most
 bhote review <id>
 ```
 
+bhote also watches herdr: when you hand the turn back without any of this, a review topic "Your turn: <you>" appears by itself and
+goes away when you work again. A topic you create yourself, with what the user has to check or decide in the description,
+is still better: it tells the user what the question is.
+
 When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
 Do not use `-w` for the user: waiting is for other people and things.
 

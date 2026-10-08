@@ -171,6 +171,13 @@ case "${MENU_ITEMS[*]}" in *"later|"*) bad "later menu offers Park for later" ;;
 rm -f "$mf"
 a1=$(COLS=40 menu_num_line "" 9 "Describe"); a2=$(COLS=40 menu_num_line "" 10 "Delete"); [ "${a1#*Describe}" != "$a1" ] && [ "$(printf '%s' "$a1" | sed 's/Describe.*//' | wc -c)" = "$(printf '%s' "$a2" | sed 's/Delete.*//' | wc -c)" ] && ok "menu: the text of 9 and 10 starts in the same column" || bad "menu numbers: [$a1] [$a2]"
 
+# a done topic that is taken up again says so in its description (once, with the new date)
+rf=$TOPIC_DIR/reopen.topic; printf 'id=reopen\ntitle=R\nstatus=done\ndescription=Check the export\nupdated=1\ndeleted=0\n' > "$rf"
+topic_set "$rf" status next; d1=$(topic_get "$rf" description); case "$d1" in "Reopened "????-??-??". Check the export") ok "reopen: the description says Reopened <date>" ;; *) bad "reopen note: $d1" ;; esac
+topic_set "$rf" status done; topic_set "$rf" status later; d2=$(topic_get "$rf" description); [ "$(printf '%s' "$d2" | grep -o 'Reopened' | wc -l | tr -d ' ')" = 1 ] && ok "reopen: the note is not doubled" || bad "reopen doubled: $d2"
+topic_set "$rf" status now; [ "$(topic_get "$rf" description)" = "$d2" ] && ok "reopen: other moves leave the description" || bad "reopen: description changed"
+rm -f "$rf"
+
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"

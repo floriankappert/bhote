@@ -218,4 +218,16 @@ echo "$frame" | grep -q "⎇" && bad "branch shown with GITHUB_BRANCHES=off" || 
 # a machine that does not answer is "unknown", not "gone" (a topic must not be taken for an agent that left)
 ( cfg_set REMOTE_AGENTS on; machine_known() { return 0; }; FAKE_DOWN=1 agent_live Laptop w1:p1; [ "$LIVE_ST" = unknown ] ) && ok "agent_live: no answer from herdr is unknown, not gone" || bad "agent_live down: $LIVE_ST"
 ( machine_known() { return 0; }; agent_live "$HOST" w1:p1; [ "$LIVE_ST" = idle ] || [ "$LIVE_ST" = working ] || [ "$LIVE_ST" = done ] ) && ok "agent_live: a local answer is read" || bad "agent_live local: $LIVE_ST"
+# an agent without a topic hands its turn back: a review topic appears, and it is gone when the agent works again
+ev() { HERDR_PLUGIN_EVENT_JSON=$(printf '{"data":{"pane_id":"%s","agent_status":"%s"}}' "$1" "$2") BHOTE_NO_SYNC=1 cli_event; }
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; cfg_set AUTO_REVIEW on; printf '%s\n' "$HOST${US}w9:p1${US}idle${US}IMS (main)${US}task" > "$AGENT_LOCAL"
+ev w9:p1 idle; [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "auto review: an agent that was never busy gets no topic" || bad "auto review at start"
+ev w9:p1 working; ev w9:p1 idle; af=$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | head -1)
+[ -n "$af" ] && [ "$(topic_get "$af" status)" = review ] && [ "$(topic_get "$af" auto)" = 1 ] && topic_get "$af" title | grep -q "IMS (main)" && ok "auto review: handing the turn back makes a review topic" || bad "auto review: $af"
+ev w9:p1 idle; [ "$(ls "$TOPIC_DIR"/*.topic | wc -l | tr -d ' ')" = 1 ] && ok "auto review: once only" || bad "auto review twice"
+ev w9:p1 working; [ "$(topic_get "$af" deleted)" = 1 ] && ok "auto review: gone when the agent works again" || bad "auto review not removed"
+# a topic of its own: now -> review when it hands back, and back to now when the user answered
+rm -f "$TOPIC_DIR"/*.topic; topic_new "Real work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w9:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
+ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$tf" status)" = review ] && ok "auto review: a topic in work goes to review" || bad "now->review: $(topic_get "$tf" status)"
+ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and back to now when the agent works again" || bad "review->now: $(topic_get "$tf" status)"
 rm -rf "$T"; exit $fail
