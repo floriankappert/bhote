@@ -178,6 +178,10 @@ topic_set "$rf" status done; topic_set "$rf" status later; d2=$(topic_get "$rf" 
 topic_set "$rf" status now; [ "$(topic_get "$rf" description)" = "$d2" ] && ok "reopen: other moves leave the description" || bad "reopen: description changed"
 rm -f "$rf"
 
+# done topics: the machine code of the agent that did it, only with more than one machine
+( HOST=Mac; AG_N=2; AG_LINES=($'Mac\037w1:p1\037idle\037a\037' $'Laptop\037w2:p1\037idle\037b\037'); MC_N=0; T_AM=(Laptop); done_mc 0; case "$DONE_MC" in [A-Z][A-Z][A-Z]) exit 0 ;; *) exit 1 ;; esac ) && ok "done: the machine code stands before the time" || bad "done_mc with two machines"
+( HOST=Mac; AG_N=1; AG_LINES=($'Mac\037w1:p1\037idle\037a\037'); MC_N=0; T_AM=(Mac); done_mc 0; [ -z "$DONE_MC" ] ) && ok "done: no code with one machine" || bad "done_mc with one machine: $DONE_MC"
+
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"
