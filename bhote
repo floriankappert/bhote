@@ -882,13 +882,14 @@ WORD
             sh="${D}${nw%%"$NEWS_LINK"*}${esc}[4:4m${esc}]8;;${NEWS_URL}${esc}\\${NEWS_LINK}${esc}]8;;${esc}\\${esc}[24m${nw#*"$NEWS_LINK"}${X}" ;; esac
         mid "NEW: $nw" "${GREEN}NEW:${X} ${sh}"; blanks $(( SG3 - 1 ))
     else blanks "$SG3"; fi
-    local mv=${#host} vv t   # the four lines are one block: centred as a whole, values start in one column
-    for vv in "${herdr_v:-?}" "$agents" "$T_N$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
+    local mv=${#host} vv t nt=0   # the four lines are one block: centred as a whole, values start in one column
+    for (( t = 0; t < T_N; t++ )); do [ "${T_STATUS[$t]}" = done ] || nt=$(( nt + 1 )); done   # the open ones (not done)
+    for vv in "${herdr_v:-?}" "$agents" "$nt$STORE_TAG"; do [ "${#vv}" -gt "$mv" ] && mv=${#vv}; done
     INFO_PAD=$(( (INNER - (9 + mv)) / 2 )); [ "$INFO_PAD" -lt 1 ] && INFO_PAD=1
     info "Machine " "$host"
     info "Herdr   " "${herdr_v:-?}"
     info "Agents  " "$agents"
-    info "Topics  " "$T_N$STORE_TAG"
+    info "Topics  " "$nt$STORE_TAG"
     blanks "$SG4"
     mid "n new · , settings · q quit" "${D}n new · , settings · q quit${X}"
     bottom

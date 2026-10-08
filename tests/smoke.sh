@@ -43,6 +43,11 @@ o=$(bv 15); case "$o" in *zZ*) ok_b=0 ;; esac                    # (never a cut-
 BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d bash ./bhote add "Real work" -s now >/dev/null; bv 30 | grep -q "bored" && ok_b=0
 [ "$ok_b" = 1 ] && echo "ok   main: bored agents when nothing is open, not cut off when low, gone with work" || { echo "FAIL main: bored agents"; fail=1; }
 rm -rf "$b"
+# the welcome screen counts the topics that are not done
+b=$(mktemp -d); : > "$b/c"; for st in done done now later; do BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d bash ./bhote add "T $st" -s $st >/dev/null; done
+BHOTE_CONFIG=$b/c BHOTE_DATA=$b/d BHOTE_VIEW=splash BHOTE_COLS=42 BHOTE_ROWS=39 LC_ALL=en_US.UTF-8 bash ./bhote | grep -q "Topics   2 " \
+  && echo "ok   splash: topics without the done ones" || { echo "FAIL splash: topic count includes done"; fail=1; }
+rm -rf "$b"
 # in colour the news link is a terminal hyperlink (OSC 8) with a dotted underline, and the line still fits
 s=$(BHOTE_FORCE_COLOR=1 BHOTE_ONCE=1 BHOTE_VIEW=splash BHOTE_COLS=42 BHOTE_ROWS=39 LC_ALL=en_US.UTF-8 bash ./bhote)
 case "$s" in *$'\033[4:4m\033]8;;https://github.com/floriankappert/bhote/'*$'\033\\see GitHub\033]8;;\033\\\033[24m'*) echo "ok   splash: 'see GitHub' is a dotted link" ;; *) echo "FAIL splash: no news link"; fail=1 ;; esac
