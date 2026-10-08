@@ -975,23 +975,25 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
     fi
 }
-done_block() {  # done_block <max>: the last done topics (newest first), above the agents; the selected one (just checked off) too
-    local max=$1 i k n=0 all=0 idx=() tc sl right="" rw
+done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
+    local max=$1 i k n=0 all=0 idx=() tc t tw w=$(( ${COLS:-44} - 2 ))
     [ "$max" -gt 0 ] || return 0
-    sel_index
     while IFS=' ' read -r k i; do                              # newest first: by the last change (checking off is one)
         [ -n "$i" ] || continue; all=$(( all + 1 ))
         if [ "$n" -lt "$max" ] || [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then idx[$n]=$i; n=$(( n + 1 )); fi
     done <<< "$(for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && printf '%s %s\n' "${T_UPD[$i]:-0}" "$i"; done | sort -k1,1nr -k2,2nr)"
     [ "$n" -gt 0 ] || return 0
-    [ "$all" -gt "$n" ] && { right="+$(( all - n ))"; [ -n "${FIND_KEY_SHOW:-}" ] && right="$right · ${FIND_KEY_SHOW} search"; }
-    dw_set rw "$right"
-    printf '\n  %sDONE%s%*s%s%s%s\n' "$GREEN" "$X" $(( ${COLS:-44} - 8 - rw )) "" "$D" "$right" "$X"
-    tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"         # muted but bold like every title, one line each
+    group DONE "$GREEN"
     for (( k = 0; k < n; k++ )); do
-        i=${idx[$k]}; sl=0; [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && sl=1   # only a chosen one (not the fallback of sel_index)
-        topic_item "$sl" "$D" "" "$tc" "${T_TITLE[$i]:-(untitled)}" "" "" "" 1
+        i=${idx[$k]}; clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 5 )); dw_set tw "$t"
+        tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"     # muted but bold like every title, one line each
+        if [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then              # chosen (just checked off, or in the search): the bar
+            tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$DSEL"
+            printf '\001%s  %s✓%s %s%s%s%*s%s\n' "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 4 - tw )) "" "$X"
+        else printf '  %s✓%s %s%s%s\n' "$GREEN" "$X" "$tc" "$t" "$X"; fi
     done
+    [ "$all" -gt "$n" ] && printf '  %s+%d more done%s\n' "$D" $(( all - n )) "$X"
+    return 0
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
     local art=(".-----.  .-----.  zZ" "| -_- |  | u_u | z" "'--+--'  '--+--'" "  /|\\      /|\\") l in=$(( ${COLS:-44} - 4 ))

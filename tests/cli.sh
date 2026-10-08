@@ -122,6 +122,6 @@ case "$frame" in *"Up soon"*DONE*"Closed one"*"═══"*) ok "panel: done topi
 for i in 1 2 3; do B add "Old done $i" -s done >/dev/null; done; sleep 1; B add "Old done 4" -s done >/dev/null; B config set DONE_MAX 3 >/dev/null
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
 sect=$(echo "$frame" | sed -n '/^  DONE/,/═══/p')
-[ "$(echo "$sect" | sed '1d;$d' | grep -c '[A-Za-z]')" = 3 ] && echo "$sect" | head -1 | grep -q '+[0-9]' \
-  && echo "$sect" | grep -q "Old done 4" && ok "panel: only the last DONE_MAX done ones (newest first), +n for the rest" || bad "panel: DONE_MAX not kept: $sect"
+[ "$(echo "$sect" | grep -c '✓')" = 3 ] && echo "$sect" | grep -q '^  +[0-9]* more done' \
+  && echo "$sect" | grep -q "✓ Old done 4" && ok "panel: only the last DONE_MAX done ones (a check each, newest first), +n more done" || bad "panel: DONE_MAX not kept: $sect"
 rm -rf "$T"; exit $fail
