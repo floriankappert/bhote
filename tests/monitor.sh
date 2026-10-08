@@ -161,7 +161,7 @@ case "$(update_command)" in "git -C "*" pull"|*"pacman"*|"brew update"*) ok "upd
 
 # the keys of the herdr you type into: another machine's config.toml (a copy), nothing before it arrives
 cfg_set HERDR_KEYS_MACHINE Elsewhere; keys_cache_set; rm -f "$KEYS_CACHE"; focus_key_set KK; [ -z "$KK" ] && ok "keys: none until the other machine's config is there" || bad "keys before: $KK"
-printf '[keys]\nprefix = "ctrl+b"\n[[keys.command]]\nkey = "prefix+t"\ncommand = "bhote.panel.focus"\n' > "$KEYS_CACHE"; focus_key_set KK; [ "$KK" = "Ctrl+B+T" ] && ok "keys: read from the other machine's config" || bad "keys after: $KK"
+printf '[keys]\nprefix = "ctrl+b"\n[[keys.command]]\nkey = "prefix+t"\ncommand = "bhote.panel.focus"\n' > "$KEYS_CACHE"; focus_key_set KK; [ "$KK" = "Ctrl+B|T" ] && ok "keys: read from the other machine's config" || bad "keys after: $KK"
 cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
 
 # the topic page: a done topic gets actions that make sense; the numbers line up
@@ -185,8 +185,8 @@ rm -f "$rf"
 ( HOST=Mac; AG_N=2; AG_LINES=($'Mac\037w1:p1\037idle\037a\037' $'Laptop\037w2:p1\037idle\037b\037'); MC_N=0; T_AM=(Laptop); done_mc 0; case "$DONE_MC" in [A-Z][A-Z][A-Z]) exit 0 ;; *) exit 1 ;; esac ) && ok "done: the machine code stands before the time" || bad "done_mc with two machines"
 ( HOST=Mac; AG_N=1; AG_LINES=($'Mac\037w1:p1\037idle\037a\037'); MC_N=0; T_AM=(Mac); done_mc 0; [ -z "$DONE_MC" ] ) && ok "done: no code with one machine" || bad "done_mc with one machine: $DONE_MC"
 
-# keys as they are typed: Ctrl+B+T, Option on a Mac, Alt elsewhere
-( HERDR_PREFIX=ctrl+b; KEYS_OS=Darwin; key_pretty a prefix+t; key_pretty b ctrl+alt+t; KEYS_OS=Linux; key_pretty c ctrl+alt+t; [ "$a $b $c" = "Ctrl+B+T Ctrl+Option+T Ctrl+Alt+T" ] ) && ok "keys: readable names, Option on a Mac and Alt elsewhere" || bad "key_pretty"
+# keys as they are typed: Ctrl+B|T, Option on a Mac, Alt elsewhere
+( HERDR_PREFIX=ctrl+b; KEYS_OS=Darwin; key_pretty a prefix+t; key_pretty b ctrl+alt+t; KEYS_OS=Linux; key_pretty c ctrl+alt+t; [ "$a $b $c" = "Ctrl+B|T Ctrl+Option+T Ctrl+Alt+T" ] ) && ok "keys: readable names, Option on a Mac and Alt elsewhere" || bad "key_pretty"
 
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"

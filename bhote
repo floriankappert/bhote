@@ -1377,10 +1377,11 @@ focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when n
     key_pretty "$1" "$_k"
 }
 KEYS_OS_LOCAL=$(uname -s); KEYS_OS=$KEYS_OS_LOCAL      # the keyboard you type on decides the names: Mac (Control, Option, Command) or Linux
-key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "Ctrl+B+T", "ctrl+alt+t" -> "Ctrl+Option+T" on a Mac, "Ctrl+Alt+T" elsewhere
+key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "Ctrl+B|T", "ctrl+alt+t" -> "Ctrl+Option+T" on a Mac, "Ctrl+Alt+T" elsewhere
     local _k=${2//[[:cntrl:]]/} _o="" _t _parts _i _mac=0; [ "${KEYS_OS:-}" = Darwin ] && _mac=1
     case "$_k" in off|none|"") printf -v "$1" '%s' ""; return 0 ;; esac
-    _k=${_k//prefix/${HERDR_PREFIX:-ctrl+b}}
+    case "$_k" in prefix+*)                                         # the prefix, then the key: Ctrl+B|T
+        local _kp _kr; key_pretty _kp "${HERDR_PREFIX:-ctrl+b}"; key_pretty _kr "${_k#prefix+}"; printf -v "$1" '%s' "$_kp|$_kr"; return 0 ;; esac
     IFS=+ read -ra _parts <<< "$_k"
     for (( _i = 0; _i < ${#_parts[@]}; _i++ )); do
         _t=${_parts[$_i]}
