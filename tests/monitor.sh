@@ -144,6 +144,7 @@ head -1 "$SHARED_DIR/deploys.list" | grep -q "${US}running${US}" && sort -t "$US
 blk=$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )
 echo "$blk" | grep -q "Deployments" && echo "$blk" | grep -q "Web · Backend" && echo "$blk" | grep -q "approval" && echo "$blk" | grep -q "Tests" \
   && [ "$(echo "$blk" | grep -c "Web · \|Rails · \|web-wt1 · \|Plain · ")" -le 14 ] && ok "panel: both blocks, seven entries each at most" || bad "block: $blk"
+echo "$blk" | grep -q "Web · Backend (feat/login)" && ok "panel: a running entry says in brackets what goes live" || bad "running note: $blk"
 cfg_set DEPLOY_MONITOR off; cfg_set TEST_MONITOR off; [ -z "$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )" ] && ok "panel: monitors off, no block" || bad "block while off"
 
 # new features: the head says so until the wizard ran at the current level; the wizard then offers only the new steps

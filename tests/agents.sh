@@ -257,4 +257,18 @@ echo "$frame" | grep -q "∟ Fix the" && ok "agent list: the topic an agent work
 topic_set "$wt" status later
 frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=70 BHOTE_ROWS=150 bash ./bhote </dev/null)
 echo "$frame" | grep -q "∟ Fix the" && bad "a parked topic is shown behind the agent" || ok "agent list: a parked topic is not shown"
+# agent numbers: a number of its own per agent on its machine, the same for good
+( HOST=Mac; rm -f "$TOPIC_DIR"/*.topic; AN_AT=-999
+  printf '%s\n' "Mac${US}w1:p1${US}idle${US}alpha${US}t" "Mac${US}w2:p1${US}idle${US}beta${US}t" > "$AGENT_LOCAL"; agentnum_assign
+  agentnum_set a Mac alpha; agentnum_set b Mac beta; [ "$a" = 1 ] && [ "$b" = 2 ] || exit 1
+  printf '%s\n' "Mac${US}w2:p1${US}idle${US}beta${US}t" "Mac${US}w3:p1${US}idle${US}gamma${US}t" > "$AGENT_LOCAL"; agentnum_assign   # alpha went away, gamma came
+  AN_AT=-999; agentnum_load; agentnum_set a Mac alpha; agentnum_set b Mac beta; agentnum_set c Mac gamma; [ "$a" = 1 ] && [ "$b" = 2 ] && [ "$c" = 3 ] || exit 2
+  printf '%s\n' "Mac${US}w1:p1${US}idle${US}alpha${US}t" > "$AGENT_LOCAL"; agentnum_assign; AN_AT=-999; agentnum_load; agentnum_set a Mac alpha; [ "$a" = 1 ] || exit 3   # alpha is back: still 1
+  printf '%s\n' "Other${US}w1:p1${US}idle${US}remote${US}t" > "$AGENT_LOCAL"; agentnum_assign; agentnum_set r Other remote; [ -z "$r" ] || exit 4   # only the own machine hands out numbers
+  exit 0 ) && ok "agent numbers: stable, next free, kept when an agent is away, only for this machine" || bad "agent numbers: step $?"
+( HOST=Mac; AG_N=2; AG_LINES=($'Mac\037w1:p1\037idle\037alpha\037' $'Laptop\037w2:p1\037idle\037beta\037'); MC_N=0; AN_AT=-999
+  rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Mac${US}w1:p1${US}idle${US}alpha${US}t" > "$AGENT_LOCAL"; agentnum_assign
+  printf 'id=an-Laptop-beta\nkind=agentnum\ntitle=Laptop/beta\nnum=7\nupdated=1\ndeleted=0\n' > "$TOPIC_DIR/an-Laptop-beta.topic"; AN_AT=-999
+  agent_code_set x Mac alpha; agent_code_set y Laptop beta; case "$x$y" in [A-Z][A-Z][A-Z]1[A-Z][A-Z][A-Z]7) ;; *) exit 1 ;; esac
+  agent_ref "$(echo "$y" | tr '[:upper:]' '[:lower:]')" && [ "$AR_NAME" = beta ] ) && ok "agent numbers: a code (any case) finds the agent" || bad "agent code ref"
 rm -rf "$T"; exit $fail
