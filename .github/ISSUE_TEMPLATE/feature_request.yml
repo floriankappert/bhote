@@ -1,0 +1,19 @@
+name: Feature request
+description: An idea for bhote
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do, and what is in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How could bhote help?
+      description: Keys, a CLI command, a setting, what the panel shows.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do instead now?

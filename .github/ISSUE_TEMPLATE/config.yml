@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/floriankappert/bhote/tree/main/docs
+    about: The CLI reference, every setting, the panel, sync and the monitors.
+  - name: Security vulnerability
+    url: https://github.com/floriankappert/bhote/security/advisories/new
+    about: Please report vulnerabilities privately, not as an issue.
