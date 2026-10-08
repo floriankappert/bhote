@@ -741,7 +741,7 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
             ws=$(printf '%s' "$snap" | jq -c '{result: {workspaces: (.result.snapshot.workspaces // [])}}' 2>/dev/null)
         fi
     fi
-    if [ -z "$panes" ]; then panes=$(herdr "$@" pane list 2>/dev/null) || return 0; ws=$(herdr "$@" workspace list 2>/dev/null); fi
+    if [ -z "$panes" ]; then panes=$(herdr "$@" pane list 2>/dev/null) || { [ $# -gt 0 ] && return 2; return 0; }; ws=$(herdr "$@" workspace list 2>/dev/null); fi
     if [ $# -eq 0 ]; then                                      # this machine: where its agents work (their branch, see branch_sync)
         printf '%s' "$panes" | jq -r '.result.panes[] | select(.agent) | [.pane_id, ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0000-\u001f]"; ""))] | join("\u001f")' > "$AGENT_CWD.tmp.$$" 2>/dev/null \
             && mv "$AGENT_CWD.tmp.$$" "$AGENT_CWD" 2>/dev/null
@@ -787,12 +787,23 @@ branch_sync() {  # the topics of this machine's agents carry their branch (agent
     done
     return 0
 }
-collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied
-    local id label host prof enabled
+collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied. A machine that does not
+    # answer (herdr reconnecting) keeps the agents seen last, marked "off-<state>": the panel shows them muted, nobody gets work
+    local id label host prof enabled out rc line m aid st name task offl="$SHARED_DIR/machines.offline"
+    : > "$offl.tmp.$$"
     { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof enabled; do
           [ "$label" = "$HOST" ] && continue                   # would look like this machine's own agents (HOST_LABEL clash)
-          [ "$enabled" = enabled ] && machine_wanted "$label" && collect_one "$label" --machine "$label"
+          [ "$enabled" = enabled ] && machine_wanted "$label" || continue
+          out=$(collect_one "$label" --machine "$label"); rc=$?
+          if [ "$rc" = 2 ]; then
+              echo "$label" >> "$offl.tmp.$$"
+              [ -r "$AGENT_REMOTE" ] && while IFS= read -r line; do
+                  case "$line" in "$label$US"*) IFS=$US read -r m aid st name task <<< "$line"
+                      case "$st" in off-*) ;; *) st="off-$st" ;; esac; printf '%s\n' "$m$US$aid$US$st$US$name$US$task" ;; esac
+              done < "$AGENT_REMOTE"
+          elif [ -n "$out" ]; then printf '%s\n' "$out"; fi
       done; } > "$AGENT_REMOTE.tmp.$$"
+    mv "$offl.tmp.$$" "$offl" 2>/dev/null
     agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
 }
 remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND hours: a notification (remembered locally)
@@ -989,7 +1000,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
              elif [ -n "${T_AG[$i]}" ]; then    # given to an agent: say what that agent is doing now
                  who=${T_AG[$i]}; tm=""; agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
                  case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
-                     idle|done) state=finished; sc=$GREEN ;; *) state=gone; sc=$D ;; esac
+                     idle|done) state=finished; sc=$GREEN ;; off-*) state="offline (${T_AM[$i]} reconnecting)"; sc=$D ;; *) state=gone; sc=$D ;; esac
              fi ;;
         waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
                  [ -n "${T_SL[$i]}" ] && { state="Slack monitor (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
@@ -1101,18 +1112,22 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             [ "$m" = "${machines[$k]}" ] || continue
+            local raw=$st off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
             case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
             name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 ))
+            if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
             cell="$ic$X $nc$label$X"; dw_set plain "$label"; plain=$(( plain + 2 ))
-            case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id$US$st"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id$US$st"; nb=$(( nb + 1 )) ;; esac
+            st=$raw                                             # (the map keeps off-: no dancing star, no work for it)
+            case "${st#off-}" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id$US$st"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id$US$st"; nb=$(( nb + 1 )) ;; esac
         done
         [ $(( nf + nb )) -gt 0 ] || continue
         # a caption for the machine when several machines are listed
         if [ "$nm" -gt 1 ]; then                              # a divider with the machine's name ("── Omarchy ─────"); only machines with agents
-            local cap rest cw2; clip_set cap "${machines[$k]}" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"
-            rest=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest" -lt 1 ] && rest=1
+            local cap rest cw2 away="" aw=0; clip_set cap "${machines[$k]}" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"
+            machine_offline "${machines[$k]}" && { away=" ${ORANGE}◐ reconnecting${X}"; aw=15; }   # as herdr says it
+            rest=$(( ${#RULE_LINE} - 4 - cw2 - aw )); [ "$rest" -lt 1 ] && rest=1
             # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
-            lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest}${X}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
+            lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X}${away} ${MUTED}${DASH_LINE:0:$rest}${X}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
         fi
         rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
         for (( r = 0; r < rows; r++ )); do
@@ -1130,6 +1145,9 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
     if [ "$hidden" -gt 0 ]; then printf '  %s+%d more agents%s\n' "$D" "$hidden" "$X"
     elif [ -n "$want" ]; then for (( r = shown; r < maxr; r++ )); do printf '\n'; done; fi   # a dragged height stays, also with fewer agents
     agent_footer
+}
+machine_offline() {  # machine_offline <label>: 0 when its last fetch failed (herdr reconnecting)
+    [ -r "$SHARED_DIR/machines.offline" ] && grep -qxF "$1" "$SHARED_DIR/machines.offline" 2>/dev/null
 }
 agent_footer() {
     # saved machines exist but are not asked: say so, and where to change it
@@ -3364,9 +3382,9 @@ find_items() {  # topics in the list's status order (review, now, next, waiting,
     for pass in busy free; do
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-            case "$st" in idle|done) [ "$pass" = free ] || continue ;; *) [ "$pass" = busy ] || continue ;; esac
+            case "${st#off-}" in idle|done) [ "$pass" = free ] || continue ;; *) [ "$pass" = busy ] || continue ;; esac
             FI_KIND[$n]=agent; FI_NAME[$n]=$name; FI_M[$n]=$m; FI_P[$n]=$id; FI_ST[$n]=$st; FI_REF[$n]=""; FI_GRP[$n]=$pass
-            FI_LABEL[$n]="$m${task:+ · $task}"; FI_TM[$n]=""; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
+            FI_LABEL[$n]="$m${task:+ · $task}"; FI_TM[$n]=""; case "$st" in off-*) FI_LABEL[$n]="$m reconnecting${task:+ · $task}" ;; esac; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
         done
     done
     i=0; while IFS= read -r m; do FI_LOW[$i]=$m; i=$(( i + 1 )); done <<< "$(printf '%s' "$lowsrc" | tr '[:upper:]' '[:lower:]')"
@@ -3394,7 +3412,7 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
             printf -v line ' %s%s%s' "$cc" "$cap" "$X"; rl[${#rl[@]}]=$line; rh[${#rh[@]}]=-1
         fi
         if [ "${FI_KIND[$i]}" = agent ]; then
-            case "${FI_ST[$i]}" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+            case "${FI_ST[$i]}" in off-*) ic="${MUTED}○" ;; working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
         else
             case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; next) ic="${S}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
         fi
@@ -3408,7 +3426,8 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
         pad=$(( w - 8 - nw - lw - ${#sep} - sbw - ${#tm} )); [ "$pad" -lt 1 ] && pad=1
         [ "$k" = "$sel" ] && sr=${#rl[@]}
         if [ "$k" = "$sel" ]; then printf -v line '%s   %s%s %s%s%s  %s%s%s%s%s%s%*s%s%s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$lbc" "$lb" "$DSEL" "$sep" "${FI_SC[$i]:-}" "$sb" "$pad" "" "$DSEL" "$tm" "$X"
-        else printf -v line '   %s%s %s%s%s  %s%s%s%s%s%s%s%*s%s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$lbc" "$lb" "$D" "$sep" "${FI_SC[$i]:-}" "$sb" "$X" "$pad" "" "$D" "$tm" "$X"; fi
+        else local nmc=$TITLE; case "${FI_ST[$i]}" in off-*) nmc=$MUTED ;; esac   # an agent whose machine does not answer: muted
+            printf -v line '   %s%s %s%s%s  %s%s%s%s%s%s%s%*s%s%s%s' "$ic" "$X" "$nmc" "$nm" "$X" "$lbc" "$lb" "$D" "$sep" "${FI_SC[$i]:-}" "$sb" "$X" "$pad" "" "$D" "$tm" "$X"; fi
         rl[${#rl[@]}]=$line; rh[${#rh[@]}]=$k
     done
     off=0; [ "$sr" -ge "$room" ] && off=$(( sr - room + 1 ))

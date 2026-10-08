@@ -7,6 +7,7 @@ T=$(mktemp -d); export NO_COLOR=1 BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/
 mkdir -p "$T/bin"
 cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
+[ -n "${FAKE_DOWN:-}" ] && case "$*" in *--machine*) exit 1 ;; esac   # the other machine does not answer
 case "$*" in
  *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*) echo "$*" >> "$FAKE_LOG" ;;
  *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
@@ -134,6 +135,19 @@ rm -f "$SHARED_DIR/remote.due"; ( bhote_cli remote-changed ); [ -e "$SHARED_DIR/
   [ -e "$SHARED_DIR/remote.due" ] && r=1 || r=0; kill "$C" "$P" 2>/dev/null; wait "$C" "$P" 2>/dev/null; exit $r ) \
   && ok "collector: a push is taken while a slow merge runs" || bad "collector: the push waited for the merge"
 [ -e "$SHARED_DIR/agents.remote.tmp.99999" ] && bad "an old temp list was left" || ok "collector: old temp lists of a killed collector are removed"
+# a machine that does not answer (herdr reconnecting): its agents stay as seen last, muted, with no work and no dancing star
+cfg_set REMOTE_AGENTS on; rm -f "$AGENT_REMOTE" "$SHARED_DIR/machines.offline"; collect_remote
+grep -q "^Laptop${US}w3:p1${US}working" "$AGENT_REMOTE" && ok "remote: the other machine's agents are there" || bad "remote agents: $(cat "$AGENT_REMOTE")"
+FAKE_DOWN=1 collect_remote
+grep -q "^Laptop${US}w3:p1${US}off-working" "$AGENT_REMOTE" && grep -qx Laptop "$SHARED_DIR/machines.offline" && ok "remote: unreachable, its agents kept as off-<state>" || bad "offline keep: $(cat "$AGENT_REMOTE")"
+FAKE_DOWN=1 collect_remote; grep -q "${US}off-off-" "$AGENT_REMOTE" && bad "off- doubled" || ok "remote: still away, marked once"
+collect_local; frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=()
+  while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < <(agents_all); agents_block )
+echo "$frame" | grep -q "Laptop ◐ reconnecting" && ok "panel: the machine says reconnecting, its agents stay listed" || bad "panel reconnecting: $(echo "$frame" | grep -n 'Laptop\|┈')"
+( AG_N=0; AG_LINES=(); while IFS= read -r l; do AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); done < "$AGENT_REMOTE"; agent_state_set s Laptop w3:p1; [ "$s" = off-working ] ) \
+  && ok "remote: a topic's agent on it reads off-working (shown as offline)" || bad "agent state offline"
+collect_remote; grep -q "^Laptop${US}w3:p1${US}working" "$AGENT_REMOTE" && [ ! -s "$SHARED_DIR/machines.offline" ] && ok "remote: back again, live states" || bad "back online"
+cfg_set REMOTE_AGENTS off
 # GitHub: the branch of a topic's agent, read by the machine it runs on; a line in the panel, inline in the search, in the JSON
 mkdir -p "$T/repo/src"; git -C "$T/repo" init -q -b feature/login 2>/dev/null
 bid=$(BHOTE_NO_SYNC=1 bhote_cli add "Login form" --json | jq -r .id); bf="$TOPIC_DIR/$bid.topic"
