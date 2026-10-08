@@ -80,6 +80,7 @@ panel in herdr (right click: the search). `bhote bar` prints the same as Waybar-
 | `x` | mark done |
 | `a` | topics suggested from what the running agents work on |
 | `,` | settings · `S` welcome screen · `w` the new wizard steps · `q` quit |
+| click a topic | select it (any of its lines; the list does not scroll while it is in view); a double click opens its page, where a click runs an action or edits the title or description |
 | click an agent | focus it in herdr (on another machine: selected there; the panel says which keys switch to it) |
 | find key (e.g. `ctrl+alt+t`, ⌘T) | search all agents and topics, jump there (`bhote find` as a herdr popup) |
 | herdr prefix, `t` | jump from the agent to the panel and back (the plugin action `bhote.panel.focus`; the keys are shown bottom right) |

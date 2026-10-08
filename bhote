@@ -1030,17 +1030,19 @@ group() {  # group <CAPTION> [colour]: a status caption; everything below starts
 }
 # One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
-# find it for scrolling (and strips it). Done entries are one muted line.
+# find it for scrolling (and strips it). Done entries are one muted line. With TI_REF set every line starts with \035id\035
+# before that: bhote_view strips it too and notes the row, so that a click selects the topic (TOPIC_MAP).
 topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> [compact 1] [branch]
     # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
-    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n
+    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n rm=""
+    [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
     local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
         bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac   # muted (done) titles: readable
     fi
-    printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
-    [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
+    printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+    [ -n "$d" ] && printf '%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
     [ -n "$who$st$tm" ] || { [ "${9:-}" = 1 ] || printf '\n'; return 0; }
     room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
     local ww sw; [ -n "$who" ] && clip_set who "$who" "$room"; dw_set ww "$who"; dw_set sw "$st"
@@ -1050,7 +1052,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         if [ -n "$who" ]; then clip_set st "$st" $(( room - ww - 3 )); else clip_set st "$st" "$room"; fi
         dw_set sw "$st"; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) ))
     fi
-    printf '%s  %s∟ ' "$bg" "$gc"
+    printf '%s%s  %s∟ ' "$rm" "$bg" "$gc"
     [ -n "$who" ] && printf '%s%s' "$wc" "$who"
     [ -n "$who" ] && [ -n "$st" ] && printf '%s · ' "$gc"
     [ -n "$st" ] && printf '%s%s' "$mc" "$st"
@@ -1058,7 +1060,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
     if [ -n "${10:-}" ]; then                                  # the agent's git branch, a line of its own
         local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
-        printf '%s  %s⎇ %s%s%*s%s\n' "$bg" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
+        printf '%s%s  %s⎇ %s%s%*s%s\n' "$rm" "$bg" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
     fi
     [ "${9:-}" = 1 ] || printf '\n'
 }
@@ -1092,7 +1094,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
     [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && [ "${U_GITHUB:-on}" = on ] && TM_BR=${T_BR[$i]}   # the agent's branch
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0 TI_REF
     sel_index
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1115,7 +1117,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             now) [ "$state" = finished ] && [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;;
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
-        sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
+        sl=0; [ "$i" = "$SEL_IDX" ] && sl=1; TI_REF=${T_ID[$i]}
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
     done
     if [ "$nlater" -gt 0 ]; then                                # where the others are
@@ -1150,8 +1152,8 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
         tc="$BOLD$D"     # muted but bold like every title, one line each
         if [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then              # chosen (just checked off, or in the search): the bar
             tc="$BOLD$DSEL"
-            printf '\001%s  %s✓%s %s%s%s%*s%s%s%s %s\n' "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
-        else printf '  %s✓%s %s%s%s%*s%s%s%s\n' "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
+            printf '\035%s\035\001%s  %s✓%s %s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
+        else printf '\035%s\035  %s✓%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
     done
     [ "$all" -gt "$n" ] && printf '  %s+%d more done%s\n' "$D" $(( all - n )) "$X"
     return 0
@@ -1499,7 +1501,7 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
     local _n=0 _l; while IFS= read -r _l; do _n=$(( _n + 1 )); done <<< "$2"; printf -v "$1" '%s' "$_n"
 }
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
-    local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() n=0 line
+    local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() n=0 line
     head=$(view_head); topics=$(topics_block); bottom=$(view_bottom)
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
     num_set dn "${U_DONE_MAX:-}" 7; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
@@ -1511,25 +1513,48 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     avail=$(( ${ROWS:-40} - hh - bh - dh - mh ))
     case "$th:$topics" in *"the agents are bored"*) [ "$th" -gt "$avail" ] && {   # no room for the bored agents: their line only
         topics=$(BORED_SMALL=1 topics_block); count_lines th "$topics"; } ;; esac
-    printf '%s\n' "$head"
+    printf '%s\n' "$head"; VP_ROW=$hh; VP_MAP=""
+    view_lines tl tr sel "$topics"; n=${#tl[@]}
     if [ "$th" -le "$avail" ]; then
-        printf '%s\n' "${topics//$'\001'/}"; pad=$(( avail - th ))
+        view_put 0 "$n"; pad=$(( avail - th )); rm -f "$RUN_DIR/toff" 2>/dev/null
     elif [ "$avail" -ge 4 ]; then       # more topics than room: a window that follows the selection, one row for the marker
         content=$(( avail - 1 ))
-        while IFS= read -r line; do case "$line" in $'\001'*) sel=$n; line=${line#$'\001'} ;; esac; tl[$n]=$line; n=$(( n + 1 )); done <<< "$topics"
         [ "$sel" = -1 ] && sel=0
         local sh=1; while [ "$sh" -lt 4 ] && [ $(( sel + sh )) -lt "$n" ] && [ -n "${tl[$(( sel + sh ))]}" ]; do sh=$(( sh + 1 )); done
-        off=$(( sel + sh - content )); [ "$off" -gt "$sel" ] && off=$sel; [ "$off" -lt 0 ] && off=0; [ "$off" -gt $(( th - content )) ] && off=$(( th - content ))
-        for (( i = off; i < off + content; i++ )); do printf '%s\n' "${tl[$i]}"; done
-        printf ' %s↑↓ %d more lines%s\n' "$D" $(( th - content )) "$X"
+        local prev; { read -r prev < "$RUN_DIR/toff"; } 2>/dev/null; num_set prev "${prev:-}" -1
+        if [ "$prev" -lt 0 ]; then off=$(( sel + sh - content ))   # the window of the last frame stays while the selection is in it (a click)
+        elif [ "$sel" -lt "$prev" ]; then off=$sel; while [ "$off" -gt 0 ] && [ -z "${tr[$(( off - 1 ))]}" ]; do off=$(( off - 1 )); done   # with its caption
+        elif [ $(( sel + sh )) -gt $(( prev + content )) ]; then off=$(( sel + sh - content ))
+        else off=$prev; fi
+        [ "$off" -gt "$sel" ] && off=$sel; [ "$off" -lt 0 ] && off=0; [ "$off" -gt $(( th - content )) ] && off=$(( th - content ))
+        echo "$off" > "$RUN_DIR/toff" 2>/dev/null
+        view_put "$off" $(( off + content ))
+        printf ' %s↑↓ %d more lines%s\n' "$D" $(( th - content )) "$X"; VP_ROW=$(( VP_ROW + 1 ))
     else                                # hardly any room: as many topic lines as fit, never more than the pane
-        n=0; while IFS= read -r line && [ "$n" -lt "$avail" ]; do printf '%s\n' "${line#$'\001'}"; n=$(( n + 1 )); done <<< "$topics"
+        view_put 0 $(( n < avail ? n : avail ))
     fi
-    for (( i = 0; i < pad; i++ )); do printf '\n'; done
-    [ "$dh" -gt 0 ] && printf '%s\n' "${dblk//$'\001'/}"
+    for (( i = 0; i < pad; i++ )); do printf '\n'; done; VP_ROW=$(( VP_ROW + pad ))
+    [ "$dh" -gt 0 ] && { view_lines tl tr sel "$dblk"; view_put 0 "${#tl[@]}"; }
     [ "$mh" -gt 0 ] && printf '%s\n' "$mblk"
+    printf '%s' "$VP_MAP" > "$RUN_DIR/tmap" 2>/dev/null           # the topics' rows on screen: a click selects one
     echo $(( ${ROWS:-40} - bh + 1 )) > "$RUN_DIR/divrow" 2>/dev/null     # the divider is the first line of the bottom part
     printf '%s' "$bottom"
+}
+view_lines() {  # view_lines <lines var> <refs var> <selected var> <text>: the lines without their markers (topic_item), the topic
+    # id of each line (empty for captions and gaps), and the index of the selected line (-1: none)
+    local _l _r _n=0 _s=-1; eval "$1=(); $2=()"
+    while IFS= read -r _l; do
+        _r=""; case "$_l" in $'\035'*) _l=${_l#$'\035'}; _r=${_l%%$'\035'*}; _l=${_l#*$'\035'} ;; esac
+        case "$_l" in $'\001'*) _s=$_n; _l=${_l#$'\001'} ;; esac
+        eval "$1[$_n]=\$_l; $2[$_n]=\$_r"; _n=$(( _n + 1 ))
+    done <<< "$4"
+    printf -v "$3" '%s' "$_s"
+}
+view_put() {  # view_put <from> <to>: prints tl[from..to-1] and notes the rows of the topics' lines in VP_MAP (row \036 id)
+    local _i; for (( _i = $1; _i < $2; _i++ )); do
+        printf '%s\n' "${tl[$_i]}"; VP_ROW=$(( VP_ROW + 1 ))
+        [ -n "${tr[$_i]}" ] && VP_MAP="$VP_MAP$VP_ROW"$'\036'"${tr[$_i]}"$'\n'
+    done
 }
 
 # Word wrap with a hanging indent: every line of a paragraph starts at the same column and ends before the panel's edge.
@@ -1724,7 +1749,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     if [ -n "${FIND_KEY_SHOW:-}" ]; then hk "$FIND_KEY_SHOW" "find a topic or agent, jump to it"
     else hk "-" "find and jump: settings › Find key"; fi
     hk_group "MOUSE"
-    hk "drag ═══" "resize the agent area"; hk "click agent" "focus it in herdr"
+    hk "drag ═══" "resize the agent area"; hk "click topic" "select it"; hk "2× click" "open its page"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
     printf '\n'; rule
     printf ' %s← esc back%s\n' "$D" "$X"
 }
@@ -1930,11 +1955,23 @@ ask_drain() {  # throw away input that is still waiting (the rest of a multi-lin
 # The divider above the agents is a handle like herdr's sidebar split: press on it, drag, release. Its row is written by the frame
 # (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is kept as AGENT_ROWS in the config.
 MOUSE_ON=$'\033[?1002h\033[?1006h'; MOUSE_OFF=$'\033[?1002l\033[?1006l'; DRAG=0; DRAG_ROWS=""
-mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the divider moves, else empty)
+# Terminals report presses, not double clicks: a second press on the same topic within half a second is one (OPEN: its page).
+# Milliseconds from perl (bash 3.2 has no EPOCHREALTIME); without perl only two presses in the same second count.
+CLICK_LAST=""; CLICK_AT=0
+click_twice() {  # click_twice <topic id>: 0 when this press makes a double click on that topic
+    local now=""; [ -n "$HAVE_PERL" ] && now=$(perl -MTime::HiRes=time -e 'printf "%d", time() * 1000' 2>/dev/null)
+    num_set now "$now" $(( SECONDS * 1000 ))
+    if [ "$1" = "$CLICK_LAST" ] && [ $(( now - CLICK_AT )) -le 500 ]; then CLICK_LAST=""; return 0; fi
+    CLICK_LAST=$1; CLICK_AT=$now; return 1
+}
+mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the divider moves, ITEM/AGENT/TOPIC/OPEN on a click, else empty)
     local b x y div rest; MOUSE_KEY=""
     b=${1%%;*}; rest=${1#*;}; x=${rest%%;*}; y=${rest#*;}
     case "$b$x$y" in *[!0-9]*) return ;; esac
     case "$b" in 64|65|66|67) return ;; esac                 # the wheel does nothing (it must not move the selection)
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ]; then  # a row of this frame that bhote_paint noted (an action on the topic's page)?
+        local r t; while IFS=$'\036' read -r r t; do [ "$r" = "$y" ] && { CLICK_I=$t; MOUSE_KEY=ITEM; return; }; done 2>/dev/null < "$RUN_DIR/pmap"
+    fi
     div=$(cat "$RUN_DIR/divrow" 2>/dev/null); div=$(num_or "$div" 0)
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && [ "$div" -gt 0 ] && [ "$y" -ge $(( div + 1 )) ]; then   # below the divider: an agent?
         local split rel line ag; split=$(head -1 "$RUN_DIR/agmap" 2>/dev/null); split=$(num_or "$split" 0); rel=$(( y - div - 1 ))
@@ -1943,6 +1980,11 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
             if [ "$x" -le "$split" ]; then ag=$(printf '%s' "$line" | cut -d$'\036' -f2); else ag=$(printf '%s' "$line" | cut -d$'\036' -f3); fi
             [ -n "$ag" ] && { CLICK_M=${ag%%$US*}; CLICK_P=${ag#*$US}; CLICK_P=${CLICK_P%%$US*}; MOUSE_KEY=AGENT; return; }
         fi
+    fi
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && { [ "$div" = 0 ] || [ "$y" -lt "$div" ]; }; then   # above it: a topic?
+        local r t; while IFS=$'\036' read -r r t; do
+            [ "$r" = "$y" ] && [ -n "$t" ] && { CLICK_T=$t; MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
+        done 2>/dev/null < "$RUN_DIR/tmap"
     fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
         DRAG=1; DRAG_Y0=$y; DRAG_R0=$(num_or "$(cat "$RUN_DIR/agrows" 2>/dev/null)" 1); return
@@ -2125,7 +2167,7 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     printf '\n  %sACTIONS%s\n' "$D" "$X"
     for (( i = 0; i < ${#MENU_ITEMS[@]}; i++ )); do
         sl=""; [ "$i" = "${MENU_IDX:-0}" ] && sl=1
-        menu_num_line "$sl" "$(( i + 1 ))" "${MENU_ITEMS[$i]#*|}"
+        printf '\035%s\035' "$i"; menu_num_line "$sl" "$(( i + 1 ))" "${MENU_ITEMS[$i]#*|}"   # (its index: a click runs it)
     done
     printf '\n'; rule
     if [ -n "${FLASH_MSG:-}" ] && [ "$SECONDS" -lt "${FLASH_UNTIL:-0}" ]; then   # what just happened (a Slack pin: asking, pinned, why not)
@@ -2136,13 +2178,14 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
 # and edited in place (EDIT_FIELD): the field is then one line, marked with \002 so that bhote_paint knows its row (EDIT_ROW)
 # and the editor opens right there.
 field_block() {  # field_block <title|description> <colour> <text>
-    local l w=$(( ${COLS:-44} - 2 )) lw mk="" sel="" first=1
+    local l w=$(( ${COLS:-44} - 2 )) lw mk="" sel="" first=1 rm
     case "$1:${MENU_IDX:-0}" in title:-2|description:-1) sel=1; mk=$'\001' ;; esac
+    if [ "$1" = title ]; then rm=$'\035-2\035'; else rm=$'\035-1\035'; fi   # every line: a click edits it (its MENU_IDX)
     if [ "${EDIT_FIELD:-}" = "$1" ]; then printf '%s\002%s%*s%s\n' "$mk" "$SELBG" "$w" "" "$X"; return; fi
     while IFS= read -r l; do
         l=${l//$X/}
-        if [ -n "$sel" ]; then dw_set lw "$l"; printf '%s%s%s%s%*s%s\n' "$mk" "$SELBG" "$LSEL" "$l" $(( w - lw )) "" "$X"; mk=""
-        else printf '%s%s%s\n' "$2" "$l" "$X"; fi
+        if [ -n "$sel" ]; then dw_set lw "$l"; printf '%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$SELBG" "$LSEL" "$l" $(( w - lw )) "" "$X"; mk=""
+        else printf '%s%s%s%s\n' "$rm" "$2" "$l" "$X"; fi
     done <<< "$(wrap_print 2 "" "$3")"
 }
 slack_msg_print() {  # slack_msg_print <who: text>: the sender, then each line (¶) wrapped; lists hang behind • / 1.; `code` and *bold* as in Slack
@@ -4035,7 +4078,7 @@ bhote_main() {
         if [ "$view" = settings ]; then
             case "$key" in
                 ","|ESC|q|Q) case "${SET_PAGE:-main}" in connections|projects) SET_PAGE=main; SET_IDX=0 ;; project) SET_PAGE=projects; SET_IDX=0 ;; *) view=$back ;; esac; redraw=1 ;;
-                ""|DRAG) ;;
+                ""|DRAG|AGENT|TOPIC|OPEN|ITEM) ;;
                 *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys
                    [ "$SETTINGS_GO" = connections ] && { SET_PAGE=connections; SET_IDX=0; }
                    [ "$SETTINGS_GO" = projects ] && { SET_PAGE=projects; SET_IDX=0; }
@@ -4072,6 +4115,10 @@ bhote_main() {
                                  -2) menu_edit_field title ;; -1) menu_edit_field description ;;
                                  *) if menu_do "$MENU_IDX"; then :; else view=main; fi ;;
                              esac; redraw=1 ;;
+                ITEM) MENU_IDX=$CLICK_I; case "$MENU_IDX" in                  # a click on an action runs it, on the title or description edits it
+                          -2) menu_edit_field title ;; -1) menu_edit_field description ;;
+                          *) if menu_do "$MENU_IDX"; then :; else view=main; fi ;;
+                      esac; redraw=1 ;;
                 [1-9]) f=$(sel_file); [ -n "$f" ] && menu_build "$f"
                        if [ "$key" -le "${#MENU_ITEMS[@]}" ]; then MENU_IDX=$(( key - 1 )); if menu_do "$MENU_IDX"; then :; else view=main; fi; fi; redraw=1 ;;
                 ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
@@ -4081,6 +4128,8 @@ bhote_main() {
                 "") ;;
                 DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
+                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; redraw=1; } ;;      # a click on a topic selects it, like the arrows
+                OPEN) [ "$view" = main ] && { SEL_ID=$CLICK_T; view=menu; MENU_IDX=0; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;
@@ -4143,8 +4192,9 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
     fi
     ui_load
     frame=$(bhote_draw "$1")
-    local fl=() n=0 sel=-1 off=0 rows=${ROWS:-40} i
+    local fl=() fr=() n=0 sel=-1 off=0 rows=${ROWS:-40} i map=""
     while IFS= read -r line; do
+        fr[$n]=""; case "$line" in $'\035'*) line=${line#$'\035'}; fr[$n]=${line%%$'\035'*}; line=${line#*$'\035'} ;; esac   # a clickable line (an action)
         case "$line" in $'\001'*) sel=$n; line=${line#$'\001'} ;; esac
         case "$line" in $'\002'*) EDIT_LINE=$n; line=${line#$'\002'} ;; esac   # the field being edited (menu_edit_field)
         fl[$n]=$line; n=$(( n + 1 ))
@@ -4155,7 +4205,9 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
     for (( i = off; i < n && i < off + rows; i++ )); do
         [ "$first" = 1 ] || out="${out}"$'\n'; first=0
         out="${out}${fl[$i]}"$'\033[K'
+        [ -n "${fr[$i]}" ] && map="$map$(( i - off + 1 ))"$'\036'"${fr[$i]}"$'\n'
     done
+    printf '%s' "$map" > "$RUN_DIR/pmap" 2>/dev/null                 # the clickable rows of this frame (row \036 index)
     [ -n "${EDIT_LINE:-}" ] && { EDIT_ROW=$(( EDIT_LINE - off + 1 )); EDIT_LINE=""; }
     printf '\033[H%s\033[J' "$out"
 }
