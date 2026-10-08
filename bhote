@@ -945,6 +945,26 @@ agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | 
     done
     printf -v "$1" '%s' "$gone"
 }
+topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's colour), TM_TM: the meta line, for the panel and the search
+    local i=$1 who="" state="" tm="" sc=$D ast; [ -n "${NOW:-}" ] || NOW=$(date +%s)
+    case "${T_STATUS[$i]}" in
+        now) ago_set tm "${T_UPD[$i]:-$NOW}"
+             if [ -n "${T_TN[$i]}" ]; then who="${T_AG[$i]:-?} → ${T_TN[$i]}"; state="handing over"; sc=$C; tm=""
+             elif [ -n "${T_AG[$i]}" ]; then    # given to an agent: say what that agent is doing now
+                 who=${T_AG[$i]}; tm=""; agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
+                 case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
+                     idle|done) state=finished; sc=$GREEN ;; *) state=gone; sc=$D ;; esac
+             fi ;;
+        waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
+                 [ -n "${T_SL[$i]}" ] && { state="Slack monitor (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
+        review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
+                [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]//¶/}; state=${state//\`/}; state=${state//\*/}
+                    while [ "${state/  / }" != "$state" ]; do state=${state//  / }; done; sc=$S; } ;;   # an answer in Slack
+        next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
+        done) ago_set tm "${T_UPD[$i]:-$NOW}" ;;            # (the panel shows done ones in their own area, with this time)
+    esac
+    TM_WHO=$who; TM_ST=$state; TM_SC=$sc; TM_TM=$tm
+}
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
     local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0
     sel_index
@@ -960,20 +980,9 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             case "$st" in now) label=NOW; lc=$ORANGE ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             group "$label" "$lc"; prev=$st
         fi
-        who=""; state=""; tm=""; sc=$D                        # the meta line: who · state · time
+        topic_meta "$i"; who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
-            now) ago_set tm "${T_UPD[$i]:-$NOW}"
-                 if [ -n "${T_TN[$i]}" ]; then who="${T_AG[$i]:-?} → ${T_TN[$i]}"; state="handing over"; sc=$C; tm=""
-                 elif [ -n "${T_AG[$i]}" ]; then    # given to an agent: say what that agent is doing now
-                     who=${T_AG[$i]}; tm=""; agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
-                     case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
-                         idle|done) state=finished; sc=$GREEN; [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;; *) state=gone; sc=$D ;; esac
-                 fi ;;
-            waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
-                     [ -n "${T_SL[$i]}" ] && { state="Slack monitor (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
-            review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
-                    [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]// ¶ / }; state=${state//\`/}; state=${state//\*/}; sc=$S; } ;;   # an answer in Slack
-            next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
+            now) [ "$state" = finished ] && [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;;
             done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
@@ -985,7 +994,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
     fi
 }
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
-    local max=$1 i k n=0 all=0 idx=() tc t tw w=$(( ${COLS:-44} - 2 ))
+    local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
     [ "$max" -gt 0 ] || return 0
     while IFS=' ' read -r k i; do                              # newest first: by the last change (checking off is one)
         [ -n "$i" ] || continue; all=$(( all + 1 ))
@@ -994,12 +1003,13 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     [ "$n" -gt 0 ] || return 0
     group DONE "$GREEN"
     for (( k = 0; k < n; k++ )); do
-        i=${idx[$k]}; clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 5 )); dw_set tw "$t"
+        i=${idx[$k]}; ago_set tm "${T_UPD[$i]:-${NOW:-0}}"                  # when it was checked off (its last change), on the right
+        clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 7 - ${#tm} )); dw_set tw "$t"
         tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"     # muted but bold like every title, one line each
         if [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then              # chosen (just checked off, or in the search): the bar
             tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$DSEL"
-            printf '\001%s  %s✓%s %s%s%s%*s%s\n' "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 4 - tw )) "" "$X"
-        else printf '  %s✓%s %s%s%s\n' "$GREEN" "$X" "$tc" "$t" "$X"; fi
+            printf '\001%s  %s✓%s %s%s%s%*s%s%s%s %s\n' "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
+        else printf '  %s✓%s %s%s%s%*s%s%s%s\n' "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
     done
     [ "$all" -gt "$n" ] && printf '  %s+%d more done%s\n' "$D" $(( all - n )) "$X"
     return 0
@@ -1298,19 +1308,23 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
 # ── the settings screen (","). Rows: the remote switch, one row per saved machine, the intervals, the animation.
 # ↑/↓ (or k/j) choose, space or enter switches, ←/→ change a number, "," or esc goes back. Every change is saved at once.
 SET_ROWS=()
-settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exist only while REMOTE_AGENTS is on
-    SET_ROWS=("choice|STORE|Data location" "enum|SYNC_VIA|Sync through" "bool|REMOTE_AGENTS|Remote agents (via herdr)")
-    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="bool|PUSH_STATES|Push agent states at once"
-    if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
-        local id label host prof enabled
-        while IFS=$US read -r id label host prof enabled; do
-            label=${label//[[:cntrl:]|]/}; host=${host//[[:cntrl:]]/}
-            [ -n "$label" ] && SET_ROWS[${#SET_ROWS[@]}]="machine|$label|$label ($host)"
-        done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
-        SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
+settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or the connections page (SET_PAGE=connections)
+    if [ "${SET_PAGE:-main}" = connections ]; then           # everything that reaches beyond this machine
+        SET_ROWS=("choice|STORE|Data location" "enum|SYNC_VIA|Sync through" "bool|REMOTE_AGENTS|Remote agents (via herdr)")
+        if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
+            SET_ROWS[${#SET_ROWS[@]}]="bool|PUSH_STATES|Push agent states at once"
+            local id label host prof enabled
+            while IFS=$US read -r id label host prof enabled; do
+                label=${label//[[:cntrl:]|]/}; host=${host//[[:cntrl:]]/}
+                [ -n "$label" ] && SET_ROWS[${#SET_ROWS[@]}]="machine|$label|$label ($host)"
+            done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
+            SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
+        fi
+        SET_ROWS[${#SET_ROWS[@]}]="bool|SLACK_WATCH|Slack monitor (Claude)"
+        [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
+        return
     fi
-    SET_ROWS[${#SET_ROWS[@]}]="bool|SLACK_WATCH|Watch Slack pins (Claude)"
-    [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
+    SET_ROWS=("link|CONNECTIONS|Connections" "link|SETUP|Setup wizard")
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
@@ -1326,13 +1340,19 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
-    SET_ROWS[${#SET_ROWS[@]}]="link|SETUP|Setup wizard"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
+}
+connections_summary() {  # one line under "Connections": where the topics are, remote agents, Slack
+    local t="topics $( [ "$(cfg_get STORE local)" = remote ] && cfg_get STORE_MACHINE '?' || echo local)"
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && t="$t · remote agents" || t="$t · no remote agents"
+    [ "$(cfg_get SLACK_WATCH off)" = on ] && t="$t · Slack monitor"
+    printf '%s' "$t"
 }
 bhote_settings() {
     local i row kind key label vp vc v def cur=${SET_IDX:-0} sel ind off
     settings_rows
-    printf '\n %sSettings%s  %s%s%s\n' "$L" "$X" "$D" "$(clip "${CONFIG_FILE/#$HOME/~}" $(( ${COLS:-44} - 13 )))" "$X"
+    if [ "${SET_PAGE:-main}" = connections ]; then printf '\n %sSettings › Connections%s\n' "$L" "$X"
+    else printf '\n %sSettings%s  %s%s%s\n' "$L" "$X" "$D" "$(clip "${CONFIG_FILE/#$HOME/~}" $(( ${COLS:-44} - 13 )))" "$X"; fi
     rule; printf '\n'
     for (( i = 0; i < ${#SET_ROWS[@]}; i++ )); do
         row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
@@ -1353,6 +1373,9 @@ bhote_settings() {
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
+            CONNECTIONS) wrap_print 5 "$D" "$(connections_summary)" ;;
+            SETUP) wrap_print 5 "$D" "Every step again: change it, or skip what is set." ;;
+            SLACK_WATCH) wrap_print 5 "$D" "Pinned Slack channels of waiting topics, read through Claude Code. One machine is enough." ;;
             REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
             JUMP_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = JUMP_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Jumps from the agent to this panel and back.')" ;;
             FIND_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = FIND_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Find a topic or an agent and jump to it.')" ;;
@@ -1360,7 +1383,7 @@ bhote_settings() {
     done
     printf '\n'; rule
     printf ' %s%s%s\n' "$D" "$(clip "↑↓ select · space/⏎ toggle" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "←→ change · , or esc back" $(( ${COLS:-44} - 3 )))" "$X"
+    printf ' %s%s%s\n' "$D" "$(clip "←→ change · , or esc back$( [ "${SET_PAGE:-main}" = connections ] && echo ' (to Settings)')" $(( ${COLS:-44} - 3 )))" "$X"
     printf ' %s%s%s\n' "$D" "$(clip "list: ⏎ open · n new · e/d edit · x done" $(( ${COLS:-44} - 3 )))" "$X"
     printf ' %s%s%s\n' "$D" "$(clip "s start · a from agents · q quit" $(( ${COLS:-44} - 3 )))" "$X"
 }
@@ -1436,7 +1459,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                 if [ "$k" = LEFT ]; then i2=$(( (i2 + n2 - 1) % n2 )); else i2=$(( (i2 + 1) % n2 )); fi
                 cfg_set "$key" "${opts[$i2]}"; return
             fi
-            if [ "$kind" = link ]; then [ "$k" = LEFT ] || { [ "$key" = SETUP ] && SETTINGS_GO=setup || SETTINGS_GO=hotkeys; }; return; fi
+            if [ "$kind" = link ]; then [ "$k" = LEFT ] || case "$key" in SETUP) SETTINGS_GO=setup ;; CONNECTIONS) SETTINGS_GO=connections ;; *) SETTINGS_GO=hotkeys ;; esac; return; fi
             if [ "$kind" = enum ]; then                              # step through the allowed values
                 setting_row "$key"; local vals cur2 nxt="" prev="" first="" last="" found=0 x IFS=:
                 vals=${S_TYPE#enum:}; cfg_var cur2 "$key" "$S_DEF"
@@ -2141,6 +2164,8 @@ w_screen() {  # w_screen <step> <TITLE>: a clean screen with the progress dots a
     done
     printf '\033[H\033[2J\n  %s%s\n  %s\n  %s\n\n  %s%s%s  %sstep %d of %d%s\n\n' "${HEAD_GRAD:-${L}Bhote setup}" "$X" "$B$(hline "$W")$X" "$dots" "$R" "$2" "$X" "$D" "$1" "$W_STEPS" "$X"
     w_log "== step $1: $2"
+    if [ "${W_GATE:-0}" = 1 ] && [ "$1" != "$W_STEPS" ]; then W_GATE=0; w_gate || return 1; printf '\n'; fi
+    W_GATE=0; return 0
 }
 w_say() { local col=${2:-$D} COLS=$(( W + 4 )); wrap_print 2 "$col" "$1"; }          # a paragraph, wrapped at the left edge
 w_mark() {  # w_mark <colour> <mark> <name> <detail>: aligned check lines (mark, name in 16 columns, detail cut to the edge)
@@ -2178,7 +2203,8 @@ w_key() {  # w_key <allowed keys, e.g. "ynsq">: waits for one of them or Enter (
         IFS= read -rsn1 k </dev/tty || { k=q; break; }
         case "$k" in
             "") k=ENTER; break ;;
-            $'\033') while read_soon _r; do :; done; continue ;;   # an arrow, the wheel, F-keys: the whole sequence goes
+            $'\033') local _sq=""; while read_soon _r; do _sq="$_sq$_r"; done   # an arrow: ← → when asked for (< >), else it goes
+                case "$_sq:$1" in "[C:"*">"*|"OC:"*">"*) k=RIGHT; break ;; "[D:"*"<"*|"OD:"*"<"*) k=LEFT; break ;; esac; continue ;;
             *) case "$1" in *"$k"*) break ;; esac
                case "$k" in [A-Z]) case "$1" in *"$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')"*) k=$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]'); break ;; esac ;; esac ;;
         esac
@@ -2212,10 +2238,43 @@ w_choose() {  # w_choose <var> <prompt> <allowed keys, e.g. 123> <default>: one 
     printf '%s%s%s\n' "$GREEN" "$W_KEY" "$X"; printf -v "$1" '%s' "$W_KEY"
 }
 w_button() { if [ "$color" = 1 ]; then printf '%s\033[7m %s \033[27m%s' "$L" "$1" "$X"; else printf '[ %s ]' "$1"; fi; }   # light on dark, inverted
-w_continue() {  # the way on: a button for Enter, quitting next to it (quiet)
-    printf '\n  %s  %sq end the setup%s ' "$(w_button "⏎ next")" "$D" "$X"
-    w_key q; [ "$W_KEY" = q ] && W_QUIT=1; printf '\n'; return 0
+w_navbar() {  # w_navbar <first button> <skip 0|1> <back 0|1>: ⏎ <first> · → skip & next · ← back · q abort (what is not possible: dim)
+    local sk bk
+    if [ "$2" = 1 ]; then sk="${L}→${X} skip & next"; else sk="${MUTED:-$D}→ skip & next${X}"; fi
+    if [ "$3" = 1 ]; then bk="${L}←${X} back"; else bk="${MUTED:-$D}← back${X}"; fi
+    printf '  %s   %s   %s   %sq%s abort' "$(w_button "⏎ $1")" "$sk" "$bk" "$L" "$X"
 }
+w_continue() {  # the end of a step: ⏎ next, ← back (this step's start → the step before), q abort
+    printf '\n'; w_navbar next 0 "$( [ "${W_IDX:-0}" -gt 0 ] && echo 1 || echo 0)" | sed 's/→ skip \& next/          /'
+    printf ' '; w_key "q<"
+    case "$W_KEY" in q) W_QUIT=1; W_JUMP=quit ;; LEFT) [ "${W_IDX:-0}" -gt 0 ] && { W_QUIT=1; W_JUMP=back; } ;; esac
+    printf '\n'; return 0
+}
+w_gate() {  # at the start of a step (again): what is set, then ⏎ change · → skip & next · ← back · q abort, pinned to the bottom
+    local set=0 rows; [ -n "$(cfg_get SETUP_DONE '')" ] && set=1
+    if [ "$set" = 1 ]; then printf '  %sAlready set%s\n' "$D" "$X"; "setup_sum_${W_NAME}" 2>/dev/null
+    else printf '  %sNot set up yet.%s\n' "$D" "$X"; fi
+    rows=$(stty size </dev/tty 2>/dev/null | awk '{print $1}'); rows=$(num_or "$rows" 0)
+    if [ "$rows" -gt 12 ]; then printf '\0337\033[%d;1H\033[2K' $(( rows - 1 )); w_navbar change "$set" "$( [ "$W_IDX" -gt 0 ] && echo 1 || echo 0)"; printf '\0338'
+    else printf '\n'; w_navbar change "$set" "$( [ "$W_IDX" -gt 0 ] && echo 1 || echo 0)"; printf '\n'; fi
+    while true; do
+        w_key "cq<>"
+        case "$W_KEY" in
+            ENTER|c) [ "$rows" -gt 12 ] && printf '\0337\033[%d;1H\033[2K\0338' $(( rows - 1 )); return 0 ;;   # change: the step's questions
+            RIGHT) [ "$set" = 1 ] && { W_JUMP=next; W_QUIT=1; return 1; } ;;
+            LEFT) [ "$W_IDX" -gt 0 ] && { W_JUMP=back; W_QUIT=1; return 1; } ;;
+            q) W_JUMP=quit; W_QUIT=1; return 1 ;;
+        esac
+    done
+}
+setup_sum_checks() { w_ok "jq · herdr" "$(command -v jq >/dev/null && echo ok || echo missing) · $(command -v herdr >/dev/null && echo ok || echo missing)"; w_ok "herdr plugin" "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo linked || echo not linked)"; }
+setup_sum_name() { w_ok "this machine" "$HOST"; }
+setup_sum_machines() { local l n=0; while IFS=$US read -r l _ _; do [ -n "$l" ] && { w_ok "machine" "$l"; n=$(( n + 1 )); }; done <<< "$(w_machines)"; [ "$n" -gt 0 ] || w_warn "machines" "none saved"; }
+setup_sum_twoway() { w_ok "other machines" "can reach $HOST over ssh (checked in the last step)"; }
+setup_sum_topics() { w_ok "topics" "$(store_summary)"; }
+setup_sum_agents() { w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"; w_ok "push states" "$(cfg_get PUSH_STATES on)"; }
+setup_sum_behaviour() { w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "auto-assign" "$(cfg_get AUTO_ASSIGN off)"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"; w_ok "slack monitor" "$(cfg_get SLACK_WATCH off)"; }
+setup_sum_panel() { w_ok "autostart" "$(cfg_get AUTOSTART on)"; w_ok "animation" "$(cfg_get ANIMATION on)"; w_ok "jump key" "${FOCUS_KEY:-$(cfg_get JUMP_KEY off)}"; w_ok "find key" "${FIND_KEY_SHOW:-$(cfg_get FIND_KEY off)}"; }
 w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a password here), then says how it went
     printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; w_log "run: $1"; shift
     local out="$RUN_DIR/wrun.$$"
@@ -2359,7 +2418,7 @@ w_remote_knows() {  # w_remote_knows <machine label>: does that machine have THI
     return 1
 }
 setup_step_checks() {
-    w_screen 1 "CHECKS"
+    w_screen 1 "CHECKS" || return
     w_say "What bhote needs on this machine. Nothing is changed in this step unless you say so."; w_line
     local dir hook="$HOME/.claude/settings.json" r
     command -v jq >/dev/null 2>&1 && w_ok "jq" "$(jq --version 2>/dev/null)" || w_bad "jq" "install it: brew install jq / pacman -S jq"
@@ -2400,7 +2459,7 @@ setup_step_checks() {
     w_continue
 }
 setup_step_name() {
-    w_screen 2 "THIS MACHINE"
+    w_screen 2 "THIS MACHINE" || return
     w_say "How this machine is called in the agent lists. Other machines must know it by the same name (herdr machine label)."
     local n old=$HOST f; w_read n "Name of this machine:" "$HOST"; [ "$W_QUIT" = 1 ] && return
     n=${n//[!A-Za-z0-9 ._-]/}; [ -n "$n" ] && { cfg_set HOST_LABEL "$n"; HOST=$n; w_ok "name" "$n"; }
@@ -2433,7 +2492,7 @@ setup_add_machine() {  # setup_add_machine <host or user@host>: user, test, labe
 setup_step_machines() {
     local label host en r t lab
     while true; do
-        w_screen 3 "OTHER MACHINES"
+        w_screen 3 "OTHER MACHINES" || return
         w_say "The machines herdr knows (herdr machine list). bhote reaches them through herdr: their agents, and the topics."; w_line
         local any=0
         while IFS=$US read -r label host en <&3; do
@@ -2442,7 +2501,7 @@ setup_step_machines() {
         done 3<<< "$(w_machines)"
         [ "$any" = 1 ] || w_warn "none yet" "add one to see its agents here"
         w_yn "Add a machine?" N; r=$?; [ $r = 3 ] && return; [ $r = 0 ] || break
-        w_screen 3 "ADD A MACHINE"
+        w_screen 3 "ADD A MACHINE" || return
         local saved_list; saved_list=$(w_machines | awk -F'\037' '{ printf "%s%s", (NR > 1 ? ", " : ""), $1 }')
         w_say "Which machines? Found nearby; a number picks one, several numbers (1 2) pick several, or type a name or an address."
         [ -n "$saved_list" ] && { w_line; w_ok "already saved" "$saved_list"; }
@@ -2490,7 +2549,7 @@ setup_open_ssh() {  # ssh into this machine is closed: switch it on here (sudo a
     return 1
 }
 setup_step_twoway() {
-    w_screen 4 "THE OTHER WAY ROUND"
+    w_screen 4 "THE OTHER WAY ROUND" || return
     w_say "So that the other machines see the agents of this one, and topics can travel both ways, they must know this machine too."; w_line
     local label host en r tgt key fp ak="$HOME/.ssh/authorized_keys" known
     while IFS=$US read -r label host en <&3; do
@@ -2547,7 +2606,7 @@ setup_step_twoway() {
     w_continue
 }
 setup_step_topics() {
-    w_screen 5 "TOPICS"
+    w_screen 5 "TOPICS" || return
     w_say "Where your topics live. The local copy is always the working copy; another machine can hold a replica."; w_line
     w_opt 1 "only on this machine"; w_opt 2 "in step with a machine, through herdr (recommended)"; w_opt 3 "in step with a machine, through ssh"
     local c m labels="" label host en r cur; cfg_var cur STORE local
@@ -2573,14 +2632,14 @@ setup_step_topics() {
     w_continue
 }
 setup_step_agents() {
-    w_screen 6 "REMOTE AGENTS"
+    w_screen 6 "REMOTE AGENTS" || return
     w_say "Also list the agents of the other machines (asked through herdr)."
     local r; w_yn "Show the agents of the other machines here?" "$([ "$(cfg_get REMOTE_AGENTS off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set REMOTE_AGENTS on; w_ok "remote agents" "on" ;; 1) cfg_set REMOTE_AGENTS off; w_ok "remote agents" "off" ;; esac
     w_continue
 }
 setup_step_behaviour() {
-    w_screen 7 "AGENTS AND NOTIFICATIONS"
+    w_screen 7 "AGENTS AND NOTIFICATIONS" || return
     local r h
     w_say "When you hand a topic to an agent, it reports back with bhote review (you check it) or bhote done."
     w_yn "May an agent close its topic itself?" "$([ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
@@ -2620,7 +2679,7 @@ setup_step_behaviour() {
     w_continue
 }
 setup_step_panel() {
-    w_screen 8 "THE PANEL"
+    w_screen 8 "THE PANEL" || return
     local r
     w_yn "Open the panel next to your agents when herdr starts?" "$([ "$(cfg_get AUTOSTART on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTOSTART on ;; 1) cfg_set AUTOSTART off ;; esac
@@ -2648,7 +2707,7 @@ setup_step_panel() {
     w_continue
 }
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
-    w_screen 9 "DONE"
+    w_screen 9 "DONE" || return
     w_ok "machine" "$HOST"
     w_ok "topics" "$([ "$(cfg_get STORE local)" = remote ] && printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" || echo 'only here')"
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
@@ -2677,8 +2736,17 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     w_log "==== setup on $HOST (bhote $VERSION)"
-    for st in checks name machines twoway topics agents behaviour panel done; do
-        "setup_step_$st"; [ "$W_QUIT" = 1 ] && break
+    local steps=(checks name machines twoway topics agents behaviour panel done); W_IDX=0
+    while [ "$W_IDX" -lt "${#steps[@]}" ]; do               # each step: ⏎ change · → skip & next · ← back · q abort
+        W_NAME=${steps[$W_IDX]}; W_QUIT=0; W_JUMP=""; W_GATE=1
+        "setup_step_$W_NAME"
+        case "$W_JUMP" in
+            back) W_IDX=$(( W_IDX > 0 ? W_IDX - 1 : 0 )); continue ;;
+            next) W_IDX=$(( W_IDX + 1 )); continue ;;
+            quit) break ;;
+        esac
+        [ "$W_QUIT" = 1 ] && break
+        W_IDX=$(( W_IDX + 1 ))
     done
     cfg_set SETUP_DONE "$(date +%Y-%m-%d)"
     HEAD_GRAD=""                                            # the list makes its own again
@@ -2801,9 +2869,10 @@ bhote_main() {
         fi
         if [ "$view" = settings ]; then
             case "$key" in
-                ","|ESC|q|Q) view=$back; redraw=1 ;;
+                ","|ESC|q|Q) if [ "${SET_PAGE:-main}" = connections ]; then SET_PAGE=main; SET_IDX=0; else view=$back; fi; redraw=1 ;;
                 ""|DRAG) ;;
                 *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys
+                   [ "$SETTINGS_GO" = connections ] && { SET_PAGE=connections; SET_IDX=0; }
                    [ "$SETTINGS_GO" = setup ] && panel_setup
                    redraw=1 ;;
             esac
@@ -2856,7 +2925,7 @@ bhote_main() {
                 d|D) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the description
                          if [ -n "$f" ] && ask "Description: " "$(topic_get "$f" description)" "$DESC_MAX"; then topic_set "$f" description "$ANSWER"; fi; redraw=1; fi ;;
                 n|N) if [ "$view" = main ]; then prompt_new_topic; redraw=1; else view=main; redraw=1; fi ;;
-                ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_IDX=0; redraw=1 ;;
+                ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_PAGE=main; SET_IDX=0; redraw=1 ;;
                 UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; fi ;;      # on the start screen the wheel does nothing
                 DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; fi ;;
                 ENTER|RIGHT) if [ "$view" = splash ]; then view=main; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
@@ -3198,34 +3267,22 @@ cli_show() {  # cli_show <file> [--json]
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
 # must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic opens its page
 # in the bhote panel of the tab. Esc closes.
-FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=()
-find_state() {  # find_state <topic index>: FS_TXT, FS_COL: what its agent does, as the list says it
-    local ast; FS_TXT=""; FS_COL=$D
-    case "${T_STATUS[$1]}" in
-        now) if [ -n "${T_TN[$1]}" ]; then FS_TXT="handing over → ${T_TN[$1]}"; FS_COL=$C
-             elif [ -n "${T_AP[$1]}" ]; then agent_state_set ast "${T_AM[$1]}" "${T_AP[$1]}"
-                 case "$ast" in working) FS_TXT=working; FS_COL=$ORANGE ;; testing) FS_TXT="running tests"; FS_COL=$ORANGE ;; blocked) FS_TXT="needs you"; FS_COL=$NN ;;
-                     idle|done) FS_TXT=finished; FS_COL=$GREEN ;; *) FS_TXT=gone ;; esac
-             fi ;;
-        review) FS_TXT="ready for review"; FS_COL=$BLUE ;;
-        waiting) [ -n "${T_AG[$1]}" ] && { FS_TXT="${T_AG[$1]} waits"; FS_COL=$Y; } ;;
-    esac
-}
+FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=(); FI_TM=()
 find_items() {  # topics in the list's status order (review, now, next, waiting, later, done), then the agents: busy, then free
     local i m id st name task lowsrc="" n=0 pass
-    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=()
+    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=(); FI_TM=()
     for (( i = 0; i < T_N; i++ )); do
         FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=${T_STATUS[$i]}; FI_REF[$n]=${T_ID[$i]}
-        FI_GRP[$n]=${T_STATUS[$i]}; FI_LABEL[$n]="${T_AG[$i]}${T_AG[$i]:+${T_WFOR[$i]:+ · }}${T_WFOR[$i]}"
-        find_state "$i"; FI_SUB[$n]=$FS_TXT; FI_SC[$n]=$FS_COL
-        lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} $FS_TXT topic"$'\n'; n=$(( n + 1 ))
+        FI_GRP[$n]=${T_STATUS[$i]}
+        topic_meta "$i"; FI_LABEL[$n]=$TM_WHO; FI_SUB[$n]=$TM_ST; FI_SC[$n]=$TM_SC; FI_TM[$n]=$TM_TM   # the panel's meta line, 1:1
+        lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} $TM_WHO $TM_ST topic"$'\n'; n=$(( n + 1 ))
     done
     for pass in busy free; do
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             case "$st" in idle|done) [ "$pass" = free ] || continue ;; *) [ "$pass" = busy ] || continue ;; esac
             FI_KIND[$n]=agent; FI_NAME[$n]=$name; FI_M[$n]=$m; FI_P[$n]=$id; FI_ST[$n]=$st; FI_REF[$n]=""; FI_GRP[$n]=$pass
-            FI_LABEL[$n]="$m${task:+ · $task}"; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
+            FI_LABEL[$n]="$m${task:+ · $task}"; FI_TM[$n]=""; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
         done
     done
     i=0; while IFS= read -r m; do FI_LOW[$i]=$m; i=$(( i + 1 )); done <<< "$(printf '%s' "$lowsrc" | tr '[:upper:]' '[:lower:]')"
@@ -3253,19 +3310,21 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
             rl[${#rl[@]}]=$(printf ' %s%s%s' "$cc" "$cap" "$X"); rh[${#rh[@]}]=-1
         fi
         if [ "${FI_KIND[$i]}" = agent ]; then
-            case "${FI_ST[$i]}" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+            case "${FI_ST[$i]}" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
         else
             case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; next) ic="${S}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
         fi
-        local sb=${FI_SUB[$i]:-} sbw=0 sep=""
+        local sb=${FI_SUB[$i]:-} sbw=0 sep="" tm=${FI_TM[$i]:-} tw2=0 lbc=$D
+        [ -n "$tm" ] && tw2=$(( ${#tm} + 2 ))                     # the time on the right edge, as in the panel
         clip_set nm "${FI_NAME[$i]}" $(( w * 3 / 5 )); dw_set nw "$nm"
-        [ -n "$sb" ] && { clip_set sb "$sb" $(( w - 8 - nw )); dw_set sbw "$sb"; }  # the state first: it must not be cut away
+        [ -n "$sb" ] && { clip_set sb "$sb" $(( w - 8 - nw - tw2 )); dw_set sbw "$sb"; }  # the state first: it must not be cut away
         [ -n "$sb" ] && [ -n "${FI_LABEL[$i]}" ] && sep=" · "
-        clip_set lb "${FI_LABEL[$i]}" $(( w - 8 - nw - sbw - ${#sep} )); dw_set lw "$lb"; [ -n "$lb" ] || sep=""
-        pad=$(( w - 8 - nw - lw - ${#sep} - sbw )); [ "$pad" -lt 0 ] && pad=0
+        clip_set lb "${FI_LABEL[$i]}" $(( w - 8 - nw - sbw - ${#sep} - tw2 )); dw_set lw "$lb"; [ -n "$lb" ] || sep=""
+        [ "${FI_KIND[$i]}" = topic ] && lbc=$BLUE                    # who, in blue like the panel
+        pad=$(( w - 8 - nw - lw - ${#sep} - sbw - ${#tm} )); [ "$pad" -lt 1 ] && pad=1
         [ "$k" = "$sel" ] && sr=${#rl[@]}
-        if [ "$k" = "$sel" ]; then line=$(printf '%s   %s%s %s%s%s  %s%s%s%s%s%*s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$DSEL" "$lb" "$sep" "${FI_SC[$i]:-}" "$sb" "$pad" "" "$X")
-        else line=$(printf '   %s%s %s%s%s  %s%s%s%s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$D" "$lb" "$sep" "${FI_SC[$i]:-}" "$sb" "$X"); fi
+        if [ "$k" = "$sel" ]; then line=$(printf '%s   %s%s %s%s%s  %s%s%s%s%s%s%*s%s%s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$lbc" "$lb" "$DSEL" "$sep" "${FI_SC[$i]:-}" "$sb" "$pad" "" "$DSEL" "$tm" "$X")
+        else line=$(printf '   %s%s %s%s%s  %s%s%s%s%s%s%s%*s%s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$lbc" "$lb" "$D" "$sep" "${FI_SC[$i]:-}" "$sb" "$X" "$pad" "" "$D" "$tm" "$X"); fi
         rl[${#rl[@]}]=$line; rh[${#rh[@]}]=$k
     done
     off=0; [ "$sr" -ge "$room" ] && off=$(( sr - room + 1 ))

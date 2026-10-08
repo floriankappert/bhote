@@ -73,6 +73,13 @@ lay=$(echo "$page" | sed -n '/^  Akrur$/,/^  2\./p')
   Open:
   1. Verify the scan
   2. Then remove the flag" ] && ok "topic page: paragraphs, bullets, numbers; identifiers stay whole" || bad "layout: $lay"
+frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=80 BHOTE_ROWS=40 bash ./bhote </dev/null)
+echo "$frame" | grep -q "slack · Akrur: Hi, Set up: • Bucket: b-1 and" && ! echo "$frame" | grep -q "¶" && ok "panel: the answer on one line, without ¶ and marks" || bad "list line: $(echo "$frame" | grep slack)"
+# the search popup says the same as the panel (one source: topic_meta)
+( topics_load; AG_N=0; AG_LINES=(); find_items
+  for (( k = 0; k < ${#FI_KIND[@]}; k++ )); do [ "${FI_REF[$k]}" = "$id" ] && break; done
+  [ "${FI_LABEL[$k]}" = slack ] && [ "${FI_SUB[$k]:0:20}" = "Akrur: Hi, Set up: •" ] && [ "${FI_TM[$k]}" = "just now" ] ) \
+  && ok "search: the same meta line as the panel (who, state, time)" || bad "search meta differs"
 # waits again: the message goes, from now on; the same message again changes nothing
 B wait "$id" Legal >/dev/null; [ "$(topic_get "$f" status)" = waiting ] && [ -z "$(topic_get "$f" slack_msg)" ] && ok "wait again: the message goes, the pin stays" || bad "rewait"
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)

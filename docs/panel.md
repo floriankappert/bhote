@@ -20,7 +20,7 @@ is selected.
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
 | `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one |
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
-| `,` | settings (the full key list is under *Hotkeys* there) · `S` welcome screen · `q` quit |
+| `,` | settings (the full key list is under *Hotkeys* there; *Connections* holds the data location, remote agents and the Slack monitor; *Setup wizard* runs the wizard again) · `S` welcome screen · `q` quit |
 
 The find key (settings › *Find key*, e.g. `ctrl+alt+t`, on the Mac ⌘T) opens a search popup over all agents and topics:
 type, choose, `⏎` jumps there; `x` (`ctrl+x` once something is typed) checks a topic off;

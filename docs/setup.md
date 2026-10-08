@@ -2,7 +2,11 @@
 
 On the first start on a machine, bhote opens a short wizard, once and in one panel only (herdr may start several panels at
 a time). Later it is under **settings › Setup wizard**, or `bhote setup` in any terminal. Every step explains itself and
-asks first: `⏎` takes the `[default]`, `s` skips a step, `q` (or `Ctrl-C`) ends the setup. On the welcome screen that
+asks first: `⏎` takes the `[default]`, `s` skips a question, `q` (or `Ctrl-C`) ends the setup.
+
+Every step opens with what is set already and a bar at the bottom: `⏎ change` (its questions), `→ skip & next` (keeps
+what is set; only once the wizard ran on this machine), `← back` (the step before), `q abort`. At the end of a step:
+`⏎ next`, `← back`, `q abort`. On the welcome screen that
 offers it, any key starts it, `Esc` postpones it to the next start and `q` quits. `bhote setup --json` only reports what is
 in place and changes nothing (it asks a machine over ssh only when herdr reaches it).
 
