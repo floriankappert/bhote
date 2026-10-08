@@ -230,4 +230,22 @@ ev w9:p1 working; [ "$(topic_get "$af" deleted)" = 1 ] && ok "auto review: gone 
 rm -f "$TOPIC_DIR"/*.topic; topic_new "Real work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w9:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
 ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$tf" status)" = review ] && ok "auto review: a topic in work goes to review" || bad "now->review: $(topic_get "$tf" status)"
 ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and back to now when the agent works again" || bad "review->now: $(topic_get "$tf" status)"
+# auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
+(
+rm -f "$TOPIC_DIR"/*.topic; project_new "IMS"; ims=$PROJ_ID; project_new "Bilendo"; bil=$PROJ_ID; project_new "Bilendo Marketing"; mkt=$PROJ_ID
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}ims-agent${US}t" "$HOST${US}w2:p1${US}idle${US}bil-agent${US}t" > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
+printf '%s\n' "$HOST${US}w1:p1${US}t1${US}a${US}${US}$ims${US}/x" "$HOST${US}w2:p1${US}t2${US}a${US}${US}$bil${US}/y" > "$AGENT_META_L"
+agent_live() { LIVE_ST=idle; LIVE_SESS=s1; }; agent_taken() { return 1; }; notify() { :; }; agent_send() { echo "$1/$2" >> "$T/sent.log"; }
+cfg_set AUTO_ASSIGN on; : > "$T/sent.log"
+project_autoselect "Fix the IMS export"; [ "$PROJ_ID" = "$ims" ] && ok "project_autoselect: a project name as a word" || bad "autoselect ims: $PROJ_ID"
+project_autoselect "Bilendo Marketing page" ; [ "$PROJ_ID" = "$mkt" ] && ok "project_autoselect: the longest name wins" || bad "autoselect longest: $PROJ_ID"
+project_autoselect "claims processing" && bad "autoselect: ims inside a word" || ok "project_autoselect: not inside a word"
+topic_new "Fix the IMS export" "" ""; t1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t1" updated 1
+topic_new "Something without a hint" "" ""; t2="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t2" updated 1
+auto_assign
+[ "$(topic_get "$t1" agent_pane)" = w1:p1 ] && [ "$(topic_get "$t1" project)" = "$ims" ] && ok "auto-assign: the project is chosen from the words and its agent is used" || bad "auto-assign ims: $(topic_get "$t1" agent_pane) $(topic_get "$t1" project)"
+[ -z "$(topic_get "$t2" agent_pane)" ] && [ -z "$(topic_get "$t2" project)" ] && ok "auto-assign: a topic without a project does not start" || bad "auto-assign without project started"
+topic_set "$t2" project "$bil"; topic_set "$t2" updated 1; topic_set "$t1" agent_pane ""; auto_assign
+[ "$(topic_get "$t2" agent_pane)" = w2:p1 ] && ok "auto-assign: a chosen project picks the agent of that project only" || bad "auto-assign bil: $(topic_get "$t2" agent_pane)"
+) && true
 rm -rf "$T"; exit $fail

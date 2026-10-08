@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.5.4}
+VERSION=${BHOTE_VERSION:-0.5.5}
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=2
@@ -85,7 +85,7 @@ PANEL_MAX_WIDTH|60|int:30:300|The widest the panel pane may get in herdr (column
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|off|bool|An agent whose workspace runs tests counts as busy
-AUTO_ASSIGN|off|bool|A running (now) topic without an agent goes to the next free agent by itself, 20 s after its last change
+AUTO_ASSIGN|off|bool|A running (now) topic with a project and without an agent goes to the next free agent OF THAT PROJECT by itself, 20 s after its last change (a topic without a project gets it from a project name in its title or description; if there is none, nothing starts)
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
@@ -863,8 +863,21 @@ collector_lead() {  # collector_lead <main pid>: 0 when this panel is the collec
 # Auto-assign (AUTO_ASSIGN=on): a running topic without an agent goes to the next free agent, 20 s after its last change (time
 # to add a description), the agents of AUTO_ASSIGN_MACHINE first (any: this machine). Each agent is asked live right before.
 # It runs in the collector, so once per machine: when two machines share the topics, switch it on on ONE of them.
+project_autoselect() {  # project_autoselect <text>: PROJ_ID of the project whose name stands in the text as whole words (the longest name; none when two differ)
+    local txt pn best="" bl=0 k tie=0 n; PROJ_ID=""
+    projects_load                                              # (the projects may have changed since the last look)
+    txt=" $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ' | tr -s ' ') "
+    for (( k = 0; k < P_N; k++ )); do
+        pn=$(printf '%s' "${P_NAME[$k]}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ' | tr -s ' '); pn=${pn# }; pn=${pn% }
+        [ "${#pn}" -ge 3 ] || continue
+        case "$txt" in *" $pn "*) n=${#pn}
+            if [ "$n" -gt "$bl" ]; then best=${P_ID[$k]}; bl=$n; tie=0; elif [ "$n" = "$bl" ] && [ "${P_ID[$k]}" != "$best" ]; then tie=1; fi ;; esac
+    done
+    [ -n "$best" ] && [ "$tie" = 0 ] || return 1
+    PROJ_ID=$best
+}
 auto_assign() {
-    local on pref i k m id st name task f now used="" pass t pick sess SEL_ID=""
+    local on pref i k m id st name task f now used="" pass t pick sess tpj SEL_ID=""
     cfg_var on AUTO_ASSIGN off; [ "$on" = on ] || return 0
     cfg_var pref AUTO_ASSIGN_MACHINE any; [ "$pref" = any ] && pref=$HOST
     topics_load; now=$(date +%s)
@@ -873,10 +886,15 @@ auto_assign() {
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_STATUS[$i]}" = now ] && [ -z "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || continue
         [ $(( now - $(num_or "${T_UPD[$i]}" "$now") )) -ge 20 ] || continue
+        # the project decides which agents come into question: a topic without one gets it from its words (project_autoselect), else it waits
+        tpj=${T_PJ[$i]}
+        if [ -z "$tpj" ]; then project_autoselect "${T_TITLE[$i]} ${T_DESC[$i]}" && { tpj=$PROJ_ID; topic_set "${T_FILE[$i]}" project "$tpj"; topic_set "${T_FILE[$i]}" project_auto 1; }; fi
+        [ -n "$tpj" ] || continue
         pick=""
         for pass in pref other; do
             for (( k = 0; k < AG_N; k++ )); do
                 IFS=$US read -r m id st name task <<< "${AG_LINES[$k]}"
+                agent_meta "$m" "$id"; [ "$AM_PROJECT" = "$tpj" ] || continue                  # only the agents of the topic's project
                 if [ "$pass" = pref ]; then [ "$m" = "$pref" ] || continue; else [ "$m" != "$pref" ] || continue; fi
                 case "$st" in idle|done) ;; *) continue ;; esac
                 case " $used " in *" $m/$id "*) continue ;; esac
@@ -3691,7 +3709,7 @@ setup_step_behaviour() {
     w_yn "Does an agent whose workspace runs tests count as busy?" "$([ "$(cfg_get TESTS_BUSY off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set TESTS_BUSY on ;; 1) cfg_set TESTS_BUSY off ;; esac
     w_head "Auto-assign"
-    w_say "Auto-assign: a topic you set to now (without an agent) goes to the next free agent by itself, 20 s after its last change. With two machines sharing topics, switch it on on one of them."
+    w_say "Auto-assign: a topic you set to now goes to the next free agent of its project by itself, 20 s after its last change. The project decides which agent: a topic without one gets it from a project name in its title or description (\"Fix the IMS export\" → IMS); if there is none, nothing starts until you give it a project (topic page › Project). With two machines sharing topics, switch it on on one of them."
     w_yn "Auto-assign now topics to the next free agent?" "$([ "$(cfg_get AUTO_ASSIGN off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTO_ASSIGN on ;; 1) cfg_set AUTO_ASSIGN off ;; esac
     if [ "$(cfg_get AUTO_ASSIGN off)" = on ]; then
