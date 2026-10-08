@@ -143,10 +143,27 @@ grep -q "^Laptop${US}w3:p1${US}off-working" "$AGENT_REMOTE" && grep -qx Laptop "
 FAKE_DOWN=1 collect_remote; grep -q "${US}off-off-" "$AGENT_REMOTE" && bad "off- doubled" || ok "remote: still away, marked once"
 collect_local; frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=()
   while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < <(agents_all); agents_block )
-echo "$frame" | grep -q "Laptop ◐ reconnecting" && ok "panel: the machine says reconnecting, its agents stay listed" || bad "panel reconnecting: $(echo "$frame" | grep -n 'Laptop\|┈')"
+echo "$frame" | grep -q "LPT ◐ reconnecting" && echo "$frame" | grep -q "LPT|" && ok "panel: the machine (its code) says reconnecting, its agents stay listed" || bad "panel reconnecting: $(echo "$frame" | grep -n 'LPT\|┈')"
 ( AG_N=0; AG_LINES=(); while IFS= read -r l; do AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); done < "$AGENT_REMOTE"; agent_state_set s Laptop w3:p1; [ "$s" = off-working ] ) \
   && ok "remote: a topic's agent on it reads off-working (shown as offline)" || bad "agent state offline"
 collect_remote; grep -q "^Laptop${US}w3:p1${US}working" "$AGENT_REMOTE" && [ ! -s "$SHARED_DIR/machines.offline" ] && ok "remote: back again, live states" || bad "back online"
+# machine codes: three capitals from the name, unique over all machines; set by hand they are a record in the store (every
+# machine shows the same); in the list MAC|name, only when more than one machine is listed
+[ "$(machine_code_cands Mac | head -1)" = MAC ] && [ "$(machine_code_cands Omarchy | head -1)" = OMR ] && [ "$(machine_code_cands "MacBook Pro" | head -1)" = MBP ] \
+  && ok "codes: made from the name (MAC, OMR, MBP)" || bad "code candidates: $(machine_code_cands Omarchy | head -3 | tr '\n' ' ')"
+( HOST=Mac; AG_N=2; AG_LINES=($'Mac\037w1:p1\037idle\037a\037' $'Mac2\037w2:p1\037idle\037b\037'); MC_KEY=-; machine_codes_load
+  machine_code_set a Mac; machine_code_set b Mac2; [ "$a" = MAC ] && [ "$b" != MAC ] && machine_code_ok "$b" ) && ok "codes: unique (a clash takes the next candidate)" || bad "codes not unique"
+nt=$(BHOTE_NO_SYNC=1 bhote_cli list --all --json | jq length)
+( AG_N=1; AG_LINES=($'Laptop\037w9:p2\037idle\037server\037'); machine_code_save Laptop zzz && MC_KEY=-; machine_codes_load; machine_code_set c Laptop; [ "$c" = ZZZ ] ) \
+  && grep -q '^kind=machine' "$TOPIC_DIR/mach-laptop.topic" && ok "codes: set by hand (lower case taken), a record in the store" || bad "code save: $(cat "$TOPIC_DIR/mach-laptop.topic" 2>&1)"
+[ "$(BHOTE_NO_SYNC=1 bhote_cli list --all --json | jq length)" = "$nt" ] && ok "codes: the record is no topic" || bad "code record listed as a topic"
+( AG_N=1; AG_LINES=($'Laptop\037w9:p2\037idle\037server\037'); machine_code_save "$HOST" ZZZ 2>/dev/null ) && bad "a taken code was given twice" || ok "codes: a code another machine has is refused"
+( machine_code_save Laptop AB 2>/dev/null ) && bad "a two-letter code was taken" || ok "codes: only three letters A-Z"
+( AG_N=1; AG_LINES=($'Laptop\037w9:p2\037idle\037server\037'); machine_code_save Laptop "" && MC_KEY=-; machine_codes_load; machine_code_set c Laptop; [ "$c" = LPT ] ) && ok "codes: empty makes it from the name again" || bad "code reset"
+frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037idle\037Laptop / root\037' $'Laptop\037w9:p3\037idle\037api\037'); agents_block )
+echo "$frame" | grep -q "|" && bad "one machine: codes shown" || ok "codes: one machine listed, no codes"
+frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037idle\037Laptop / root\037' $"$HOST"$'\037w1:p1\037idle\037api\037'); agents_block )
+echo "$frame" | grep -q "LPT|root" && echo "$frame" | grep -q "|api" && ! echo "$frame" | grep -qi "^ *laptop *$" && ok "codes: CODE|name, no machine sub-captions (Laptop / root is LPT|root)" || bad "codes in the list: $frame"
 cfg_set REMOTE_AGENTS off
 # projects: this machine's agents get repo and project tokens (only on a change); the panel reads them back
 mkdir -p "$T/prj"; git -C "$T/prj" init -q -b main; git -C "$T/prj" remote add origin https://github.com/acme/ims.git

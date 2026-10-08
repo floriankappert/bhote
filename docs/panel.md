@@ -21,7 +21,7 @@ is selected.
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
 | `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one |
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
-| `,` | settings (the full key list is under *Hotkeys* there; *Connections* holds the data location, remote agents and the Slack monitor; *Setup wizard* runs the wizard again) · `S` welcome screen · `q` quit |
+| `,` | settings (the full key list is under *Hotkeys* there; *Connections* holds the data location, remote agents, the Slack monitor and the machine codes; *Setup wizard* runs the wizard again) · `S` welcome screen · `q` quit |
 
 The find key (settings › *Find key*, e.g. `ctrl+alt+t`, on the Mac ⌘T) opens a search popup over all agents and topics:
 type, choose, `⏎` jumps there; `x` (`ctrl+x` once something is typed) checks a topic off;
@@ -44,9 +44,14 @@ description shows how many of its 140 characters are left.
 
 ## Agents
 
-Agents are split into **free** (idle, done) and **busy** (working, blocked, running tests with `TESTS_BUSY=on`). Agents of
-other machines carry the machine's initial unless their name starts with it. Drag the `═══` divider to give the agent area
-more or fewer rows. A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
+Agents are listed by project (the panel's own project first, those without one last), in two columns; the icon says the
+state as in the herdr sidebar (`✶` busy, `◉` needs you, `✓` done, `○` idle). When the agents of more than one machine are
+listed, each name carries its machine's **code** in front: `MAC|IMS (main)`, `OMR|root` (a session in the home folder,
+named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
+`OMR`, MacBook Pro `MBP`), unique over all machines; settings › *Connections* › *Code of …* and the setup wizard set one by
+hand (empty: made from the name again). A code set by hand is a record in the topic store, so every machine shows the same.
+A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. Drag the `═══`
+divider to give the agent area more or fewer rows. A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
 `finished · x = done`, `gone`).
 
 ## Handing a topic to an agent

@@ -1128,9 +1128,9 @@ agent_divider() {  # the handle between topics and agents: a rule with a grip in
     l=$(( (w - 5) / 2 )); r=$(( w - 5 - l ))
     printf '  %s%s%s ═══ %s%s%s\n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X"
 }
-agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), inside a project
-    # by machine when there is more than one; two columns. The icon says the state (as in the herdr sidebar), muted when the
-    # machine does not answer. A project's agents come from their repo/project tokens (project_sync on their machine).
+agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), two columns;
+    # with more than one machine each name has its machine's code in front (MAC|name). The icon says the state (as in the herdr
+    # sidebar), muted when the machine does not answer. A project's agents come from their repo/project tokens (project_sync).
     local i k m id st raw off name task ic nc label cw maxr cell plain _ln n=0 shown hidden=0 r lines=() lc=() lid=() rid=()
     maxr=$(( ${ROWS:-40} - 21 )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
@@ -1138,24 +1138,27 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     agent_divider
     [ "$AG_N" -gt 0 ] || { agent_footer; return; }
     # each agent's project (from the collected tokens), the machines, the projects in their order
-    local apj=() machines=("$HOST") nm=1 pm mm t a rr jj cc
+    local apj=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
     local metas; metas=$(cat "$AGENT_META_L" "$AGENT_META_R" 2>/dev/null)
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
         apj[$i]=""; case "$metas" in *"$m$US$id$US"*) local rest=${metas#*"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
         for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done; [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
+        [ "$m" = "$HOST" ] && hosted=1
     done
+    [ -z "$hosted" ] && { machines=("${machines[@]:1}"); nm=$(( nm - 1 )); }   # (this machine first, but only with agents of its own)
     [ "${P_N:-0}" -gt 0 ] || projects_load
     local order=() no=0                                         # the panel's project first, then by name, then "no project"
     [ -n "${CUR_PROJ:-}" ] && order[${#order[@]}]=$CUR_PROJ
     for (( k = 0; k < P_N; k++ )); do [ "${P_ID[$k]}" = "${CUR_PROJ:-}" ] || order[${#order[@]}]=${P_ID[$k]}; done
     order[${#order[@]}]="-"
+    [ "$nm" -gt 1 ] && machine_codes_load
     for pm in "${order[@]}"; do
         local cnt=0; for (( i = 0; i < AG_N; i++ )); do
             if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null || cnt=$(( cnt + 1 )); else [ "${apj[$i]}" = "$pm" ] && cnt=$(( cnt + 1 )); fi
         done
         [ "$cnt" -gt 0 ] || continue
-        local cap cw2 rest2 pname pmach=() npm=0 only=""; if [ "$pm" = "-" ]; then pname="no project"; else pname=$(project_name "$pm"); fi
+        local cap cw2 rest2 pname pmach=() npm=0; if [ "$pm" = "-" ]; then pname="no project"; else pname=$(project_name "$pm"); fi
         for mm in "${machines[@]}"; do                         # the machines this project runs on: one only? then it goes into the caption
             for (( i = 0; i < AG_N; i++ )); do
                 [ "${AG_LINES[$i]%%$US*}" = "$mm" ] || continue
@@ -1163,33 +1166,30 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                 pmach[$npm]=$mm; npm=$(( npm + 1 )); break
             done
         done
-        [ "$npm" = 1 ] && [ "$nm" -gt 1 ] && { only=${pmach[0]}; pname="$pname · $only"; machine_offline "$only" && pname="$pname ◐"; }
+        for mm in "${pmach[@]}"; do machine_offline "$mm" && { machine_code_set cc "$mm"; pname="$pname · ${cc:-$mm} ◐ reconnecting"; }; done   # (as herdr says it)
         clip_set cap "$pname" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"; rest2=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest2" -lt 1 ] && rest2=1
         # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
         if [ "$pm" = "-" ]; then lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
         else lines[$n]="  ${MUTED}┈┈${X} ${L}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"; fi
         lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
+        local cells=() cid=() cwid=() nc2=0 pre plen
         for mm in "${machines[@]}"; do
-            local cells=() cid=() cwid=() nc2=0
+            pre=""; plen=0; [ "$nm" -gt 1 ] && { machine_code_set pre "$mm"; [ -n "$pre" ] && { pre="$pre|"; plen=${#pre}; }; }   # MAC|name
             for (( i = 0; i < AG_N; i++ )); do
                 IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
                 [ "$m" = "$mm" ] || continue
                 if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
                 raw=$st; off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
                 case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
-                name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 ))
+                [ -n "$pre" ] && case "$name" in "$mm / "*) name=${name#"$mm / "} ;; esac   # (MAC|Mac / root says it twice)
+                name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 - plen ))
                 if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
-                dw_set plain "$label"; cells[$nc2]="$ic$X $nc$label$X"; cwid[$nc2]=$(( plain + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
+                dw_set plain "$label"; cells[$nc2]="$ic$X ${pre:+$D$pre$X}$nc$label$X"; cwid[$nc2]=$(( plain + plen + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
             done
-            [ "$nc2" -gt 0 ] || continue
-            if [ "$nm" -gt 1 ] && [ -z "$only" ]; then         # the machine, a sub-caption (when the project runs on more than one)
-                local away=""; machine_offline "$mm" && away=" ${ORANGE}◐ reconnecting${X}"
-                lines[$n]="    ${D}${mm}${X}${away}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
-            fi
-            for (( r = 0; r < nc2; r += 2 )); do               # two columns, left to right
-                printf -v _ln '  %s%*s %s' "${cells[$r]}" $(( cw - ${cwid[$r]} )) "" "${cells[$(( r + 1 ))]:-}"; lines[$n]=$_ln
-                lc[$n]=$(( 1 + (r + 1 < nc2) )); lid[$n]=${cid[$r]}; rid[$n]=${cid[$(( r + 1 ))]:-}; n=$(( n + 1 ))
-            done
+        done
+        for (( r = 0; r < nc2; r += 2 )); do                   # two columns, left to right (this machine's agents first)
+            printf -v _ln '  %s%*s %s' "${cells[$r]}" $(( cw - ${cwid[$r]} )) "" "${cells[$(( r + 1 ))]:-}"; lines[$n]=$_ln
+            lc[$n]=$(( 1 + (r + 1 < nc2) )); lid[$n]=${cid[$r]}; rid[$n]=${cid[$(( r + 1 ))]:-}; n=$(( n + 1 ))
         done
     done
     shown=$n; [ "$shown" -gt "$maxr" ] && shown=$maxr
@@ -1451,6 +1451,8 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         SET_ROWS[${#SET_ROWS[@]}]="bool|GITHUB_BRANCHES|GitHub: agent branches"
         SET_ROWS[${#SET_ROWS[@]}]="bool|SLACK_WATCH|Slack monitor (Claude)"
         [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
+        machine_codes_load; local mi                            # the machines' codes (MAC|name in the agent list)
+        for (( mi = 0; mi < MC_N; mi++ )); do SET_ROWS[${#SET_ROWS[@]}]="mcode|${MC_NAME[$mi]//|/}|Code of ${MC_NAME[$mi]//|/}"; done
         return
     fi
     if [ "${SET_PAGE:-main}" = projects ]; then             # the projects; ⏎ opens one
@@ -1516,9 +1518,16 @@ bhote_settings() {
             key) if [ "$key" = FIND_KEY ]; then vp=${FIND_KEY_SHOW:-off}; else vp=${FOCUS_KEY:-off}; fi; vc="${C}${vp}${X}" ;;
             enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
             prefer) ind=2; cfg_var v "$key" any; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
+            mcode) machine_code_set v "$key"; local mx; for (( mx = 0; mx < MC_N; mx++ )); do [ "${MC_NAME[$mx]}" = "$key" ] && break; done
+                  if [ "${MC_SET[$mx]:-0}" = 1 ]; then vp=$v; vc="${C}${v}${X}"; else vp="$v auto"; vc="${C}${v}${X}${D} auto${X}"; fi ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
         [ "$kind" = pagent ] && { if [ -n "$AM_REPO" ]; then wrap_print 5 "$D" "$AM_REPO"; else wrap_print 5 "$D" "its workspace (no git repository)"; fi; }
+        if [ "$kind" = mcode ]; then
+            if [ "$key" = "${MC_MSG_FOR:-}" ] && [ -n "${MC_MSG:-}" ]; then wrap_print 5 "$D" "$MC_MSG"
+            elif [ -z "${mc_said:-}" ]; then wrap_print 5 "$D" "In front of the agents' names (MAC|name) when more than one machine is listed. ⏎ three letters; empty: made from the name."; fi
+            local mc_said=1
+        fi
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
             CONNECTIONS) wrap_print 5 "$D" "$(connections_summary)" ;;
@@ -1617,6 +1626,12 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || case "$key" in SETUP) SETTINGS_GO=setup ;; CONNECTIONS) SETTINGS_GO=connections ;; PROJECTS) SETTINGS_GO=projects ;; *) SETTINGS_GO=hotkeys ;; esac; return; fi
             case "$kind" in
+                mcode) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                      local mcur; machine_codes_load; machine_code_set mcur "$key"; MC_MSG_FOR=$key
+                      if ask "Code of $key (3 letters, empty = from the name): " "$mcur" 3; then
+                          if machine_code_save "$key" "$ANSWER" 2> "$RUN_DIR/mcerr"; then machine_codes_load; machine_code_set mcur "$key"; MC_MSG="Saved: $mcur, on every machine (with the topics)."
+                          else MC_MSG=$(head -1 "$RUN_DIR/mcerr"); MC_MSG="Not changed: ${MC_MSG#bhote: }"; fi
+                      fi; return ;;
                 projrow) [ "$k" = LEFT ] || { SET_PROJ=$key; SETTINGS_GO=project; }; return ;;
                 projnew) [ "$k" = LEFT ] && return; ask "New project: " || return; [ -n "$ANSWER" ] && project_new "$ANSWER"; return ;;
                 pact) [ "$k" = LEFT ] && return; local pf3="$TOPIC_DIR/$SET_PROJ.topic"
@@ -2129,6 +2144,76 @@ project_new() {  # project_new <name>: PROJ_ID; 1 when it exists already
         topic_set "$f" deleted 0; topic_set "$f" title "$name"; return 0; fi
     printf 'id=%s\nkind=project\ntitle=%s\nrepos=\nworkspaces=\ncreated=%s\nupdated=%s\ndeleted=0\n' "$PROJ_ID" "$name" "$now" "$now" > "$f"
     : > "$STORE_DIRTY"
+}
+# ── machine codes: three capitals per machine (MAC, OMR), in front of its agents' names when the agents of more than one
+# machine are listed. Made from the name and unique over all machines bhote knows; one set by hand (settings › Connections,
+# the setup) is a record in the topic store (kind=machine, file mach-<slug>.topic), so every machine shows the same code.
+MC_KEY="-"; MC_N=0; MC_NAME=(); MC_CODE=(); MC_SET=()
+machine_code_ok() { [ "${#1}" = 3 ] && [ -z "${1//[ABCDEFGHIJKLMNOPQRSTUVWXYZ]/}" ]; }   # (no [A-Z]: a range follows the locale)
+machine_code_cands() {  # machine_code_cands <name>: the codes it could get, the best first (one per line)
+    printf '%s\n' "$1" | LC_ALL=C awk '
+        function emit(x) { if (length(x) == 3 && !(x in seen)) { seen[x] = 1; print x } }
+        { w = $0; gsub(/[^A-Za-z]+/, " ", w); o = ""
+          for (i = 1; i <= length(w); i++) { c = substr(w, i, 1); if (c ~ /[A-Z]/ && substr(w, i - 1, 1) ~ /[a-z]/) o = o " "; o = o c }   # MacBook: Mac Book
+          n = split(o, W, " "); L = toupper(o); gsub(/ /, "", L); if (L == "") L = "M"
+          while (length(L) < 3) L = L "X"
+          f = substr(L, 1, 1); V = "AEIOU"
+          if (length(L) == 3) emit(L)                                                                   # Mac: MAC
+          if (n >= 3) emit(toupper(substr(W[1], 1, 1) substr(W[2], 1, 1) substr(W[3], 1, 1)))            # Mac Book Pro: MBP
+          if (n == 2) { u = toupper(W[2]); c = ""; for (i = 2; i <= length(u); i++) if (index(V, substr(u, i, 1)) == 0) { c = substr(u, i, 1); break }
+                        if (c == "") c = substr(u, 2, 1); emit(f substr(u, 1, 1) c) }                    # Mac Studio: MST
+          c = ""; for (i = 2; i <= length(L) && length(c) < 2; i++) if (index(V, substr(L, i, 1)) == 0) c = c substr(L, i, 1)
+          emit(f c)                                                                                     # Omarchy: OMR
+          emit(substr(L, 1, 3))
+          for (i = 2; i <= length(L); i++) for (j = i + 1; j <= length(L); j++) emit(f substr(L, i, 1) substr(L, j, 1))
+          A = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"; for (i = 1; i <= 26; i++) for (j = 1; j <= 26; j++) emit(f substr(A, i, 1) substr(A, j, 1)) }'
+}
+machine_codes_load() {  # MC_NAME/MC_CODE (MC_SET: 1 = set by hand): this machine, the listed agents' machines, the records
+    # (no forks while the list is drawn: only a changed set of machines or records asks awk for candidates)
+    local f line t cd kd del i k c m key="" names=() nn=0 rn=() rc=() nr=0 x
+    for f in "$TOPIC_DIR"/mach-*.topic; do
+        [ -f "$f" ] || continue; t=""; cd=""; kd=""; del=0
+        while IFS= read -r line; do case "$line" in title=*) [ -z "$t" ] && t=${line#title=} ;; code=*) cd=${line#code=} ;; kind=*) kd=${line#kind=} ;; deleted=*) del=${line#deleted=} ;; esac; done < "$f"
+        t=${t//[[:cntrl:]]/}; [ "$kd" = machine ] && [ "$del" != 1 ] && [ -n "$t" ] && { rn[$nr]=$t; rc[$nr]=$cd; nr=$(( nr + 1 )); key="$key$t=$cd;"; }
+    done
+    for m in "$HOST" ${rn[@]+"${rn[@]}"}; do names[$nn]=$m; nn=$(( nn + 1 )); done
+    for (( i = 0; i < ${AG_N:-0}; i++ )); do m=${AG_LINES[$i]%%$US*}; m=${m//[[:cntrl:]]/}; [ -n "$m" ] && { names[$nn]=$m; nn=$(( nn + 1 )); }; done
+    for (( i = 1; i < nn; i++ )); do for (( k = i; k > 0; k-- )); do         # by name, without doubles (a handful)
+        [[ "${names[$(( k - 1 ))]}" > "${names[$k]}" ]] || break; x=${names[$k]}; names[$k]=${names[$(( k - 1 ))]}; names[$(( k - 1 ))]=$x
+    done; done
+    local un=() u=0; for (( i = 0; i < nn; i++ )); do [ "$i" -gt 0 ] && [ "${names[$i]}" = "${names[$(( i - 1 ))]}" ] && continue; un[$u]=${names[$i]}; u=$(( u + 1 )); key="$key|${names[$i]}"; done
+    [ "$key" = "$MC_KEY" ] && return 0
+    MC_KEY=$key; MC_N=$u; MC_NAME=(); MC_CODE=(); MC_SET=()
+    for (( i = 0; i < MC_N; i++ )); do MC_NAME[$i]=${un[$i]}; MC_CODE[$i]=""; MC_SET[$i]=0; done
+    local used=" "
+    for (( i = 0; i < MC_N; i++ )); do                          # set by hand first (the first by name keeps a code twice set)
+        for (( k = 0; k < nr; k++ )); do
+            [ "${rn[$k]}" = "${MC_NAME[$i]}" ] || continue; c=${rc[$k]}
+            machine_code_ok "$c" && case "$used" in *" $c "*) ;; *) MC_CODE[$i]=$c; MC_SET[$i]=1; used="$used$c " ;; esac
+        done
+    done
+    for (( i = 0; i < MC_N; i++ )); do                          # the rest, by name: the first free candidate
+        [ -n "${MC_CODE[$i]}" ] && continue
+        while IFS= read -r c; do case "$used" in *" $c "*) ;; *) MC_CODE[$i]=$c; used="$used$c "; break ;; esac; done < <(machine_code_cands "${MC_NAME[$i]}")
+    done
+}
+machine_code_set() {  # machine_code_set <var> <machine>: its code (empty when it is not known)
+    local _i; for (( _i = 0; _i < MC_N; _i++ )); do [ "${MC_NAME[$_i]}" = "$2" ] && { printf -v "$1" '%s' "${MC_CODE[$_i]}"; return 0; }; done
+    printf -v "$1" '%s' ""; return 1
+}
+machine_code_save() {  # machine_code_save <machine> <code | "">: sets it by hand (empty: made from the name again); 1 = taken or not 3 letters
+    local name=${1//[[:cntrl:]]/} c f slug now i
+    c=$(printf '%s' "$2" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
+    [ -z "$c" ] || machine_code_ok "$c" || { echo "bhote: a machine code is three letters A-Z" >&2; return 1; }
+    machine_codes_load
+    if [ -n "$c" ]; then for (( i = 0; i < MC_N; i++ )); do
+        [ "${MC_CODE[$i]}" = "$c" ] && [ "${MC_NAME[$i]}" != "$name" ] && { echo "bhote: $c is the code of ${MC_NAME[$i]}" >&2; return 1; }
+    done; fi
+    slug=$(project_slug "$name"); [ -n "$slug" ] || return 1
+    f="$TOPIC_DIR/mach-$slug.topic"; now=$(date +%s); mkdir -p "$TOPIC_DIR"
+    if [ -f "$f" ]; then topic_set "$f" title "$name"; topic_set "$f" code "$c"; topic_set "$f" deleted 0
+    else printf 'id=mach-%s\nkind=machine\ntitle=%s\ncode=%s\ncreated=%s\nupdated=%s\ndeleted=0\n' "$slug" "$name" "$c" "$now" "$now" > "$f"; fi
+    MC_KEY="-"; : > "$STORE_DIRTY"
 }
 project_ref() {  # project_ref <ref>: prints the file; ref = number (bhote project list), id, name or part of it (exit 2: ambiguous)
     local ref=$1 i hits=0 hit="" low; projects_load
@@ -2800,8 +2885,14 @@ setup_step_name() {
     n=${n//[!A-Za-z0-9 ._-]/}; [ -n "$n" ] && { cfg_set HOST_LABEL "$n"; HOST=$n; w_ok "name" "$n"; }
     if [ -n "$n" ] && [ "$n" != "$old" ]; then
         for f in "$TOPIC_DIR"/*.topic; do [ -f "$f" ] && [ "$(topic_get "$f" agent_machine)" = "$old" ] && topic_set "$f" agent_machine "$n"; done
+        f="$TOPIC_DIR/mach-$(project_slug "$old").topic"; [ -f "$f" ] && topic_set "$f" deleted 1      # its code goes with the new name
         [ -n "$(w_machines)" ] && w_warn "renamed" "machines that saved $old: rename it there (herdr)"
     fi
+    local c; machine_codes_load; machine_code_set c "$HOST"
+    w_say "Its code: three capitals in front of its agents' names when the agents of more than one machine are listed (MAC|name). Unique over all machines."
+    w_read c "Code of this machine:" "$c"; [ "$W_QUIT" = 1 ] && return
+    if machine_code_save "$HOST" "$c" 2> "$RUN_DIR/mcerr"; then machine_codes_load; machine_code_set c "$HOST"; w_ok "code" "$c"
+    else w_bad "code" "$(head -1 "$RUN_DIR/mcerr" | sed 's/^bhote: //')"; fi
     w_continue
 }
 setup_add_machine() {  # setup_add_machine <host or user@host>: user, test, label, no duplicates, herdr machine add

@@ -30,6 +30,10 @@ agent_pane=wA:p1
 | `transfer_to`, `transfer_to_name`, `transfer_from` | Only while a [Steal & Transfer](steal-and-transfer.md) is pending; any status other than `now` clears them. |
 | `handover_branch`, `handover_commit` | Where the last transfer left the work. |
 
+Records with a `kind` sit in the same folder and travel the same way, but are no topics: `proj-<slug>.topic`
+(`kind=project`: `title`, `repos`, `workspaces`) and `mach-<slug>.topic` (`kind=machine`: `title` = the machine's name,
+`code` = its three capitals, set by hand).
+
 Rules: one `KEY=value` per line; when a key appears twice, **the first one counts** everywhere; values have no control
 characters. Files are written atomically (a temporary file, then `mv`) with mode `0600` in a `0700` folder.
 
