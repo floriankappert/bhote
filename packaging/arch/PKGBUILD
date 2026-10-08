@@ -7,6 +7,8 @@ arch=('any')
 url='https://github.com/floriankappert/bhote'
 license=('MIT')
 depends=('bash' 'jq')
+makedepends=('git')
+optdepends=('herdr: the terminal workspace manager bhote sits next to' 'github-cli: deployment and test monitor (GitHub Actions)' 'curl: deployment and test monitor (CircleCI)')
 source=("git+https://github.com/floriankappert/bhote.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
@@ -18,7 +20,11 @@ package() {
   install -m644 herdr-plugin/herdr-plugin.toml "$pkgdir/usr/share/bhote/herdr-plugin/"
   install -m755 herdr-plugin/open_panel.sh herdr-plugin/on_event.sh herdr-plugin/dump.sh herdr-plugin/focus.sh herdr-plugin/search.sh herdr-plugin/search_open.sh herdr-plugin/changed.sh "$pkgdir/usr/share/bhote/herdr-plugin/"
   install -Dm644 integrations/claude/skills/bhote/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote/SKILL.md"
+  install -d "$pkgdir/usr/share/bhote/omarchy-plugin"
+  install -m644 omarchy-plugin/manifest.json omarchy-plugin/BarWidget.qml "$pkgdir/usr/share/bhote/omarchy-plugin/"
+  install -m755 omarchy-plugin/focus.sh "$pkgdir/usr/share/bhote/omarchy-plugin/"
   install -d "$pkgdir/usr/share/doc/$pkgname"
   cp -r docs/. "$pkgdir/usr/share/doc/$pkgname/"
   echo "link the herdr plugin with: herdr plugin link /usr/share/bhote/herdr-plugin" >&2
+  echo "Omarchy bar widget: ln -s /usr/share/bhote/omarchy-plugin ~/.config/omarchy/plugins/bhote.bar && omarchy plugin enable bhote.bar" >&2
 }

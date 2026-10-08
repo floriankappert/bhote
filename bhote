@@ -3553,6 +3553,27 @@ cli_event() {
 }
 # `bhote current`: the topic of the agent that asks (its Claude session, else its herdr pane). For a SessionStart hook: the
 # agent learns what it works on and how to report back. Prints nothing (exit 0) when there is none.
+cli_bar() {  # bhote bar: one line for a status bar (Waybar-style JSON: text, tooltip, class), from the topic files and the
+    # panels' agent lists (no herdr call): the number of things for you (topics in review, agents that wait for an answer)
+    local i n=0 rv=0 wt=0 nw=0 busy=0 blk=0 m id st name task tip="" line
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in
+            review) rv=$(( rv + 1 )); [ "$rv" -le 6 ] && tip="$tip"$'\n'"  ● ${T_TITLE[$i]}" ;;
+            waiting) wt=$(( wt + 1 )) ;; now) nw=$(( nw + 1 )) ;;
+        esac
+    done
+    while IFS=$US read -r m id st name task; do
+        case "$st" in working|testing) busy=$(( busy + 1 )) ;; blocked) blk=$(( blk + 1 )); line="  ◉ $name ($m)"; tip="$tip"$'\n'"$line" ;; esac
+    done < <(agents_all)
+    n=$(( rv + blk ))
+    local text="󰩃" cls=idle head
+    [ "$n" -gt 0 ] && { text="󰩃 $n"; cls=attention; }
+    [ "$n" = 0 ] && [ "$busy" -gt 0 ] && cls=busy
+    head="bhote: $rv in review · $blk need an answer · $busy busy · $nw now · $wt waiting"
+    printf '{"text":%s,"tooltip":%s,"class":%s,"review":%d,"blocked":%d,"busy":%d,"now":%d,"waiting":%d}\n' \
+        "$(json_str "$text")" "$(json_str "$head$tip")" "$(json_str "$cls")" "$rv" "$blk" "$busy" "$nw" "$wt"
+}
 cli_current() {
     local i f hit=""; topics_load
     for (( i = 0; i < T_N; i++ )); do
@@ -3990,6 +4011,7 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
+        bar) bhote_info; cli_bar ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg pin="" proj=""

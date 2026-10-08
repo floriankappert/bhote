@@ -23,13 +23,33 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 
 Needs bash 3.2+, `jq` and herdr. macOS and Linux.
 
+**macOS** (Homebrew):
+
+```sh
+brew install floriankappert/bhote/bhote
+herdr plugin link "$(brew --prefix)/share/bhote/herdr-plugin"
+```
+
+**Arch Linux / Omarchy** (the package from `packaging/arch`; it also brings the Omarchy bar widget):
+
+```sh
+git clone https://github.com/floriankappert/bhote && cd bhote/packaging/arch && makepkg -si
+herdr plugin link /usr/share/bhote/herdr-plugin
+# Omarchy: the bar widget
+ln -s /usr/share/bhote/omarchy-plugin ~/.config/omarchy/plugins/bhote.bar && omarchy plugin enable bhote.bar --section right
+```
+
+**Any Linux** (also Homebrew on Linux works with the command above), or from a checkout on any system:
+
 ```sh
 git clone https://github.com/floriankappert/bhote && cd bhote && ./install.sh
 ```
 
-`install.sh` links `~/.local/bin/bhote` and, when herdr is present, the plugin `bhote.panel`, which opens the panel on the
-right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the config switches that off; the action
-"Bhote: open panel" opens it by hand). Packaging recipes for Homebrew and Arch are in `packaging/`.
+`install.sh` links `~/.local/bin/bhote` (update with `git pull`) and, when herdr is present, the plugin `bhote.panel`, which
+opens the panel on the right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the config switches that
+off; the action "Bhote: open panel" opens it by hand). On Omarchy it also links the bar widget `bhote.bar`: the dog and the
+number of things for you (topics in review, agents that need an answer), the list on hover, a click jumps to the bhote
+panel in herdr (right click: the search). `bhote bar` prints the same as Waybar-style JSON for any other bar.
 
 ## Keys
 

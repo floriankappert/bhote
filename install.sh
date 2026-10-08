@@ -13,3 +13,8 @@ if command -v herdr >/dev/null 2>&1; then
     || { herdr plugin unlink bhote.panel >/dev/null 2>&1 || true; herdr plugin link "$DIR/herdr-plugin" >/dev/null; }
   echo "✓ herdr plugin bhote.panel (opens the panel next to the agent pane of every tab at herdr start)"
 fi
+if command -v omarchy >/dev/null 2>&1 && [ -d "$HOME/.config/omarchy" ]; then   # Omarchy: the bar widget (enable it yourself)
+  mkdir -p "$HOME/.config/omarchy/plugins"
+  ln -sfn "$DIR/omarchy-plugin" "$HOME/.config/omarchy/plugins/bhote.bar"
+  echo "✓ Omarchy bar widget bhote.bar (show it: omarchy plugin enable bhote.bar --section right)"
+fi
