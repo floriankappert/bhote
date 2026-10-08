@@ -71,8 +71,7 @@ in `bhote setup --json` (`reachable`, `knows_this_machine`). Install bhote on th
 
 ## 8. Start and verify
 
-- Panels: for each pane labelled `bhote`: `herdr pane process-info --pane <id>` → the bhote pid → `kill -TERM <pid>`, then
-  `herdr pane run <id> "'$HOME/.local/bin/bhote'"`. Ask first if a panel might be inside the wizard.
+- Panels: `bhote reload` restarts every bhote panel of this machine safely (it ends the old panel and only then starts the new one; it never types into a panel that still runs). Run it on each machine (`ssh <host> bhote reload`). Never use `herdr pane run`/`send-keys` on a pane that may still run bhote: the text lands in the panel as keys (t, then Enter, starts a hand-over). Ask first if a panel might be inside the wizard.
 - `bhote setup --json` shows jq, herdr, plugin, claude_hook true and every machine reachable.
 - `bhote bar`, `bhote list`, `bhote update` (is a newer version out, and the command that updates it).
 - From a checkout: `for t in tests/*.sh; do bash $t | grep ^FAIL; done` (no output = fine).
