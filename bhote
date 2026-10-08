@@ -93,6 +93,7 @@ NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
 SLACK_WATCH|off|bool|Watch the Slack channels pinned to waiting topics, from this machine (through Claude Code and its Slack connector; one machine is enough): a new message from someone else sets the topic to review
 SLACK_EVERY|120|int:30:3600|Seconds between two Slack checks (one short Claude call each, only while a waiting topic has a pin)
+CLAUDE_CONFIG_DIR||text|Slack watch: the Claude Code profile it runs in (its folder, e.g. ~/.claude2; empty: the one of this process, else ~/.claude). Set it when the Slack connector lives in a second profile
 DEPLOY_MONITOR|off|bool|Deployment monitor: the last deployments of the projects (GitHub Actions, CircleCI) above the agents
 DEPLOY_EVERY|60|int:15:3600|Seconds between two deployment checks
 DEPLOY_GITHUB|on|bool|Deployment monitor: GitHub Actions (through gh and its login)
@@ -2517,13 +2518,14 @@ new_topic_from() {  # new_topic_from <text>: the same syntax as the prompt, with
 # topic to review (slack_msg: who and what). A topic Slack put under review stays watched: what follows joins its message. BHOTE_CLAUDE replaces the claude command (the tests use a fake).
 SLACK_TOOLS="mcp__claude_ai_Slack__slack_read_channel mcp__claude_ai_Slack__slack_read_thread mcp__claude_ai_Slack__slack_read_user_profile mcp__claude_ai_Slack__slack_search_channels mcp__claude_ai_Slack__slack_search_users"
 claude_json() {  # claude_json <prompt> [timeout s]: one headless Claude call with the Slack tools; prints the JSON of its answer
-    local cl=${BHOTE_CLAUDE:-claude} dir="$DATA_DIR/slack" out p k
+    local cl=${BHOTE_CLAUDE:-claude} dir="$DATA_DIR/slack" out p k prof envp=()
+    cfg_var prof CLAUDE_CONFIG_DIR ""; prof=${prof/#\~/$HOME}; [ -n "$prof" ] && envp=("CLAUDE_CONFIG_DIR=$prof")   # the profile with the Slack connector
     command -v "$cl" >/dev/null 2>&1 || return 3
     mkdir -p "$dir"; out=$(mktemp "$RUN_DIR/claude.XXXXXX")
     # outside herdr's view (no agent in this pane) and not as a nested session; in a folder of its own (no project files).
     # Slack text is untrusted: no built-in tools, none of the user's allow rules (--setting-sources project), nothing outside --allowedTools
     ( cd "$dir" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID -u HERDR_SOCKET_PATH -u CLAUDECODE \
-        -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT "$cl" -p "$1" --model haiku --tools "" --setting-sources project --permission-mode dontAsk --allowedTools $SLACK_TOOLS \
+        -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT ${envp[@]+"${envp[@]}"} "$cl" -p "$1" --model haiku --tools "" --setting-sources project --permission-mode dontAsk --allowedTools $SLACK_TOOLS \
         --no-session-persistence --output-format json ) > "$out" 2>/dev/null </dev/null & p=$!
     ( trap 'kill "$w" 2>/dev/null; exit 0' TERM; sleep "${2:-120}" & w=$!; wait "$w"; kill "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & k=$!
     wait "$p" 2>/dev/null; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null   # (the watchdog takes its sleep along: no output kept open)

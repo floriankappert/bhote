@@ -10,7 +10,7 @@ echo NOTIFY=off > "$T/config"
 cat > "$T/claude" <<'SH'
 #!/bin/sh
 prompt=""; while [ $# -gt 0 ]; do [ "$1" = -p ] && { prompt=$2; shift; }; shift; done
-{ printf 'PROMPT %s\n' "$prompt"; printf 'ENV herdr=%s pane=%s cc=%s cwd=%s\n' "${HERDR_ENV:-}" "${HERDR_PANE_ID:-}" "${CLAUDECODE:-}" "$PWD"; } >> "$FAKE_LOG"
+{ printf 'PROMPT %s\n' "$prompt"; printf 'ENV herdr=%s pane=%s cc=%s cwd=%s prof=%s\n' "${HERDR_ENV:-}" "${HERDR_PANE_ID:-}" "${CLAUDECODE:-}" "$PWD" "${CLAUDE_CONFIG_DIR:-}"; } >> "$FAKE_LOG"
 case "$prompt" in *"slack_read_user_profile once"*) echo '{"is_error":false,"result":"{\"id\":\"U1\",\"name\":\"Flo\"}"}'; exit 0 ;; esac
 [ -s "$FAKE_ANSWER" ] || { echo '{"is_error":true,"result":"no connector"}'; exit 1; }
 jq -n --rawfile r "$FAKE_ANSWER" '{is_error: false, result: $r}'
@@ -104,4 +104,7 @@ slack_check; [ "$(topic_get "$f" status)" = waiting ] && ok "watch: an old messa
 # garbage from Claude: an odd topic id and a ts that is no number are dropped
 printf '{"me":"U1","pins":[{"topic":"../x","messages":[{"ts":"9999999999.1","user":"U2"}]},{"topic":"%s","messages":[{"ts":"soon","user":"U2"}]}]}' "$id" > "$FAKE_ANSWER"
 slack_check; [ "$(topic_get "$f" status)" = waiting ] && [ ! -e "$TOPIC_DIR/../x.topic" ] && ok "watch: odd answers are dropped" || bad "garbage accepted"
+# the profile of the Slack watch: CLAUDE_CONFIG_DIR in the config reaches the claude call
+: > "$FAKE_LOG"; echo '{"id":"U1"}' > "$FAKE_ANSWER"; echo "CLAUDE_CONFIG_DIR=~/.claude2" >> "$BHOTE_CONFIG"
+claude_json "x" 20 >/dev/null; grep -q "prof=$HOME/.claude2$" "$FAKE_LOG" && ok "slack: the configured profile is used" || bad "slack profile: $(cat "$FAKE_LOG")"
 rm -rf "$T"; exit $fail
