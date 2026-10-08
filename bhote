@@ -202,28 +202,29 @@ store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STAT
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, next, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
-    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br seen n=0 a_as a_dl a_tn a_sl a_sm a_br s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br pj kd seen n=0 a_as a_dl a_tn a_sl a_sm a_br a_pj s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
         [ -f "$f" ] || continue
-        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; br=""; seen=" "
+        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; br=""; pj=""; kd=""; seen=" "
         while IFS= read -r line; do
             k=${line%%=*}; v=${line#*=}
             case "$seen" in *" $k "*) continue ;; esac; seen="$seen$k "     # the FIRST value counts, everywhere (topic_get does the same)
-            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; agent_branch) br=$v ;; esac
+            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; agent_branch) br=$v ;; project) pj=$v ;; kind) kd=$v ;; esac
         done < "$f"
         [ "$del" = 1 ] && continue
+        [ -n "$kd" ] && continue                                   # a project record (kind=project), not a topic
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
         case "$st" in now|next|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
-        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; n=$(( n + 1 ))
+        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; a_pj[$n]=${pj//[!A-Za-z0-9_-]/}; n=$(( n + 1 ))
     done
-    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=()
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=(); T_PJ=()
     for s in review now next waiting later done; do             # review first: it waits for you
         for (( i = 0; i < n; i++ )); do
             [ "${a_st[$i]}" = "$s" ] || continue
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
-            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; m=$(( m + 1 ))
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; T_PJ[$m]=${a_pj[$i]}; m=$(( m + 1 ))
         done
     done
     T_N=$m
@@ -742,6 +743,9 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
         fi
     fi
     if [ -z "$panes" ]; then panes=$(herdr "$@" pane list 2>/dev/null) || { [ $# -gt 0 ] && return 2; return 0; }; ws=$(herdr "$@" workspace list 2>/dev/null); fi
+    if [ -n "${COLLECT_META:-}" ]; then                       # per pane: its tab, whether an agent runs there, the repo and project tokens
+        printf '%s' "$panes" | jq -r --arg m "$label" '.result.panes[]? | [$m, .pane_id, (.tab_id // ""), (if .agent then "a" else "" end), (.tokens.repo // ""), (.tokens.project // ""), (.foreground_cwd // .cwd // "")] | map(tostring | gsub("[\u0000-\u001f]"; "")) | join("\u001f")' >> "$COLLECT_META" 2>/dev/null
+    fi
     if [ $# -eq 0 ]; then                                      # this machine: where its agents work (their branch, see branch_sync)
         printf '%s' "$panes" | jq -r '.result.panes[] | select(.agent) | [.pane_id, ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0000-\u001f]"; ""))] | join("\u001f")' > "$AGENT_CWD.tmp.$$" 2>/dev/null \
             && mv "$AGENT_CWD.tmp.$$" "$AGENT_CWD" 2>/dev/null
@@ -760,7 +764,32 @@ agents_put() {  # agents_put <tmp> <list file>: only a changed list replaces the
     if cmp -s "$1" "$2" 2>/dev/null; then rm -f "$1"; return 0; fi
     mv "$1" "$2"; printf '%s %s\n' "$(date +%s)" "$$$RANDOM" > "$SHARED_DIR/agents.rev" 2>/dev/null
 }
-collect_local() { collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"; agents_put "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"; }
+collect_local() {
+    : > "$AGENT_META_L.tmp.$$"; COLLECT_META="$AGENT_META_L.tmp.$$" collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"
+    mv "$AGENT_META_L.tmp.$$" "$AGENT_META_L" 2>/dev/null; agents_put "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"
+}
+AGENT_META_L="$SHARED_DIR/agents.meta.local"; AGENT_META_R="$SHARED_DIR/agents.meta.remote"   # machine US pane US tab US a US repo US project US cwd
+agent_meta() {  # agent_meta <machine> <pane>: AM_REPO, AM_PROJECT, AM_TAB of an agent (from the last collection)
+    local m p t a r j c; AM_REPO=""; AM_PROJECT=""; AM_TAB=""
+    while IFS=$US read -r m p t a r j c; do [ "$m" = "$1" ] && [ "$p" = "$2" ] && { AM_REPO=$r; AM_PROJECT=$j; AM_TAB=$t; return 0; }; done < <(cat "$AGENT_META_L" "$AGENT_META_R" 2>/dev/null)
+    return 1
+}
+project_sync() {  # this machine's agents carry their repository and project as herdr tokens (repo, project): the other machines read them
+    [ -r "$AGENT_META_L" ] || return 0
+    local m p t a r j c key ws cache="$SHARED_DIR/repo.cache" line hit name
+    projects_load
+    while IFS=$US read -r m p t a r j c; do
+        [ "$a" = a ] || continue
+        hit=""; [ -r "$cache" ] && while IFS=$US read -r line key; do [ "$line" = "$c" ] && { hit=1; break; }; done < "$cache"
+        if [ -z "$hit" ]; then git_repo_key_set key "$c" || key=""; printf '%s\n' "$c$US$key" >> "$cache"; fi   # once per folder
+        ws=""; while IFS=$US read -r _m _id _st name _tk; do [ "$_id" = "$p" ] && { ws=$name; break; }; done < "$AGENT_LOCAL"
+        project_for "$key" "$ws" || PROJ_ID=""
+        [ "$key" = "$r" ] && [ "$PROJ_ID" = "$j" ] && continue
+        herdr pane report-metadata --source bhote $( [ -n "$key" ] && echo "--token repo=$key" || echo "--clear-token repo" ) \
+            $( [ -n "$PROJ_ID" ] && echo "--token project=$PROJ_ID" || echo "--clear-token project" ) "$p" >/dev/null 2>&1
+    done < "$AGENT_META_L"
+    return 0
+}
 AGENT_CWD="$SHARED_DIR/agents.cwd"                             # pane US working folder of this machine's agents (for their branch)
 git_branch_set() {  # git_branch_set <var> <folder>: the branch checked out there (worktrees too), "@1234abc" when detached; read from .git, no git call
     local _d=$2 _h="" _g _l _n=0; printf -v "$1" '%s' ""
@@ -790,20 +819,21 @@ branch_sync() {  # the topics of this machine's agents carry their branch (agent
 collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied. A machine that does not
     # answer (herdr reconnecting) keeps the agents seen last, marked "off-<state>": the panel shows them muted, nobody gets work
     local id label host prof enabled out rc line m aid st name task offl="$SHARED_DIR/machines.offline"
-    : > "$offl.tmp.$$"
+    : > "$offl.tmp.$$"; : > "$AGENT_META_R.tmp.$$"
     { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof enabled; do
           [ "$label" = "$HOST" ] && continue                   # would look like this machine's own agents (HOST_LABEL clash)
           [ "$enabled" = enabled ] && machine_wanted "$label" || continue
-          out=$(collect_one "$label" --machine "$label"); rc=$?
+          out=$(COLLECT_META="$AGENT_META_R.tmp.$$" collect_one "$label" --machine "$label"); rc=$?
           if [ "$rc" = 2 ]; then
               echo "$label" >> "$offl.tmp.$$"
+              [ -r "$AGENT_META_R" ] && grep "^$label$US" "$AGENT_META_R" >> "$AGENT_META_R.tmp.$$" 2>/dev/null
               [ -r "$AGENT_REMOTE" ] && while IFS= read -r line; do
                   case "$line" in "$label$US"*) IFS=$US read -r m aid st name task <<< "$line"
                       case "$st" in off-*) ;; *) st="off-$st" ;; esac; printf '%s\n' "$m$US$aid$US$st$US$name$US$task" ;; esac
               done < "$AGENT_REMOTE"
           elif [ -n "$out" ]; then printf '%s\n' "$out"; fi
       done; } > "$AGENT_REMOTE.tmp.$$"
-    mv "$offl.tmp.$$" "$offl" 2>/dev/null
+    mv "$offl.tmp.$$" "$offl" 2>/dev/null; mv "$AGENT_META_R.tmp.$$" "$AGENT_META_R" 2>/dev/null
     agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
 }
 remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND hours: a notification (remembered locally)
@@ -867,7 +897,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
             [ -e "$SHARED_DIR/remote.due" ] && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine
             collect_local                                       # first what the panels show; the merge can take a moment
-            branch_sync
+            branch_sync; project_sync
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
                 [ "$remote_due" = 1 ] && collect_remote
             elif [ -s "$AGENT_REMOTE" ]; then : > "$AGENT_REMOTE.tmp.$$"; agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"; fi
@@ -1956,6 +1986,84 @@ bhote_pick() {
     [ "${#PICK_MAP[@]}" -gt 0 ] || printf '\n   %sno free agent right now%s\n' "$D" "$X"
     printf '\n'; rule
     printf ' %s↑↓ choose · →/⏎ start · ←/esc back%s\n' "$D" "$X"
+}
+
+# ── projects. An agent belongs to a project by its git repository (a worktree by its main repository: it inherits) or, outside
+# a repository, by its herdr workspace. A project is a record in the topic store (kind=project, file proj-<slug>.topic), so
+# it travels with the topics to the other machine. A repository is known by its key: the origin URL (host/owner/name) or,
+# without a remote, "dir:<folder name>" of the main checkout.
+P_N=0; P_ID=(); P_NAME=(); P_REPOS=(); P_WS=(); P_FILE=()
+projects_load() {  # P_* arrays, by name
+    local f line k v id name repos ws del kd n=0 i j t
+    P_N=0; P_ID=(); P_NAME=(); P_REPOS=(); P_WS=(); P_FILE=()
+    for f in "$TOPIC_DIR"/proj-*.topic; do
+        [ -f "$f" ] || continue
+        name=""; repos=""; ws=""; del=0; kd=""
+        while IFS= read -r line; do k=${line%%=*}; v=${line#*=}
+            case "$k" in title) [ -z "$name" ] && name=$v ;; repos) repos=$v ;; workspaces) ws=$v ;; deleted) del=$v ;; kind) kd=$v ;; esac
+        done < "$f"
+        [ "$kd" = project ] && [ "$del" != 1 ] && [ -n "$name" ] || continue
+        id=${f##*/}; id=${id%.topic}
+        P_ID[$n]=$id; P_NAME[$n]=${name//[[:cntrl:]]/}; P_REPOS[$n]=$repos; P_WS[$n]=$ws; P_FILE[$n]=$f; n=$(( n + 1 ))
+    done
+    P_N=$n
+    for (( i = 1; i < P_N; i++ )); do                          # by name (insertion sort, a handful of projects)
+        for (( j = i; j > 0; j-- )); do
+            [[ "${P_NAME[$(( j - 1 ))]}" > "${P_NAME[$j]}" ]] || break
+            for t in P_ID P_NAME P_REPOS P_WS P_FILE; do eval "local _a=\${$t[$j]}; $t[$j]=\${$t[$(( j - 1 ))]}; $t[$(( j - 1 ))]=\$_a"; done
+        done
+    done
+}
+project_slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//' | cut -c1-40; }
+project_name() {  # project_name <id>: its name (empty: none)
+    local i; for (( i = 0; i < P_N; i++ )); do [ "${P_ID[$i]}" = "$1" ] && { printf '%s' "${P_NAME[$i]}"; return 0; }; done; return 1
+}
+project_new() {  # project_new <name>: PROJ_ID; 1 when it exists already
+    local name=${1//[[:cntrl:]]/} slug f now; name=${name:0:60}; slug=$(project_slug "$name"); [ -n "$slug" ] || return 1
+    PROJ_ID="proj-$slug"; f="$TOPIC_DIR/$PROJ_ID.topic"; now=$(date +%s); mkdir -p "$TOPIC_DIR"
+    if [ -f "$f" ]; then [ "$(topic_get "$f" deleted 0)" = 1 ] || return 1      # there; a deleted one comes back
+        topic_set "$f" deleted 0; topic_set "$f" title "$name"; return 0; fi
+    printf 'id=%s\nkind=project\ntitle=%s\nrepos=\nworkspaces=\ncreated=%s\nupdated=%s\ndeleted=0\n' "$PROJ_ID" "$name" "$now" "$now" > "$f"
+    : > "$STORE_DIRTY"
+}
+project_ref() {  # project_ref <ref>: prints the file; ref = number (bhote project list), id, name or part of it (exit 2: ambiguous)
+    local ref=$1 i hits=0 hit="" low; projects_load
+    [ -n "$ref" ] || { echo "bhote: a project is needed (bhote project list)" >&2; return 1; }
+    case "$ref" in *[!0-9]*) ;; *) i=$(( 10#$ref )); [ "$i" -ge 1 ] && [ "$i" -le "$P_N" ] && { printf '%s' "${P_FILE[$(( i - 1 ))]}"; return 0; } ;; esac
+    for (( i = 0; i < P_N; i++ )); do
+        { [ "${P_ID[$i]}" = "$ref" ] || [ "${P_ID[$i]}" = "proj-$ref" ] || eq_ci "${P_NAME[$i]}" "$ref"; } && { printf '%s' "${P_FILE[$i]}"; return 0; }
+    done
+    for (( i = 0; i < P_N; i++ )); do title_has "${P_NAME[$i]}" "$ref" && { hits=$(( hits + 1 )); hit=${P_FILE[$i]}; }; done
+    [ "$hits" = 1 ] && { printf '%s' "$hit"; return 0; }
+    [ "$hits" = 0 ] && { echo "bhote: no project matches '$ref' (bhote project list)" >&2; return 1; }
+    echo "bhote: '$ref' matches $hits projects" >&2; return 2
+}
+list_has() { case ",$1," in *",$2,"*) return 0 ;; esac; return 1; }   # list_has <a,b,c> <item>
+list_add() { if list_has "$1" "$2"; then printf '%s' "$1"; else printf '%s' "${1:+$1,}$2"; fi; }
+list_del() { local x out="" IFS=,; for x in $1; do [ "$x" = "$2" ] || out=${out:+$out,}$x; done; printf '%s' "$out"; }
+project_for() {  # project_for <repo key> <workspace label>: PROJ_ID of the first project that has the repository (else the workspace)
+    local i; PROJ_ID=""
+    [ -n "$1" ] && for (( i = 0; i < P_N; i++ )); do list_has "${P_REPOS[$i]}" "$1" && { PROJ_ID=${P_ID[$i]}; return 0; }; done
+    [ -n "$2" ] && for (( i = 0; i < P_N; i++ )); do list_has "${P_WS[$i]}" "$2" && { PROJ_ID=${P_ID[$i]}; return 0; }; done
+    return 1
+}
+git_repo_key_set() {  # git_repo_key_set <var> <folder>: the key of the repository there (a worktree: its main one), empty outside one
+    local _d=$2 _g="" _c="" _main="" _l _u="" _in=0 _n=0; printf -v "$1" '%s' ""
+    while [ -n "$_d" ] && [ "$_n" -lt 40 ]; do
+        if [ -d "$_d/.git" ]; then _c="$_d/.git"; _main=$_d; break; fi
+        if [ -f "$_d/.git" ]; then IFS= read -r _g < "$_d/.git"; _g=${_g#gitdir: }; case "$_g" in /*) ;; *) _g="$_d/$_g" ;; esac
+            case "$_g" in */worktrees/*) _c=${_g%/worktrees/*}; _main=${_c%/.git} ;; *) _c=$_g; _main=$_d ;; esac; break; fi
+        [ "$_d" = / ] && break; _d=${_d%/*}; [ -n "$_d" ] || _d=/; _n=$(( _n + 1 ))
+    done
+    [ -n "$_c" ] || return 1
+    [ -r "$_c/config" ] && while IFS= read -r _l; do               # [remote "origin"] url = ...
+        case "$_l" in '['*) [ "$_l" = '[remote "origin"]' ] && _in=1 || _in=0 ;; *) [ "$_in" = 1 ] && case "$_l" in *url*=*) _u=${_l#*=}; _u=${_u# }; break ;; esac ;; esac
+    done < "$_c/config"
+    if [ -n "$_u" ]; then
+        _u=${_u#*://}; _u=${_u#*@}; _u=${_u%.git}; _u=${_u%/}
+        case "$_u" in *:*) case "${_u#*:}" in [0-9]*/*) _u="${_u%%:*}/${_u#*:*/}" ;; *) _u="${_u%%:*}/${_u#*:}" ;; esac ;; esac   # host:owner/x (scp form) or host:port/owner/x
+        printf -v "$1" '%s' "$(printf '%s' "$_u" | tr '[:upper:]' '[:lower:]')"
+    else printf -v "$1" 'dir:%s' "${_main##*/}"; fi
 }
 # ── talking to agents: the live state of one agent pane, and a prompt to it (both through herdr, --machine for other machines)
 machine_known() {  # machine_known <label>: this machine, or a machine saved in herdr (a label from another machine's view is not)
@@ -3145,6 +3253,15 @@ agent_note() {  # agent_note <file>: when an agent runs the command, remember wh
     fi
     return 0
 }
+agent_claim() {  # agent_claim <file>: the agent that runs the command takes the topic over (its session, pane, machine and name)
+    [ -n "${HERDR_PANE_ID:-}" ] || return 1
+    bhote_info
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && topic_set "$1" agent_session "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}"
+    topic_set "$1" agent_pane "${HERDR_PANE_ID//[!A-Za-z0-9:_-]/}"; topic_set "$1" agent_machine "$HOST"
+    [ -n "${HERDR_WORKSPACE_ID:-}" ] && topic_set "$1" agent "$(herdr workspace list 2>/dev/null | jq -r --arg w "$HERDR_WORKSPACE_ID" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // "agent"' 2>/dev/null)"
+    topic_set "$1" delegated "$(date +%s)"; topic_set "$1" agent_branch ""
+    return 0
+}
 # An agent's status changed (the herdr plugin passes the event as HERDR_PLUGIN_EVENT_JSON, or on stdin). When an agent that
 # holds a running topic stops working (done / idle) and did not report back itself, the topic goes to review and you get a
 # notification. Either way the collector is poked, so every panel shows the new state at once.
@@ -3286,6 +3403,40 @@ cli_handover() {  # bhote handover <topic> [--to <machine/pane>] [--branch <b>] 
     case "$to" in *[!A-Za-z0-9._:/\ -]*) echo "bhote: odd characters in --to" >&2; return 1 ;; esac
     bhote_info; transfer_finish "$f" "$to" "$b" "$c" || return 1
     cli_done; topics_load; cli_show "$f" $json
+}
+cli_project() {  # bhote project [list] | add <name> | rename <ref> <name> | rm <ref> | pin <ref> <folder | agent | ws:<workspace>> | unpin <ref> <key> | of [folder]
+    local sub=${1:-list} f i k ws key; [ $# -gt 0 ] && shift
+    case "$sub" in
+        list|ls) projects_load
+            if [ -n "$json" ]; then printf '['; for (( i = 0; i < P_N; i++ )); do [ "$i" -gt 0 ] && printf ','
+                printf '{"id":%s,"n":%d,"name":%s,"repos":%s,"workspaces":%s}' "$(json_str "${P_ID[$i]}")" $(( i + 1 )) "$(json_str "${P_NAME[$i]}")" \
+                    "$(jq -nc --arg s "${P_REPOS[$i]}" '$s | split(",") | map(select(. != ""))')" "$(jq -nc --arg s "${P_WS[$i]}" '$s | split(",") | map(select(. != ""))')"; done; printf ']\n'
+            else [ "$P_N" -gt 0 ] || echo "no projects yet (bhote project add <name>)"
+                for (( i = 0; i < P_N; i++ )); do printf '%3s  %s%s\n' $(( i + 1 )) "${P_NAME[$i]}" "$( [ -n "${P_REPOS[$i]}${P_WS[$i]}" ] && printf '  (%s)' "$(printf '%s' "${P_REPOS[$i]}${P_REPOS[$i]:+${P_WS[$i]:+,}}${P_WS[$i]:+ws:${P_WS[$i]//,/,ws:}}" | sed 's/,/, /g')")"; done; fi ;;
+        add|new) [ -n "${1:-}" ] || { echo "bhote: project add <name>" >&2; return 1; }
+            project_new "$*" || { echo "bhote: the project '$*' is there already" >&2; return 1; }
+            cli_done; [ -n "$json" ] && printf '{"id":%s,"name":%s}\n' "$(json_str "$PROJ_ID")" "$(json_str "$*")" || echo "project $* ($PROJ_ID)" ;;
+        rename) f=$(project_ref "${1:-}") || return $?; shift; [ -n "${1:-}" ] || { echo "bhote: project rename <ref> <name>" >&2; return 1; }
+            topic_set "$f" title "$*"; cli_done; echo "renamed: $*" ;;
+        rm|delete) f=$(project_ref "${1:-}") || return $?; topic_set "$f" deleted 1; cli_done; echo "deleted (its topics keep their topics, without a project)" ;;
+        pin|unpin) f=$(project_ref "${1:-}") || return $?; shift; [ -n "${1:-}" ] || { echo "bhote: project $sub <ref> <folder | agent | ws:<workspace> | repo key>" >&2; return 1; }
+            key=$1
+            case "$key" in
+                ws:*) ;;
+                /*|.|./*|~*) git_repo_key_set k "${key/#\~/$HOME}" && key=$k || { echo "bhote: no git repository at $key (pin its workspace: ws:<name>)" >&2; return 1; } ;;
+                *) if [ "$sub" = pin ] && agent_ref "$key" 2>/dev/null; then       # an agent: its repository, else its workspace
+                       agent_meta "$AR_M" "$AR_ID"; if [ -n "$AM_REPO" ]; then key=$AM_REPO; else key="ws:$AR_NAME"; fi
+                   fi ;;
+            esac
+            if [ "${key#ws:}" != "$key" ]; then ws=$(topic_get "$f" workspaces)
+                if [ "$sub" = pin ]; then topic_set "$f" workspaces "$(list_add "$ws" "${key#ws:}")"; else topic_set "$f" workspaces "$(list_del "$ws" "${key#ws:}")"; fi
+            else k=$(topic_get "$f" repos)
+                if [ "$sub" = pin ]; then topic_set "$f" repos "$(list_add "$k" "$key")"; else topic_set "$f" repos "$(list_del "$k" "$key")"; fi
+            fi
+            cli_done; echo "$sub: $key → $(topic_get "$f" title)" ;;
+        of) git_repo_key_set k "${1:-$PWD}"; projects_load; project_for "$k" "" && project_name "$PROJ_ID" && echo || { echo "bhote: no project for ${k:-this folder}" >&2; return 1; } ;;
+        *) echo "bhote: project list | add <name> | rename <ref> <name> | rm <ref> | pin <ref> <folder|agent|ws:name> | unpin <ref> <key> | of [folder]" >&2; return 1 ;;
+    esac
 }
 cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <KEY>
     local sub=${1:-list} key=${2:-} v line k d first=1
@@ -3545,6 +3696,7 @@ bhote — topics and agents next to herdr.
   bhote list [--all] [-s <status>]   the open topics (--all: also done ones), numbered
   bhote show <ref>                   one topic
   bhote now|next|review|later|done <ref>   start or resume · up next · ready for review · park · mark done
+  bhote take <ref>                   an agent takes a topic over: it becomes its agent (now also does that, run by an agent)
   bhote wait <ref> <Name> [--slack <pin>]   waiting for Name (from now)
   bhote slack <ref> <pin|off>        pin a Slack channel, DM or thread: a message from someone else sets the waiting topic
                                      to review (<pin>: a Slack link, #channel or @person; needs SLACK_WATCH on one machine)
@@ -3614,6 +3766,7 @@ bhote_cli() {
               case "$st" in next|later|done|review) topic_set "$f" status "$st" ;; esac
               [ -n "$pin" ] && { slack_pin "$f" "$pin" || echo "bhote: the topic is there, without the Slack pin" >&2; }
               cli_done; topics_load; cli_show "$f" $json ;;
+        project|projects) cli_project "$@" ;;
         slack) local f; [ $# -ge 2 ] || { echo "bhote: slack <ref> <Slack link | #channel | @person | off>" >&2; return 1; }
               f=$(topic_ref_sync "$1") || return $?
               slack_pin "$f" "$2" || return 1
@@ -3639,7 +3792,7 @@ bhote_cli() {
               done
               if [ -n "$json" ]; then printf ']\n'; fi; return 0 ;;
         show) local f; f=$(topic_ref "${1:-}") || return $?; topics_load; cli_show "$f" $json ;;
-        done|now|next|review|later|wait|rename|desc|rm)
+        done|now|next|review|later|wait|rename|desc|rm|take)
               local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
               f=$(topic_ref_sync "$ref") || return $?; shift
               case "$cmd" in
@@ -3652,7 +3805,11 @@ bhote_cli() {
                   review) topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
                   now) if [ "$(topic_get "$f" status)" = waiting ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ -z "${CLAUDECODE:-}" ] && [ "${1:-}" != --quiet ]; then
                            bhote_info; topic_resume "$f"            # the wait is over: its agent gets told and goes on
-                       else topic_set "$f" status now; topic_set "$f" waiting_for ""; fi ;;
+                       else topic_set "$f" status now; topic_set "$f" waiting_for ""
+                           [ -n "${CLAUDECODE:-}" ] && [ "$(topic_get "$f" agent_pane)" != "${HERDR_PANE_ID:-}" ] && agent_claim "$f"   # an agent starts it: it is its topic now
+                       fi ;;
+                  take) agent_claim "$f" || { echo "bhote: take is for an agent in herdr (HERDR_PANE_ID)" >&2; return 1; }
+                        topic_set "$f" status now; topic_set "$f" waiting_for ""; poke ;;
                   later) topic_set "$f" status later ;;
                   next) topic_set "$f" status next ;;
                   wait) local wpin="" wargs=()

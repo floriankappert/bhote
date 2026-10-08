@@ -9,7 +9,7 @@ cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 [ -n "${FAKE_DOWN:-}" ] && case "$*" in *--machine*) exit 1 ;; esac   # the other machine does not answer
 case "$*" in
- *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*) echo "$*" >> "$FAKE_LOG" ;;
+ *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*|*"report-metadata"*) echo "$*" >> "$FAKE_LOG" ;;
  *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
  *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
@@ -148,6 +148,15 @@ echo "$frame" | grep -q "Laptop ◐ reconnecting" && ok "panel: the machine says
   && ok "remote: a topic's agent on it reads off-working (shown as offline)" || bad "agent state offline"
 collect_remote; grep -q "^Laptop${US}w3:p1${US}working" "$AGENT_REMOTE" && [ ! -s "$SHARED_DIR/machines.offline" ] && ok "remote: back again, live states" || bad "back online"
 cfg_set REMOTE_AGENTS off
+# projects: this machine's agents get repo and project tokens (only on a change); the panel reads them back
+mkdir -p "$T/prj"; git -C "$T/prj" init -q -b main; git -C "$T/prj" remote add origin https://github.com/acme/ims.git
+BHOTE_NO_SYNC=1 bhote_cli project add IMS >/dev/null; BHOTE_NO_SYNC=1 bhote_cli project pin IMS "$T/prj" >/dev/null
+printf 'Mac%sw1:p1%st1%sa%s%s%s%s%s\n' "$US" "$US" "$US" "$US" "" "$US" "" "$US" > "$AGENT_META_L"; sed -i.bak "s#\$#$T/prj#" "$AGENT_META_L"
+: > "$FAKE_LOG"; project_sync
+grep -q "report-metadata --source bhote --token repo=github.com/acme/ims --token project=proj-ims w1:p1" "$FAKE_LOG" && ok "projects: the agent gets its repo and project tokens" || bad "tokens: $(cat "$FAKE_LOG")"
+sed -i.bak "s#${US}a${US}${US}${US}#${US}a${US}github.com/acme/ims${US}proj-ims${US}#" "$AGENT_META_L"; : > "$FAKE_LOG"; project_sync
+[ -s "$FAKE_LOG" ] && bad "tokens set again: $(cat "$FAKE_LOG")" || ok "projects: unchanged tokens are not set again"
+agent_meta Mac w1:p1 && [ "$AM_PROJECT" = proj-ims ] && [ "$AM_TAB" = t1 ] && ok "projects: agent_meta reads project and tab" || bad "agent_meta: $AM_PROJECT $AM_TAB"
 # GitHub: the branch of a topic's agent, read by the machine it runs on; a line in the panel, inline in the search, in the JSON
 mkdir -p "$T/repo/src"; git -C "$T/repo" init -q -b feature/login 2>/dev/null
 bid=$(BHOTE_NO_SYNC=1 bhote_cli add "Login form" --json | jq -r .id); bf="$TOPIC_DIR/$bid.topic"

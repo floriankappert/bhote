@@ -58,6 +58,11 @@ bhote slack <ref> off --json                               # unpin
 thread). `@` and `#` take a few seconds: bhote asks Claude Code to look them up. When bhote says SLACK_WATCH is off, tell
 the user that one machine needs it on (`bhote config set SLACK_WATCH on` where Claude Code has the Slack connector).
 
+## When you take over a topic
+
+When the user asks you to work on an existing topic (by its title or number), run `bhote take <ref> --json` first: it
+becomes your topic (your session and pane), status `now`. Then report back as below (`review`, `done`, `wait`).
+
 ## When you were given a topic
 
 A prompt from bhote ends with "(bhote topic <id>: when you are finished, run …)". When you are finished, run exactly what
