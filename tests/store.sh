@@ -103,13 +103,13 @@ chmod +x "$T/halfssh"; FAKE_SSH_REAL=$T/fakessh BHOTE_SSH=$T/halfssh store_sync;
 [ "$rc" = 1 ] && [ "$before" = "$(ls "$TOPIC_DIR" | sort)" ] && ok "hardening: an incomplete dump is not merged (offline)" || bad "incomplete dump: rc=$rc"
 rm -f "$R/half.topic"
 # the sync lock: busy -> 2; a lock of a dead process is taken over
-sleep 30 & held=$!; ln -s "$held" "$DATA_DIR/sync.lock"
+sleep 30 & held=$!; ln -s "$held" "$SHARED_DIR/sync.lock"
 store_sync; [ $? = 2 ] && ok "hardening: a running sync elsewhere returns 2 (busy)" || bad "busy lock not reported"
 kill "$held"; wait "$held" 2>/dev/null
-store_sync; [ $? = 0 ] && [ ! -e "$DATA_DIR/sync.lock" ] && [ ! -L "$DATA_DIR/sync.lock" ] && ok "hardening: the lock of a dead process is taken over and released" || bad "stale lock not taken over"
+store_sync; [ $? = 0 ] && [ ! -e "$SHARED_DIR/sync.lock" ] && [ ! -L "$SHARED_DIR/sync.lock" ] && ok "hardening: the lock of a dead process is taken over and released" || bad "stale lock not taken over"
 # config: several keys in one write, labels with regex characters
-mkdir -p "$DATA_DIR/sync.lock"; echo 1 > "$DATA_DIR/sync.lock/pid"   # an old directory lock (older version) is replaced
-store_sync; [ $? = 0 ] && [ ! -e "$DATA_DIR/sync.lock" ] && ok "hardening: an old directory lock is replaced" || bad "old dir lock blocks"
+mkdir -p "$SHARED_DIR/sync.lock"; echo 1 > "$SHARED_DIR/sync.lock/pid"   # an old directory lock (older version) is replaced
+store_sync; [ $? = 0 ] && [ ! -e "$SHARED_DIR/sync.lock" ] && ok "hardening: an old directory lock is replaced" || bad "old dir lock blocks"
 cfg_set A 1 B 2; [ "$(cfg_get A x)$(cfg_get B x)" = 12 ] && ok "hardening: cfg_set writes several keys at once" || bad "cfg_set multi"
 cfg_set 'A.*' z; [ "$(cfg_get A x)" = 1 ] && ok "hardening: a key with regex characters does not delete other keys" || bad "regex key removed others"
 

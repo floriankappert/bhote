@@ -367,6 +367,7 @@ herdr_dump() {  # herdr_dump <machine label>: the other machine's topics through
     # (the newest dump in the log before we ask is the baseline: only a newer one counts. No clocks of two machines compared.)
     local m=$1 i out base q='def lid: (.log_id // "" | tostring | capture("(?<n>[0-9]+)$").n // "0" | tonumber);'
     base=$(with_timeout 20 herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r "$q"' [.result.logs[] | select(.action_id == "dump") | lid] | max // 0' 2>/dev/null)
+    [ -n "$base" ] || return 1                                  # no baseline: an old dump must not count as new
     base=$(num_or "$base" 0)
     with_timeout 20 herdr --machine "$m" plugin action invoke dump --plugin bhote.panel >/dev/null 2>&1 || return 1
     for (( i = 0; i < 20; i++ )); do
@@ -398,7 +399,7 @@ lock_take() {  # lock_take <path> <pid>: 0 when it is (now) ours
 lock_drop() { [ "$(readlink "$1" 2>/dev/null)" = "$2" ] && rm -f "$1"; return 0; }   # lock_drop <path> <pid>: only our own
 # One sync at a time over all panels of this machine (and the CLI). store_sync returns 2 when another sync is running.
 store_sync() {
-    local lock=$DATA_DIR/sync.lock rc
+    local lock=$SHARED_DIR/sync.lock rc
     mkdir -p "$DATA_DIR"
     lock_take "$lock" "$$" || return 2
     store_sync_run; rc=$?
@@ -855,7 +856,7 @@ collect_remote() {  # only the saved machines that are switched on; with the set
           out=$(COLLECT_META="$AGENT_META_R.tmp.$$" collect_one "$label" --machine "$label"); rc=$?
           if [ "$rc" = 2 ]; then
               echo "$label" >> "$offl.tmp.$$"
-              [ -r "$AGENT_META_R" ] && grep "^$label$US" "$AGENT_META_R" >> "$AGENT_META_R.tmp.$$" 2>/dev/null
+              [ -r "$AGENT_META_R" ] && awk -F"$US" -v l="$label" '$1 == l' "$AGENT_META_R" >> "$AGENT_META_R.tmp.$$" 2>/dev/null
               [ -r "$AGENT_REMOTE" ] && while IFS= read -r line; do
                   case "$line" in "$label$US"*) IFS=$US read -r m aid st name task <<< "$line"
                       case "$st" in off-*) ;; *) st="off-$st" ;; esac; printf '%s\n' "$m$US$aid$US$st$US$name$US$task" ;; esac
@@ -927,7 +928,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
         lead=0
         if collector_lead "$1"; then
             lead=1; local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
-            [ -e "$SHARED_DIR/remote.due" ] && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine
+            [ -e "$SHARED_DIR/remote.due" ] && ! { [ -n "$rem_pid" ] && kill -0 "$rem_pid" 2>/dev/null; } && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine (kept while a round still runs)
             collect_local                                       # first what the panels show; the merge can take a moment
             branch_sync; project_sync
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
@@ -1182,7 +1183,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     local metas; metas_read metas
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        apj[$i]=""; case "$metas" in *"$m$US$id$US"*) local rest=${metas#*"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
+        apj[$i]=""; case "$metas" in *$'\n'"$m$US$id$US"*) local rest=${metas#*$'\n'"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
         for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done; [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
         [ "$m" = "$HOST" ] && hosted=1
     done
@@ -1251,7 +1252,7 @@ machine_offline() {  # machine_offline <label>: 0 when its last fetch failed (he
     while IFS= read -r _l; do [ "$_l" = "$1" ] && return 0; done < "$SHARED_DIR/machines.offline"; return 1
 }
 metas_read() {  # metas_read <var>: the pane meta lists of both machines in one variable (no subshell, no cat)
-    local _m="" _l _f; for _f in "$AGENT_META_L" "$AGENT_META_R"; do [ -r "$_f" ] && while IFS= read -r _l; do _m="$_m$_l"$'\n'; done < "$_f"; done
+    local _m=$'\n' _l _f; for _f in "$AGENT_META_L" "$AGENT_META_R"; do [ -r "$_f" ] && while IFS= read -r _l; do _m="$_m$_l"$'\n'; done < "$_f"; done
     printf -v "$1" '%s' "$_m"
 }
 agent_footer() {
@@ -1768,7 +1769,7 @@ ANIM_FILE="$RUN_DIR/anim"
 SPIN_FRAMES=("·" "✢" "✳" "✶" "✻" "✽" "✻" "✶" "✳" "✢")       # Claude Code's spinner, there and back
 spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the frame just drawn (from the agent map)
     local div split line r l rr rest st; SPIN_CELLS=""
-    read -r div < "$RUN_DIR/divrow" 2>/dev/null; num_set div "${div:-}" 0; [ "$div" -gt 0 ] || return 0
+    { read -r div < "$RUN_DIR/divrow"; } 2>/dev/null; num_set div "${div:-}" 0; [ "$div" -gt 0 ] || return 0
     { IFS= read -r split; split=$(num_or "$split" 0)
       while IFS=$'\036' read -r r l rr; do
           for line in "l:$l" "r:$rr"; do
@@ -1797,7 +1798,7 @@ dog_animate() {  # the main loop's answer to USR1 (only on the splash and the li
     local idx blink tick c
     [ "$TOO_SMALL" = 1 ] && return 0
     [ "$1" = splash ] && ! splash_fits && return 0
-    read -r idx blink tick < "$ANIM_FILE" 2>/dev/null || { idx=0; blink=on; tick=0; }
+    { read -r idx blink tick < "$ANIM_FILE"; } 2>/dev/null || { idx=0; blink=on; tick=0; }
     case "$1" in
         splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at big $(( 4 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
                 if [ "$blink" != "${DRAWN_BLINK:-}" ]; then splash_prompt_at "$blink"; DRAWN_BLINK=$blink; fi ;;
@@ -2198,7 +2199,7 @@ topics_projects() {  # T_EPJ: each topic's project: its own, else its agent's
     for (( i = 0; i < T_N; i++ )); do
         T_EPJ[$i]=${T_PJ[$i]}
         if [ -z "${T_EPJ[$i]}" ] && [ -n "${T_AP[$i]}" ]; then
-            case "$metas" in *"${T_AM[$i]}$US${T_AP[$i]}$US"*) rest=${metas#*"${T_AM[$i]}$US${T_AP[$i]}$US"}; rest=${rest%%$'\n'*}
+            case "$metas" in *$'\n'"${T_AM[$i]}$US${T_AP[$i]}$US"*) rest=${metas#*$'\n'"${T_AM[$i]}$US${T_AP[$i]}$US"}; rest=${rest%%$'\n'*}
                 IFS=$US read -r t a rr jj cc <<< "$rest"; T_EPJ[$i]=$jj ;; esac
         fi
     done
@@ -2667,7 +2668,9 @@ with_timeout() {  # with_timeout <seconds> <command…>: its output, its status;
     o=$(mktemp "$d/to.XXXXXX") || return 1
     "${@:2}" > "$o" 2>/dev/null </dev/null & p=$!
     ( trap 'kill "$w" 2>/dev/null; exit 0' TERM; sleep "$1" & w=$!; wait "$w"; kill "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & k=$!
-    wait "$p" 2>/dev/null; rc=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null
+    wait "$p" 2>/dev/null; rc=$?
+    while kill -0 "$p" 2>/dev/null; do wait "$p" 2>/dev/null; rc=$?; done   # (a trapped signal, e.g. a resize, ends a wait early)
+    kill "$k" 2>/dev/null; wait "$k" 2>/dev/null
     cat "$o"; rm -f "$o"; return "$rc"
 }
 gh_t() { with_timeout 25 gh "$@"; }   # a gh call that cannot hang the monitor
@@ -2754,7 +2757,8 @@ deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>: 
     for b in ${3:-main}; do brs[${#brs[@]}]=$b; done
     unset IFS
     if [ ${#names[@]} -gt 0 ]; then
-        for e in "${names[@]}"; do part=$(gh_t run list -R "$2" --workflow "$e" --limit 5 --json "$f") && { runs="$runs$part"$'\n'; got=1; }; done
+        for e in "${names[@]}"; do for b in "${brs[@]}"; do   # (per workflow AND branch: the last runs of other branches must not push the deploy branch out)
+            part=$(gh_t run list -R "$2" --workflow "$e" --branch "$b" --limit 5 --json "$f") && { runs="$runs$part"$'\n'; got=1; }; done; done
     else
         for b in "${brs[@]}"; do part=$(gh_t run list -R "$2" --branch "$b" --limit 50 --json "$f") && { runs="$runs$part"$'\n'; got=1; }; done
     fi
@@ -2853,7 +2857,7 @@ tests_local() {  # the local runs (bhote test run) and the live status files (TE
 monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project with CI (and the local runs); the list, newest first
     local kind=$1 out tmp i ci br nm tn pn
     [ "$kind" = deploys ] || [ "$kind" = tests ] || return 1
-    tmp=$(mktemp "$RUN_DIR/mon.XXXXXX") || return 1
+    tmp=$(mktemp "$SHARED_DIR/$kind.XXXXXX") || return 1   # (same filesystem as the list: the move is atomic)
     projects_load
     {
         for (( i = 0; i < P_N; i++ )); do
@@ -2868,11 +2872,12 @@ monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project wit
         done
         [ "$kind" = tests ] && [ "$(cfg_get TEST_LOCAL on)" = on ] && tests_local
     } 2>/dev/null | grep -E "^[0-9]+$US" | sort -t "$US" -k1,1nr | head -50 > "$tmp"
-    mv "$tmp" "$SHARED_DIR/$kind.list"; printf '%s\n' "$(date +%s)" > "$SHARED_DIR/$kind.at"
+    if [ -s "$tmp" ] || [ ! -s "$SHARED_DIR/$kind.list" ]; then mv "$tmp" "$SHARED_DIR/$kind.list"; else rm -f "$tmp"; fi   # (a round that found nothing, e.g. offline, keeps the last list)
+    printf '%s\n' "$(date +%s)" > "$SHARED_DIR/$kind.at"
     poke
 }
 test_summary() {  # test_summary <log>: the result line of the usual frameworks, short (412 passed · 2 failed)
-    tail -n 80 "$1" 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | awk '
+    tail -n 80 "$1" 2>/dev/null | sed "s/$(printf '\033')\[[0-9;]*[A-Za-z]//g" | awk '
         /[0-9]+ runs?, [0-9]+ assertions?/ { if (match($0, /[0-9]+ runs?, /)) { r = substr($0, RSTART); split(r, a, /, */); m = a[1] " · " a[3] " · " a[4] } }   # Minitest
         /^ *Tests +[0-9]/ { v = $0; sub(/^ *Tests +/, "", v); sub(/ *\(.*$/, "", v); gsub(/ *\| */, " · ", v); m = v }                           # Vitest
         /[0-9]+ examples?, [0-9]+ failures?/ { if (match($0, /[0-9]+ examples?, /)) m = substr($0, RSTART) }                                  # RSpec
@@ -3730,7 +3735,7 @@ bhote_main() {
         trap '' INT TERM HUP QUIT USR1 WINCH                  # once, and not interrupted by the next signal
         kill $pids 2>/dev/null
         [ -n "$stty_saved" ] && stty "$stty_saved" </dev/tty 2>/dev/null
-        lock_drop "$SHARED_DIR/collector.lock" "$$"; lock_drop "$DATA_DIR/sync.lock" "$$"; lock_drop "$SHARED_DIR/setup.lock" "$$"
+        lock_drop "$SHARED_DIR/collector.lock" "$$"; lock_drop "$SHARED_DIR/sync.lock" "$$"; lock_drop "$SHARED_DIR/setup.lock" "$$"
         rm -rf "$RUN_DIR"
         printf '%s\033[0m\033[?25h\033[?1049l\033]2;\007' "$MOUSE_OFF" 2>/dev/null   # mouse off, colours, cursor, normal screen, title
     }
@@ -3749,7 +3754,7 @@ bhote_main() {
         elif [ "$redraw" = 1 ]; then
             redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; }
             [ "$view" = splash ] && ! splash_fits && view=main
-            read -r DOG_IDX _ < "$ANIM_FILE" 2>/dev/null || DOG_IDX=0
+            { read -r DOG_IDX _ < "$ANIM_FILE"; } 2>/dev/null || DOG_IDX=0
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
             bhote_paint "$view"; dog_prev_reset "$view"
             if [ "$view" = main ]; then spin_cells; else SPIN_CELLS=""; fi
@@ -3876,11 +3881,11 @@ bhote_main() {
         if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
         if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ) & fi
         if [ -z "$key" ]; then                                 # the agent lists changed (the collector counts a revision up): at once
-            local _rev=""; read -r _rev < "$SHARED_DIR/agents.rev" 2>/dev/null
+            local _rev=""; { read -r _rev < "$SHARED_DIR/agents.rev"; } 2>/dev/null
             if [ "$_rev" != "${AG_REV:-}" ]; then AG_REV=$_rev; case "$view" in main) redraw=1 ;; esac; fi
         fi
         if [ -r "$SHARED_DIR/select" ]; then                   # bhote find chose a topic without an agent: select it here
-            local _sid _snc _sact; read -r _sid _snc _sact < "$SHARED_DIR/select" 2>/dev/null
+            local _sid _snc _sact; { read -r _sid _snc _sact < "$SHARED_DIR/select"; } 2>/dev/null
             if [ "$_sid $_snc" != "${SEL_SEEN:-}" ]; then        # (show: the topic's page, else the list with it selected)
                 [ -n "${SEL_SEEN:-}" ] && case "$_sid" in ''|*[!A-Za-z0-9_-]*) ;; *) [ -f "$TOPIC_DIR/$_sid.topic" ] && {
                     SEL_ID=$_sid; view=main; [ "$_sact" = show ] && { view=menu; MENU_IDX=0; }; redraw=1; } ;; esac
