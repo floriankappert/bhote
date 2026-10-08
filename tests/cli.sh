@@ -142,4 +142,10 @@ B project pin IMS "$T/ims" >/dev/null && [ "$(B project list --json | jq -r '.[]
 B project pin "Bilendo Marketing" ws:marketing >/dev/null && B project list | grep -q "ws:marketing" && ok "project pin ws:<workspace>" || bad "pin ws"
 B project rename "Bilendo M" "Marketing" >/dev/null && B project list | grep -q "Marketing" && ok "project rename" || bad "rename"
 B project rm Marketing >/dev/null && ! B project list | grep -q "Marketing" && ok "project rm" || bad "project rm"
+# an agent does not revive a topic the user parked or closed; the user (no agent) can, and `take` works on request
+B add "Parked one" -s later >/dev/null; pid=$(B list --all --json | jq -r '[.[] | select(.title=="Parked one")][0].id')
+CLAUDECODE=1 B now "$pid" >/dev/null 2>&1 && bad "an agent revived a parked topic" || ok "agent: bhote now refuses a parked topic"
+[ "$(B show "$pid" --json | jq -r .status)" = later ] && ok "agent: the topic stays parked" || bad "parked topic moved"
+CLAUDECODE=1 B review "$pid" >/dev/null 2>&1 && bad "an agent moved a parked topic to review" || ok "agent: bhote review refuses a parked topic"
+B now "$pid" >/dev/null 2>&1; [ "$(B show "$pid" --json | jq -r .status)" = now ] && ok "user: bhote now works on a parked topic" || bad "user could not move it"
 rm -rf "$T"; exit $fail

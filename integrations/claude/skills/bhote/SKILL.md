@@ -44,6 +44,8 @@ bhote also watches herdr: when you wait for an answer or end your turn with a qu
 is still better: it tells the user what the question is.
 
 When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
+A topic the user parked (`later`) or closed (`done`) stays that way: `bhote now` refuses it for you. Do not work on it or move it
+again unless the user asks you to; then `bhote take <ref>`.
 Do not use `-w` for the user: waiting is for other people and things.
 
 ## When you commit

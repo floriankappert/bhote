@@ -4745,8 +4745,14 @@ bhote_cli() {
                             notify "Ready for review" "$(topic_get "$f" title)" request
                         else topic_set "$f" status done; [ -n "$ag_call" ] && notify "Done" "$(topic_get "$f" title)" done; fi
                         agent_note "$f"; poke ;;
-                  review) topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
-                  now) if [ "$(topic_get "$f" status)" = waiting ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ -z "${CLAUDECODE:-}" ] && [ "${1:-}" != --quiet ]; then
+                  review) if is_agent && case "$(topic_get "$f" status)" in later|done) true ;; *) false ;; esac; then
+                           echo "bhote: this topic is $(topic_get "$f" status) (the user put it there): it is not moved to review" >&2; return 1
+                       fi
+                       topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
+                  now) if is_agent && case "$(topic_get "$f" status)" in later|done) true ;; *) false ;; esac; then   # the user parked or closed it: an agent does not revive it
+                           echo "bhote: this topic is $(topic_get "$f" status) (the user put it there): leave it. When the user asks you to work on it, run: bhote take <ref>" >&2; return 1
+                       fi
+                       if [ "$(topic_get "$f" status)" = waiting ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ -z "${CLAUDECODE:-}" ] && [ "${1:-}" != --quiet ]; then
                            bhote_info; topic_resume "$f"            # the wait is over: its agent gets told and goes on
                        else topic_set "$f" status now; topic_set "$f" waiting_for ""
                            [ -n "${CLAUDECODE:-}" ] && [ "$(topic_get "$f" agent_pane)" != "${HERDR_PANE_ID:-}" ] && agent_claim "$f"   # an agent starts it: it is its topic now
