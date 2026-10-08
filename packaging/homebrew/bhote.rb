@@ -2,7 +2,7 @@
 class Bhote < Formula
   desc "Topics and agents side panel for the herdr terminal workspace manager"
   homepage "https://github.com/floriankappert/bhote"
-  url "https://github.com/floriankappert/bhote.git", tag: "v0.5.2"
+  url "https://github.com/floriankappert/bhote.git", tag: "v0.5.3"
   license "MIT"
   head "https://github.com/floriankappert/bhote.git", branch: "main"
 

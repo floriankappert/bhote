@@ -215,4 +215,7 @@ echo "$frame" | grep -A3 "Login form" | grep -q "⎇ feature/login" && ok "githu
 [ "$(BHOTE_NO_SYNC=1 bhote_cli show "$bid" --json | jq -r .agent.branch)" = feature/login ] && ok "github: agent.branch in the JSON" || bad "json branch"
 cfg_set GITHUB_BRANCHES off; frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=150 bash ./bhote </dev/null)
 echo "$frame" | grep -q "⎇" && bad "branch shown with GITHUB_BRANCHES=off" || ok "github: off hides the branch"
+# a machine that does not answer is "unknown", not "gone" (a topic must not be taken for an agent that left)
+( cfg_set REMOTE_AGENTS on; machine_known() { return 0; }; FAKE_DOWN=1 agent_live Laptop w1:p1; [ "$LIVE_ST" = unknown ] ) && ok "agent_live: no answer from herdr is unknown, not gone" || bad "agent_live down: $LIVE_ST"
+( machine_known() { return 0; }; agent_live "$HOST" w1:p1; [ "$LIVE_ST" = idle ] || [ "$LIVE_ST" = working ] || [ "$LIVE_ST" = done ] ) && ok "agent_live: a local answer is read" || bad "agent_live local: $LIVE_ST"
 rm -rf "$T"; exit $fail

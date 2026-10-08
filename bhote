@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.5.2}
+VERSION=${BHOTE_VERSION:-0.5.3}
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=2
@@ -2369,10 +2369,12 @@ machine_known() {  # machine_known <label>: this machine, or a machine saved in 
     herdr machine list 2>/dev/null | awk -F'\t' -v l="$1" '$2 == l { f = 1 } END { exit !f }'
 }
 agent_live() {  # agent_live <machine> <pane>: LIVE_ST (idle|done|working|blocked|gone|noagent|unknown), LIVE_SESS, LIVE_CWD
-    local opt=() out; LIVE_SESS=""; LIVE_CWD=""
+    local opt=() out raw; LIVE_SESS=""; LIVE_CWD=""
     machine_known "$1" || { LIVE_ST=unknown; return 0; }
     [ "$1" = "$HOST" ] || opt=(--machine "$1")
-    out=$(herdr "${opt[@]}" pane list 2>/dev/null | jq -r --arg p "$2" '[.result.panes[] | select(.pane_id == $p)][0]
+    raw=$(herdr_m ${opt[@]+"${opt[@]}"} pane list) || { LIVE_ST=unknown; return 0; }       # herdr did not answer (or not in time): not "gone"
+    [ -n "$raw" ] || { LIVE_ST=unknown; return 0; }
+    out=$(printf '%s' "$raw" | jq -r --arg p "$2" '[.result.panes[] | select(.pane_id == $p)][0]
         | if . == null then "gone" elif (.agent // "") == "" then "noagent" else
           [(.agent_status // ""), ((.agent_session.value // "") | tostring | gsub("[^A-Za-z0-9-]"; "")), ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0001-\u001f]"; ""))] | join("\u001f") end' 2>/dev/null)
     LIVE_ST=${out%%$US*}; LIVE_SESS=""; LIVE_CWD=""
@@ -2384,8 +2386,8 @@ agent_send() {  # agent_send <machine> <pane> <text>: a prompt to that agent
     local opt=(); machine_known "$1" || return 1; [ "$1" = "$HOST" ] || opt=(--machine "$1")
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
     if [ -n "$AGENT_SEND_SYNC" ]; then
-        herdr "${opt[@]}" agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 || { echo "bhote: herdr could not send the prompt to $1/$2" >&2; return 1; }
-    else ( herdr "${opt[@]}" agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 ) & fi
+        herdr_m ${opt[@]+"${opt[@]}"} agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 || { echo "bhote: herdr could not send the prompt to $1/$2" >&2; return 1; }
+    else ( herdr_m ${opt[@]+"${opt[@]}"} agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 ) & fi
 }
 how_to_finish() {  # how_to_finish <id>: the sentence every agent gets about reporting back
     local h="when you are finished, run \`bhote review $1\` so that I check it"
@@ -2454,7 +2456,7 @@ pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt throug
         [ "$m" = "$HOST" ] || opt=(--machine "$m")
         # the lists are a few seconds old: right before typing, ask herdr itself that this pane still runs a FREE agent
         # (a pane that is now a plain shell would execute the text)
-        live=$(herdr "${opt[@]}" pane list 2>/dev/null | jq -r --arg p "$id" '[.result.panes[] | select(.pane_id == $p)][0] | if . == null then "gone" elif (.agent // "") == "" then "noagent" else ((.agent_status // "") + "\u001f" + ((.agent_session.value // "") | tostring | gsub("[^A-Za-z0-9-]"; ""))) end' 2>/dev/null)
+        live=$(herdr_m ${opt[@]+"${opt[@]}"} pane list | jq -r --arg p "$id" '[.result.panes[] | select(.pane_id == $p)][0] | if . == null then "gone" elif (.agent // "") == "" then "noagent" else ((.agent_status // "") + "\u001f" + ((.agent_session.value // "") | tostring | gsub("[^A-Za-z0-9-]"; ""))) end' 2>/dev/null)
         st=${live%%$US*}; sess=""; case "$live" in *"$US"*) sess=${live#*$US} ;; esac
         case "$st" in idle|done) ;; *) return 0 ;; esac
     fi
@@ -2507,7 +2509,7 @@ topic_resume() {  # topic_resume <file>: a waiting topic of an agent: the wait i
     am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane); ag=$(topic_get "$f" agent)
     topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" delegated "$(date +%s)"
     [ -n "$ap" ] || return 0
-    agent_live "$am" "$ap"; case "$LIVE_ST" in gone|noagent) echo "bhote: ${ag:-the agent} is not there any more" >&2; return 0 ;; esac
+    agent_live "$am" "$ap"; case "$LIVE_ST" in gone|noagent) echo "bhote: ${ag:-the agent} is not there any more" >&2; return 0 ;; unknown) echo "bhote: could not ask herdr about ${ag:-the agent}; sending the prompt anyway" >&2 ;; esac
     agent_send "$am" "$ap" "The wait is over${wf:+ ($wf)}: $title${desc:+. Go on with: $desc} (bhote topic $id: $(how_to_finish "$id"))."
 }
 prompt_new_topic() {  # [text to start with] "Title", "Title; description", "Title @Name" or "Title > Name" (= waiting for Name); the new topic gets selected
