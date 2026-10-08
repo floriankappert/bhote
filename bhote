@@ -1529,10 +1529,15 @@ bhote_settings() {
         esac
     done
     printf '\n'; rule
-    printf ' %s%s%s\n' "$D" "$(clip "↑↓ select · space/⏎ toggle" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "←→ change · , or esc back$( [ "${SET_PAGE:-main}" != main ] && echo ' (one page up)')" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "list: ⏎ open · n new · e/d edit · x done" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "s start · a from agents · q quit" $(( ${COLS:-44} - 3 )))" "$X"
+    local k1 k2                                                # the keys of THIS page (the list's keys: settings › Hotkeys)
+    case "${SET_PAGE:-main}" in
+        projects) k1="↑↓ select · ⏎ open"; k2=", or esc back to Settings" ;;
+        project) k1="↑↓ select · space/⏎ pin or unpin an agent"; k2="⏎ rename / delete · , or esc back to Projects" ;;
+        connections) k1="↑↓ select · space/⏎ toggle · ←→ change"; k2=", or esc back to Settings" ;;
+        *) k1="↑↓ select · space/⏎ toggle · ←→ change"; k2="⏎ open a page (›) · , or esc back" ;;
+    esac
+    printf ' %s%s%s\n' "$D" "$(clip "$k1" $(( ${COLS:-44} - 3 )))" "$X"
+    printf ' %s%s%s\n' "$D" "$(clip "$k2" $(( ${COLS:-44} - 3 )))" "$X"
 }
 bhote_hotkeys() {  # every key, grouped by screen
     local k
