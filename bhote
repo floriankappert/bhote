@@ -972,7 +972,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
                      [ -n "${T_SL[$i]}" ] && { state="Slack monitor active (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
             review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
-                    [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]// ¶ / }; sc=$S; } ;;   # an answer in Slack
+                    [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]// ¶ / }; state=${state//\`/}; state=${state//\*/}; sc=$S; } ;;   # an answer in Slack
             next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
             done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
@@ -1723,18 +1723,30 @@ field_block() {  # field_block <title|description> <colour> <text>
         else printf '%s%s%s\n' "$2" "$l" "$X"; fi
     done <<< "$(wrap_print 2 "" "$3")"
 }
-slack_msg_print() {  # slack_msg_print <who: text>: the sender, then each paragraph (¶) wrapped; a bullet line hangs behind its •
-    local who=${1%%: *} txt=${1#*: } p rest
+slack_msg_print() {  # slack_msg_print <who: text>: the sender, then each line (¶) wrapped; lists hang behind • / 1.; `code` and *bold* as in Slack
+    local who=${1%%: *} txt=${1#*: } p rest mk ind blank=1
     [ "$who" = "$1" ] && { who=""; txt=$1; }
     [ -n "$who" ] && printf '\n  %s%s%s\n' "$BLUE" "$(clip "$who" $(( ${COLS:-44} - 4 )))" "$X"
-    rest=$txt
+    rest=${txt// ¶ ¶ / ¶ $'\003' ¶ }                          # (an empty line in Slack: a paragraph break, \003 here)
     while [ -n "$rest" ]; do
         p=${rest%% ¶ *}; [ "$p" = "$rest" ] && rest="" || rest=${rest#* ¶ }
-        p=${p#"${p%%[! ]*}"}; [ -n "$p" ] || continue
-        case "$p" in "• "*|"- "*|"* "*) p=${p#"• "}; p=${p#"- "}; p=${p#"* "}
-            printf '  %s•%s ' "$S" "$X"; wrap_print 4 "$DESC" "$p" | sed '1s/^    //' ;;
-            *) wrap_print 2 "$DESC" "$p" ;; esac
-    done
+        p=${p#"${p%%[! ]*}"}; [ "$p" = $'\003' ] && p=""
+        if [ -z "$p" ]; then [ -z "$blank" ] && printf '\n'; blank=1; continue; fi; blank=""   # a paragraph break: one empty line
+        mk=""; case "$p" in "• "*|"◦ "*|"- "*) mk="•"; p=${p#* } ;; [0-9]". "*|[0-9][0-9]". "*) mk=${p%%. *}.; p=${p#*. } ;; esac
+        if [ -n "$mk" ]; then ind=$(( 3 + ${#mk} )); printf '  %s%s%s ' "$D" "$mk" "$X"; wrap_print "$ind" "" "$p" | sed "1s/^ \{$ind\}//"
+        else wrap_print 2 "" "$p"; fi
+    done | slack_marks
+}
+slack_marks() {  # stdin → stdout: `code` in the code colour, *bold* bold, the rest in the terminal's text colour (state carried over lines)
+    awk -v base="$([ "$color" = 1 ] && printf '%s[39m' "$esc")" -v code="$C" -v bold="$([ "$color" = 1 ] && printf '%s[1m' "$esc")" -v off="$X" '
+        { out = ""; n = length($0); line = $0
+          for (i = 1; i <= n; i++) {
+              ch = substr(line, i, 1); prev = (i > 1) ? substr(line, i - 1, 1) : " "; nxt = (i < n) ? substr(line, i + 1, 1) : " "
+              if (ch == "`") { incode = !incode; out = out off (incode ? code : (inbold ? bold base : base)); continue }
+              if (ch == "*" && !incode && ((!inbold && prev ~ /[ (]/ && nxt !~ /[ ]/) || (inbold && prev !~ /[ ]/))) { inbold = !inbold; out = out off base (inbold ? bold : ""); continue }
+              out = out ch
+          }
+          print base (incode ? code : "") (inbold ? bold : "") out off }'
 }
 menu_edit_field() {  # menu_edit_field <title|description>: the editor where the field stands; Enter keeps, Esc throws away
     local f fld=$1 cur; f=$(sel_file); [ -n "$f" ] || return 0
@@ -2056,7 +2068,7 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
     done
     [ "$n" -gt 0 ] || return 0
     me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); [ -n "$me" ] || { slack_me && me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); }   # who I am: once
-    j=$(claude_json "You check Slack for new messages, read-only. For each pin in this list: when thread_ts is set, call slack_read_thread(channel_id, message_ts=thread_ts, oldest), else slack_read_channel(channel_id, oldest, limit 20). Pins: [$pins]. Reply with only JSON, no prose: {\"pins\":[{\"topic\":\"<topic>\",\"error\":<null or short text>,\"messages\":[{\"ts\":\"<ts>\",\"user\":\"<user id>\",\"name\":\"<display name>\",\"text\":\"<first 300 characters>\"}]}]}. List only messages newer than oldest, the thread parent never." 150)
+    j=$(claude_json "You check Slack for new messages, read-only. For each pin in this list: when thread_ts is set, call slack_read_thread(channel_id, message_ts=thread_ts, oldest), else slack_read_channel(channel_id, oldest, limit 20). Pins: [$pins]. Reply with only JSON, no prose: {\"pins\":[{\"topic\":\"<topic>\",\"error\":<null or short text>,\"messages\":[{\"ts\":\"<ts>\",\"user\":\"<user id>\",\"name\":\"<display name>\",\"text\":\"<the text exactly as Slack has it (mrkdwn, line breaks as \\n), at most 1500 characters>\"}]}]}. List only messages newer than oldest, the thread parent never." 150)
     if [ -z "$j" ]; then printf 'error %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"; return 1; fi
     while IFS=$US read -r id maxts who txt; do
         [ -n "$id" ] || continue; f="$TOPIC_DIR/$id.topic"; [ -f "$f" ] || continue
@@ -2071,11 +2083,12 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
     done <<< "$(printf '%s' "$j" | jq -r --arg me "$me" '
         def clean: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
         def plain: gsub("<@[A-Z0-9]+\\|(?<n>[^>]+)>"; "@\(.n)") | gsub("<[!#@][^>|]*\\|(?<n>[^>]+)>"; "\(.n)") | gsub("<(?<u>https?:[^>|]+)\\|(?<t>[^>]+)>"; .t)
-            | gsub("<(?<u>https?:[^>]+)>"; .u) | gsub("<@[A-Z0-9]+>"; "@someone") | gsub("[*_~`]"; "") | gsub("  +"; " ");   # Slack markup out
+            | gsub("<(?<u>https?:[^>]+)>"; .u) | gsub("<@[A-Z0-9]+>"; "@someone") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")
+            | gsub("  +"; " ");   # Slack markup out (mentions, links, entities); *bold* and `code` stay for the topic page
         .pins[]? | select(.topic | test("^[A-Za-z0-9_-]+$")) | . as $p
         | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")))] | sort_by(.ts | tonumber)) as $m
         | (if $me == "" then null else ([$m[] | select(.user != $me)] | last) end) as $o   # (who I am unknown: only move on)
-        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | gsub("\\r"; "") | gsub("\\n+"; " ¶ ") | clean | plain | .[0:300]) else "" end)] | join("\u001f")' 2>/dev/null)"
+        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | gsub("\\r"; "") | gsub("\\n[ \\t]*\\n\\s*"; " ¶ ¶ ") | gsub("\\n"; " ¶ ") | clean | plain | .[0:1500]) else "" end)] | join("\u001f")' 2>/dev/null)"
     printf 'ok %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"
     poke
 }

@@ -52,14 +52,27 @@ grep -q "C0123ABC" "$FAKE_LOG" && ! grep -q "C0999XYZ" "$FAKE_LOG" && ok "watch:
 printf '{"me":"U1","pins":[{"topic":"%s","messages":[{"ts":"%s","user":"U2","name":"Alex","text":"Hi <@U1|Flo>,  Clause 7 is *fine* <https://x.io|see>\\nfrom our side"},{"ts":"%s","user":"U9","name":"Old","text":"old"}]}]}' "$id" "$new" "$mine" > "$FAKE_ANSWER"
 : > "$FAKE_LOG"; slack_check
 grep -q "slack_read_user_profile once" "$FAKE_LOG" && bad "asked for me again" || ok "watch: the kept user is reused"
-[ "$(topic_get "$f" status)" = review ] && [ "$(topic_get "$f" slack_msg)" = "Alex: Hi @Flo, Clause 7 is fine see ¶ from our side" ] && [ "$(topic_get "$f" slack_seen)" = "$new" ] \
+[ "$(topic_get "$f" status)" = review ] && [ "$(topic_get "$f" slack_msg)" = "Alex: Hi @Flo, Clause 7 is *fine* see ¶ from our side" ] && [ "$(topic_get "$f" slack_seen)" = "$new" ] \
   && ok "watch: someone else wrote → review, with who and what" || bad "review: $(topic_get "$f" status) '$(topic_get "$f" slack_msg)'"
-B show "$id" | grep -q "slack message: Alex: Hi @Flo, Clause 7" && [ "$(B show "$id" --json | jq -r .slack.message)" = "Alex: Hi @Flo, Clause 7 is fine see
+B show "$id" | grep -q "slack message: Alex: Hi @Flo, Clause 7" && [ "$(B show "$id" --json | jq -r .slack.message)" = "Alex: Hi @Flo, Clause 7 is *fine* see
 from our side" ] && ok "show: the Slack message (line breaks kept)" || bad "show message: $(B show "$id" --json | jq .slack)"
 page=$(SEL_ID=$id BHOTE_ONCE=1 BHOTE_VIEW=menu BHOTE_COLS=60 BHOTE_ROWS=50 bash ./bhote </dev/null 2>&1)
-case "$page" in *SLACK*"channel"*"Alex"*"Hi @Flo, Clause 7 is fine see"*"from our side"*ACTIONS*) ok "topic page: the pin and the whole message" ;; *) bad "topic page: $(echo "$page" | head -30)" ;; esac
+case "$page" in *SLACK*"channel"*"Alex"*"Hi @Flo, Clause 7 is fine see"*"from our side"*ACTIONS*) ok "topic page: the pin and the whole message (no markup)" ;; *) bad "topic page: $(echo "$page" | head -30)" ;; esac
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)
 echo "$frame" | grep -q "slack · Alex: Hi @Flo" && ok "panel: the answer under the topic" || bad "panel review line"
+# the topic page lays a long message out like Slack: paragraphs, bullets and numbers hanging, `code` and *bold* without marks
+topic_set "$f" slack_msg 'Akrur: Hi, ¶ ¶ Set up: ¶ • Bucket: `b-1` and `SECURE_FILES_BUCKET` ¶ ¶ Open: ¶ 1. *Verify* the scan ¶ 2. *Then* remove the flag'
+page=$(SEL_ID=$id BHOTE_ONCE=1 BHOTE_VIEW=menu BHOTE_COLS=60 BHOTE_ROWS=60 bash ./bhote </dev/null 2>&1)
+lay=$(echo "$page" | sed -n '/^  Akrur$/,/^  2\./p')
+[ "$lay" = "  Akrur
+  Hi,
+
+  Set up:
+  • Bucket: b-1 and SECURE_FILES_BUCKET
+
+  Open:
+  1. Verify the scan
+  2. Then remove the flag" ] && ok "topic page: paragraphs, bullets, numbers; identifiers stay whole" || bad "layout: $lay"
 # waits again: the message goes, from now on; the same message again changes nothing
 B wait "$id" Legal >/dev/null; [ "$(topic_get "$f" status)" = waiting ] && [ -z "$(topic_get "$f" slack_msg)" ] && ok "wait again: the message goes, the pin stays" || bad "rewait"
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)
