@@ -157,6 +157,24 @@ grep -q "report-metadata --source bhote --token repo=github.com/acme/ims --token
 sed -i.bak "s#${US}a${US}${US}${US}#${US}a${US}github.com/acme/ims${US}proj-ims${US}#" "$AGENT_META_L"; : > "$FAKE_LOG"; project_sync
 [ -s "$FAKE_LOG" ] && bad "tokens set again: $(cat "$FAKE_LOG")" || ok "projects: unchanged tokens are not set again"
 agent_meta Mac w1:p1 && [ "$AM_PROJECT" = proj-ims ] && [ "$AM_TAB" = t1 ] && ok "projects: agent_meta reads project and tab" || bad "agent_meta: $AM_PROJECT $AM_TAB"
+# the agent list by project (the panel's own first, "no project" last), the topics of the panel's project
+BHOTE_NO_SYNC=1 bhote_cli project add Zeta >/dev/null
+printf 'Mac%sw1:p1%st1%sa%s%sproj-ims%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
+  "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
+collect_local >/dev/null 2>&1; printf 'Mac%sw1:p1%st1%sa%s%sproj-ims%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
+  "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
+grp=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"
+  projects_load; CUR_PROJ=proj-zeta; agents_block | sed 's/\x1b\[[0-9;]*m//g' )
+caps=$(echo "$grp" | grep '┈┈' | sed 's/ *┈*$//; s/^ *┈┈ //' | tr '\n' '|')
+[ "$caps" = "Zeta|IMS|no project|" ] && ok "agents by project: the panel's own first, no project last" || bad "project captions: $caps"
+echo "$grp" | grep -A1 '┈┈ IMS' | tail -1 | grep -q 'Project A' && ok "agents by project: the agent under its project" || bad "agent under project: $grp"
+( HERDR_PANE_ID=w9:p9; current_project; [ "$CUR_PROJ" = proj-zeta ] ) && ok "the panel's project: of the agent in its tab" || bad "current project"
+t1=$(BHOTE_NO_SYNC=1 bhote_cli add "Zeta work" -p Zeta --json | jq -r .id); BHOTE_NO_SYNC=1 bhote_cli add "IMS work" -p IMS >/dev/null; BHOTE_NO_SYNC=1 bhote_cli add "Loose work" >/dev/null
+[ "$(BHOTE_NO_SYNC=1 bhote_cli show "$t1" --json | jq -r .project)" = Zeta ] && ok "add -p: the topic's project" || bad "topic project"
+blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=project; AG_N=0; topics_block | sed 's/\x1b\[[0-9;]*m//g' )
+echo "$blk" | grep -q "Zeta work" && echo "$blk" | grep -q "Loose work" && ! echo "$blk" | grep -q "IMS work" && ok "scope project: its topics and those without one" || bad "scope: $blk"
+blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=all; AG_N=0; topics_block )
+echo "$blk" | grep -q "IMS work" && ok "scope all: every topic" || bad "scope all"
 # GitHub: the branch of a topic's agent, read by the machine it runs on; a line in the panel, inline in the search, in the JSON
 mkdir -p "$T/repo/src"; git -C "$T/repo" init -q -b feature/login 2>/dev/null
 bid=$(BHOTE_NO_SYNC=1 bhote_cli add "Login form" --json | jq -r .id); bf="$TOPIC_DIR/$bid.topic"

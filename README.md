@@ -6,12 +6,13 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 **agents** (who is free, who is busy). A single bash script, about 44 columns wide, with a small sheepdog that guards the herd.
 
 - Topics are `now`, `waiting` (for a name, with a date), `later` or `done`, each with an optional description.
-- Agents of every herdr tab are listed in two columns: **free** (idle/done) on the left, **busy** on the right.
+- Agents of every herdr tab are listed by project, then machine; the icon says free (○ ✓) or busy (the dancing star).
 - Start a topic on a free agent: bhote sends the title and description to its pane (`herdr pane run`, with `--machine` for agents on another machine).
 - Agents' tasks that are no topic yet are suggested (`a`); a finished agent is marked, `x` closes its topic.
 - Topics are plain files; they can be kept in sync with a second machine over ssh (opt-in).
 - **Steal & Transfer**: an agent commits its state with a handover on its branch, and a free agent takes over ([how](docs/steal-and-transfer.md)).
 - Agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on.
+- **Projects**: agents are listed by project (and machine); an agent belongs to a project by its git repository (worktrees inherit), and the panel can list only its project's topics.
 - **GitHub**: the git branch a topic's agent works on, under the topic and in the search.
 - **Slack pins**: a waiting topic can carry a Slack channel, DM or thread; when someone writes there, it goes to review. Claude Code (its Slack connector) does the reading, so bhote needs no Slack token.
 - Themes: follows your terminal colours (and Omarchy's system theme) by default, or exact Catppuccin colours, each role overridable.

@@ -15,6 +15,7 @@
     "waiting_since",
     "agent",
     "slack",
+    "project",
     "created",
     "updated"
   ],
@@ -169,6 +170,13 @@
           }
         }
       ]
+    },
+    "project": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The project's name (the topic's own, set by bhote add --project, an agent's repository or the panel's tab); null: none."
     },
     "created": {
       "type": [

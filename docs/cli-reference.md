@@ -124,6 +124,21 @@ keeps no Slack token) for newer messages. A message from someone else sets the t
 notification; the message (sender and up to 300 characters) is in `slack.message` and on the topic page. Your own
 messages only move the watch on.
 
+### `bhote take <ref>`
+
+Run by an agent (in herdr): it takes the topic over, it becomes the topic's agent (its session, pane, machine and name),
+status `now`. `bhote now <ref>` run by an agent does the same. Exit `1` outside an agent.
+
+### `bhote project [list]` · `add <name>` · `rename <ref> <name>` · `rm <ref>` · `pin <ref> <what>` · `unpin <ref> <key>` · `of [folder]`
+
+Projects group the agents (and the topics). An agent belongs to a project by its git repository, known by its key: the
+origin URL as `host/owner/name` (`git@github.com:Acme/IMS.git` → `github.com/acme/ims`) or `dir:<folder>` without a
+remote; a worktree has the key of its main repository, so it inherits the project. Outside a repository an agent belongs
+to a project by its herdr workspace (`ws:<name>`). `pin` takes a folder, an agent (`bhote agents`: its repository, else
+its workspace), `ws:<workspace>` or a key. `of` prints the project of a folder (default: here). Projects are records in
+the topic store and travel with the topics; `--json` on `list` gives `[{"id", "n", "name", "repos", "workspaces"}]`.
+`bhote add … -p <project>` gives a topic its project; a topic an agent makes gets the project of the agent's repository.
+
 ### `bhote rename <ref> <title>`
 
 New title. Exit `1` without a title.
@@ -237,6 +252,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session", "branch"}` (each may be null; `branch`: the git branch it works on, `@1234abc` when detached). |
+| `project` | string \| null | The topic's project (its name). |
 | `slack` | object \| null | A Slack pin: `{"channel", "thread", "label", "message"}`; `message` is the last one from someone else (sender: text), while in review. |
 | `created` | integer \| null | |
 | `updated` | integer \| null | Last change; the newer one wins in a merge. |

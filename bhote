@@ -99,6 +99,7 @@ AUTOSTART|on|bool|The herdr plugin opens the panel next to the agents when herdr
 FIND_KEY||text|The herdr key that opens the search popup: find a topic or an agent and jump to it (e.g. ctrl+alt+t; off removes it)
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
+TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of its project (the project of the agent in its herdr tab; topics without a project are always there)
 DONE_MAX|7|int:0:999|The last done topics shown above the agents (0: none)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
 NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve
@@ -233,7 +234,7 @@ panel_shows() { case "$1" in now|next|review|waiting) return 0 ;; esac; return 1
 sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the first shown one); needs topics_load first
     local i; SEL_IDX=0
     for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && { SEL_IDX=$i; return; }; done
-    for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && { SEL_IDX=$i; return; }; done
+    for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; return; }; done
 }
 topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
 sel_file() { topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"; }
@@ -241,9 +242,9 @@ sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game
     [ -n "${T_N:-}" ] || topics_load; [ "$T_N" -gt 0 ] || return 0   # the arrays of the last frame; ui_load reloads right after
     sel_index; local i=$SEL_IDX k
     for (( k = 0; k < T_N; k++ )); do                          # the next shown one (a parked/done one is skipped)
-        i=$(( (i + $1 + T_N) % T_N )); panel_shows "${T_STATUS[$i]}" && break
+        i=$(( (i + $1 + T_N) % T_N )); panel_shows "${T_STATUS[$i]}" && in_scope "$i" && break
     done
-    panel_shows "${T_STATUS[$i]}" && { SEL_IDX=$i; SEL_ID=${T_ID[$i]}; }
+    panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; SEL_ID=${T_ID[$i]}; }
 }
 topic_files() { topics_ordered; }
 topics_count() { topics_load; echo "$T_N"; }
@@ -724,6 +725,7 @@ ui_load() {
     done
     AGENTS=$AG_N
     topics_load
+    projects_load; current_project; topics_projects; cfg_var U_SCOPE TOPICS_SCOPE all
 }
 
 # ── the agents of every machine: this one and every enabled saved machine (herdr --machine <label>). Collected in the
@@ -1046,11 +1048,15 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
     local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0
     sel_index
-    for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && open=$(( open + 1 )); done
+    for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
+    if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
+        printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
+    fi
     [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
+        in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
         if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected parked one stays: chosen in the search)
             nlater=$(( nlater + 1 )); continue
         fi
@@ -1075,7 +1081,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
     [ "$max" -gt 0 ] || return 0
     local dn=() used=" " best bu u j sel_in=0                 # newest first: by the last change (checking off is one); builtins only
-    for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
+    for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
     while [ "$n" -lt "$max" ] && [ "$n" -lt "$all" ]; do
         best=-1; bu=-1
         for j in "${dn[@]}"; do case "$used" in *" $j "*) continue ;; esac; u=${T_UPD[$j]:-0}; [ "$u" -ge "$bu" ] && { bu=$u; best=$j; }; done
@@ -1122,47 +1128,60 @@ agent_divider() {  # the handle between topics and agents: a rule with a grip in
     l=$(( (w - 5) / 2 )); r=$(( w - 5 - l ))
     printf '  %s%s%s ═══ %s%s%s\n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X"
 }
-agents_block() {  # two columns: free agents (idle, done) left, busy ones right; grouped by machine (a dim caption per machine when
-    # there is more than one), so names need no machine prefix. The colours follow the herdr sidebar.
-    local i k m id st name task ic nc label cw maxr cell plain _ln machines=() nm=0 lines=() lw=() lc=() lid=() rid=() n=0 shown hidden=0 r
+agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), inside a project
+    # by machine when there is more than one; two columns. The icon says the state (as in the herdr sidebar), muted when the
+    # machine does not answer. A project's agents come from their repo/project tokens (project_sync on their machine).
+    local i k m id st raw off name task ic nc label cw maxr cell plain _ln n=0 shown hidden=0 r lines=() lc=() lid=() rid=()
     maxr=$(( ${ROWS:-40} - 21 )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
     agent_divider
     [ "$AG_N" -gt 0 ] || { agent_footer; return; }
-    # the machines, this one first
-    machines[0]=$HOST; nm=1
+    # each agent's project (from the collected tokens), the machines, the projects in their order
+    local apj=() machines=("$HOST") nm=1 pm mm t a rr jj cc
+    local metas; metas=$(cat "$AGENT_META_L" "$AGENT_META_R" 2>/dev/null)
     for (( i = 0; i < AG_N; i++ )); do
-        m=${AG_LINES[$i]%%$US*}; for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done
-        [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
+        IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+        apj[$i]=""; case "$metas" in *"$m$US$id$US"*) local rest=${metas#*"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
+        for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done; [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
     done
-    printf '  %s%-*s%s%s%s\n' "$GREEN" $(( cw + 1 )) "FREE" "$X$ORANGE" "BUSY" "$X"
-    for (( k = 0; k < nm; k++ )); do
-        local f=() b=() fw=() fid=() bid=() nf=0 nb=0 rows
-        for (( i = 0; i < AG_N; i++ )); do
-            IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-            [ "$m" = "${machines[$k]}" ] || continue
-            local raw=$st off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
-            case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
-            name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 ))
-            if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
-            cell="$ic$X $nc$label$X"; dw_set plain "$label"; plain=$(( plain + 2 ))
-            st=$raw                                             # (the map keeps off-: no dancing star, no work for it)
-            case "${st#off-}" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id$US$st"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id$US$st"; nb=$(( nb + 1 )) ;; esac
+    [ "${P_N:-0}" -gt 0 ] || projects_load
+    local order=() no=0                                         # the panel's project first, then by name, then "no project"
+    [ -n "${CUR_PROJ:-}" ] && order[${#order[@]}]=$CUR_PROJ
+    for (( k = 0; k < P_N; k++ )); do [ "${P_ID[$k]}" = "${CUR_PROJ:-}" ] || order[${#order[@]}]=${P_ID[$k]}; done
+    order[${#order[@]}]="-"
+    for pm in "${order[@]}"; do
+        local cnt=0; for (( i = 0; i < AG_N; i++ )); do
+            if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null || cnt=$(( cnt + 1 )); else [ "${apj[$i]}" = "$pm" ] && cnt=$(( cnt + 1 )); fi
         done
-        [ $(( nf + nb )) -gt 0 ] || continue
-        # a caption for the machine when several machines are listed
-        if [ "$nm" -gt 1 ]; then                              # a divider with the machine's name ("── Omarchy ─────"); only machines with agents
-            local cap rest cw2 away="" aw=0; clip_set cap "${machines[$k]}" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"
-            machine_offline "${machines[$k]}" && { away=" ${ORANGE}◐ reconnecting${X}"; aw=15; }   # as herdr says it
-            rest=$(( ${#RULE_LINE} - 4 - cw2 - aw )); [ "$rest" -lt 1 ] && rest=1
-            # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
-            lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X}${away} ${MUTED}${DASH_LINE:0:$rest}${X}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
-        fi
-        rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
-        for (( r = 0; r < rows; r++ )); do
-            printf -v _ln '  %s%*s %s' "${f[$r]:-}" $(( cw - ${fw[$r]:-0} )) "" "${b[$r]:-}"; lines[$n]=$_ln   # no subshell per row
-            lc[$n]=$(( (r < nf) + (r < nb) )); lid[$n]=${fid[$r]:-}; rid[$n]=${bid[$r]:-}; n=$(( n + 1 ))
+        [ "$cnt" -gt 0 ] || continue
+        local cap cw2 rest2 pname; if [ "$pm" = "-" ]; then pname="no project"; else pname=$(project_name "$pm"); fi
+        clip_set cap "$pname" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"; rest2=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest2" -lt 1 ] && rest2=1
+        # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
+        if [ "$pm" = "-" ]; then lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
+        else lines[$n]="  ${MUTED}┈┈${X} ${L}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"; fi
+        lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
+        for mm in "${machines[@]}"; do
+            local cells=() cid=() cwid=() nc2=0
+            for (( i = 0; i < AG_N; i++ )); do
+                IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+                [ "$m" = "$mm" ] || continue
+                if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
+                raw=$st; off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
+                case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+                name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 ))
+                if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
+                dw_set plain "$label"; cells[$nc2]="$ic$X $nc$label$X"; cwid[$nc2]=$(( plain + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
+            done
+            [ "$nc2" -gt 0 ] || continue
+            if [ "$nm" -gt 1 ]; then                           # the machine, a sub-caption
+                local away=""; machine_offline "$mm" && away=" ${ORANGE}◐ reconnecting${X}"
+                lines[$n]="    ${D}${mm}${X}${away}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
+            fi
+            for (( r = 0; r < nc2; r += 2 )); do               # two columns, left to right
+                printf -v _ln '  %s%*s %s' "${cells[$r]}" $(( cw - ${cwid[$r]} )) "" "${cells[$(( r + 1 ))]:-}"; lines[$n]=$_ln
+                lc[$n]=$(( 1 + (r + 1 < nc2) )); lid[$n]=${cid[$r]}; rid[$n]=${cid[$(( r + 1 ))]:-}; n=$(( n + 1 ))
+            done
         done
     done
     shown=$n; [ "$shown" -gt "$maxr" ] && shown=$maxr
@@ -1415,7 +1434,17 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
         return
     fi
-    SET_ROWS=("link|CONNECTIONS|Connections" "link|SETUP|Setup wizard")
+    if [ "${SET_PAGE:-main}" = projects ]; then             # the projects; ⏎ opens one
+        projects_load; SET_ROWS=(); local pi
+        for (( pi = 0; pi < P_N; pi++ )); do SET_ROWS[${#SET_ROWS[@]}]="projrow|${P_ID[$pi]}|${P_NAME[$pi]}"; done
+        SET_ROWS[${#SET_ROWS[@]}]="projnew|NEW|+ New project"; return
+    fi
+    if [ "${SET_PAGE:-main}" = project ]; then              # one project: rename, its agents (a check pins the agent's repository), delete
+        SET_ROWS=("pact|rename|Rename"); local ai am ap ast an at
+        for (( ai = 0; ai < AG_N; ai++ )); do IFS=$US read -r am ap ast an at <<< "${AG_LINES[$ai]}"; SET_ROWS[${#SET_ROWS[@]}]="pagent|$am$US$ap|$an · $am"; done
+        SET_ROWS[${#SET_ROWS[@]}]="pact|delete|Delete this project"; return
+    fi
+    SET_ROWS=("link|CONNECTIONS|Connections" "link|PROJECTS|Projects" "enum|TOPICS_SCOPE|Topics shown" "link|SETUP|Setup wizard")
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
@@ -1442,7 +1471,9 @@ connections_summary() {  # one line under "Connections": where the topics are, r
 bhote_settings() {
     local i row kind key label vp vc v def cur=${SET_IDX:-0} sel ind off
     settings_rows
-    if [ "${SET_PAGE:-main}" = connections ]; then printf '\n %sSettings › Connections%s\n' "$L" "$X"
+    if [ "${SET_PAGE:-main}" = projects ]; then printf '\n %sSettings › Projects%s\n' "$L" "$X"
+    elif [ "${SET_PAGE:-main}" = project ]; then projects_load; printf '\n %sSettings › Projects › %s%s\n' "$L" "$(project_name "$SET_PROJ")" "$X"
+    elif [ "${SET_PAGE:-main}" = connections ]; then printf '\n %sSettings › Connections%s\n' "$L" "$X"
     else printf '\n %sSettings%s  %s%s%s\n' "$L" "$X" "$D" "$(clip "${CONFIG_FILE/#$HOME/~}" $(( ${COLS:-44} - 13 )))" "$X"; fi
     rule; printf '\n'
     for (( i = 0; i < ${#SET_ROWS[@]}; i++ )); do
@@ -1456,15 +1487,24 @@ bhote_settings() {
             machine) ind=2; cfg_var off MACHINES_OFF ""
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
-            link) vp="›"; vc="${D}›${X}" ;;
+            link|projnew|pact) vp="›"; vc="${D}›${X}" ;;
+            projrow) local pf2 pr pw np=0; pf2="$TOPIC_DIR/$key.topic"; pr=$(topic_get "$pf2" repos); pw=$(topic_get "$pf2" workspaces)
+                  [ -n "$pr" ] && np=$(( np + $(printf '%s' "$pr" | tr ',' '\n' | grep -c .) )); [ -n "$pw" ] && np=$(( np + $(printf '%s' "$pw" | tr ',' '\n' | grep -c .) ))
+                  vp="$np pinned ›"; vc="${D}${vp}${X}" ;;
+            pagent) local pm2=${key%%$US*} pp2=${key#*$US}; agent_meta "$pm2" "$pp2"; local an2=${label%% · *}
+                  if { [ -n "$AM_REPO" ] && list_has "$(topic_get "$TOPIC_DIR/$SET_PROJ.topic" repos)" "$AM_REPO"; } || list_has "$(topic_get "$TOPIC_DIR/$SET_PROJ.topic" workspaces)" "$an2"; then vp="[x]"; vc="${GREEN}[x]${X}"
+                  else vp="[ ]"; vc="${D}[ ]${X}"; fi ;;
             key) if [ "$key" = FIND_KEY ]; then vp=${FIND_KEY_SHOW:-off}; else vp=${FOCUS_KEY:-off}; fi; vc="${C}${vp}${X}" ;;
             enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
             prefer) ind=2; cfg_var v "$key" any; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
+        [ "$kind" = pagent ] && { if [ -n "$AM_REPO" ]; then wrap_print 5 "$D" "$AM_REPO"; else wrap_print 5 "$D" "its workspace (no git repository)"; fi; }
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
             CONNECTIONS) wrap_print 5 "$D" "$(connections_summary)" ;;
+            PROJECTS) projects_load; wrap_print 5 "$D" "$( [ "$P_N" -gt 0 ] && printf '%s' "$(for (( q = 0; q < P_N; q++ )); do printf '%s%s' "${P_NAME[$q]}" "$( [ $q -lt $(( P_N - 1 )) ] && echo ', ')"; done)" || echo 'none yet: agents by project')" ;;
+            TOPICS_SCOPE) wrap_print 5 "$D" "project: only the topics of the project of this tab's agent (and those without one)." ;;
             SETUP) wrap_print 5 "$D" "Every step again: change it, or skip what is set." ;;
             GITHUB_BRANCHES) wrap_print 5 "$D" "The branch a topic's agent works on, under the topic and in the search." ;;
             SLACK_WATCH) wrap_print 5 "$D" "Pinned Slack channels of waiting topics, read through Claude Code. One machine is enough." ;;
@@ -1475,7 +1515,7 @@ bhote_settings() {
     done
     printf '\n'; rule
     printf ' %s%s%s\n' "$D" "$(clip "↑↓ select · space/⏎ toggle" $(( ${COLS:-44} - 3 )))" "$X"
-    printf ' %s%s%s\n' "$D" "$(clip "←→ change · , or esc back$( [ "${SET_PAGE:-main}" = connections ] && echo ' (to Settings)')" $(( ${COLS:-44} - 3 )))" "$X"
+    printf ' %s%s%s\n' "$D" "$(clip "←→ change · , or esc back$( [ "${SET_PAGE:-main}" != main ] && echo ' (one page up)')" $(( ${COLS:-44} - 3 )))" "$X"
     printf ' %s%s%s\n' "$D" "$(clip "list: ⏎ open · n new · e/d edit · x done" $(( ${COLS:-44} - 3 )))" "$X"
     printf ' %s%s%s\n' "$D" "$(clip "s start · a from agents · q quit" $(( ${COLS:-44} - 3 )))" "$X"
 }
@@ -1551,7 +1591,23 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                 if [ "$k" = LEFT ]; then i2=$(( (i2 + n2 - 1) % n2 )); else i2=$(( (i2 + 1) % n2 )); fi
                 cfg_set "$key" "${opts[$i2]}"; return
             fi
-            if [ "$kind" = link ]; then [ "$k" = LEFT ] || case "$key" in SETUP) SETTINGS_GO=setup ;; CONNECTIONS) SETTINGS_GO=connections ;; *) SETTINGS_GO=hotkeys ;; esac; return; fi
+            if [ "$kind" = link ]; then [ "$k" = LEFT ] || case "$key" in SETUP) SETTINGS_GO=setup ;; CONNECTIONS) SETTINGS_GO=connections ;; PROJECTS) SETTINGS_GO=projects ;; *) SETTINGS_GO=hotkeys ;; esac; return; fi
+            case "$kind" in
+                projrow) [ "$k" = LEFT ] || { SET_PROJ=$key; SETTINGS_GO=project; }; return ;;
+                projnew) [ "$k" = LEFT ] && return; ask "New project: " || return; [ -n "$ANSWER" ] && project_new "$ANSWER"; return ;;
+                pact) [ "$k" = LEFT ] && return; local pf3="$TOPIC_DIR/$SET_PROJ.topic"
+                      if [ "$key" = rename ]; then ask "Name: " "$(topic_get "$pf3" title)" && [ -n "$ANSWER" ] && topic_set "$pf3" title "$ANSWER"
+                      else ask "Delete \"$(topic_get "$pf3" title)\"? y/N: " && case "$ANSWER" in y|Y) topic_set "$pf3" deleted 1; SETTINGS_GO=projects ;; esac; fi
+                      return ;;
+                pagent) [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                      local pm3=${key%%$US*} pp3=${key#*$US} pf4="$TOPIC_DIR/$SET_PROJ.topic" an3=${row#*|}; an3=${an3%% · *}
+                      agent_meta "$pm3" "$pp3"
+                      if [ -n "$AM_REPO" ]; then local rl; rl=$(topic_get "$pf4" repos)
+                          if list_has "$rl" "$AM_REPO"; then topic_set "$pf4" repos "$(list_del "$rl" "$AM_REPO")"; else topic_set "$pf4" repos "$(list_add "$rl" "$AM_REPO")"; fi
+                      else local wl; wl=$(topic_get "$pf4" workspaces)
+                          if list_has "$wl" "$an3"; then topic_set "$pf4" workspaces "$(list_del "$wl" "$an3")"; else topic_set "$pf4" workspaces "$(list_add "$wl" "$an3")"; fi
+                      fi; return ;;
+            esac
             if [ "$kind" = enum ]; then                              # step through the allowed values
                 setting_row "$key"; local vals cur2 nxt="" prev="" first="" last="" found=0 x IFS=:
                 vals=${S_TYPE#enum:}; cfg_var cur2 "$key" "$S_DEF"
@@ -1585,7 +1641,7 @@ spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the fr
           for line in "l:$l" "r:$rr"; do
               rest=${line#?:}; [ -n "$rest" ] || continue; st=${rest##*$US}
               case "$st" in working|testing) ;; *) continue ;; esac
-              if [ "${line%%:*}" = l ]; then SPIN_CELLS="$SPIN_CELLS $(( div + 2 + r )):3"; else SPIN_CELLS="$SPIN_CELLS $(( div + 2 + r )):$(( split + 1 ))"; fi
+              if [ "${line%%:*}" = l ]; then SPIN_CELLS="$SPIN_CELLS $(( div + 1 + r )):3"; else SPIN_CELLS="$SPIN_CELLS $(( div + 1 + r )):$(( split + 1 ))"; fi
           done
       done; } < "$RUN_DIR/agmap" 2>/dev/null
 }
@@ -1672,8 +1728,8 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     case "$b$x$y" in *[!0-9]*) return ;; esac
     case "$b" in 64|65|66|67) return ;; esac                 # the wheel does nothing (it must not move the selection)
     div=$(cat "$RUN_DIR/divrow" 2>/dev/null); div=$(num_or "$div" 0)
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && [ "$div" -gt 0 ] && [ "$y" -ge $(( div + 2 )) ]; then   # below the FREE/BUSY line: an agent?
-        local split rel line ag; split=$(head -1 "$RUN_DIR/agmap" 2>/dev/null); split=$(num_or "$split" 0); rel=$(( y - div - 2 ))
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && [ "$div" -gt 0 ] && [ "$y" -ge $(( div + 1 )) ]; then   # below the divider: an agent?
+        local split rel line ag; split=$(head -1 "$RUN_DIR/agmap" 2>/dev/null); split=$(num_or "$split" 0); rel=$(( y - div - 1 ))
         line=$(awk -F'\036' -v r="$rel" 'NR > 1 && $1 == r { print; exit }' "$RUN_DIR/agmap" 2>/dev/null)
         if [ -n "$line" ] && [ "$split" -gt 0 ]; then
             if [ "$x" -le "$split" ]; then ag=$(printf '%s' "$line" | cut -d$'\036' -f2); else ag=$(printf '%s' "$line" | cut -d$'\036' -f3); fi
@@ -1820,6 +1876,8 @@ menu_build() {  # menu_build <file>
     [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
     [ "$st" = next ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="next|Up next"
     MENU_ITEMS[${#MENU_ITEMS[@]}]="wait|Waiting for ..."
+    [ "${P_N:-0}" -gt 0 ] || projects_load
+    [ "$P_N" -gt 0 ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
     if [ -n "$(topic_get "$f" slack_channel)" ]; then MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: unpin $(topic_get "$f" slack_label)"
     else MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: pin a channel ..."; fi
     MENU_ITEMS=("${MENU_ITEMS[@]}" "later|Park for later" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
@@ -1840,6 +1898,7 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ ${D}· $am$X}"
     line=$(topic_get "$f" agent_branch); [ -n "$line" ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ "$(cfg_get GITHUB_BRANCHES on)" = on ] \
         && printf '  %sbranch%s %s⎇ %s%s\n' "$D" "$X" "$S" "$(clip "$line" $(( ${COLS:-44} - 13 )))" "$X"
+    line=$(topic_get "$f" project); [ -n "$line" ] && printf '  %sproject%s %s%s%s\n' "$D" "$X" "$L" "$(project_name "$line" || echo "$line")" "$X"
     if [ -n "$(topic_get "$f" slack_channel)" ] || [ -n "$(topic_get "$f" slack_msg)" ]; then   # the pin and the answer that came in
         printf '\n  %sSLACK%s\n' "$D" "$X"
         line=$(topic_get "$f" slack_label); [ -n "$line" ] && printf '  %s%s%s%s\n' "$S" "$line" "$X" "$( [ "$st" = waiting ] && printf ' %s· monitor%s' "$D" "$X")"
@@ -1993,6 +2052,27 @@ bhote_pick() {
 # it travels with the topics to the other machine. A repository is known by its key: the origin URL (host/owner/name) or,
 # without a remote, "dir:<folder name>" of the main checkout.
 P_N=0; P_ID=(); P_NAME=(); P_REPOS=(); P_WS=(); P_FILE=()
+current_project() {  # CUR_PROJ: the project of this panel: of the agent in its herdr tab (from the collected tokens)
+    local m p t a r j c mytab=""; CUR_PROJ=""
+    [ -n "${HERDR_PANE_ID:-}" ] && [ -r "$AGENT_META_L" ] || return 0
+    while IFS=$US read -r m p t a r j c; do [ "$p" = "$HERDR_PANE_ID" ] && { mytab=$t; break; }; done < "$AGENT_META_L"
+    [ -n "$mytab" ] || return 0
+    while IFS=$US read -r m p t a r j c; do [ "$t" = "$mytab" ] && [ "$a" = a ] && [ -n "$j" ] && { CUR_PROJ=$j; return 0; }; done < "$AGENT_META_L"
+}
+topics_projects() {  # T_EPJ: each topic's project: its own, else its agent's
+    local i metas rest t a rr jj cc; T_EPJ=(); metas=$(cat "$AGENT_META_L" "$AGENT_META_R" 2>/dev/null)
+    for (( i = 0; i < T_N; i++ )); do
+        T_EPJ[$i]=${T_PJ[$i]}
+        if [ -z "${T_EPJ[$i]}" ] && [ -n "${T_AP[$i]}" ]; then
+            case "$metas" in *"${T_AM[$i]}$US${T_AP[$i]}$US"*) rest=${metas#*"${T_AM[$i]}$US${T_AP[$i]}$US"}; rest=${rest%%$'\n'*}
+                IFS=$US read -r t a rr jj cc <<< "$rest"; T_EPJ[$i]=$jj ;; esac
+        fi
+    done
+}
+in_scope() {  # in_scope <topic index>: 0 when the panel lists it (TOPICS_SCOPE=project: its project, or none)
+    [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ] || return 0
+    [ -z "${T_EPJ[$1]:-}" ] || [ "${T_EPJ[$1]}" = "$CUR_PROJ" ]
+}
 projects_load() {  # P_* arrays, by name
     local f line k v id name repos ws del kd n=0 i j t
     P_N=0; P_ID=(); P_NAME=(); P_REPOS=(); P_WS=(); P_FILE=()
@@ -2179,6 +2259,9 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         resume) topic_resume "$f" ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
            topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; slack_rewait "$f" ;;
+        project) local cur nx="" i2; cur=$(topic_get "$f" project); projects_load   # none → the first → … → the last → none
+           if [ -z "$cur" ]; then nx=${P_ID[0]:-}; else for (( i2 = 0; i2 < P_N; i2++ )); do [ "${P_ID[$i2]}" = "$cur" ] && { nx=${P_ID[$(( i2 + 1 ))]:-}; break; }; done; fi
+           topic_set "$f" project "$nx"; return 0 ;;
         slack) if [ -n "$(topic_get "$f" slack_channel)" ]; then slack_pin "$f" off; return 0; fi
            ask "Slack: a link, #channel, @person or a name: " || return 0; [ -n "$ANSWER" ] || return 0
            case "$ANSWER" in http*) ;; *) FLASH_MSG="… asking Claude for $ANSWER (a few seconds)"; FLASH_UNTIL=$(( SECONDS + 120 )); bhote_paint menu ;; esac
@@ -2218,7 +2301,9 @@ new_topic_from() {  # new_topic_from <text>: the same syntax as the prompt, with
     case "$title" in *" @"*) who=${title##* @}; title=${title% @*} ;; *" > "*) who=${title##* > }; title=${title% > *} ;; esac   # the name goes last
     case "$title" in *";"*) desc=${title#*;}; title=${title%%;*} ;; esac
     title=${title%"${title##*[! ]}"}; desc=${desc#"${desc%%[! ]*}"}
-    topic_new "$title" "$who" "$desc" && SEL_ID=$NEW_TOPIC_ID
+    topic_new "$title" "$who" "$desc" && SEL_ID=$NEW_TOPIC_ID || return 1
+    [ -n "${CUR_PROJ:-}" ] && topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" project "$CUR_PROJ"   # made in a project's tab: that project
+    return 0
 }
 
 # ── Slack pins: a waiting topic can carry a Slack channel, DM or thread (slack_channel, slack_thread, slack_label). With
@@ -2367,7 +2452,7 @@ harden_perms() {  # data, config and their folders: this user only (older versio
 # ── the setup wizard. On the first start of every machine it opens by itself (once; one panel only), later from the settings
 # ("Setup wizard") or as `bhote setup`. Every step explains itself and asks first; Enter takes the [default], s skips a step,
 # q ends the setup. It never asks for a password: when ssh needs one, ssh asks for it itself, and bhote never sees it.
-W_STEPS=9; W_QUIT=0
+W_STEPS=10; W_QUIT=0
 W_LOG="$DATA_DIR/setup.log"                                   # what the wizard did and saw: every check, every command and its output
 w_log() { mkdir -p "$DATA_DIR" 2>/dev/null; printf '%s %s\n' "$(date '+%F %T')" "${*//[[:cntrl:]]/}" >> "$W_LOG" 2>/dev/null; }
 w_width() { W=$(( ${COLS:-44} - 4 )); [ "$W" -lt 26 ] && W=26; [ "$W" -gt 72 ] && W=72; }
@@ -2852,8 +2937,36 @@ setup_step_agents() {
     case $r in 0) cfg_set REMOTE_AGENTS on; w_ok "remote agents" "on" ;; 1) cfg_set REMOTE_AGENTS off; w_ok "remote agents" "off" ;; esac
     w_continue
 }
+setup_step_projects() {  # projects: create them, and give each agent here without one its project (by its repository)
+    w_screen 7 "PROJECTS" || return
+    local name i k c keys key line m p t a r j cwd ws
+    w_say "The agent list groups agents by project. An agent belongs to a project by its git repository (a worktree by its main one) or, outside a repository, by its herdr workspace. Projects travel with the topics to the other machine."
+    projects_load; w_line
+    if [ "$P_N" -gt 0 ]; then for (( i = 0; i < P_N; i++ )); do w_ok "${P_NAME[$i]}" "$(printf '%s' "${P_REPOS[$i]}${P_REPOS[$i]:+${P_WS[$i]:+,}}${P_WS[$i]:+ws:${P_WS[$i]}}" | sed 's/,/, /g')"; done
+    else w_warn "projects" "none yet"; fi
+    while true; do
+        w_read name "New project (empty: none more):" ""; [ "$W_QUIT" = 1 ] && return; [ -n "$name" ] || break
+        if project_new "$name"; then w_ok "$name" "added"; else w_warn "$name" "is there already"; fi
+    done
+    projects_load; [ "$P_N" -gt 0 ] || { w_continue; return; }
+    [ -r "$AGENT_META_L" ] || collect_local
+    while IFS=$US read -r m p t a r j cwd <&3; do              # this machine's agents without a project
+        [ "$a" = a ] || continue
+        git_repo_key_set key "$cwd" || key=""
+        ws=$(awk -F"$US" -v p="$p" '$2 == p { print $4; exit }' "$AGENT_LOCAL" 2>/dev/null)
+        project_for "$key" "$ws" && continue
+        w_line; w_say "${ws:-$p}: ${key:-no git repository} (${cwd/#$HOME/~})" "$L"
+        keys="0"; for (( i = 0; i < P_N && i < 9; i++ )); do w_opt "$(( i + 1 ))" "${P_NAME[$i]}"; keys="$keys$(( i + 1 ))"; done; w_opt 0 "no project"
+        w_choose c "Project:" "$keys" 0 || return
+        [ "$c" = 0 ] && continue; k=$(( c - 1 ))
+        if [ -n "$key" ]; then topic_set "${P_FILE[$k]}" repos "$(list_add "${P_REPOS[$k]}" "$key")"; else topic_set "${P_FILE[$k]}" workspaces "$(list_add "${P_WS[$k]}" "$ws")"; fi
+        projects_load; w_ok "${ws:-$p}" "→ ${P_NAME[$k]}"
+    done 3< "$AGENT_META_L"
+    w_continue
+}
+setup_sum_projects() { local i; projects_load; [ "$P_N" -gt 0 ] || { w_warn "projects" "none yet"; return; }; for (( i = 0; i < P_N; i++ )); do w_ok "${P_NAME[$i]}" "$(printf '%s' "${P_REPOS[$i]}" | sed 's/,/, /g')${P_WS[$i]:+ ws:${P_WS[$i]}}"; done; }
 setup_step_behaviour() {
-    w_screen 7 "AGENTS AND NOTIFICATIONS" || return
+    w_screen 8 "AGENTS AND NOTIFICATIONS" || return
     local r h
     w_say "When you hand a topic to an agent, it reports back with bhote review (you check it) or bhote done."
     w_yn "May an agent close its topic itself?" "$([ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
@@ -2893,7 +3006,7 @@ setup_step_behaviour() {
     w_continue
 }
 setup_step_panel() {
-    w_screen 8 "THE PANEL" || return
+    w_screen 9 "THE PANEL" || return
     local r
     w_yn "Open the panel next to your agents when herdr starts?" "$([ "$(cfg_get AUTOSTART on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTOSTART on ;; 1) cfg_set AUTOSTART off ;; esac
@@ -2921,7 +3034,7 @@ setup_step_panel() {
     w_continue
 }
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
-    w_screen 9 "DONE" || return
+    w_screen 10 "DONE" || return
     w_ok "machine" "$HOST"
     w_ok "topics" "$([ "$(cfg_get STORE local)" = remote ] && printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" || echo 'only here')"
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
@@ -2950,7 +3063,7 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     w_log "==== setup on $HOST (bhote $VERSION)"
-    local steps=(checks name machines twoway topics agents behaviour panel done); W_IDX=0
+    local steps=(checks name machines twoway topics agents projects behaviour panel done); W_IDX=0
     while [ "$W_IDX" -lt "${#steps[@]}" ]; do               # each step: ⏎ change · → skip & next · ← back · q abort
         W_NAME=${steps[$W_IDX]}; W_QUIT=0; W_JUMP=""; W_GATE=1
         "setup_step_$W_NAME"
@@ -3079,10 +3192,12 @@ bhote_main() {
         fi
         if [ "$view" = settings ]; then
             case "$key" in
-                ","|ESC|q|Q) if [ "${SET_PAGE:-main}" = connections ]; then SET_PAGE=main; SET_IDX=0; else view=$back; fi; redraw=1 ;;
+                ","|ESC|q|Q) case "${SET_PAGE:-main}" in connections|projects) SET_PAGE=main; SET_IDX=0 ;; project) SET_PAGE=projects; SET_IDX=0 ;; *) view=$back ;; esac; redraw=1 ;;
                 ""|DRAG) ;;
                 *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys
                    [ "$SETTINGS_GO" = connections ] && { SET_PAGE=connections; SET_IDX=0; }
+                   [ "$SETTINGS_GO" = projects ] && { SET_PAGE=projects; SET_IDX=0; }
+                   [ "$SETTINGS_GO" = project ] && { SET_PAGE=project; SET_IDX=0; }
                    [ "$SETTINGS_GO" = setup ] && panel_setup
                    redraw=1 ;;
             esac
@@ -3498,9 +3613,10 @@ topic_json() {  # topic_json <file>
     local sch slack=null; sch=$(topic_get "$f" slack_channel)
     [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
 /g')")")
-    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"created":%s,"updated":%s}' \
+    local pj; pj=$(topic_get "$f" project); [ -n "$pj" ] && { [ "${P_N:-0}" -gt 0 ] || projects_load; pj=$(project_name "$pj" || true); }
+    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"project":%s,"created":%s,"updated":%s}' \
         "$(json_str "$(topic_id "$f")")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
-        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" "$slack" \
+        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" "$slack" "$(json_opt "$pj")" \
         "$(json_num "$(topic_get "$f" created)")" "$(json_num "$(topic_get "$f" updated)")"
 }
 cli_show() {  # cli_show <file> [--json]
@@ -3512,6 +3628,7 @@ cli_show() {  # cli_show <file> [--json]
     if [ -n "$desc" ]; then printf '  description: %s\n' "$desc"; fi
     if [ -n "$ag" ]; then printf '  agent: %s (%s)\n' "$ag" "$(topic_get "$f" agent_machine)"; fi
     if [ "$st" = waiting ] && [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
+    local spj; spj=$(topic_get "$f" project); [ -n "$spj" ] && { projects_load; printf '  project: %s\n' "$(project_name "$spj" || echo "$spj")"; }
     if [ -n "$(topic_get "$f" slack_channel)" ]; then printf '  slack: %s%s\n' "$(topic_get "$f" slack_label)" "$( [ "$st" = waiting ] && echo " (watched)")"; fi
     if [ "$st" = review ] && [ -n "$(topic_get "$f" slack_msg)" ]; then printf '  slack message: %s\n' "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
     /g')"; fi
@@ -3741,13 +3858,14 @@ bhote_cli() {
         current) bhote_info; cli_current ;;
         find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
-        add)  local title="" who="" st="" desc="" arg pin=""
+        add)  local title="" who="" st="" desc="" arg pin="" proj=""
               while [ $# -gt 0 ]; do
                   case "$1" in
                       --waiting|-w) who=${2:-}; shift ;;
                       --status|-s) st=${2:-}; shift ;;
                       --desc|-d) desc=${2:-}; shift ;;
                       --slack) pin=${2:-}; shift ;;
+                      --project|-p) proj=${2:-}; shift ;;
                       @?*) who=${1#@} ;;
                       --) shift; title="${title:+$title }$*"; break ;;
                       -?*) echo "bhote: unknown option '$1' for add (a title starting with - goes after --)" >&2; return 1 ;;
@@ -3764,6 +3882,9 @@ bhote_cli() {
                   [ -n "${HERDR_WORKSPACE_ID:-}" ] && topic_set "$f" agent "$(herdr workspace list 2>/dev/null | jq -r --arg w "$HERDR_WORKSPACE_ID" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // "agent"' 2>/dev/null)"
               fi
               case "$st" in next|later|done|review) topic_set "$f" status "$st" ;; esac
+              if [ -n "$proj" ]; then local pf; pf=$(project_ref "$proj") || return $?; topic_set "$f" project "$(topic_id "$pf")"
+              elif is_agent; then local rk; git_repo_key_set rk "$PWD"; projects_load            # an agent's topic: the project of its repository
+                  project_for "$rk" "$(topic_get "$f" agent)" && topic_set "$f" project "$PROJ_ID"; fi
               [ -n "$pin" ] && { slack_pin "$f" "$pin" || echo "bhote: the topic is there, without the Slack pin" >&2; }
               cli_done; topics_load; cli_show "$f" $json ;;
         project|projects) cli_project "$@" ;;
