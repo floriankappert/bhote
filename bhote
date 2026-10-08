@@ -922,7 +922,7 @@ agent_divider() {  # the handle between topics and agents: a rule with a grip in
 }
 agents_block() {  # two columns: free agents (idle, done) left, busy ones right; grouped by machine (a dim caption per machine when
     # there is more than one), so names need no machine prefix. The colours follow the herdr sidebar.
-    local i k m id st name task ic nc label cw maxr cell plain _ln machines=() nm=0 lines=() lw=() lc=() n=0 shown hidden=0 r
+    local i k m id st name task ic nc label cw maxr cell plain _ln machines=() nm=0 lines=() lw=() lc=() lid=() rid=() n=0 shown hidden=0 r
     maxr=$(( ${ROWS:-40} - 21 )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
@@ -936,14 +936,14 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
     done
     printf '  %s%-*s%s%s%s\n' "$GREEN" $(( cw + 1 )) "FREE" "$X$ORANGE" "BUSY" "$X"
     for (( k = 0; k < nm; k++ )); do
-        local f=() b=() fw=() nf=0 nb=0 rows
+        local f=() b=() fw=() fid=() bid=() nf=0 nb=0 rows
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             [ "$m" = "${machines[$k]}" ] || continue
             case "$st" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
             name_color_set nc "$name"; clip_set label "$name" $(( cw - 2 ))
             cell="$ic$X $nc$label$X"; dw_set plain "$label"; plain=$(( plain + 2 ))
-            case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; nb=$(( nb + 1 )) ;; esac
+            case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id"; nb=$(( nb + 1 )) ;; esac
         done
         [ $(( nf + nb )) -gt 0 ] || continue
         # a caption for the machine when several machines are listed
@@ -951,16 +951,18 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
             local cap rest cw2; clip_set cap "${machines[$k]}" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"
             rest=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest" -lt 1 ] && rest=1
             # (braces around the colours: bash 3.2 takes the first byte of a "─" right after $B into the variable name)
-            lines[$n]="  ${B}──${X} ${D}${cap}${X} ${B}${RULE_LINE:0:$rest}${X}"; lc[$n]=0; n=$(( n + 1 ))
+            lines[$n]="  ${B}──${X} ${D}${cap}${X} ${B}${RULE_LINE:0:$rest}${X}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
         fi
         rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
         for (( r = 0; r < rows; r++ )); do
             printf -v _ln '  %s%*s %s' "${f[$r]:-}" $(( cw - ${fw[$r]:-0} )) "" "${b[$r]:-}"; lines[$n]=$_ln   # no subshell per row
-            lc[$n]=$(( (r < nf) + (r < nb) )); n=$(( n + 1 ))
+            lc[$n]=$(( (r < nf) + (r < nb) )); lid[$n]=${fid[$r]:-}; rid[$n]=${bid[$r]:-}; n=$(( n + 1 ))
         done
     done
     shown=$n; [ "$shown" -gt "$maxr" ] && shown=$maxr
     if [ -n "$want" ]; then echo "$maxr"; else echo "$shown"; fi > "$RUN_DIR/agrows" 2>/dev/null   # the rows shown: where a drag starts
+    # for a click: line (counted from the first agent line) US left agent (machine US pane) US right agent; first line: the column split
+    { echo "$(( cw + 3 ))"; for (( r = 0; r < shown; r++ )); do printf '%s\036%s\036%s\n' "$r" "${lid[$r]:-}" "${rid[$r]:-}"; done; } > "$RUN_DIR/agmap" 2>/dev/null
     for (( r = 0; r < n; r++ )); do
         if [ "$r" -lt "$shown" ]; then printf '%s\n' "${lines[$r]}"; else hidden=$(( hidden + lc[$r] )); fi
     done
@@ -1066,12 +1068,27 @@ jump_key_apply() {  # jump_key_apply <key|off>: 0 when herdr took it
     rm -f "$old"; cfg_set JUMP_KEY "${k:-off}"; focus_key_set FOCUS_KEY
     return 0
 }
+# A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
+# machines (the API cannot): the key line says so for a few seconds.
+FLASH_MSG=""; FLASH_UNTIL=0
+agent_jump() {  # agent_jump <machine> <pane>
+    case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
+    if [ "$1" = "$HOST" ]; then ( herdr agent focus "$2" >/dev/null 2>&1 & )
+    else
+        machine_known "$1" || return 1
+        ( herdr --machine "$1" agent focus "$2" >/dev/null 2>&1 & )
+        FLASH_MSG="selected on $1: switch to $1 in herdr"; FLASH_UNTIL=$(( SECONDS + 6 ))
+    fi
+}
 view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
     agents_block
     rule
     local sg="" left right="" room=$(( ${COLS:-44} - 4 )) lw rw
     suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} agents-topics"
     left="↑↓ move · , settings$sg"
+    if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -lt "$FLASH_UNTIL" ]; then     # a short note (a click on a remote agent) instead of the keys
+        printf '  %s%s%s' "$S" "$(clip "$FLASH_MSG" "$room")" "$X"; return
+    fi
     [ -n "${FOCUS_KEY:-}" ] && right="$FOCUS_KEY ⇄"         # bottom right: the herdr key that jumps here and back
     dw_set lw "$left"; dw_set rw "$right"
     if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=", settings$sg"; dw_set lw "$left"; fi
@@ -1205,7 +1222,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     if [ -n "${FOCUS_KEY:-}" ]; then hk "$FOCUS_KEY" "jump to this panel and back"
     else hk "-" "jump here: bind bhote.panel.focus (bhote setup)"; fi
     hk_group "MOUSE"
-    hk "drag ═══" "resize the agent area"
+    hk "drag ═══" "resize the agent area"; hk "click agent" "focus it in herdr"
     printf '\n'; rule
     printf ' %s← esc back%s\n' "$D" "$X"
 }
@@ -1327,6 +1344,14 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     case "$b$x$y" in *[!0-9]*) return ;; esac
     case "$b" in 64|65|66|67) return ;; esac                 # the wheel does nothing (it must not move the selection)
     div=$(cat "$RUN_DIR/divrow" 2>/dev/null); div=$(num_or "$div" 0)
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && [ "$div" -gt 0 ] && [ "$y" -ge $(( div + 2 )) ]; then   # below the FREE/BUSY line: an agent?
+        local split rel line ag; split=$(head -1 "$RUN_DIR/agmap" 2>/dev/null); split=$(num_or "$split" 0); rel=$(( y - div - 2 ))
+        line=$(awk -F'\036' -v r="$rel" 'NR > 1 && $1 == r { print; exit }' "$RUN_DIR/agmap" 2>/dev/null)
+        if [ -n "$line" ] && [ "$split" -gt 0 ]; then
+            if [ "$x" -le "$split" ]; then ag=$(printf '%s' "$line" | cut -d$'\036' -f2); else ag=$(printf '%s' "$line" | cut -d$'\036' -f3); fi
+            [ -n "$ag" ] && { CLICK_M=${ag%%$US*}; CLICK_P=${ag#*$US}; MOUSE_KEY=AGENT; return; }
+        fi
+    fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
         DRAG=1; DRAG_Y0=$y; DRAG_R0=$(num_or "$(cat "$RUN_DIR/agrows" 2>/dev/null)" 1); return
     fi
@@ -2423,6 +2448,7 @@ bhote_main() {
             case "$key" in
                 "") ;;
                 DRAG) [ "$view" = main ] && redraw=1 ;;
+                AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;
@@ -2451,6 +2477,7 @@ bhote_main() {
         # (only when idle: after a key press the screen is repainted anyway, and a key must not wait for this check)
         # Every 2 seconds, when no key was read: did the agent lists, the topics or the sync state change? (Not tied to a read
         # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
+        if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
         if [ -z "$key" ] && [ "$SECONDS" -ge $(( ${chk:-0} + 2 )) ]; then
             chk=$SECONDS
             m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; cat "$CONFIG_FILE" 2>/dev/null; } | cksum )   # also the settings: a new theme shows at once

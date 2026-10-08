@@ -18,6 +18,9 @@ and the agents below.
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
 | `,` | settings (the full key list is under *Hotkeys* there) · `S` welcome screen · `q` quit |
 
+Click an agent in the agent area to focus it in herdr. An agent on another machine is selected there; herdr lets only its
+client switch machines, so the key line says to switch to that machine in herdr.
+
 From anywhere in herdr, the key bound to `bhote.panel.focus` ([herdr plugin](herdr-plugin.md), e.g. prefix then `t`) jumps
 to the panel and back; the panel shows it bottom right (`^b t ⇄`).
 

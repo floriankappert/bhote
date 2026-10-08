@@ -41,6 +41,7 @@ right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the c
 | `x` | mark done |
 | `a` | topics suggested from what the running agents work on |
 | `,` | settings · `S` welcome screen · `q` quit |
+| click an agent | focus it in herdr (on another machine: selected there, switch to it in herdr) |
 | herdr prefix, `t` | jump from the agent to the panel and back (a herdr key for the plugin action `bhote.panel.focus`; shown bottom right) |
 
 ## CLI
