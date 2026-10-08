@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.5.7}
+VERSION=${BHOTE_VERSION:-0.5.8}
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=2
