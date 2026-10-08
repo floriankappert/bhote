@@ -104,6 +104,7 @@ TEST_LOCAL|on|bool|Test monitor: local runs (bhote test run -- <command>) and li
 TEST_GITHUB|on|bool|Test monitor: the test jobs of GitHub Actions
 TEST_CIRCLECI|on|bool|Test monitor: the test jobs of CircleCI
 TEST_STATUS_DIR|~/.cache/ims-test-status|text|Folder with live test status files (one JSON per suite: tree, suite, done, total, passed, failed, ok, as IMS writes them)
+HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
@@ -747,6 +748,7 @@ ui_load() {
     cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
     if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
+    if [ -n "${KEYS_CACHE:-}" ] && [ "$KEYS_CACHE" -nt "$RUN_DIR/keys.loaded" ]; then focus_key_set FOCUS_KEY; fi   # (the other machine's keys arrived or changed)
     local _sd _wl; cfg_var _sd SETUP_DONE ""; cfg_var _wl WIZARD_LEVEL ""; num_set _wl "$_wl" 1; NEWFEAT=0
     [ -n "$_sd" ] && [ "$_wl" -lt "$FEATURE_LEVEL" ] && NEWFEAT=1
     local _uc; cfg_var _uc UPDATE_CHECK on; UPD_LATEST=""; [ "$_uc" = on ] && update_load
@@ -926,11 +928,11 @@ auto_assign() {
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
-    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999
-    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
+    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999 last_h=-999999 key_pid=""
+    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
-        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
+        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         lead=0
@@ -964,6 +966,11 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             fi
             if [ "$(cfg_get UPDATE_CHECK on)" = on ] && [ $(( SECONDS - last_u )) -ge 21600 ] && ! { [ -n "$upd_pid" ] && kill -0 "$upd_pid" 2>/dev/null; }; then
                 last_u=$SECONDS; ( update_fetch ) & upd_pid=$!                  # the first time at start, then every 6 hours
+            fi
+            keys_cache_set                                       # the keys of the herdr you type into, when that is another machine
+            if [ -n "$KEYS_CACHE" ] && ! { [ -n "$key_pid" ] && kill -0 "$key_pid" 2>/dev/null; } \
+               && { [ $(( SECONDS - last_h )) -ge 300 ] || { [ ! -s "$KEYS_CACHE" ] && [ $(( SECONDS - last_h )) -ge 20 ]; }; }; then
+                last_h=$SECONDS; ( keys_fetch ) & key_pid=$!
             fi
             remind_waiting
             auto_assign
@@ -1331,10 +1338,23 @@ view_head() {  # one line: name and version in colour, the tagline; then a rule 
 }
 # The herdr key that jumps between agent and panel (the plugin action bhote.panel.focus), as herdr's config.toml binds it:
 # a [[keys.command]] block, or the inline form term-theme writes. "prefix+t" is shown with the prefix: "^b t".
-HERDR_CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml
+HERDR_CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml; HERDR_CONFIG_OWN=$HERDR_CONFIG
+# The keys belong to the herdr you TYPE into: with the panel on another machine than that herdr (a Mac attached to this Linux
+# session) HERDR_KEYS_MACHINE names it, and its config.toml is read from a copy the collector keeps (keys_fetch).
+keys_cache_set() { local _km; cfg_var _km HERDR_KEYS_MACHINE any; KEYS_CACHE=""
+    [ "$_km" = any ] || [ "$_km" = "$HOST" ] || KEYS_CACHE=$SHARED_DIR/herdr-keys.${_km//[!A-Za-z0-9_-]/_}; KEYS_MACHINE=$_km; }
+keys_fetch() {  # the other machine's herdr config.toml into the cache (only when it changed)
+    local host tmp; keys_cache_set; [ -n "$KEYS_CACHE" ] || return 0
+    host=$(store_host "$KEYS_MACHINE"); [ -n "$host" ] || return 1
+    tmp=$(mktemp "$SHARED_DIR/herdr-keys.XXXXXX") || return 1
+    store_sh "$host" 'cat "${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml"' 2>/dev/null | head -c 200000 > "$tmp"
+    if [ -s "$tmp" ] && ! cmp -s "$tmp" "$KEYS_CACHE" 2>/dev/null; then mv "$tmp" "$KEYS_CACHE"; else rm -f "$tmp"; fi
+}
 focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when none is bound
-    local _k="" _p
-    if [ -r "$HERDR_CONFIG" ]; then
+    local _k="" _p _cfg=$HERDR_CONFIG
+    if [ "$HERDR_CONFIG" = "$HERDR_CONFIG_OWN" ]; then keys_cache_set; [ -n "$KEYS_CACHE" ] && _cfg=$KEYS_CACHE; fi   # (not when a scratch file is checked)
+    HERDR_CONFIG_IN=$_cfg
+    if [ -r "$_cfg" ]; then
         _k=$(awk '
             function val(s, name) { if (!match(s, name " *= *\"[^\"]*\"")) return ""; s = substr(s, RSTART, RLENGTH); sub(/^[^"]*"/, "", s); sub(/"$/, "", s); return s }
             /^[ \t]*\[/ { if (blk && cmd == "bhote.panel.focus" && k != "") { print k; done = 1; exit }
@@ -1342,10 +1362,12 @@ focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when n
             /bhote\.panel\.focus/ && /key *= *"/ { n = split($0, parts, "}"); for (i = 1; i <= n; i++) if (parts[i] ~ /bhote\.panel\.focus/) { print val(parts[i], "key"); done = 1; exit } }
             blk && /^[ \t]*key *= *"/ { k = val($0, "key") }
             blk && /^[ \t]*command *= *"bhote\.panel\.focus"/ { cmd = "bhote.panel.focus" }
-            END { if (!done && blk && cmd == "bhote.panel.focus" && k != "") print k }' "$HERDR_CONFIG" 2>/dev/null)
-        _p=$(awk '/^[ \t]*\[/ { inkeys = ($0 ~ /^[ \t]*\[keys\][ \t]*$/); next } inkeys && /^[ \t]*prefix *= *"/ { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit }' "$HERDR_CONFIG" 2>/dev/null)
+            END { if (!done && blk && cmd == "bhote.panel.focus" && k != "") print k }' "$_cfg" 2>/dev/null)
+        _p=$(awk '/^[ \t]*\[/ { inkeys = ($0 ~ /^[ \t]*\[keys\][ \t]*$/); next } inkeys && /^[ \t]*prefix *= *"/ { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit }' "$_cfg" 2>/dev/null)
     fi
     _k=${_k//[[:cntrl:]]/}; HERDR_PREFIX=${_p:-ctrl+b}; FOCUS_KEY_RAW=$_k
+    [ -n "$KEYS_CACHE" ] && [ ! -r "$KEYS_CACHE" ] && { printf -v "$1" '%s' ""; return; }   # the other machine's keys are not there yet: none rather than the wrong ones
+    [ -n "$KEYS_CACHE" ] && : > "$RUN_DIR/keys.loaded"
     key_pretty "$1" "$_k"
 }
 key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "^b t", "ctrl+alt+t" -> "^⌥t"
@@ -1573,6 +1595,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="bool|UPDATE_CHECK|Check for updates"
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|HERDR_KEYS_MACHINE|Keyboard of herdr on"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
@@ -1731,7 +1754,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                 cfg_var cur3 "$key" any; n2=${#opts[@]}
                 for (( i2 = 0; i2 < n2; i2++ )); do [ "${opts[$i2]}" = "$cur3" ] && break; done; [ "$i2" -ge "$n2" ] && i2=0
                 if [ "$k" = LEFT ]; then i2=$(( (i2 + n2 - 1) % n2 )); else i2=$(( (i2 + 1) % n2 )); fi
-                cfg_set "$key" "${opts[$i2]}"; return
+                cfg_set "$key" "${opts[$i2]}"; [ "$key" = HERDR_KEYS_MACHINE ] && focus_key_set FOCUS_KEY; return
             fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || case "$key" in SETUP) SETTINGS_GO=setup ;; CONNECTIONS) SETTINGS_GO=connections ;; PROJECTS) SETTINGS_GO=projects ;; *) SETTINGS_GO=hotkeys ;; esac; return; fi
             case "$kind" in

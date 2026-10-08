@@ -158,6 +158,11 @@ printf 'checked=1\nlatest=0.0.1\n' > "$UPDATE_FILE"; update_load; [ -z "$UPD_LAT
 printf 'latest=1.2.3; touch %s/pwn\n' "$T" > "$UPDATE_FILE"; update_load; [ -z "$UPD_LATEST" ] && [ ! -e "$T/pwn" ] && ok "update: a bad file is ignored" || bad "update_load bad"
 case "$(update_command)" in "git -C "*" pull"|*"pacman"*|"brew update"*) ok "update: a command for this install" ;; *) bad "update_command: $(update_command)" ;; esac
 
+# the keys of the herdr you type into: another machine's config.toml (a copy), nothing before it arrives
+cfg_set HERDR_KEYS_MACHINE Elsewhere; keys_cache_set; rm -f "$KEYS_CACHE"; focus_key_set KK; [ -z "$KK" ] && ok "keys: none until the other machine's config is there" || bad "keys before: $KK"
+printf '[keys]\nprefix = "ctrl+b"\n[[keys.command]]\nkey = "prefix+t"\ncommand = "bhote.panel.focus"\n' > "$KEYS_CACHE"; focus_key_set KK; [ "$KK" = "^b t" ] && ok "keys: read from the other machine's config" || bad "keys after: $KK"
+cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
+
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"
