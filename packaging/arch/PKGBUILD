@@ -20,6 +20,7 @@ package() {
   install -m644 herdr-plugin/herdr-plugin.toml "$pkgdir/usr/share/bhote/herdr-plugin/"
   install -m755 herdr-plugin/open_panel.sh herdr-plugin/on_event.sh herdr-plugin/dump.sh herdr-plugin/focus.sh herdr-plugin/search.sh herdr-plugin/search_open.sh herdr-plugin/changed.sh "$pkgdir/usr/share/bhote/herdr-plugin/"
   install -Dm644 integrations/claude/skills/bhote/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote/SKILL.md"
+  install -Dm644 integrations/claude/skills/bhote-install/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote-install/SKILL.md"
   install -d "$pkgdir/usr/share/bhote/omarchy-plugin"
   install -m644 omarchy-plugin/manifest.json omarchy-plugin/BarWidget.qml "$pkgdir/usr/share/bhote/omarchy-plugin/"
   install -m755 omarchy-plugin/focus.sh "$pkgdir/usr/share/bhote/omarchy-plugin/"

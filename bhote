@@ -3413,7 +3413,8 @@ setup_step_checks() {
     elif [ -d "$cdir" ] && [ -f "$src/SKILL.md" ]; then
         w_warn "Claude skill" "not installed: agents do not create waiting topics"
         w_yn "Install the bhote skill for Claude Code (${sk/#$HOME/~})?" Y; r=$?; [ $r = 3 ] && return
-        [ $r = 0 ] && { mkdir -p "$sk" && cp "$src/SKILL.md" "$sk/SKILL.md" && w_ok "Claude skill" "installed" || w_bad "Claude skill" "could not be copied"; }
+        [ $r = 0 ] && { mkdir -p "$sk" && cp "$src/SKILL.md" "$sk/SKILL.md" && w_ok "Claude skill" "installed" || w_bad "Claude skill" "could not be copied"
+            [ -f "${src}-install/SKILL.md" ] && mkdir -p "${sk}-install" && cp "${src}-install/SKILL.md" "${sk}-install/SKILL.md" && w_ok "Claude skill" "bhote-install: an agent can set bhote up on a machine"; }
     fi
     w_continue
 }
