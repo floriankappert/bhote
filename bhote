@@ -392,11 +392,11 @@ store_summary() {  # one line for the settings screen: where the data lives and 
 }
 
 if [ -n "${NO_COLOR:-}" ] || [ ! -t 1 ] && [ -z "${BHOTE_FORCE_COLOR:-}" ]; then
-    rgb() { :; }; X=""; R=""; NN=""; S=""; C=""; L=""; D=""; color=0
+    rgb() { :; }; X=""; R=""; NN=""; S=""; C=""; L=""; D=""; BOLD=""; color=0
 else
     color=1; esc=$'\033'
     rgb() { printf '%s[38;2;%sm' "$esc" "$1"; }
-    X="${esc}[0m"
+    X="${esc}[0m"; BOLD="${esc}[1m"                          # (a variable: drawing must not fork for it)
 fi
 stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135")
 gradient() {            # gradient <text> : colours the characters of one line left to right
@@ -854,7 +854,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
 PROMPT_TEXT="PRESS ANY KEY TO START"
 SPLASH_PROMPT_ROW=35      # grows by SPLASH_E on a taller pane
 prompt_shown() {  # prompt_shown <on|off>
-    if [ "$1" = on ]; then printf '%s%s%s%s' "$Y" "$([ "$color" = 1 ] && printf '%s[1m' "$esc")" "$PROMPT_TEXT" "$X"; else printf '%*s' "${#PROMPT_TEXT}" ""; fi
+    if [ "$1" = on ]; then printf '%s%s%s%s' "$Y" "$BOLD" "$PROMPT_TEXT" "$X"; else printf '%*s' "${#PROMPT_TEXT}" ""; fi
 }
 splash_prompt_row() { mid "$PROMPT_TEXT" "$(prompt_shown on)"; }
 splash_prompt_at() {  # splash_prompt_at <on|off>
@@ -916,7 +916,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
         bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
-        case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$DSEL" ;; esac   # muted (done) titles: readable
+        case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac   # muted (done) titles: readable
     fi
     printf '%s%s  %s%s%s%*s%s\n' "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
     [ -n "$d" ] && printf '%s  %s%s%s%*s%s\n' "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
@@ -983,7 +983,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         topic_meta "$i"; who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
             now) [ "$state" = finished ] && [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;;
-            done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
+            done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
@@ -996,18 +996,24 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
     [ "$max" -gt 0 ] || return 0
-    while IFS=' ' read -r k i; do                              # newest first: by the last change (checking off is one)
-        [ -n "$i" ] || continue; all=$(( all + 1 ))
-        if [ "$n" -lt "$max" ] || [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then idx[$n]=$i; n=$(( n + 1 )); fi
-    done <<< "$(for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && printf '%s %s\n' "${T_UPD[$i]:-0}" "$i"; done | sort -k1,1nr -k2,2nr)"
+    local dn=() used=" " best bu u j sel_in=0                 # newest first: by the last change (checking off is one); builtins only
+    for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
+    while [ "$n" -lt "$max" ] && [ "$n" -lt "$all" ]; do
+        best=-1; bu=-1
+        for j in "${dn[@]}"; do case "$used" in *" $j "*) continue ;; esac; u=${T_UPD[$j]:-0}; [ "$u" -ge "$bu" ] && { bu=$u; best=$j; }; done
+        idx[$n]=$best; used="$used$best "; n=$(( n + 1 )); [ "${T_ID[$best]}" = "${SEL_ID:-}" ] && sel_in=1
+    done
+    if [ "$sel_in" = 0 ] && [ -n "${SEL_ID:-}" ]; then          # a chosen one (just checked off) is there even when older
+        for j in ${dn[@]+"${dn[@]}"}; do [ "${T_ID[$j]}" = "$SEL_ID" ] && { idx[$n]=$j; n=$(( n + 1 )); break; }; done
+    fi
     [ "$n" -gt 0 ] || return 0
     group DONE "$GREEN"
     for (( k = 0; k < n; k++ )); do
         i=${idx[$k]}; ago_set tm "${T_UPD[$i]:-${NOW:-0}}"                  # when it was checked off (its last change), on the right
         clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 7 - ${#tm} )); dw_set tw "$t"
-        tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"     # muted but bold like every title, one line each
+        tc="$BOLD$D"     # muted but bold like every title, one line each
         if [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then              # chosen (just checked off, or in the search): the bar
-            tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$DSEL"
+            tc="$BOLD$DSEL"
             printf '\001%s  %s✓%s %s%s%s%*s%s%s%s %s\n' "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
         else printf '  %s✓%s %s%s%s%*s%s%s%s\n' "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
     done
@@ -1235,15 +1241,14 @@ view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of
     agents_block
     rule
     local sg="" left right="" room=$(( ${COLS:-44} - 4 )) lw rw
-    suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} agents-topics"
-    left="↑↓ move · , settings$sg"
+    left="↑↓ move · , settings"
     if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -lt "$FLASH_UNTIL" ]; then     # a short note (a click on a remote agent) instead of the keys
         printf '  %s%s%s' "$S" "$(clip "$FLASH_MSG" "$room")" "$X"; return
     fi
     [ -n "${FOCUS_KEY:-}" ] && right="$FOCUS_KEY ⇄"         # bottom right: the herdr key that jumps here and back
     dw_set lw "$left"; dw_set rw "$right"
     if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=", settings$sg"; dw_set lw "$left"; fi
-    if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=${sg# · }; dw_set lw "$left"; fi   # narrow: suggestions and the key
+    if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=""; dw_set lw "$left"; fi   # narrow: only the key
     if [ -n "$right" ] && [ $(( lw + 1 + rw )) -le "$room" ]; then
         printf '  %s%s%*s%s%s%s' "$D" "$left" $(( room - lw - rw )) "" "$S" "$right" "$X"
     else printf '  %s%s%s' "$D" "$(clip "$left" "$room")" "$X"; fi
@@ -1528,16 +1533,43 @@ dog_animate() {  # the main loop's answer to USR1 (only on the splash and the li
 # Is another byte waiting on the terminal within a few milliseconds? bash 4+ can wait 0.05 s itself; bash 3.2 (macOS) only knows
 # whole seconds, so it asks perl. (A lone Esc used to wait a full second for a byte that never came.)
 HAVE_PERL=""; command -v perl >/dev/null 2>&1 && HAVE_PERL=1
-read_soon() {  # read_soon <var>: one more byte if it arrives within ~50 ms, else empty (rc 1)
-    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then IFS= read -rsn1 -t 0.05 "$1" 2>/dev/null && return 0
-    elif [ -n "$HAVE_PERL" ]; then
-        perl -MIO::Select -e 'exit(IO::Select->new(\*STDIN)->can_read(0.05) ? 0 : 1)' </dev/tty 2>/dev/null \
-            && IFS= read -rsn1 -t 1 "$1" 2>/dev/null && return 0
-    else IFS= read -rsn1 -t 1 "$1" 2>/dev/null && return 0; fi
-    printf -v "$1" '%s' ""; return 1
+# Input comes through INBUF: one wait takes everything that is there at once (a held arrow key, a drag, fast typing), in ONE
+# perl call on bash 3.2 (it waits whole seconds only); the keys are then taken from the buffer without starting anything.
+INBUF=""
+in_fill() {  # in_fill <seconds | wait>: waits for input, then puts all that is there into INBUF; 1 = nothing came in time
+    local h c t=$1
+    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
+        if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 1; else IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || return 1; fi
+        INBUF+=$c; while IFS= read -rsn1 -d '' -t 0.005 c </dev/tty 2>/dev/null; do INBUF+=$c; done; return 0
+    fi
+    if [ -n "$HAVE_PERL" ]; then
+        h=$(perl -e 'use IO::Select; my $t = shift; my $s = IO::Select->new(\*STDIN);
+            exit 1 unless ($t eq "wait" ? $s->can_read() : $s->can_read($t));
+            my $b = ""; while (1) { my $n = sysread(STDIN, my $c, 4096); last unless $n; $b .= $c; last unless $s->can_read(0.003); }
+            exit 1 unless length $b; print map { sprintf("\\x%02x", ord) } split //, $b' "$t" </dev/tty 2>/dev/null) || return 1
+        printf -v h '%b' "$h"; INBUF="$INBUF$h"; return 0
+    fi
+    if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 1      # (no perl: whole seconds)
+    else t=${t%.*}; [ "${t:-0}" -ge 1 ] 2>/dev/null || t=1; IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || return 1; fi
+    INBUF="$INBUF$c"
+}
+in_get() {  # in_get <var> [seconds]: the next character (Enter reads as empty, like read); without seconds it waits; 1 = none
+    if [ -z "$INBUF" ]; then in_fill "${2:-wait}" || { printf -v "$1" '%s' ""; return 1; }; fi
+    local _c=${INBUF:0:1}; INBUF=${INBUF:1}
+    case "$_c" in $'\n'|$'\r') _c="" ;; esac
+    printf -v "$1" '%s' "$_c"; return 0
+}
+input_pending() {  # 0 when a key (or a mouse report) is already waiting: then it is handled first and the screen drawn once after
+    [ -n "$INBUF" ] && return 0
+    if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then read -t 0 </dev/tty 2>/dev/null
+    elif [ -n "$HAVE_PERL" ]; then perl -MIO::Select -e 'exit(IO::Select->new(\*STDIN)->can_read(0) ? 0 : 1)' </dev/tty 2>/dev/null
+    else return 1; fi
+}
+read_soon() {  # read_soon <var>: one more character if it is there within ~50 ms (the rest of an escape sequence), else empty (rc 1)
+    in_get "$1" 0.05
 }
 ask_drain() {  # throw away input that is still waiting (the rest of a multi-line paste): it must not turn into commands
-    local _j
+    local _j; INBUF=""
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then while IFS= read -rsn1 -t 0.05 _j </dev/tty 2>/dev/null; do :; done
     elif [ -n "$HAVE_PERL" ]; then
         perl -MIO::Select -e '$s = IO::Select->new(\*STDIN); while ($s->can_read(0.05)) { sysread(STDIN, $b, 4096) or last }' </dev/tty 2>/dev/null
@@ -1631,7 +1663,7 @@ ask() {  # ask <label> [text to start with] [max length]: the editor on the last
     printf '%s\033[?25h' "$MOUSE_OFF"                       # no mouse reports in the text; cursor on
     ask_draw "$1"
     while true; do
-        IFS= read -rsn1 ch </dev/tty || { cancel=1; break; }   # end of input: treat as cancel
+        in_get ch || { cancel=1; break; }                       # end of input: treat as cancel
         case "$ch" in
             "") break ;;                                    # Enter
             $'\033')
@@ -1639,7 +1671,7 @@ ask() {  # ask <label> [text to start with] [max length]: the editor on the last
                 case "$k2" in
                     "") cancel=1; break ;;                  # a lone Esc: throw the entry away
                     "["|O) p=""; k3=""; n=0
-                        while IFS= read -rsn1 -t 1 k3 </dev/tty && [ "$n" -lt 24 ]; do
+                        while in_get k3 1 && [ "$n" -lt 24 ]; do
                             case "$k3" in [0123456789\;\<\=\>\?\ \!\"\#\$\%\&\'\(\)\*\+\,\-\.\/]) p="$p$k3" ;; *) break ;; esac
                             [ "$k2" = O ] && break; n=$(( n + 1 ))
                         done
@@ -1660,7 +1692,7 @@ ask() {  # ask <label> [text to start with] [max length]: the editor on the last
             *) if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then    # bash 3.2 reads one BYTE: collect the rest of a UTF-8 character
                    LC_ALL=C printf -v b '%d' "'$ch"; [ "$b" -lt 0 ] && b=$(( b + 256 )); n=0   # bash 3.2: bytes >= 0x80 come back negative
                    [ "$b" -ge 192 ] && n=1; [ "$b" -ge 224 ] && n=2; [ "$b" -ge 240 ] && n=3
-                   while [ "$n" -gt 0 ] && IFS= read -rsn1 -t 1 k3 </dev/tty; do ch="$ch$k3"; n=$(( n - 1 )); done
+                   while [ "$n" -gt 0 ] && in_get k3 1; do ch="$ch$k3"; n=$(( n - 1 )); done
                fi
                ed_insert "$ch" "$max" ;;
         esac
@@ -1763,7 +1795,7 @@ slack_msg_print() {  # slack_msg_print <who: text>: the sender, then each line (
     done | slack_marks
 }
 slack_marks() {  # stdin → stdout: `code` in the code colour, *bold* bold, the rest in the terminal's text colour (state carried over lines)
-    awk -v base="$([ "$color" = 1 ] && printf '%s[39m' "$esc")" -v code="$C" -v bold="$([ "$color" = 1 ] && printf '%s[1m' "$esc")" -v off="$X" '
+    awk -v base="$([ "$color" = 1 ] && printf '%s[39m' "$esc")" -v code="$C" -v bold="$BOLD" -v off="$X" '
         { out = ""; n = length($0); line = $0
           for (i = 1; i <= n; i++) {
               ch = substr(line, i, 1); prev = (i > 1) ? substr(line, i - 1, 1) : " "; nxt = (i < n) ? substr(line, i + 1, 1) : " "
@@ -2831,7 +2863,8 @@ bhote_main() {
     local back=main
     redraw=1
     while true; do
-        if [ "$redraw" = 1 ]; then
+        if [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
+        elif [ "$redraw" = 1 ]; then
             redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; }
             [ "$view" = splash ] && ! splash_fits && view=main
             read -r DOG_IDX _ < "$ANIM_FILE" 2>/dev/null || DOG_IDX=0
@@ -2843,13 +2876,8 @@ bhote_main() {
         [ "$view" = splash ] || SPLASH_SINCE=""
         tmo=1                                                  # (the 2 s checks below and the auto-close need a short timeout)
         key=""; rc=0
-        if [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && [ "${BASH_VERSINFO[0]}" -lt 4 ] && [ -n "$HAVE_PERL" ] \
-           && ! perl -MIO::Select -e 'exit(IO::Select->new(\*STDIN)->can_read(0.3) ? 0 : 1)' </dev/tty 2>/dev/null; then
-            rc=142                                             # the star dances in 0.3 s steps: bash 3.2 waits whole seconds only
-        else
-            [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && [ "${BASH_VERSINFO[0]}" -ge 4 ] && tmo=0.3
-            IFS= read -rsn1 -t "$tmo" key 2>/dev/null; rc=$?
-        fi
+        [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && tmo=0.3        # the star dances in 0.3 s steps
+        in_get key "$tmo" || rc=142
         [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
         if [ "$key" = $'\033' ]; then      # an arrow key (ESC [ A..D, ESC O A..D), a mouse report, another sequence, or a lone Esc
             read_soon k2
@@ -2857,12 +2885,12 @@ bhote_main() {
                 # read up to the final byte (@ .. ~): parameters such as 1;5 (Ctrl+arrow), mouse reports and paste markers
                 # must not leak their tail as keys. Only a parameterless A..D is an arrow; the rest is ignored.
                 k3=""; seq=""
-                while IFS= read -rsn1 -t 1 k3 2>/dev/null; do
+                while in_get k3 1; do
                     case "$k3" in [0123456789\;\<\=\>\?\ \!\"\#\$\%\&\'\(\)\*\+\,\-\.\/]) ;; *) [ "$k2" = O ] || [ -z "$seq" ] || k3="x$k3"; break ;; esac   # (no [@-~]: a range follows the locale)
                     [ "$k2" = O ] && break; seq="$seq$k3"; [ "${#seq}" -gt 24 ] && break
                 done
                 if [ "$k2" = "[" ] && [ -z "$seq" ] && [ "$k3" = M ]; then        # X10 mouse: three raw bytes follow
-                    IFS= read -rsn1 -t 1 k3; IFS= read -rsn1 -t 1 k3; IFS= read -rsn1 -t 1 k3; k3=M
+                    in_get k3 1; in_get k3 1; in_get k3 1; k3=M
                 fi
                 case "$k3" in A) key=UP ;; B) key=DOWN ;; C) key=RIGHT ;; D) key=LEFT ;; *) key="" ;; esac
                 case "$seq" in "<"*) mouse_event "${seq#<}" "${k3#x}"; key=$MOUSE_KEY ;; esac      # SGR mouse: < b ; x ; y M|m
@@ -3314,7 +3342,7 @@ find_filter() {  # find_filter <query>: FI_HIT = the matching items (every word 
 find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a caption per group (like the panel's list)
     local rows cols w i k n off sel=$2 out ic nm lb lw nw pad line room sr=0 r prev="" cap cc
     local rl=() rh=()                                          # screen rows: their text, and the hit they show (-1 = caption)
-    read -r rows cols < <(stty size </dev/tty 2>/dev/null); rows=${rows:-20}; cols=${cols:-60}; w=$(( cols - 2 ))
+    rows=${ROWS:-20}; cols=${COLS:-60}; w=$(( cols - 2 ))           # (find_main keeps the size: drawing must not fork)
     n=${#FI_HIT[@]}; room=$(( rows - 4 )); [ "$room" -lt 1 ] && room=1
     for (( k = 0; k < n; k++ )); do
         i=${FI_HIT[$k]}
@@ -3322,7 +3350,7 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
             prev=${FI_GRP[$i]}
             case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; next) cap=NEXT; cc=$S ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
                 done) cap=DONE; cc=$GREEN ;; busy) cap="AGENTS · BUSY"; cc=$ORANGE ;; free) cap="AGENTS · FREE"; cc=$GREEN ;; *) cap=$prev; cc=$D ;; esac
-            rl[${#rl[@]}]=$(printf ' %s%s%s' "$cc" "$cap" "$X"); rh[${#rh[@]}]=-1
+            printf -v line ' %s%s%s' "$cc" "$cap" "$X"; rl[${#rl[@]}]=$line; rh[${#rh[@]}]=-1
         fi
         if [ "${FI_KIND[$i]}" = agent ]; then
             case "${FI_ST[$i]}" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
@@ -3338,16 +3366,17 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
         [ "${FI_KIND[$i]}" = topic ] && lbc=$BLUE                    # who, in blue like the panel
         pad=$(( w - 8 - nw - lw - ${#sep} - sbw - ${#tm} )); [ "$pad" -lt 1 ] && pad=1
         [ "$k" = "$sel" ] && sr=${#rl[@]}
-        if [ "$k" = "$sel" ]; then line=$(printf '%s   %s%s %s%s%s  %s%s%s%s%s%s%*s%s%s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$lbc" "$lb" "$DSEL" "$sep" "${FI_SC[$i]:-}" "$sb" "$pad" "" "$DSEL" "$tm" "$X")
-        else line=$(printf '   %s%s %s%s%s  %s%s%s%s%s%s%s%*s%s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$lbc" "$lb" "$D" "$sep" "${FI_SC[$i]:-}" "$sb" "$X" "$pad" "" "$D" "$tm" "$X"); fi
+        if [ "$k" = "$sel" ]; then printf -v line '%s   %s%s %s%s%s  %s%s%s%s%s%s%*s%s%s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$lbc" "$lb" "$DSEL" "$sep" "${FI_SC[$i]:-}" "$sb" "$pad" "" "$DSEL" "$tm" "$X"
+        else printf -v line '   %s%s %s%s%s  %s%s%s%s%s%s%s%*s%s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$lbc" "$lb" "$D" "$sep" "${FI_SC[$i]:-}" "$sb" "$X" "$pad" "" "$D" "$tm" "$X"; fi
         rl[${#rl[@]}]=$line; rh[${#rh[@]}]=$k
     done
     off=0; [ "$sr" -ge "$room" ] && off=$(( sr - room + 1 ))
     [ "$sr" -gt 0 ] && [ "${rh[$(( sr - 1 ))]}" = -1 ] && [ "$off" -gt $(( sr - 1 )) ] && off=$(( sr - 1 ))   # its caption stays in view
     out=$'\033[H'
     clip_set line "$1" $(( w - 14 ))
-    out+=$(printf ' %s▶%s %s%s%s\033[7m \033[27m %s%d/%d%s' "$ORANGE" "$X" "$L" "$line" "$X" "$D" "$n" "${#FI_KIND[@]}" "$X")$'\033[K\n'
-    out+=$(printf ' %s%s%s' "$B" "$(hline $(( w - 1 )))" "$X")$'\033[K\n'
+    local tl; printf -v tl ' %s▶%s %s%s%s\033[7m \033[27m %s%d/%d%s' "$ORANGE" "$X" "$L" "$line" "$X" "$D" "$n" "${#FI_KIND[@]}" "$X"; out+="$tl"$'\033[K\n'
+    [ "${FIND_HL_W:-}" = "$w" ] || { FIND_HL=$(hline $(( w - 1 ))); FIND_HL_W=$w; }   # the rule once per width
+    printf -v tl ' %s%s%s' "$B" "$FIND_HL" "$X"; out+="$tl"$'\033[K\n'
     for (( r = off; r < off + room && r < ${#rl[@]}; r++ )); do out+="${rl[$r]}"$'\033[K\n'; done
     if [ "$n" = 0 ]; then                                     # nothing found: Enter makes it a topic
         if [ -n "$1" ]; then clip_set line "$1" $(( w - 40 )); out+=$(printf '   %snothing matches · %s⏎ %screate "%s"%s' "$D" "$S" "$L" "$line" "$X")$'\033[K\n'
@@ -3357,7 +3386,8 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
     local hint="↑↓ choose · ⏎ open · x done · ^n new · esc close"
     [ -n "$1" ] && hint="↑↓ choose · ⏎ open · ^x done · ^n new · esc close"
     [ "$n" = 0 ] && [ -n "$1" ] && hint="⏎ new topic \"$1\" · esc close"
-    printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$([ -n "$3" ] && printf '%s' "$S" || printf '%s' "$D")" "$(clip "${3:-$hint}" $(( w - 1 )))" "$X"
+    local hc=$D; [ -n "$3" ] && hc=$S; clip_set tl "${3:-$hint}" $(( w - 1 ))
+    printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$hc" "$tl" "$X"
 }
 panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus (through herdr's socket: by pane id)
     local act tab pan sock=${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}
@@ -3395,8 +3425,8 @@ find_main() {
     printf '\033]2;bhote search\007\033[?25l\033[2J'
     while true; do
         [ "$sel" -ge "${#FI_HIT[@]}" ] && sel=$(( ${#FI_HIT[@]} - 1 )); [ "$sel" -lt 0 ] && sel=0
-        find_draw "$q" "$sel" "$note"; note=""
-        IFS= read -rsn1 c </dev/tty || break
+        if [ -z "$note" ] && input_pending; then :; else find_draw "$q" "$sel" "$note"; note=""; fi   # typed ahead (repeat, fast typing): draw once after
+        in_get c || break
         if [ "$c" = $'\016' ] || { [ -z "$c" ] && [ "${#FI_HIT[@]}" = 0 ] && [ -n "$q" ]; }; then
             # Ctrl-N: a new topic in the editor, the search text to start with; Enter when nothing matches: made at once
             # from the search text (both "Title; description @Name")
@@ -3431,7 +3461,7 @@ find_main() {
             $'\033') read_soon k2
                 case "$k2" in
                     "") break ;;
-                    "["|O) k3=""; while IFS= read -rsn1 -t 1 k3 </dev/tty; do case "$k3" in [0123456789\;]) ;; *) break ;; esac; done
+                    "["|O) k3=""; while in_get k3 1; do case "$k3" in [0123456789\;]) ;; *) break ;; esac; done
                            case "$k3" in A) sel=$(( sel - 1 )) ;; B) sel=$(( sel + 1 )) ;; esac ;;
                 esac ;;
             $'\177'|$'\010') q=${q%?}; find_filter "$q"; sel=0 ;;
