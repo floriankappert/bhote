@@ -24,6 +24,9 @@ fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.5.1}
+# FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
+# wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
+FEATURE_LEVEL=2
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
 NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
@@ -739,6 +742,8 @@ ui_load() {
     cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
     if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
+    local _sd _wl; cfg_var _sd SETUP_DONE ""; cfg_var _wl WIZARD_LEVEL ""; num_set _wl "$_wl" 1; NEWFEAT=0
+    [ -n "$_sd" ] && [ "$_wl" -lt "$FEATURE_LEVEL" ] && NEWFEAT=1
     STORE_TAG=""; [ "$U_STORE" = remote ] && [ "$st" = offline ] && STORE_TAG=" · offline"
     AG_N=0; AG_LINES=()
     for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do
@@ -1167,7 +1172,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     # with more than one machine each name has its machine's code in front (MAC|name). The icon says the state (as in the herdr
     # sidebar), muted when the machine does not answer. A project's agents come from their repo/project tokens (project_sync).
     local i k m id st raw off name task ic nc label cw maxr cell plain _ln n=0 shown hidden=0 r lines=() lc=() lid=() rid=()
-    maxr=$(( ${ROWS:-40} - 21 )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
+    maxr=$(( ${ROWS:-40} - 21 - ${NEWFEAT:-0} )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
     agent_divider
@@ -1207,7 +1212,8 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         if [ "$pm" = "-" ]; then lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
         else lines[$n]="  ${MUTED}┈┈${X} ${L}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"; fi
         lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
-        local cells=() cid=() cwid=() nc2=0 pre plen
+        local cells=() cid=() cwid=() nc2=0 pre plen rk rkst
+        for rk in 0 1 2; do                                    # inside a project: the active ones first (orange), then those that need you (red), then the idle (grey)
         for mm in "${machines[@]}"; do
             pre=""; plen=0; [ "$nm" -gt 1 ] && { machine_code_set pre "$mm"; [ -n "$pre" ] && { pre="$pre|"; plen=${#pre}; }; }   # MAC|name
             for (( i = 0; i < AG_N; i++ )); do
@@ -1215,12 +1221,14 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                 [ "$m" = "$mm" ] || continue
                 if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
                 raw=$st; off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
-                case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+                case "$st" in working|testing) rkst=0 ;; blocked) rkst=1 ;; *) rkst=2 ;; esac; [ "$rkst" = "$rk" ] || continue
+                case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; *) ic="${D}○" ;; esac
                 [ -n "$pre" ] && case "$name" in "$mm / "*) name=${name#"$mm / "} ;; esac   # (MAC|Mac / root says it twice)
                 name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 - plen ))
                 if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
                 dw_set plain "$label"; cells[$nc2]="$ic$X ${pre:+$D$pre$X}$nc$label$X"; cwid[$nc2]=$(( plain + plen + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
             done
+        done
         done
         for (( r = 0; r < nc2; r += 2 )); do                   # two columns, left to right (this machine's agents first)
             printf -v _ln '  %s%*s %s' "${cells[$r]}" $(( cw - ${cwid[$r]} )) "" "${cells[$(( r + 1 ))]:-}"; lines[$n]=$_ln
@@ -1293,6 +1301,7 @@ clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
 view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
     local name="Bhote v$VERSION" t; clip_set t " - Herd Management" $(( ${COLS:-44} - 5 - ${#name} ))
     printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X"
+    [ "${NEWFEAT:-0}" = 1 ] && { clip_set t "✦ New Features Available · w Start Wizard" $(( ${COLS:-44} - 4 )); printf '  %s%s%s\n' "$ORANGE" "$t" "$X"; }
     rule
 }
 # The herdr key that jumps between agent and panel (the plugin action bhote.panel.focus), as herdr's config.toml binds it:
@@ -1629,7 +1638,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     hk "↑↓ jk" "move"; hk "⏎" "jump to the topic's agent (none: its page)"; hk "→" "the topic's page"; hk "n" "new topic (Title; description @Name)"
     hk "e" "edit the title"; hk "d" "edit the description"
     hk "s" "start on a free agent"; hk "t" "Steal & Transfer to another agent"; hk "x" "mark done"; hk "a" "suggestions from agents"
-    hk "," "settings"; hk "S" "welcome screen"; hk "q" "quit"
+    hk "," "settings"; hk "S" "welcome screen"; hk "w" "setup wizard (after an update: only the new steps)"; hk "q" "quit"
     hk_group "MENUS AND PICKERS"
     hk "↑↓" "choose"; hk "→ ⏎" "do it"; hk "← esc" "back"; hk "x" "dismiss a suggestion"
     hk_group "SETTINGS"
@@ -3256,7 +3265,7 @@ w_remote_knows() {  # w_remote_knows <machine label>: does that machine have THI
 setup_step_checks() {
     w_screen 1 "CHECKS" || return
     w_say "What bhote needs on this machine. Nothing is changed in this step unless you say so."; w_line
-    local dir hook="$HOME/.claude/settings.json" r
+    local cdir=${CLAUDE_CONFIG_DIR:-$HOME/.claude} dir hook r; hook="$cdir/settings.json"
     command -v jq >/dev/null 2>&1 && w_ok "jq" "$(jq --version 2>/dev/null)" || w_bad "jq" "install it: brew install jq / pacman -S jq"
     if command -v herdr >/dev/null 2>&1; then w_ok "herdr" "${HERDR_V:-?}"; else w_bad "herdr" "not found: bhote lives next to herdr"; fi
     herdr pane list >/dev/null 2>&1 && w_ok "herdr server" "running" || w_warn "herdr server" "not reachable right now"
@@ -3281,15 +3290,15 @@ setup_step_checks() {
             if [ $r = 0 ] && command -v jq >/dev/null 2>&1; then
                 local tmp="$hook.tmp.$$"
                 jq '.hooks.SessionStart = ((.hooks.SessionStart // [{"matcher":"*","hooks":[]}]) | .[0].hooks += [{"type":"command","command":"command -v bhote >/dev/null 2>&1 && bhote current 2>/dev/null; true","timeout":10}])' "$hook" > "$tmp" \
-                    && jq empty "$tmp" && mv "$tmp" "$hook" && w_ok "Claude hook" "added" || { rm -f "$tmp"; w_bad "Claude hook" "could not be added"; }
+                    && jq empty "$tmp" && cat "$tmp" > "$hook" && rm -f "$tmp" && w_ok "Claude hook" "added" || { rm -f "$tmp"; w_bad "Claude hook" "could not be added"; }
             fi
         fi
-    else w_warn "Claude Code" "no ~/.claude/settings.json: the hook is skipped"; fi
-    local sk="$HOME/.claude/skills/bhote" src; src="$(w_share integrations/claude/skills/bhote)/integrations/claude/skills/bhote"
+    else w_warn "Claude Code" "no ${hook/#$HOME/~}: the hook is skipped"; fi
+    local sk="$cdir/skills/bhote" src; src="$(w_share integrations/claude/skills/bhote)/integrations/claude/skills/bhote"
     if [ -e "$sk/SKILL.md" ]; then w_ok "Claude skill" "agents create waiting topics"
-    elif [ -d "$HOME/.claude" ] && [ -f "$src/SKILL.md" ]; then
+    elif [ -d "$cdir" ] && [ -f "$src/SKILL.md" ]; then
         w_warn "Claude skill" "not installed: agents do not create waiting topics"
-        w_yn "Install the bhote skill for Claude Code (~/.claude/skills/bhote)?" Y; r=$?; [ $r = 3 ] && return
+        w_yn "Install the bhote skill for Claude Code (${sk/#$HOME/~})?" Y; r=$?; [ $r = 3 ] && return
         [ $r = 0 ] && { mkdir -p "$sk" && cp "$src/SKILL.md" "$sk/SKILL.md" && w_ok "Claude skill" "installed" || w_bad "Claude skill" "could not be copied"; }
     fi
     w_continue
@@ -3646,13 +3655,17 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
     w_line; w_say "Change anything later in the settings (,), or run the setup again: settings › Setup wizard, or bhote setup. A log of this setup: ${W_LOG/#$HOME/~}"
     w_continue
 }
+step_level() { case "$1" in monitors) echo 2 ;; *) echo 1 ;; esac; }   # the feature level that brought the step
 bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     local st old_int; W_QUIT=0; ask_drain                      # keys typed before it opened must not answer its first questions
     old_int=$(trap -p INT); trap 'W_QUIT=1' INT                 # Ctrl-C ends the wizard (and only the wizard)
     COLS=${COLS:-$(stty size </dev/tty 2>/dev/null | awk '{print $2}')}; COLS=${COLS:-44}
     HEAD_GRAD=$(gradient "Bhote setup"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     w_log "==== setup on $HOST (bhote $VERSION)"
-    local steps=(checks name machines twoway topics agents projects monitors behaviour panel done); W_IDX=0
+    local steps=() all=(checks name machines twoway topics agents projects monitors behaviour panel done) sn from=0 wl; W_IDX=0
+    cfg_var wl WIZARD_LEVEL ""; num_set wl "$wl" 1
+    [ "${W_NEW_ONLY:-0}" = 1 ] && [ "$wl" -lt "$FEATURE_LEVEL" ] && from=$wl     # from the panel with new features: only the steps added since
+    for sn in "${all[@]}"; do [ "$sn" = done ] || [ "$(step_level "$sn")" -gt "$from" ] && steps[${#steps[@]}]=$sn; done
     while [ "$W_IDX" -lt "${#steps[@]}" ]; do               # each step: ⏎ change · → skip & next · ← back · q abort
         W_NAME=${steps[$W_IDX]}; W_QUIT=0; W_JUMP=""; W_GATE=1
         "setup_step_$W_NAME"
@@ -3664,7 +3677,7 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
         [ "$W_QUIT" = 1 ] && break
         W_IDX=$(( W_IDX + 1 ))
     done
-    cfg_set SETUP_DONE "$(date +%Y-%m-%d)"
+    cfg_set SETUP_DONE "$(date +%Y-%m-%d)" WIZARD_LEVEL "$FEATURE_LEVEL"
     HEAD_GRAD=""                                            # the list makes its own again
     if [ -n "$old_int" ]; then eval "$old_int"; else trap - INT; fi
     printf '\033[H\033[2J'
@@ -3672,7 +3685,7 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
 setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
     printf '{"machine":%s,"jq":%s,"herdr":%s,"plugin":%s,"claude_hook":%s,"machines":[' "$(json_str "$HOST")" \
         "$(command -v jq >/dev/null 2>&1 && echo true || echo false)" "$(command -v herdr >/dev/null 2>&1 && echo true || echo false)" \
-        "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo true || echo false)" "$(grep -q 'bhote current' "$HOME/.claude/settings.json" 2>/dev/null && echo true || echo false)"
+        "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo true || echo false)" "$(grep -q 'bhote current' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" 2>/dev/null && echo true || echo false)"
     local label host en first=1 known
     while IFS=$US read -r label host en <&3; do
         [ -n "$label" ] || continue
@@ -3686,7 +3699,7 @@ setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
 
 panel_setup() {  # the wizard from inside the panel: a normal terminal for it, then the panel mode again
     trap '' USR1; printf '%s\033[?25h' "$MOUSE_OFF"; stty "$stty_saved" </dev/tty 2>/dev/null
-    bhote_setup
+    W_NEW_ONLY=${1:-0} bhote_setup
     stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null; printf '\033[?25l%s' "$MOUSE_ON"; trap 'anim=1' USR1; term_size
 }
 bhote_main() {
@@ -3833,6 +3846,7 @@ bhote_main() {
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;
                 S) splash_fits && view=splash; redraw=1 ;;
+                w|W) if [ "$view" = main ]; then panel_setup "${NEWFEAT:-0}"; redraw=1; fi ;;   # the wizard (new features: only what is new)
                 a|A) if [ "$view" = main ]; then view=suggest; SUG_IDX=0; redraw=1; fi ;;
                 x|X) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && topic_set "$f" status done; redraw=1; fi ;;   # check it off
                 e|E) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the title

@@ -13,7 +13,7 @@ has_herdr() {  # has_herdr <pid>: 0 when herdr runs below that process
 win=""
 for p in $(hyprctl clients -j | jq -r '.[].pid'); do has_herdr "$p" && { win=$p; break; }; done
 [ -n "$win" ] || { notify-send "bhote" "herdr is not running in a terminal window" 2>/dev/null; exit 0; }
-hyprctl dispatch focuswindow "pid:$win" >/dev/null 2>&1
+hyprctl dispatch "hl.dsp.focus({ window = \"pid:$win\" })" >/dev/null 2>&1 || hyprctl dispatch focuswindow "pid:$win" >/dev/null 2>&1   # (Hyprland with the Lua config, else the classic dispatcher)
 case "${1:-panel}" in
     search) herdr plugin action invoke search --plugin bhote.panel >/dev/null 2>&1 ;;
     *) title=$(herdr pane list 2>/dev/null | jq -r '[.result.panes[] | select(.focused)][0].terminal_title_stripped // empty')

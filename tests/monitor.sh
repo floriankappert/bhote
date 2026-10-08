@@ -146,6 +146,11 @@ echo "$blk" | grep -q "Deployments" && echo "$blk" | grep -q "Web · Backend" &&
   && [ "$(echo "$blk" | grep -c "Web · \|Rails · \|web-wt1 · \|Plain · ")" -le 10 ] && ok "panel: both blocks, five entries each at most" || bad "block: $blk"
 cfg_set DEPLOY_MONITOR off; cfg_set TEST_MONITOR off; [ -z "$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )" ] && ok "panel: monitors off, no block" || bad "block while off"
 
+# new features: the head says so until the wizard ran at the current level; the wizard then offers only the new steps
+NEWFEAT=1; COLS=60; view_head | grep -q "New Features Available · w Start Wizard" && ok "head: new features line" || bad "head: no new features line"
+NEWFEAT=0; view_head | grep -q "New Features" && bad "head: line without new features" || ok "head: no line when up to date"
+[ "$(step_level monitors)" -gt 1 ] && [ "$(step_level checks)" = 1 ] && ok "wizard: the monitor step is a level-2 step" || bad "step_level"
+
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"

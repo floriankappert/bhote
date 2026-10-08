@@ -15,6 +15,8 @@ if command -v herdr >/dev/null 2>&1; then
 fi
 if command -v omarchy >/dev/null 2>&1 && [ -d "$HOME/.config/omarchy" ]; then   # Omarchy: the bar widget (enable it yourself)
   mkdir -p "$HOME/.config/omarchy/plugins"
-  ln -sfn "$DIR/omarchy-plugin" "$HOME/.config/omarchy/plugins/bhote.bar"
-  echo "✓ Omarchy bar widget bhote.bar (show it: omarchy plugin enable bhote.bar --section right)"
+  t="$HOME/.config/omarchy/plugins/bhote.bar"
+  if [ -d "$t" ] && [ ! -L "$t" ]; then echo "! $t is a real directory: move it away, then run install.sh again"
+  else ln -sfn "$DIR/omarchy-plugin" "$t"
+    echo "✓ Omarchy bar widget bhote.bar (show it: omarchy plugin enable bhote.bar --section right)"; fi
 fi

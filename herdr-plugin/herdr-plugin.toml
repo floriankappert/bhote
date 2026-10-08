@@ -1,6 +1,6 @@
 id = "bhote.panel"
 name = "Bhote Panel"
-version = "0.6.0"
+version = "0.5.1"
 min_herdr_version = "0.8.2"
 description = "Opens the Bhote side panel (topics + agents) on the right of every tab, about as wide as the herdr sidebar, when herdr starts"
 platforms = ["macos", "linux"]

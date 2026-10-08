@@ -14,7 +14,7 @@ BarWidget {
   property string label: "\u{f0a43}"
   property string tip: "bhote"
   property string cls: "idle"
-  readonly property string here: Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")
+  readonly property string here: decodeURIComponent(Qt.resolvedUrl(".").toString().replace(/^file:\/\//, ""))
 
   function refresh() {
     if (!barProc.running) barProc.running = true
