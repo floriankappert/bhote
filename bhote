@@ -3593,7 +3593,8 @@ setup_step_behaviour() {
     w_say "When you hand a topic to an agent, it reports back with bhote review (you check it) or bhote done."
     w_yn "May an agent close its topic itself?" "$([ "$(cfg_get AGENT_CAN_CLOSE on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AGENT_CAN_CLOSE on ;; 1) cfg_set AGENT_CAN_CLOSE off ;; esac
-    w_yn "herdr notifications (ready for review, done, waiting too long)?" "$([ "$(cfg_get NOTIFY on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    w_say "Notifications: herdr pops up a short message when an agent hands a topic back for your review, when a topic is done, or when one has waited for your answer too long (the reminder time follows below)."
+    w_yn "Show these notifications in herdr?" "$([ "$(cfg_get NOTIFY on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set NOTIFY on ;; 1) cfg_set NOTIFY off ;; esac
     w_read h "Remind a waiting topic after how many hours (0 = never):" "$(cfg_get WAIT_REMIND 24)"; [ "$W_QUIT" = 1 ] && return
     setting_check WAIT_REMIND "$h" 2>/dev/null && cfg_set WAIT_REMIND "$(num_or "$h" "$h")"
