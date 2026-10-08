@@ -250,6 +250,20 @@ auto_assign
 topic_set "$t2" project "$bil"; topic_set "$t2" updated 1; topic_set "$t1" agent_pane ""; auto_assign
 [ "$(topic_get "$t2" agent_pane)" = w2:p1 ] && ok "auto-assign: a chosen project picks the agent of that project only" || bad "auto-assign bil: $(topic_get "$t2" agent_pane)"
 ) && true
+# auto-assign: a project without a free agent does not hold up the topics of the other projects
+(
+rm -f "$TOPIC_DIR"/*.topic; project_new "Alpha"; pa=$PROJ_ID; project_new "Beta"; pb=$PROJ_ID
+printf '%s\n' "$HOST${US}w1:p1${US}working${US}alpha-agent${US}t" "$HOST${US}w2:p1${US}idle${US}beta-agent${US}t" > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
+printf '%s\n' "$HOST${US}w1:p1${US}t1${US}a${US}${US}$pa${US}/x" "$HOST${US}w2:p1${US}t2${US}a${US}${US}$pb${US}/y" > "$AGENT_META_L"
+agent_live() { LIVE_ST=idle; LIVE_SESS=s1; }; agent_taken() { return 1; }; notify() { :; }; agent_send() { :; }
+cfg_set AUTO_ASSIGN on
+for p in Alpha Beta; do   # (fixed file names: Alpha comes first, as the topics are read in file order)
+    topic_new "$p work" "" ""; f="$TOPIC_DIR/1-$p.topic"; mv "$TOPIC_DIR/$NEW_TOPIC_ID.topic" "$f"
+    topic_set "$f" project "$( [ $p = Alpha ] && echo "$pa" || echo "$pb")"; topic_set "$f" updated 1
+done
+auto_assign; topics_load
+for (( i = 0; i < T_N; i++ )); do printf '%s=%s ' "${T_TITLE[$i]}" "${T_AP[$i]:--}"; done > "$T/aa.out"
+grep -q "Alpha work=- " "$T/aa.out" && grep -q "Beta work=w2:p1 " "$T/aa.out" ) && ok "auto-assign: a project without a free agent does not hold up the others" || bad "auto-assign stops at a busy project: $(cat "$T/aa.out")"
 # the agent list says which topic an agent works on (not for a parked one)
 cfg_set HOST_LABEL Mac; rm -f "$TOPIC_DIR"/*.topic; topic_new "Fix the export" "" ""; wt="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wt" agent_pane w1:p1; topic_set "$wt" agent_machine "$HOST"; topic_set "$wt" status now
 frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=70 BHOTE_ROWS=150 bash ./bhote </dev/null)
@@ -306,4 +320,14 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   grep -q $'\036-1$' "$RUN_DIR/pmap" || exit 8                     # the description (empty: its hint line) too
   out=$(bhote_paint main); [ ! -s "$RUN_DIR/pmap" ] || exit 5
   exit 0 ) && ok "click: actions, title and description on the topic's page are rows of their own (ITEM with the index), the list has none" || bad "action click: step $?"
+# an unchanged agent list stays fresh (bhote find then takes it instead of asking herdr again), and the revision stays
+( L=$T/fresh.list; printf 'a\n' > "$L"; touch -t 202001010000 "$L"; printf 'a\n' > "$L.new"; r0=$(cat "$SHARED_DIR/agents.rev" 2>/dev/null)
+  agents_put "$L.new" "$L"; [ -n "$(find "$L" -mmin -1)" ] && [ "$(cat "$SHARED_DIR/agents.rev" 2>/dev/null)" = "$r0" ] ) \
+  && ok "agent lists: an unchanged list counts as fresh, without a new revision" || bad "unchanged agent list looks stale"
+# no agents: no error text in the panel (no agent map yet), and an old map does not stay (no star, no click on a gone agent)
+( R=$(mktemp -d); RUN_DIR=$R; echo 5 > "$R/divrow"
+  err=$( { spin_cells; } 2>&1 ); [ -z "$err" ] || exit 1
+  printf '12\n0\036Mac%sw1:p1%sworking\036\n' "$US" "$US" > "$R/agmap"; spin_cells; [ -n "$SPIN_CELLS" ] || exit 2
+  AG_N=0; AG_LINES=(); COLS=44; ROWS=40; agents_block >/dev/null; spin_cells; [ -z "$SPIN_CELLS" ] || exit 3
+  rm -rf "$R"; exit 0 ) && ok "no agents: no error text, and the old agent map is gone" || bad "agent map without agents: step $?"
 rm -rf "$T"; exit $fail

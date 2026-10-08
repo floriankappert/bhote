@@ -3,6 +3,18 @@
 cd "$(dirname "$0")/.." || exit 1
 unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data TMPDIR=$T BHOTE_SHARED=$T/shared
+# a fake herdr first on the PATH: nothing reaches the herdr you work in (notifications, prompts); every call is logged
+mkdir -p "$T/bin"; export FAKE_LOG=$T/herdr.log PATH="$T/bin:$PATH"
+cat > "$T/bin/herdr" <<'SH'
+#!/bin/sh
+echo "$*" >> "$FAKE_LOG"
+case "$*" in
+ *"pane list"*) echo '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"repo":"github.com/acme/api"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2"}]}}' ;;
+ *"workspace list"*) echo '{"result":{"workspaces":[{"workspace_id":"w1","label":"shopws"},{"workspace_id":"w2","label":"notes"}]}}' ;;
+ *) exit 1 ;;
+esac
+SH
+chmod +x "$T/bin/herdr"
 B() { bash ./bhote "$@"; }
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
 
@@ -141,6 +153,12 @@ B project pin Shop "$T/shop" >/dev/null && [ "$(B project list --json | jq -r '.
 [ "$(B project of "$T/shop-wt1")" = Shop ] && ok "project of a worktree: its main repository's project" || bad "worktree project: $(B project of "$T/shop-wt1" 2>&1)"
 B project pin "Acme Marketing" ws:marketing >/dev/null && B project list | grep -q "ws:marketing" && ok "project pin ws:<workspace>" || bad "pin ws"
 B project rename "Acme M" "Marketing" >/dev/null && B project list | grep -q "Marketing" && ok "project rename" || bad "rename"
+# pin an agent (its number from bhote agents, or its name): its repository (a herdr token), else its workspace
+B project add "Pinned" >/dev/null; B project pin Pinned 1 >/dev/null; B project pin Pinned notes >/dev/null
+pinned=$(B project list --json | jq -c '.[] | select(.name == "Pinned") | [.repos, .workspaces]')
+[ "$pinned" = '[["github.com/acme/api"],["notes"]]' ] && ok "project pin <agent>: its repository, else its workspace" || bad "pin agent: $pinned"
+n0=$(B list --all --json | jq length); B add "Lost one" -p "No such project" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && [ "$(B list --all --json | jq length)" = "$n0" ] && ok "add -p with an unknown project: exit 1, no topic" || bad "add -p unknown: rc=$rc, $(B list --all --json | jq length) topics (was $n0)"
 B project rm Marketing >/dev/null && ! B project list | grep -q "Marketing" && ok "project rm" || bad "project rm"
 # an agent does not revive a topic the user parked or closed; the user (no agent) can, and `take` works on request
 B add "Parked one" -s later >/dev/null; pid=$(B list --all --json | jq -r '[.[] | select(.title=="Parked one")][0].id')

@@ -139,4 +139,10 @@ store_host() { echo fakehost; }; cfg_set SYNC_VIA ssh
 
 # 7) data location local: no ssh at all
 cfg_set STORE local; FAKE_OFFLINE=1 store_sync && ok "local mode: no connection needed" || bad "local mode tried to connect"
+# the sync lock belongs to the process that syncs, not to $$ (a background sync in a subshell shares $$ with the panel)
+pm=""; self_pid_set pm; [ "$pm" = "$$" ] || bad "self_pid_set: the main shell is not \$\$ ($pm)"
+( mkdir -p "$SHARED_DIR"; p0=""; self_pid_set p0; [ "$p0" != "$$" ] && kill -0 "$p0" 2>/dev/null || exit 1
+  ( p1=""; self_pid_set p1; [ "$p1" != "$p0" ] && kill -0 "$p1" 2>/dev/null && lock_take "$SHARED_DIR/t.lock" "$p1" && sleep 1 ) &
+  sleep 0.5; lock_take "$SHARED_DIR/t.lock" "$p0" && exit 2; wait; lock_take "$SHARED_DIR/t.lock" "$p0" || exit 3
+  lock_drop "$SHARED_DIR/t.lock" "$p0"; exit 0 ) && ok "sync lock: a background sync in a subshell holds it against the panel" || bad "sync lock shared with a subshell: step $?"
 rm -rf "$T"; exit $fail
