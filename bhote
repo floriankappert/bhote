@@ -86,6 +86,7 @@ ANIMATION|on|bool|The dog on the welcome screen blinks and pants
 SPLASH_AUTOCLOSE|on|bool|The welcome screen closes by itself
 SPLASH_SECONDS|15|int:1:600|Seconds until the welcome screen closes itself
 AUTOSTART|on|bool|The herdr plugin opens the panel next to the agents when herdr starts
+FIND_KEY||text|The herdr key that opens the search popup: find a topic or an agent and jump to it (e.g. ctrl+alt+t; off removes it)
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
 DONE_MAX|7|int:0:999|Done topics shown before +n more
@@ -681,7 +682,7 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
         [ -n "$HOST" ] || { HOST=$([ "$(uname -s)" = Darwin ] && echo Mac || { hostname -s 2>/dev/null || uname -n; }); HOST=${HOST%%.*}; }
         HOST=${HOST//[[:cntrl:]]/}; HOST=${HOST:-local}
         HAS_MACHINES=$([ -n "$(herdr machine list 2>/dev/null)" ] && echo 1 || echo 0)
-        focus_key_set FOCUS_KEY
+        focus_key_set FOCUS_KEY; cfg_var FIND_KEY_SHOW FIND_KEY off; key_pretty FIND_KEY_SHOW "$FIND_KEY_SHOW"
     fi
 }
 # Everything a screen needs, read ONCE per repaint and without starting a single process (except one `date`): the settings,
@@ -1035,39 +1036,55 @@ focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when n
             END { if (!done && blk && cmd == "bhote.panel.focus" && k != "") print k }' "$HERDR_CONFIG" 2>/dev/null)
         _p=$(awk '/^[ \t]*\[/ { inkeys = ($0 ~ /^[ \t]*\[keys\][ \t]*$/); next } inkeys && /^[ \t]*prefix *= *"/ { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit }' "$HERDR_CONFIG" 2>/dev/null)
     fi
-    _k=${_k//[[:cntrl:]]/}; _p=${_p:-ctrl+b}; FOCUS_KEY_RAW=$_k
-    case "$_k" in prefix+*) _k="$_p ${_k#prefix+}" ;; esac
-    _k=${_k//ctrl+/^}; _k=${_k//shift+/⇧}; _k=${_k//alt+/⌥}
+    _k=${_k//[[:cntrl:]]/}; HERDR_PREFIX=${_p:-ctrl+b}; FOCUS_KEY_RAW=$_k
+    key_pretty "$1" "$_k"
+}
+key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "^b t", "ctrl+alt+t" -> "^⌥t"
+    local _k=${2//[[:cntrl:]]/}
+    case "$_k" in off|none) _k="" ;; prefix+*) _k="${HERDR_PREFIX:-ctrl+b} ${_k#prefix+}" ;; esac
+    _k=${_k//ctrl+/^}; _k=${_k//shift+/⇧}; _k=${_k//alt+/⌥}; _k=${_k//cmd+/⌘}
     printf -v "$1" '%s' "$_k"
 }
 # The key is kept in a block of its own in herdr's config.toml ("# >>> bhote" .. "# <<< bhote"): bhote rewrites only that
 # block, and tools that regenerate the file can keep it (the dotfiles' term-theme does). herdr checks it on reload; a key it
 # does not take puts the old file back.
-jump_key_apply() {  # jump_key_apply <key|off>: 0 when herdr took it
-    local k=$1 old tmp out
-    case "$k" in off|none|"") k="" ;; *[!A-Za-z0-9+_\;,.\[\]/=-]*) echo "bhote: odd characters in the key" >&2; return 1 ;; esac
-    [ "${#k}" -le 40 ] || { echo "bhote: the key is too long" >&2; return 1; }
+key_ok() {  # key_ok <herdr key>: plain key syntax only (it goes into a TOML string)
+    case "$1" in *[!A-Za-z0-9+_\;,.\[\]/=-]*) echo "bhote: odd characters in the key" >&2; return 1 ;; esac
+    [ "${#1}" -le 40 ] || { echo "bhote: the key is too long" >&2; return 1; }
+}
+herdr_keys_apply() {  # herdr_keys_apply <jump key|off> <find key|off>: 0 when herdr took both
+    local j=$1 fk=$2 old tmp out bin
+    case "$j" in off|none) j="" ;; esac; case "$fk" in off|none) fk="" ;; esac
+    { [ -z "$j" ] || key_ok "$j"; } && { [ -z "$fk" ] || key_ok "$fk"; } || return 1
+    [ -n "$j" ] && [ "$j" = "$fk" ] && { echo "bhote: the jump key and the find key must differ" >&2; return 1; }
+    bin=$(command -v bhote 2>/dev/null); [ -n "$bin" ] || bin=$0; case "$bin" in /*) ;; *) bin="$PWD/$bin" ;; esac
+    case "$bin" in *[\"\'\\]*|*[[:cntrl:]]*) [ -n "$fk" ] && { echo "bhote: odd characters in the path of bhote" >&2; return 1; } ;; esac
     mkdir -p "$(dirname "$HERDR_CONFIG")" && touch "$HERDR_CONFIG" || return 1
     old=$(mktemp "$RUN_DIR/herdrcfg.XXXXXX") && cp "$HERDR_CONFIG" "$old" || return 1
     tmp=$(mktemp "$HERDR_CONFIG.XXXXXX") || return 1
     awk '/^# >>> bhote/ { skip = 1; next } /^# <<< bhote/ { skip = 0; next } !skip { l[++n] = $0 }
          END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' "$HERDR_CONFIG" > "$tmp"
-    if [ -n "$k" ] && HERDR_CONFIG=$tmp focus_key_set _JK_OTHER && [ -n "$_JK_OTHER" ]; then   # bound by hand elsewhere in the file
+    if [ -n "$j" ] && HERDR_CONFIG=$tmp focus_key_set _JK_OTHER && [ -n "$_JK_OTHER" ]; then   # bound by hand elsewhere in the file
         rm -f "$tmp" "$old"; echo "bhote: bound by hand in config.toml ($_JK_OTHER): change it there" >&2; return 1
     fi
-    if [ -n "$k" ]; then
+    if [ -n "$j$fk" ]; then
         [ -s "$tmp" ] && [ -n "$(tail -c1 "$tmp")" ] && printf '\n' >> "$tmp"
-        printf '\n# >>> bhote (settings › Jump key; bhote rewrites this block)\n[[keys.command]]\nkey = "%s"\ntype = "plugin_action"\ncommand = "bhote.panel.focus"\ndescription = "Bhote panel"\n# <<< bhote\n' "$k" >> "$tmp"
+        { printf '\n# >>> bhote (settings › Jump key, Find key; bhote rewrites this block)\n'
+          [ -n "$j" ] && printf '[[keys.command]]\nkey = "%s"\ntype = "plugin_action"\ncommand = "bhote.panel.focus"\ndescription = "Bhote panel"\n' "$j"
+          [ -n "$fk" ] && printf '[[keys.command]]\nkey = "%s"\ntype = "popup"\ncommand = "%s find"\ndescription = "Bhote: find and jump"\nwidth = "70%%"\nheight = "70%%"\n' "$fk" "'$bin'"
+          printf '# <<< bhote\n'; } >> "$tmp"
     fi
     mv "$tmp" "$HERDR_CONFIG"
     out=$(herdr server reload-config 2>&1) || out=$(herdr config check 2>&1 && echo '"status":"applied","diagnostics":[]')
     case "$out" in *'"status":"applied"'*'"diagnostics":[]'*|*'"diagnostics":[]'*'"status":"applied"'*) ;;
         *) cp "$old" "$HERDR_CONFIG"; rm -f "$old"; herdr server reload-config >/dev/null 2>&1
-           echo "bhote: herdr did not take '$k': $(printf '%s' "$out" | jq -r '[.result.diagnostics[]? | .message // tostring] | join("; ")' 2>/dev/null | head -c 160)" >&2; return 1 ;;
+           echo "bhote: herdr did not take it: $(printf '%s' "$out" | jq -r '[.result.diagnostics[]? | .message // tostring] | join("; ")' 2>/dev/null | head -c 160)" >&2; return 1 ;;
     esac
-    rm -f "$old"; cfg_set JUMP_KEY "${k:-off}"; focus_key_set FOCUS_KEY
+    rm -f "$old"; cfg_set JUMP_KEY "${j:-off}" FIND_KEY "${fk:-off}"; focus_key_set FOCUS_KEY; key_pretty FIND_KEY_SHOW "${fk:-off}"
     return 0
 }
+jump_key_apply() { local _f; cfg_var _f FIND_KEY off; herdr_keys_apply "$1" "$_f"; }   # jump_key_apply <key|off>
+find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1"; }   # find_key_apply <key|off>
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot): the key line says so for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
@@ -1170,6 +1187,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
+    SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="link|SETUP|Setup wizard"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
 }
@@ -1190,14 +1208,15 @@ bhote_settings() {
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
             link) vp="›"; vc="${D}›${X}" ;;
-            key) vp=${FOCUS_KEY:-off}; vc="${C}${vp}${X}" ;;
+            key) if [ "$key" = FIND_KEY ]; then vp=${FIND_KEY_SHOW:-off}; else vp=${FOCUS_KEY:-off}; fi; vc="${C}${vp}${X}" ;;
             enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
             REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
-            JUMP_KEY) wrap_print 5 "$D" "${JUMP_MSG:-⏎ change. Jumps from the agent to this panel and back.}" ;;
+            JUMP_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = JUMP_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Jumps from the agent to this panel and back.')" ;;
+            FIND_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = FIND_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Find a topic or an agent and jump to it.')" ;;
         esac
     done
     printf '\n'; rule
@@ -1220,7 +1239,9 @@ bhote_hotkeys() {  # every key, grouped by screen
     hk "↑↓" "select"; hk "space ⏎" "switch"; hk "←→" "change a value"; hk ", esc" "back"
     hk_group "HERDR"
     if [ -n "${FOCUS_KEY:-}" ]; then hk "$FOCUS_KEY" "jump to this panel and back"
-    else hk "-" "jump here: bind bhote.panel.focus (bhote setup)"; fi
+    else hk "-" "jump here: settings › Jump key"; fi
+    if [ -n "${FIND_KEY_SHOW:-}" ]; then hk "$FIND_KEY_SHOW" "find a topic or agent, jump to it"
+    else hk "-" "find and jump: settings › Find key"; fi
     hk_group "MOUSE"
     hk "drag ═══" "resize the agent area"; hk "click agent" "focus it in herdr"
     printf '\n'; rule
@@ -1258,10 +1279,13 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             fi
             if [ "$kind" = key ]; then                               # ⏎ / space: type a new key (herdr's syntax)
                 [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
-                focus_key_set FOCUS_KEY
-                if ask "herdr key (prefix+t, alt+b, off): " "${FOCUS_KEY_RAW:-prefix+t}" 40 && [ -n "$ANSWER" ]; then
-                    if jump_key_apply "$ANSWER" 2> "$RUN_DIR/jkerr"; then JUMP_MSG="Saved: ${FOCUS_KEY:-off}. herdr has it now."
-                    else JUMP_MSG=$(head -1 "$RUN_DIR/jkerr"); JUMP_MSG=${JUMP_MSG#bhote: }; JUMP_MSG="Not changed: ${JUMP_MSG:-herdr refused it}"; fi
+                local cur_raw fn=jump_key_apply; focus_key_set FOCUS_KEY; cur_raw=${FOCUS_KEY_RAW:-prefix+t}
+                if [ "$key" = FIND_KEY ]; then fn=find_key_apply; cfg_var cur_raw FIND_KEY off; [ "$cur_raw" = off ] && cur_raw=ctrl+alt+t; fi
+                if ask "herdr key (prefix+t, ctrl+alt+t, off): " "$cur_raw" 40 && [ -n "$ANSWER" ]; then
+                    KEY_MSG_FOR=$key
+                    if "$fn" "$ANSWER" 2> "$RUN_DIR/jkerr"; then
+                        KEY_MSG="Saved: $([ "$key" = FIND_KEY ] && printf '%s' "${FIND_KEY_SHOW:-off}" || printf '%s' "${FOCUS_KEY:-off}"). herdr has it now."
+                    else KEY_MSG=$(head -1 "$RUN_DIR/jkerr"); KEY_MSG=${KEY_MSG#bhote: }; KEY_MSG="Not changed: ${KEY_MSG:-herdr refused it}"; fi
                 fi
                 return
             fi
@@ -2263,6 +2287,15 @@ setup_step_panel() {
             else w_bad "jump key" "$(head -1 "$RUN_DIR/jkerr")"; fi
         fi
     fi
+    if [ "$(cfg_get FIND_KEY off)" != off ]; then key_pretty FIND_KEY_SHOW "$(cfg_get FIND_KEY off)"; w_ok "find key" "$FIND_KEY_SHOW: find and jump"
+    else
+        w_say "Another key opens a search over all topics and agents; Enter jumps there (ctrl+alt+t; on macOS your terminal can send it for ⌘T)."
+        w_yn "Add it (ctrl+alt+t)?" Y; r=$?; [ $r = 3 ] && return
+        if [ $r = 0 ]; then
+            if find_key_apply ctrl+alt+t 2> "$RUN_DIR/jkerr"; then w_ok "find key" "$FIND_KEY_SHOW: find and jump"
+            else w_bad "find key" "$(head -1 "$RUN_DIR/jkerr")"; fi
+        fi
+    fi
     w_continue
 }
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
@@ -2478,6 +2511,13 @@ bhote_main() {
         # Every 2 seconds, when no key was read: did the agent lists, the topics or the sync state change? (Not tied to a read
         # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
         if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
+        if [ -r "$SHARED_DIR/select" ]; then                   # bhote find chose a topic without an agent: select it here
+            local _sid _snc; read -r _sid _snc < "$SHARED_DIR/select" 2>/dev/null
+            if [ "$_sid $_snc" != "${SEL_SEEN:-}" ]; then
+                [ -n "${SEL_SEEN:-}" ] && case "$_sid" in ''|*[!A-Za-z0-9_-]*) ;; *) [ -f "$TOPIC_DIR/$_sid.topic" ] && { SEL_ID=$_sid; view=main; redraw=1; } ;; esac
+                SEL_SEEN="$_sid $_snc"
+            fi
+        else SEL_SEEN=${SEL_SEEN:-none}; fi
         if [ -z "$key" ] && [ "$SECONDS" -ge $(( ${chk:-0} + 2 )) ]; then
             chk=$SECONDS
             m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; cat "$CONFIG_FILE" 2>/dev/null; } | cksum )   # also the settings: a new theme shows at once
@@ -2704,11 +2744,13 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
              setting_check "$key" "$v" || return 1
              case "$S_TYPE" in int:*) v=$(num_or "$v" "$v") ;; esac     # stored plain: 007 is 7
              if [ "$key" = JUMP_KEY ]; then jump_key_apply "$v" || return 1; cli_config get "$key"; return; fi
+             if [ "$key" = FIND_KEY ]; then find_key_apply "$v" || return 1; cli_config get "$key"; return; fi
              cfg_set "$key" "$v"
              case "$key" in STORE|STORE_MACHINE) : > "$STORE_DIRTY" ;; esac
              cli_config get "$key" ;;
         unset) setting_check "$key" "" || return 1
              [ "$key" = JUMP_KEY ] && { jump_key_apply off || return 1; }
+             [ "$key" = FIND_KEY ] && { find_key_apply off || return 1; }
              local tmp="$CONFIG_FILE.tmp.$$"
              if [ -r "$CONFIG_FILE" ]; then grep -v "^$key=" "$CONFIG_FILE" > "$tmp"; mv "$tmp" "$CONFIG_FILE"; fi
              cli_config get "$key" ;;
@@ -2754,6 +2796,126 @@ cli_show() {  # cli_show <file> [--json]
     if [ "$st" = waiting ] && [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
     return 0
 }
+# ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
+# must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic jumps to its
+# agent, or, without one, to the bhote panel of the tab with the topic selected. Esc closes.
+FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=()
+find_items() {
+    local i m id st name task ic lowsrc="" n=0
+    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=()
+    for (( i = 0; i < AG_N; i++ )); do
+        IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+        FI_KIND[$n]=agent; FI_NAME[$n]=$name; FI_M[$n]=$m; FI_P[$n]=$id; FI_ST[$n]=$st; FI_REF[$n]=""
+        FI_LABEL[$n]="$m${task:+ · $task}"; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
+    done
+    for (( i = 0; i < T_N; i++ )); do                          # open topics first (list order), done ones at the end
+        [ "${T_STATUS[$i]}" = done ] && continue
+        FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=${T_STATUS[$i]}; FI_REF[$n]=${T_ID[$i]}
+        FI_LABEL[$n]="${T_STATUS[$i]}${T_AG[$i]:+ · ${T_AG[$i]}}${T_WFOR[$i]:+ · ${T_WFOR[$i]}}"
+        lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} topic"$'\n'; n=$(( n + 1 ))
+    done
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = done ] || continue
+        FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=done; FI_REF[$n]=${T_ID[$i]}
+        FI_LABEL[$n]="done${T_AG[$i]:+ · ${T_AG[$i]}}"; lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} done ${T_AG[$i]} topic"$'\n'; n=$(( n + 1 ))
+    done
+    i=0; while IFS= read -r m; do FI_LOW[$i]=$m; i=$(( i + 1 )); done <<< "$(printf '%s' "$lowsrc" | tr '[:upper:]' '[:lower:]')"
+}
+FI_HIT=()
+find_filter() {  # find_filter <query>: FI_HIT = the matching items; names that start with the query first
+    local q w i ok first=() rest=() words=()
+    q=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"
+    for (( i = 0; i < ${#FI_KIND[@]}; i++ )); do
+        ok=1; for w in ${words[@]+"${words[@]}"}; do case "${FI_LOW[$i]}" in *"$w"*) ;; *) ok=0; break ;; esac; done
+        [ "$ok" = 1 ] || continue
+        case "${FI_LOW[$i]}" in "${words[0]:-}"*) first[${#first[@]}]=$i ;; *) rest[${#rest[@]}]=$i ;; esac
+    done
+    FI_HIT=(${first[@]+"${first[@]}"} ${rest[@]+"${rest[@]}"})
+}
+find_draw() {  # find_draw <query> <selected hit> <note>
+    local rows cols w i k n off sel=$2 out ic nm lb lw nw pad line
+    read -r rows cols < <(stty size </dev/tty 2>/dev/null); rows=${rows:-20}; cols=${cols:-60}; w=$(( cols - 2 ))
+    n=${#FI_HIT[@]}; local room=$(( rows - 4 )); [ "$room" -lt 1 ] && room=1
+    off=0; [ "$sel" -ge "$room" ] && off=$(( sel - room + 1 ))
+    out=$'\033[H'
+    clip_set line "$1" $(( w - 14 ))
+    out+=$(printf ' %s▶%s %s%s%s\033[7m \033[27m%*s%s%d/%d%s' "$ORANGE" "$X" "$L" "$line" "$X" 1 "" "$D" "$n" "${#FI_KIND[@]}" "$X")$'\033[K\n'
+    out+=$(printf ' %s%s%s' "$B" "$(hline $(( w - 1 )))" "$X")$'\033[K\n'
+    for (( k = off; k < off + room && k < n; k++ )); do
+        i=${FI_HIT[$k]}
+        if [ "${FI_KIND[$i]}" = agent ]; then
+            case "${FI_ST[$i]}" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+        else
+            case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
+        fi
+        clip_set nm "${FI_NAME[$i]}" $(( w * 3 / 5 )); dw_set nw "$nm"
+        clip_set lb "${FI_LABEL[$i]}" $(( w - 6 - nw )); dw_set lw "$lb"
+        pad=$(( w - 6 - nw - lw )); [ "$pad" -lt 0 ] && pad=0
+        if [ "$k" = "$sel" ]; then out+=$(printf '%s %s%s %s%s%s  %s%s%*s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$DSEL" "$lb" "$pad" "" "$X")
+        else out+=$(printf ' %s%s %s%s%s  %s%s%s' "$ic" "$X" "$L" "$nm" "$X" "$D" "$lb" "$X"); fi
+        out+=$'\033[K\n'
+    done
+    [ "$n" -gt 0 ] || out+=$(printf '   %snothing matches%s' "$D" "$X")$'\033[K\n'
+    out+=$'\033[J'
+    printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$([ -n "$3" ] && printf '%s' "$S" || printf '%s' "$D")" "$(clip "${3:-↑↓ choose · ⏎ jump · esc close}" $(( w - 1 )))" "$X"
+}
+panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus (through herdr's socket: by pane id)
+    local act tab pan sock=${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}
+    act=${HERDR_ACTIVE_PANE_ID:-}; [ -n "$act" ] || act=$(herdr pane list 2>/dev/null | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
+    tab=$(herdr pane list 2>/dev/null | jq -r --arg p "$act" '[.result.panes[] | select(.pane_id == $p)][0].tab_id // empty')
+    pan=$(herdr pane list 2>/dev/null | jq -r --arg t "$tab" '[.result.panes[] | select(.tab_id == $t and (.agent // "") == "" and (.terminal_title_stripped // "") == "Bhote")][0].pane_id // empty')
+    case "$pan" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
+    perl -MIO::Socket::UNIX -e 'my $s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 1;
+        print $s qq({"id":"bhote-find","method":"pane.focus","params":{"pane_id":"$ARGV[1]"}}\n); my $r = <$s>; exit(defined $r && $r =~ /"result"/ ? 0 : 1)' "$sock" "$pan"
+}
+find_act() {  # find_act <item>: 0 = done (close), 1 = stay (FIND_NOTE says why)
+    local i=$1 m=${FI_M[$1]} p=${FI_P[$1]}
+    FIND_NOTE=""
+    if [ "${FI_KIND[$i]}" = topic ] && [ -z "$p" ]; then     # no agent: the panel of this tab, with the topic selected
+        printf '%s %s\n' "${FI_REF[$i]}" "$$$RANDOM" > "$SHARED_DIR/select" 2>/dev/null; poke
+        panel_focus_active || { FIND_NOTE="no bhote panel in this tab: the topic is selected in the panels"; return 1; }
+        return 0
+    fi
+    [ -n "$m" ] || m=$HOST
+    agent_jump "$m" "$p" || { FIND_NOTE="$m is not a machine herdr knows here"; return 1; }
+    if [ "$m" != "$HOST" ]; then FIND_NOTE="selected on $m: switch to $m in herdr"; return 2; fi
+    return 0
+}
+find_main() {
+    [ -t 0 ] && [ -t 1 ] || { echo "bhote: find needs a terminal (bind it as a herdr popup: settings › Find key)" >&2; return 1; }
+    local q="" sel=0 c k2 k3 r _s note=""
+    if [ -n "$(find "$AGENT_LOCAL" -mmin -1 2>/dev/null)" ]; then :                 # the panels' lists are fresh: no herdr round trip
+    else AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote; collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote; fi
+    ui_load; topics_load; find_items; find_filter ""
+    _s=$(stty -g </dev/tty 2>/dev/null); stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null
+    trap 'stty "$_s" </dev/tty 2>/dev/null; printf "\033[?25h"; exit 0' INT TERM HUP
+    printf '\033[?25l\033[2J'
+    while true; do
+        [ "$sel" -ge "${#FI_HIT[@]}" ] && sel=$(( ${#FI_HIT[@]} - 1 )); [ "$sel" -lt 0 ] && sel=0
+        find_draw "$q" "$sel" "$note"; note=""
+        IFS= read -rsn1 c </dev/tty || break
+        case "$c" in
+            "") [ "${#FI_HIT[@]}" -gt 0 ] || continue
+                find_act "${FI_HIT[$sel]}"; r=$?
+                [ "$r" = 0 ] && break
+                note=$FIND_NOTE; [ "$r" = 2 ] && { find_draw "$q" "$sel" "$note"; sleep 1.6; break; } ;;
+            $'\033') read_soon k2
+                case "$k2" in
+                    "") break ;;
+                    "["|O) k3=""; while IFS= read -rsn1 -t 1 k3 </dev/tty; do case "$k3" in [0123456789\;]) ;; *) break ;; esac; done
+                           case "$k3" in A) sel=$(( sel - 1 )) ;; B) sel=$(( sel + 1 )) ;; esac ;;
+                esac ;;
+            $'\177'|$'\010') q=${q%?}; find_filter "$q"; sel=0 ;;
+            $'\025') q=""; find_filter ""; sel=0 ;;                 # Ctrl-U
+            $'\020') sel=$(( sel - 1 )) ;; $'\016') sel=$(( sel + 1 )) ;;   # Ctrl-P / Ctrl-N
+            $'\t') sel=$(( sel + 1 )) ;;
+            [[:cntrl:]]) ;;
+            *) [ "${#q}" -lt 60 ] && q="$q$c"; find_filter "$q"; sel=0 ;;
+        esac
+    done
+    stty "$_s" </dev/tty 2>/dev/null; printf '\033[?25h'
+    return 0
+}
 bhote_help() {
     cat <<'HELP'
 bhote — topics and agents next to herdr.
@@ -2774,6 +2936,7 @@ bhote — topics and agents next to herdr.
   bhote transfer <from> <to> [-t <topic>]   Steal & Transfer: <from> commits and hands its work over to <to>
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
+  bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
 
@@ -2801,6 +2964,7 @@ bhote_cli() {
         event) bhote_info; cli_event ;;
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
+        find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
         add)  local title="" who="" st="" desc="" arg
               while [ $# -gt 0 ]; do

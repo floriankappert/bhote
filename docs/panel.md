@@ -18,6 +18,9 @@ and the agents below.
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
 | `,` | settings (the full key list is under *Hotkeys* there) · `S` welcome screen · `q` quit |
 
+The find key (settings › *Find key*, e.g. `ctrl+alt+t`, on the Mac ⌘T) opens a search popup over all agents and topics:
+type, choose, `⏎` jumps there.
+
 Click an agent in the agent area to focus it in herdr. An agent on another machine is selected there; herdr lets only its
 client switch machines, so the key line says to switch to that machine in herdr.
 

@@ -185,6 +185,13 @@ Called by the [herdr plugin](herdr-plugin.md) on `pane.agent_status_changed` wit
 not reported back itself, the topic goes to `review` and a herdr notification says so. Every event also makes the panels
 refresh at once.
 
+### `bhote find`
+
+Search all agents (every machine) and topics: type to filter (every word must appear), `↑↓` choose, `⏎` jump, `Esc`
+close. An agent is focused in herdr (on another machine it is selected there; switch to that machine in herdr). A topic jumps
+to its agent; without one, to the bhote panel of the tab, with the topic selected. Meant for a herdr popup: settings ›
+*Find key* (`FIND_KEY`) binds it. Needs a terminal.
+
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.1.0` (`--json`: `{"version":"0.1.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
