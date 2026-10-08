@@ -1,0 +1,16 @@
+name: Release check
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  versions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version in bhote, PKGBUILD, formula and CHANGELOG matches the tag
+        run: bash tools/release-check.sh "$GITHUB_REF_NAME"

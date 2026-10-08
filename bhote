@@ -2307,6 +2307,7 @@ projects_load() {  # P_* arrays, by name
     for (( i = 1; i < P_N; i++ )); do                          # by name (insertion sort, a handful of projects)
         for (( j = i; j > 0; j-- )); do
             [[ "${P_NAME[$(( j - 1 ))]}" > "${P_NAME[$j]}" ]] || break
+            # shellcheck disable=SC1087  # the array name is a variable: eval builds ${name[j]}
             for t in P_ID P_NAME P_REPOS P_WS P_FILE; do eval "local _a=\${$t[$j]}; $t[$j]=\${$t[$(( j - 1 ))]}; $t[$(( j - 1 ))]=\$_a"; done
         done
     done
@@ -3292,6 +3293,7 @@ w_yn() {  # w_yn <question> <Y|N>: 0 yes, 1 no, 2 skip (s), 3 quit (q); only y, 
     local hint="Y/n" __q __w __ws __line="" __first=1 __room=$(( W - 7 )); [ "$2" = N ] && hint="y/N"
     read -r -a __ws <<< "$1"; printf '\n'
     for __w in ${__ws[@]+"${__ws[@]}"}; do
+        # shellcheck disable=SC1075  # an if inside the else branch, on one line
         if [ -z "$__line" ]; then __line=$__w
         elif [ $(( ${#__line} + 1 + ${#__w} )) -le "$__room" ]; then __line="$__line $__w"
         else if [ "$__first" = 1 ]; then printf '  %s▶%s %s%s%s\n' "$C" "$X" "$L" "$__line" "$X"; __first=0; else printf '    %s%s%s\n' "$L" "$__line" "$X"; fi; __line=$__w; fi
@@ -4297,6 +4299,7 @@ cli_event() {
     fi
     if [ -n "$ask" ]; then
         local line m_ aid ast anm atask; anm=""; atask=""
+        # shellcheck disable=SC2066  # one file on purpose (a loop, so that break ends the search)
         for line in "$AGENT_LOCAL"; do [ -r "$line" ] && while IFS=$US read -r m_ aid ast anm atask; do [ "$m_" = "$HOST" ] && [ "$aid" = "$pane" ] && break; anm=""; atask=""; done < "$line"; done
         anm=${anm:-agent}
         [ "$ask" = "needs your answer" ] && atask="needs your answer" || atask=$ask            # the question itself is the description
