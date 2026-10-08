@@ -8,6 +8,7 @@
 | `[[startup]]` | herdr starts (and on server handoff) | In every tab: split the agent pane (or the first pane) to the right, about 44 columns, and run `bhote` in the new pane. |
 | `[[events]] worktree.created` | a worktree was created | the same, for tabs that have no panel yet |
 | `[[events]] pane.agent_status_changed` | an agent's status changed | `bhote event`: a finished agent moves its topic to review (with a notification); all panels refresh at once |
+| action `changed` | another machine's `bhote event` | That machine's agents changed: bhote asks it again at once (`PUSH_STATES`). |
 | action `Bhote: open panel` | by hand | the same for the focused tab only, also when the autostart is off |
 | action `Bhote: jump to the panel and back` (`bhote.panel.focus`) | a key you bind | Focuses the bhote panel of the tab; from the panel, back to the pane you came from. A tab without a panel gets one first. |
 

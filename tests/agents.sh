@@ -8,7 +8,7 @@ mkdir -p "$T/bin"
 cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 case "$*" in
- *"pane run"*|*"agent prompt"*|*"notification show"*) echo "$*" >> "$FAKE_LOG" ;;
+ *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*) echo "$*" >> "$FAKE_LOG" ;;
  *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
  *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
@@ -119,4 +119,11 @@ PICK_MODE=start; pick_do 0; [ -z "$(topic_get "$tf" agent_pane)$(topic_get "$tf"
 blocked_live() { LIVE_ST=blocked; LIVE_SESS=""; LIVE_CWD=""; }
 ( agent_live() { if [ "$2" = w3:p1 ]; then blocked_live; else LIVE_ST=idle; fi; }
   transfer_start "$tf" Mac w3:p1 busy Mac w2:p1 server 2>/dev/null ) && bad "blocked source accepted" || ok "transfer: a blocked source agent is refused"
+# push: an agent event here tells the other machines at once (only with REMOTE_AGENTS on); remote-changed marks a query
+: > "$FAKE_LOG"; cfg_set REMOTE_AGENTS on
+HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w1:p1","agent_status":"working"}}' cli_event
+grep -q -- "--machine Laptop plugin action invoke changed --plugin bhote.panel" "$FAKE_LOG" && ok "push: the other machine is told at once" || bad "no push: $(cat "$FAKE_LOG")"
+cfg_set PUSH_STATES off; : > "$FAKE_LOG"; HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w1:p1","agent_status":"idle"}}' cli_event
+grep -q "invoke changed" "$FAKE_LOG" && bad "pushed although PUSH_STATES=off" || ok "push: PUSH_STATES=off keeps quiet"
+rm -f "$SHARED_DIR/remote.due"; ( bhote_cli remote-changed ); [ -e "$SHARED_DIR/remote.due" ] && ok "remote-changed: the collector asks the other machines at once" || bad "remote.due missing"
 rm -rf "$T"; exit $fail

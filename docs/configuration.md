@@ -12,6 +12,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `STORE` | `local` | Data location | `remote` keeps a replica of the topics on `STORE_MACHINE` ([data and sync](data-and-sync.md)). |
 | `STORE_MACHINE` | | Data location | The label of a saved herdr machine (`herdr machine list`). |
 | `SYNC_VIA` | `herdr` | Sync through | How topics travel to `STORE_MACHINE`: `herdr` (through herdr's own connection; each side pulls from the other) or `ssh` (bhote's own ssh; push and pull). See [data and sync](data-and-sync.md). |
+| `PUSH_STATES` | `on` | Push agent states at once | With `REMOTE_AGENTS` on: when an agent here changes its state, the other machines are told at once through herdr (the plugin action `changed`), so their panels show it within about a second instead of after `REMOTE_EVERY`. |
 | `REMOTE_AGENTS` | `off` | Remote agents (via herdr) | List the agents of the saved herdr machines, too (herdr asks them over its ssh connection). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
 | `PANEL_MIN_WIDTH` | `36` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |

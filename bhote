@@ -73,6 +73,7 @@ SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it 
 STORE|local|enum:local:remote|Where the topics are kept: local, or a replica on STORE_MACHINE
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
+PUSH_STATES|on|bool|When an agent here changes its state, tell the other machines at once (through herdr), so that their panels show it within a second (only with REMOTE_AGENTS on)
 REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
 MACHINES_OFF||list|Saved machines that stay out even with REMOTE_AGENTS=on
 PANEL_MIN_WIDTH|36|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
@@ -811,13 +812,14 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         if collector_lead "$1"; then
             local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
+            [ -e "$SHARED_DIR/remote.due" ] && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine
             collect_local                                       # first what the panels show; the merge can take a moment
-            # the data location: at once after a local change, otherwise as often as the remote agents
-            if [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; store_sync; [ $? = 2 ] && : > "$STORE_DIRTY"
-            elif [ "$remote_due" = 1 ]; then store_sync; fi
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
                 [ "$remote_due" = 1 ] && collect_remote
             elif [ -s "$AGENT_REMOTE" ]; then : > "$AGENT_REMOTE.tmp.$$"; agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"; fi
+            # the data location: at once after a local change, otherwise as often as the remote agents
+            if [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; store_sync; [ $? = 2 ] && : > "$STORE_DIRTY"
+            elif [ "$remote_due" = 1 ]; then store_sync; fi
             remind_waiting
             auto_assign
         fi
@@ -1245,6 +1247,7 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
 SET_ROWS=()
 settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exist only while REMOTE_AGENTS is on
     SET_ROWS=("choice|STORE|Data location" "enum|SYNC_VIA|Sync through" "bool|REMOTE_AGENTS|Remote agents (via herdr)")
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="bool|PUSH_STATES|Push agent states at once"
     if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
         local id label host prof enabled
         while IFS=$US read -r id label host prof enabled; do
@@ -2771,6 +2774,24 @@ agent_note() {  # agent_note <file>: when an agent runs the command, remember wh
 # An agent's status changed (the herdr plugin passes the event as HERDR_PLUGIN_EVENT_JSON, or on stdin). When an agent that
 # holds a running topic stops working (done / idle) and did not report back itself, the topic goes to review and you get a
 # notification. Either way the collector is poked, so every panel shows the new state at once.
+# Push: an agent here changed its state; the other machines ask this one again at once (the plugin action "changed" there),
+# like herdr's own client does with its live connection. One push at a time: an event during a push makes it run once more.
+push_peers() {
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && [ "$(cfg_get PUSH_STATES on)" = on ] || return 0
+    local lock=$SHARED_DIR/push.lock id label host prof en p k
+    if ! lock_take "$lock" "$$"; then : > "$SHARED_DIR/push.pending"; return 0; fi
+    while true; do
+        rm -f "$SHARED_DIR/push.pending"
+        herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof en; do
+            [ -n "$label" ] && [ "$label" != "$HOST" ] && [ "$en" = enabled ] || continue
+            herdr --machine "$label" plugin action invoke changed --plugin bhote.panel >/dev/null 2>&1 & p=$!
+            ( sleep 6; kill "$p" 2>/dev/null ) & k=$!                # an unreachable machine must not hold the event up
+            wait "$p" 2>/dev/null; kill "$k" 2>/dev/null
+        done
+        [ -e "$SHARED_DIR/push.pending" ] || break
+    done
+    lock_drop "$lock" "$$"
+}
 cli_event() {
     local ev pane st sess i f now; ev=${HERDR_PLUGIN_EVENT_JSON:-}; [ -n "$ev" ] || ev=$(head -c 65536)
     command -v jq >/dev/null 2>&1 || return 0
@@ -2778,6 +2799,7 @@ cli_event() {
         [ ($p.pane_id // $d.pane_id // ""), ($d.agent_status // $p.agent_status // $d.status // ""), (($p.agent_session.value // $d.agent_session.value // "") | tostring) ]
         | map(tostring | gsub("[^A-Za-z0-9:_-]"; "")) | map(if . == "" then "-" else . end) | join(" ")' 2>/dev/null)"
     poke
+    push_peers                                                 # the other machines' panels show it at once, too
     case "$st" in done|idle) ;; *) return 0 ;; esac
     [ "$(cfg_get STORE local)" = remote ] && store_sync >/dev/null 2>&1   # the topic may have been handed out on the other machine
     [ "$pane" = - ] && pane=""; [ "$sess" = - ] && sess=""
@@ -3186,6 +3208,7 @@ bhote_cli() {
         handover) cli_handover "$@" ;;
         setup) bhote_info; if [ -n "$json" ]; then setup_status_json; else term_size 2>/dev/null; bhote_setup; fi ;;
         event) bhote_info; cli_event ;;
+        remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
         find) bhote_info; find_main ;;
