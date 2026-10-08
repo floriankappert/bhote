@@ -939,15 +939,16 @@ agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | 
     printf -v "$1" '%s' "$gone"
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked and done ones only counted
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc ndone=0 hidden=0 max nlater=0 ndn=0 shown=0 open=0
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc ndone=0 hidden=0 max nlater=0 ndn=0 open=0
     num_set max "${U_DONE_MAX:-}" 7
     sel_index
+    for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && open=$(( open + 1 )); done
+    [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected one stays: chosen in the search, or just checked off)
             case "$st" in later) nlater=$(( nlater + 1 )) ;; done) ndn=$(( ndn + 1 )) ;; esac; continue
         fi
-        shown=$(( shown + 1 )); case "$st" in done|later) ;; *) open=$(( open + 1 )) ;; esac
         if [ "$st" = done ]; then                              # beyond the cap only the selected one is shown
             ndone=$(( ndone + 1 ))
             if [ "$ndone" -gt "$max" ] && [ "$i" != "$SEL_IDX" ]; then hidden=$(( hidden + 1 )); continue; fi
@@ -974,7 +975,6 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
     done
     [ "$hidden" -gt 0 ] && printf '  %s+%d more%s\n' "$D" "$hidden" "$X"
-    [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting
     if [ $(( nlater + ndn )) -gt 0 ]; then                      # where the others are
         local rest=""; [ "$nlater" -gt 0 ] && rest="$nlater parked"; [ "$ndn" -gt 0 ] && rest="${rest:+$rest · }$ndn done"
         [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
@@ -984,9 +984,9 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
     local art=(".-----.  .-----.  zZ" "| -_- |  | u_u | z" "'--+--'  '--+--'" "  /|\\      /|\\") l in=$(( ${COLS:-44} - 4 ))
     if [ "$in" -lt 20 ] || [ -n "${BORED_SMALL:-}" ]; then printf '\n  %s%s%s\n' "$D" "$(clip "agents are bored · n" "$in")" "$X"; return; fi
-    printf '\n'; for l in "${art[@]}"; do printf '%*s%s%s%s\n' $(( 2 + (in - 16) / 2 )) "" "$D" "$l" "$X"; done   # (16: the two agents, zZ hangs out)
+    printf '\n\n'; for l in "${art[@]}"; do printf '%*s%s%s%s\n' $(( 2 + (in - 16) / 2 )) "" "$D" "$l" "$X"; done   # (16: the two agents, zZ hangs out)
     printf '\n%*s%s%s\n' $(( 2 + (in - 20) / 2 )) "" "${L}the agents are bored" "$X"
-    printf '%*s%sn%s %sgives them work%s\n' $(( 2 + (in - 17) / 2 )) "" "$S" "$X" "$D" "$X"
+    printf '%*s%sn%s %sgives them work%s\n\n' $(( 2 + (in - 17) / 2 )) "" "$S" "$X" "$D" "$X"
 }
 name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS rule (part-of-name=colour) that matches, else plain
     local _r _p _c _col="$L"
