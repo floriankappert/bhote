@@ -728,9 +728,15 @@ AGENT_LOCAL="$SHARED_DIR/agents.local"
 AGENT_REMOTE="$SHARED_DIR/agents.remote"
 agents_all() { cat "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null; }
 collect_one() {  # collect_one <machine label> [herdr options: --machine X]
-    local label=$1 panes ws; shift
-    panes=$(herdr "$@" pane list 2>/dev/null) || return 0
-    ws=$(herdr "$@" workspace list 2>/dev/null)
+    local label=$1 panes="" ws="" snap; shift
+    if [ $# -gt 0 ]; then                                      # another machine: one call (each one costs an ssh connection)
+        snap=$(herdr "$@" api snapshot 2>/dev/null)
+        if [ -n "$snap" ]; then
+            panes=$(printf '%s' "$snap" | jq -c '{result: {panes: (.result.snapshot.panes // empty)}}' 2>/dev/null)
+            ws=$(printf '%s' "$snap" | jq -c '{result: {workspaces: (.result.snapshot.workspaces // [])}}' 2>/dev/null)
+        fi
+    fi
+    if [ -z "$panes" ]; then panes=$(herdr "$@" pane list 2>/dev/null) || return 0; ws=$(herdr "$@" workspace list 2>/dev/null); fi
     # control characters out of every text (a name must not carry escape codes to the terminal), only plain pane ids
     local tb; cfg_var tb TESTS_BUSY off
     printf '%s\n%s\n' "$panes" "$ws" | jq -rs --arg m "$label" --arg tb "$tb" '
