@@ -1070,13 +1070,13 @@ view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of
     agents_block
     rule
     local sg="" left right="" room=$(( ${COLS:-44} - 4 )) lw rw
-    suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} new"
+    suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} agents-topics"
     left="↑↓ move · , settings$sg"
     [ -n "${FOCUS_KEY:-}" ] && right="$FOCUS_KEY ⇄"         # bottom right: the herdr key that jumps here and back
     dw_set lw "$left"; dw_set rw "$right"
     if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=", settings$sg"; dw_set lw "$left"; fi
     if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=${sg# · }; dw_set lw "$left"; fi   # narrow: suggestions and the key
-    if [ -n "$right" ] && [ $(( lw + 3 + rw )) -le "$room" ]; then
+    if [ -n "$right" ] && [ $(( lw + 1 + rw )) -le "$room" ]; then
         printf '  %s%s%*s%s%s%s' "$D" "$left" $(( room - lw - rw )) "" "$S" "$right" "$X"
     else printf '  %s%s%s' "$D" "$(clip "$left" "$room")" "$X"; fi
 }
