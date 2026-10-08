@@ -96,7 +96,7 @@ AUTOSTART|on|bool|The herdr plugin opens the panel next to the agents when herdr
 FIND_KEY||text|The herdr key that opens the search popup: find a topic or an agent and jump to it (e.g. ctrl+alt+t; off removes it)
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
-DONE_MAX|7|int:0:999|Done topics shown before +n more
+DONE_MAX|7|int:0:999|The last done topics shown above the agents (0: none)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
 NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve
 COLOR_TEXT||color|Override: text (#rrggbb)
@@ -938,20 +938,16 @@ agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | 
     done
     printf -v "$1" '%s' "$gone"
 }
-topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked and done ones only counted
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc ndone=0 hidden=0 max nlater=0 ndn=0 open=0
-    num_set max "${U_DONE_MAX:-}" 7
+topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0
     sel_index
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && open=$(( open + 1 )); done
     [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
-        if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected one stays: chosen in the search, or just checked off)
-            case "$st" in later) nlater=$(( nlater + 1 )) ;; done) ndn=$(( ndn + 1 )) ;; esac; continue
-        fi
-        if [ "$st" = done ]; then                              # beyond the cap only the selected one is shown
-            ndone=$(( ndone + 1 ))
-            if [ "$ndone" -gt "$max" ] && [ "$i" != "$SEL_IDX" ]; then hidden=$(( hidden + 1 )); continue; fi
+        [ "$st" = done ] && continue                             # (in done_block, above the agents)
+        if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected parked one stays: chosen in the search)
+            nlater=$(( nlater + 1 )); continue
         fi
         if [ "$st" != "$prev" ]; then
             case "$st" in now) label=NOW; lc=$ORANGE ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
@@ -974,12 +970,28 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
     done
-    [ "$hidden" -gt 0 ] && printf '  %s+%d more%s\n' "$D" "$hidden" "$X"
-    if [ $(( nlater + ndn )) -gt 0 ]; then                      # where the others are
-        local rest=""; [ "$nlater" -gt 0 ] && rest="$nlater parked"; [ "$ndn" -gt 0 ] && rest="${rest:+$rest · }$ndn done"
-        [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
+    if [ "$nlater" -gt 0 ]; then                                # where the others are
+        local rest="$nlater parked"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
         printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
     fi
+}
+done_block() {  # done_block <max>: the last done topics (newest first), above the agents; the selected one (just checked off) too
+    local max=$1 i k n=0 all=0 idx=() tc sl right="" rw
+    [ "$max" -gt 0 ] || return 0
+    sel_index
+    while IFS=' ' read -r k i; do                              # newest first: by the last change (checking off is one)
+        [ -n "$i" ] || continue; all=$(( all + 1 ))
+        if [ "$n" -lt "$max" ] || [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then idx[$n]=$i; n=$(( n + 1 )); fi
+    done <<< "$(for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && printf '%s %s\n' "${T_UPD[$i]:-0}" "$i"; done | sort -k1,1nr -k2,2nr)"
+    [ "$n" -gt 0 ] || return 0
+    [ "$all" -gt "$n" ] && { right="+$(( all - n ))"; [ -n "${FIND_KEY_SHOW:-}" ] && right="$right · ${FIND_KEY_SHOW} search"; }
+    dw_set rw "$right"
+    printf '\n  %sDONE%s%*s%s%s%s\n' "$GREEN" "$X" $(( ${COLS:-44} - 8 - rw )) "" "$D" "$right" "$X"
+    tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"         # muted but bold like every title, one line each
+    for (( k = 0; k < n; k++ )); do
+        i=${idx[$k]}; sl=0; [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && sl=1   # only a chosen one (not the fallback of sel_index)
+        topic_item "$sl" "$D" "" "$tc" "${T_TITLE[$i]:-(untitled)}" "" "" "" 1
+    done
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
     local art=(".-----.  .-----.  zZ" "| -_- |  | u_u | z" "'--+--'  '--+--'" "  /|\\      /|\\") l in=$(( ${COLS:-44} - 4 ))
@@ -1219,10 +1231,14 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
     local _n=0 _l; while IFS= read -r _l; do _n=$(( _n + 1 )); done <<< "$2"; printf -v "$1" '%s' "$_n"
 }
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
-    local head topics bottom hh th bh avail pad=0 i off sel=-1 content tl=() n=0 line
+    local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() n=0 line
     head=$(view_head); topics=$(topics_block); bottom=$(view_bottom)
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
-    avail=$(( ${ROWS:-40} - hh - bh ))
+    num_set dn "${U_DONE_MAX:-}" 7; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
+    while [ "$dh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
+        dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
+    done
+    avail=$(( ${ROWS:-40} - hh - bh - dh ))
     case "$th:$topics" in *"the agents are bored"*) [ "$th" -gt "$avail" ] && {   # no room for the bored agents: their line only
         topics=$(BORED_SMALL=1 topics_block); count_lines th "$topics"; } ;; esac
     printf '%s\n' "$head"
@@ -1240,6 +1256,7 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
         n=0; while IFS= read -r line && [ "$n" -lt "$avail" ]; do printf '%s\n' "${line#$'\001'}"; n=$(( n + 1 )); done <<< "$topics"
     fi
     for (( i = 0; i < pad; i++ )); do printf '\n'; done
+    [ "$dh" -gt 0 ] && printf '%s\n' "${dblk//$'\001'/}"
     echo $(( ${ROWS:-40} - bh + 1 )) > "$RUN_DIR/divrow" 2>/dev/null     # the divider is the first line of the bottom part
     printf '%s' "$bottom"
 }

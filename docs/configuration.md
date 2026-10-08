@@ -32,7 +32,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `SPLASH_SECONDS` | `15` | | Seconds until the welcome screen closes itself. |
 | `AUTOSTART` | `on` | Auto-start with herdr | The [herdr plugin](herdr-plugin.md) opens the panel when herdr starts. |
 | `AGENT_ROWS` | automatic | drag the `═══` divider | Height of the agent area in rows. |
-| `DONE_MAX` | `7` | | Done topics shown in the list before `+n more`. |
+| `DONE_MAX` | `7` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
 | `HOST_LABEL` | `Mac` on macOS, else the host name | | How this machine is called in agent lists. Should match the label other machines use for it in `herdr machine list`. |
 | `JUMP_KEY` | | Jump key (herdr) | The herdr key that jumps between the agent and the bhote panel of the tab (e.g. `prefix+t`; `off` removes it). bhote writes it into herdr's `config.toml` (a block between `# >>> bhote` and `# <<< bhote`) and reloads herdr; a key herdr refuses changes nothing. |
 | `FIND_KEY` | | Find key (herdr) | The herdr key that opens `bhote find` as a popup (e.g. `ctrl+alt+t`; on macOS a terminal can send it for ⌘T). Written the same way. |
