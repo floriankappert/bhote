@@ -86,6 +86,7 @@ ANIMATION|on|bool|The dog on the welcome screen blinks and pants
 SPLASH_AUTOCLOSE|on|bool|The welcome screen closes by itself
 SPLASH_SECONDS|15|int:1:600|Seconds until the welcome screen closes itself
 AUTOSTART|on|bool|The herdr plugin opens the panel next to the agents when herdr starts
+JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
 DONE_MAX|7|int:0:999|Done topics shown before +n more
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
@@ -680,6 +681,7 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
         [ -n "$HOST" ] || { HOST=$([ "$(uname -s)" = Darwin ] && echo Mac || { hostname -s 2>/dev/null || uname -n; }); HOST=${HOST%%.*}; }
         HOST=${HOST//[[:cntrl:]]/}; HOST=${HOST:-local}
         HAS_MACHINES=$([ -n "$(herdr machine list 2>/dev/null)" ] && echo 1 || echo 0)
+        focus_key_set FOCUS_KEY
     fi
 }
 # Everything a screen needs, read ONCE per repaint and without starting a single process (except one `date`): the settings,
@@ -1015,11 +1017,68 @@ view_head() {  # one line: name and version in colour, the tagline; then a rule 
     printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X"
     rule
 }
+# The herdr key that jumps between agent and panel (the plugin action bhote.panel.focus), as herdr's config.toml binds it:
+# a [[keys.command]] block, or the inline form term-theme writes. "prefix+t" is shown with the prefix: "^b t".
+HERDR_CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml
+focus_key_set() {  # focus_key_set <var>: the key in short form, or empty when none is bound
+    local _k="" _p
+    if [ -r "$HERDR_CONFIG" ]; then
+        _k=$(awk '
+            function val(s, name) { if (!match(s, name " *= *\"[^\"]*\"")) return ""; s = substr(s, RSTART, RLENGTH); sub(/^[^"]*"/, "", s); sub(/"$/, "", s); return s }
+            /^[ \t]*\[/ { if (blk && cmd == "bhote.panel.focus" && k != "") { print k; done = 1; exit }
+                            blk = ($0 ~ /^[ \t]*\[\[keys\.command\]\]/); k = ""; cmd = ""; next }
+            /bhote\.panel\.focus/ && /key *= *"/ { n = split($0, parts, "}"); for (i = 1; i <= n; i++) if (parts[i] ~ /bhote\.panel\.focus/) { print val(parts[i], "key"); done = 1; exit } }
+            blk && /^[ \t]*key *= *"/ { k = val($0, "key") }
+            blk && /^[ \t]*command *= *"bhote\.panel\.focus"/ { cmd = "bhote.panel.focus" }
+            END { if (!done && blk && cmd == "bhote.panel.focus" && k != "") print k }' "$HERDR_CONFIG" 2>/dev/null)
+        _p=$(awk '/^[ \t]*\[/ { inkeys = ($0 ~ /^[ \t]*\[keys\][ \t]*$/); next } inkeys && /^[ \t]*prefix *= *"/ { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit }' "$HERDR_CONFIG" 2>/dev/null)
+    fi
+    _k=${_k//[[:cntrl:]]/}; _p=${_p:-ctrl+b}; FOCUS_KEY_RAW=$_k
+    case "$_k" in prefix+*) _k="$_p ${_k#prefix+}" ;; esac
+    _k=${_k//ctrl+/^}; _k=${_k//shift+/⇧}; _k=${_k//alt+/⌥}
+    printf -v "$1" '%s' "$_k"
+}
+# The key is kept in a block of its own in herdr's config.toml ("# >>> bhote" .. "# <<< bhote"): bhote rewrites only that
+# block, and tools that regenerate the file can keep it (the dotfiles' term-theme does). herdr checks it on reload; a key it
+# does not take puts the old file back.
+jump_key_apply() {  # jump_key_apply <key|off>: 0 when herdr took it
+    local k=$1 old tmp out
+    case "$k" in off|none|"") k="" ;; *[!A-Za-z0-9+_\;,.\[\]/=-]*) echo "bhote: odd characters in the key" >&2; return 1 ;; esac
+    [ "${#k}" -le 40 ] || { echo "bhote: the key is too long" >&2; return 1; }
+    mkdir -p "$(dirname "$HERDR_CONFIG")" && touch "$HERDR_CONFIG" || return 1
+    old=$(mktemp "$RUN_DIR/herdrcfg.XXXXXX") && cp "$HERDR_CONFIG" "$old" || return 1
+    tmp=$(mktemp "$HERDR_CONFIG.XXXXXX") || return 1
+    awk '/^# >>> bhote/ { skip = 1; next } /^# <<< bhote/ { skip = 0; next } !skip { l[++n] = $0 }
+         END { while (n > 0 && l[n] == "") n--; for (i = 1; i <= n; i++) print l[i] }' "$HERDR_CONFIG" > "$tmp"
+    if [ -n "$k" ] && HERDR_CONFIG=$tmp focus_key_set _JK_OTHER && [ -n "$_JK_OTHER" ]; then   # bound by hand elsewhere in the file
+        rm -f "$tmp" "$old"; echo "bhote: bound by hand in config.toml ($_JK_OTHER): change it there" >&2; return 1
+    fi
+    if [ -n "$k" ]; then
+        [ -s "$tmp" ] && [ -n "$(tail -c1 "$tmp")" ] && printf '\n' >> "$tmp"
+        printf '\n# >>> bhote (settings › Jump key; bhote rewrites this block)\n[[keys.command]]\nkey = "%s"\ntype = "plugin_action"\ncommand = "bhote.panel.focus"\ndescription = "Bhote panel"\n# <<< bhote\n' "$k" >> "$tmp"
+    fi
+    mv "$tmp" "$HERDR_CONFIG"
+    out=$(herdr server reload-config 2>&1) || out=$(herdr config check 2>&1 && echo '"status":"applied","diagnostics":[]')
+    case "$out" in *'"status":"applied"'*'"diagnostics":[]'*|*'"diagnostics":[]'*'"status":"applied"'*) ;;
+        *) cp "$old" "$HERDR_CONFIG"; rm -f "$old"; herdr server reload-config >/dev/null 2>&1
+           echo "bhote: herdr did not take '$k': $(printf '%s' "$out" | jq -r '[.result.diagnostics[]? | .message // tostring] | join("; ")' 2>/dev/null | head -c 160)" >&2; return 1 ;;
+    esac
+    rm -f "$old"; cfg_set JUMP_KEY "${k:-off}"; focus_key_set FOCUS_KEY
+    return 0
+}
 view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
     agents_block
     rule
-    local sg=""; suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} new"
-    printf '  %s%s%s' "$D" "$(clip "↑↓ move · , settings$sg" $(( ${COLS:-44} - 4 )))" "$X"
+    local sg="" left right="" room=$(( ${COLS:-44} - 4 )) lw rw
+    suggest_build; [ "${#SUG_MAP[@]}" -gt 0 ] && sg=" · a: ${#SUG_MAP[@]} new"
+    left="↑↓ move · , settings$sg"
+    [ -n "${FOCUS_KEY:-}" ] && right="$FOCUS_KEY ⇄"         # bottom right: the herdr key that jumps here and back
+    dw_set lw "$left"; dw_set rw "$right"
+    if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=", settings$sg"; dw_set lw "$left"; fi
+    if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=${sg# · }; dw_set lw "$left"; fi   # narrow: suggestions and the key
+    if [ -n "$right" ] && [ $(( lw + 3 + rw )) -le "$room" ]; then
+        printf '  %s%s%*s%s%s%s' "$D" "$left" $(( room - lw - rw )) "" "$S" "$right" "$X"
+    else printf '  %s%s%s' "$D" "$(clip "$left" "$room")" "$X"; fi
 }
 count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution on text full of escapes and UTF-8 is very slow in bash 3.2)
     local _n=0 _l; while IFS= read -r _l; do _n=$(( _n + 1 )); done <<< "$2"; printf -v "$1" '%s' "$_n"
@@ -1093,6 +1152,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
     SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
+    SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="link|SETUP|Setup wizard"
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
 }
@@ -1113,12 +1173,14 @@ bhote_settings() {
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
             link) vp="›"; vc="${D}›${X}" ;;
+            key) vp=${FOCUS_KEY:-off}; vc="${C}${vp}${X}" ;;
             enum) setting_row "$key"; cfg_var v "$key" "$S_DEF"; vp="‹ $v ›"; vc="${C}${vp}${X}" ;;
         esac
         set_row "$sel" "$label" "$vp" "$vc" "$ind"
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
             REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
+            JUMP_KEY) wrap_print 5 "$D" "${JUMP_MSG:-⏎ change. Jumps from the agent to this panel and back.}" ;;
         esac
     done
     printf '\n'; rule
@@ -1139,6 +1201,9 @@ bhote_hotkeys() {  # every key, grouped by screen
     hk "↑↓" "choose"; hk "→ ⏎" "do it"; hk "← esc" "back"; hk "x" "dismiss a suggestion"
     hk_group "SETTINGS"
     hk "↑↓" "select"; hk "space ⏎" "switch"; hk "←→" "change a value"; hk ", esc" "back"
+    hk_group "HERDR"
+    if [ -n "${FOCUS_KEY:-}" ]; then hk "$FOCUS_KEY" "jump to this panel and back"
+    else hk "-" "jump here: bind bhote.panel.focus (bhote setup)"; fi
     hk_group "MOUSE"
     hk "drag ═══" "resize the agent area"
     printf '\n'; rule
@@ -1173,6 +1238,15 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
                 v=$(num_or "$(cfg_get "$key" "$S_DEF")" "$S_DEF")
                 if [ "$k" = RIGHT ]; then v=$(( v + 1 )); else v=$(( v > lo ? v - 1 : lo )); fi
                 setting_check "$key" "$v" 2>/dev/null && cfg_set "$key" "$v"; return
+            fi
+            if [ "$kind" = key ]; then                               # ⏎ / space: type a new key (herdr's syntax)
+                [ "$k" = LEFT ] || [ "$k" = RIGHT ] && return
+                focus_key_set FOCUS_KEY
+                if ask "herdr key (prefix+t, alt+b, off): " "${FOCUS_KEY_RAW:-prefix+t}" 40 && [ -n "$ANSWER" ]; then
+                    if jump_key_apply "$ANSWER" 2> "$RUN_DIR/jkerr"; then JUMP_MSG="Saved: ${FOCUS_KEY:-off}. herdr has it now."
+                    else JUMP_MSG=$(head -1 "$RUN_DIR/jkerr"); JUMP_MSG=${JUMP_MSG#bhote: }; JUMP_MSG="Not changed: ${JUMP_MSG:-herdr refused it}"; fi
+                fi
+                return
             fi
             if [ "$kind" = link ]; then [ "$k" = LEFT ] || { [ "$key" = SETUP ] && SETTINGS_GO=setup || SETTINGS_GO=hotkeys; }; return; fi
             if [ "$kind" = enum ]; then                              # step through the allowed values
@@ -2154,6 +2228,16 @@ setup_step_panel() {
     case $r in 0) cfg_set AUTOSTART on ;; 1) cfg_set AUTOSTART off ;; esac
     w_yn "Let the dog on the welcome screen blink and pant?" "$([ "$(cfg_get ANIMATION on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set ANIMATION on ;; 1) cfg_set ANIMATION off ;; esac
+    focus_key_set FOCUS_KEY
+    if [ -n "$FOCUS_KEY" ]; then w_ok "jump key" "$FOCUS_KEY: agent ⇄ panel"
+    else
+        w_say "A herdr key can jump from the agent to this panel and back (prefix, then t). Change it later in the settings."
+        w_yn "Add it to ${HERDR_CONFIG/#$HOME/~} (prefix+t)?" Y; r=$?; [ $r = 3 ] && return
+        if [ $r = 0 ]; then
+            if jump_key_apply prefix+t 2> "$RUN_DIR/jkerr"; then w_ok "jump key" "$FOCUS_KEY: agent ⇄ panel"
+            else w_bad "jump key" "$(head -1 "$RUN_DIR/jkerr")"; fi
+        fi
+    fi
     w_continue
 }
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
@@ -2592,10 +2676,12 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
              shift 2; v="$*"
              setting_check "$key" "$v" || return 1
              case "$S_TYPE" in int:*) v=$(num_or "$v" "$v") ;; esac     # stored plain: 007 is 7
+             if [ "$key" = JUMP_KEY ]; then jump_key_apply "$v" || return 1; cli_config get "$key"; return; fi
              cfg_set "$key" "$v"
              case "$key" in STORE|STORE_MACHINE) : > "$STORE_DIRTY" ;; esac
              cli_config get "$key" ;;
         unset) setting_check "$key" "" || return 1
+             [ "$key" = JUMP_KEY ] && { jump_key_apply off || return 1; }
              local tmp="$CONFIG_FILE.tmp.$$"
              if [ -r "$CONFIG_FILE" ]; then grep -v "^$key=" "$CONFIG_FILE" > "$tmp"; mv "$tmp" "$CONFIG_FILE"; fi
              cli_config get "$key" ;;

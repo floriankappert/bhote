@@ -16,7 +16,7 @@ package() {
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
   install -d "$pkgdir/usr/share/bhote/herdr-plugin"
   install -m644 herdr-plugin/herdr-plugin.toml "$pkgdir/usr/share/bhote/herdr-plugin/"
-  install -m755 herdr-plugin/open_panel.sh herdr-plugin/on_event.sh herdr-plugin/dump.sh "$pkgdir/usr/share/bhote/herdr-plugin/"
+  install -m755 herdr-plugin/open_panel.sh herdr-plugin/on_event.sh herdr-plugin/dump.sh herdr-plugin/focus.sh "$pkgdir/usr/share/bhote/herdr-plugin/"
   install -Dm644 integrations/claude/skills/bhote/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote/SKILL.md"
   install -d "$pkgdir/usr/share/doc/$pkgname"
   cp -r docs/. "$pkgdir/usr/share/doc/$pkgname/"

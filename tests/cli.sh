@@ -98,4 +98,12 @@ B done "Agent task" >/dev/null; [ "$(B show "Agent task" --json | python3 -c 'im
 B config unset AGENT_CAN_CLOSE >/dev/null
 n_plain=$(B dump | grep -c '^@@'); n_packed=$(B dump --packed | BHOTE_SOURCE_ONLY=1 bash -c '. ./bhote; dump_unpack' | grep -c '^@@')
 [ "$n_plain" = "$n_packed" ] && [ "$n_plain" -gt 1 ] && ok "dump --packed (for herdr) unpacks to the same topics" || bad "packed dump differs: $n_plain vs $n_packed"
+# the jump key: bhote writes its own block into herdr's config.toml; herdr checks it, a refused key leaves the file as it was
+mkdir -p "$T/hb"; printf '%s\n' '#!/bin/sh' 'case "$*" in *reload-config*) if grep -q "key = \"bad" "$XDG_CONFIG_HOME/herdr/config.toml"; then echo "{\"result\":{\"diagnostics\":[{\"message\":\"no\"}],\"status\":\"rejected\"}}"; else echo "{\"result\":{\"diagnostics\":[],\"status\":\"applied\"}}"; fi ;; esac' > "$T/hb/herdr"; chmod +x "$T/hb/herdr"
+HB() { PATH="$T/hb:$PATH" XDG_CONFIG_HOME=$T/xdg bash ./bhote "$@"; }
+mkdir -p "$T/xdg/herdr"; printf '[keys]\nprefix = "ctrl+space"\n' > "$T/xdg/herdr/config.toml"
+HB config set JUMP_KEY prefix+t >/dev/null && grep -q '^key = "prefix+t"' "$T/xdg/herdr/config.toml" && ok "jump key: written into herdr's config.toml" || bad "jump key not written"
+cp "$T/xdg/herdr/config.toml" "$T/before"; HB config set JUMP_KEY bad+x >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && cmp -s "$T/before" "$T/xdg/herdr/config.toml" && ok "jump key: a key herdr refuses changes nothing" || bad "refused key: rc=$rc"
+HB config set JUMP_KEY off >/dev/null && ! grep -q 'bhote' "$T/xdg/herdr/config.toml" && grep -q 'prefix = "ctrl+space"' "$T/xdg/herdr/config.toml" && ok "jump key: off removes only bhote's block" || bad "off: $(cat "$T/xdg/herdr/config.toml")"
 rm -rf "$T"; exit $fail

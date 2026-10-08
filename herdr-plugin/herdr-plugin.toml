@@ -1,6 +1,6 @@
 id = "bhote.panel"
 name = "Bhote Panel"
-version = "0.3.0"
+version = "0.4.0"
 min_herdr_version = "0.8.2"
 description = "Opens the Bhote side panel (topics + agents) on the right of every tab, about as wide as the herdr sidebar, when herdr starts"
 platforms = ["macos", "linux"]
@@ -27,3 +27,9 @@ id = "dump"
 title = "Bhote: topics for another machine"
 contexts = ["global"]
 command = ["sh", "dump.sh"]
+
+[[actions]]
+id = "focus"
+title = "Bhote: jump to the panel and back"
+contexts = ["global"]
+command = ["sh", "focus.sh"]

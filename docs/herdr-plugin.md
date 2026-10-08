@@ -9,6 +9,17 @@
 | `[[events]] worktree.created` | a worktree was created | the same, for tabs that have no panel yet |
 | `[[events]] pane.agent_status_changed` | an agent's status changed | `bhote event`: a finished agent moves its topic to review (with a notification); all panels refresh at once |
 | action `Bhote: open panel` | by hand | the same for the focused tab only, also when the autostart is off |
+| action `Bhote: jump to the panel and back` (`bhote.panel.focus`) | a key you bind | Focuses the bhote panel of the tab; from the panel, back to the pane you came from. A tab without a panel gets one first. |
+
+Bind the jump to a key in herdr's `config.toml` (the setup wizard offers it); the panel shows the key bottom right:
+
+```toml
+[[keys.command]]
+key = "prefix+t"
+type = "plugin_action"
+command = "bhote.panel.focus"
+description = "Bhote panel"
+```
 
 Rules the plugin follows:
 
