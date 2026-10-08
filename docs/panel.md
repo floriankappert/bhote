@@ -13,7 +13,8 @@ is selected.
 | Key | List |
 |---|---|
 | `↑` `↓` `j` `k` | move |
-| `→` `⏎` | the topic's page: title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
+| `⏎` | jump to the topic's agent in herdr, as a click on it does (on another machine: selected there). Without an agent that herdr knows now (none, gone, or its machine reconnecting) it opens the topic's page |
+| `→` | the topic's page: title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |

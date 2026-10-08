@@ -1340,6 +1340,13 @@ panel_width_clamp() {
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot): the key line says so for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
+topic_jump() {  # the selected topic's agent, focused in herdr (as a click on it does); 1 when it has none that herdr knows now
+    local f m p ast; f=$(sel_file); [ -n "$f" ] || return 1
+    m=$(topic_get "$f" agent_machine); p=$(topic_get "$f" agent_pane); [ -n "$p" ] || return 1
+    [ -n "$m" ] || m=$HOST
+    agent_state_set ast "$m" "$p"; case "$ast" in gone|off-*) return 1 ;; esac   # not there (any more), or its machine does not answer
+    agent_jump "$m" "$p"
+}
 agent_jump() {  # agent_jump <machine> <pane>
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
     if [ "$1" = "$HOST" ]; then ( herdr agent focus "$2" >/dev/null 2>&1 & )
@@ -1531,7 +1538,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     local k
     printf '\n %sHotkeys%s\n' "$L" "$X"; rule
     hk_group "LIST"
-    hk "↑↓ jk" "move"; hk "→ ⏎" "open the topic menu"; hk "n" "new topic (Title; description @Name)"
+    hk "↑↓ jk" "move"; hk "⏎" "jump to the topic's agent (none: its page)"; hk "→" "the topic's page"; hk "n" "new topic (Title; description @Name)"
     hk "e" "edit the title"; hk "d" "edit the description"
     hk "s" "start on a free agent"; hk "t" "Steal & Transfer to another agent"; hk "x" "mark done"; hk "a" "suggestions from agents"
     hk "," "settings"; hk "S" "welcome screen"; hk "q" "quit"
@@ -3261,7 +3268,9 @@ bhote_main() {
                 ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_PAGE=main; SET_IDX=0; redraw=1 ;;
                 UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; fi ;;      # on the start screen the wheel does nothing
                 DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; fi ;;
-                ENTER|RIGHT) if [ "$view" = splash ]; then view=main; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
+                ENTER) if [ "$view" = splash ]; then view=main
+                       elif [ -n "$(sel_file)" ]; then topic_jump || { view=menu; MENU_IDX=0; }; fi; redraw=1 ;;   # its agent, like a click; else its page
+                RIGHT) if [ "$view" = splash ]; then view=main; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
                 *) if [ "$view" = splash ]; then view=main; redraw=1; fi ;;
             esac
         fi

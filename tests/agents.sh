@@ -9,7 +9,7 @@ cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 [ -n "${FAKE_DOWN:-}" ] && case "$*" in *--machine*) exit 1 ;; esac   # the other machine does not answer
 case "$*" in
- *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*|*"report-metadata"*) echo "$*" >> "$FAKE_LOG" ;;
+ *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*|*"report-metadata"*|*"agent focus"*) echo "$*" >> "$FAKE_LOG" ;;
  *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
  *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
@@ -175,6 +175,14 @@ blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(dat
 echo "$blk" | grep -q "Zeta work" && echo "$blk" | grep -q "Loose work" && ! echo "$blk" | grep -q "IMS work" && ok "scope project: its topics and those without one" || bad "scope: $blk"
 blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=all; AG_N=0; topics_block )
 echo "$blk" | grep -q "IMS work" && ok "scope all: every topic" || bad "scope all"
+# Enter on a topic: its agent is focused in herdr (as a click), when herdr knows it now; else 1 (the page opens)
+jt=$(BHOTE_NO_SYNC=1 bhote_cli add "Jump topic" --json | jq -r .id); jf="$TOPIC_DIR/$jt.topic"
+( SEL_ID=$jt; topics_load; AG_N=0; AG_LINES=(); topic_jump ) && bad "jump without an agent" || ok "enter: no agent, the page opens"
+topic_set "$jf" agent_machine "$HOST"; topic_set "$jf" agent_pane "w2:p1"; : > "$FAKE_LOG"
+( SEL_ID=$jt; topics_load; AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"; topic_jump ) \
+  && sleep 0.3 && grep -q "agent focus w2:p1" "$FAKE_LOG" && ok "enter: the topic's agent is focused in herdr" || bad "jump: $(cat "$FAKE_LOG")"
+topic_set "$jf" agent_pane "w7:p7"; ( SEL_ID=$jt; topics_load; AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"; topic_jump ) \
+  && bad "jump to a gone agent" || ok "enter: a gone agent, the page opens"
 # GitHub: the branch of a topic's agent, read by the machine it runs on; a line in the panel, inline in the search, in the JSON
 mkdir -p "$T/repo/src"; git -C "$T/repo" init -q -b feature/login 2>/dev/null
 bid=$(BHOTE_NO_SYNC=1 bhote_cli add "Login form" --json | jq -r .id); bf="$TOPIC_DIR/$bid.topic"
@@ -182,11 +190,11 @@ topic_set "$bf" agent "Project A"; topic_set "$bf" agent_machine "$HOST"; topic_
 printf 'w1:p1%s%s\n' "$US" "$T/repo/src" > "$AGENT_CWD"; branch_sync
 [ "$(topic_get "$bf" agent_branch)" = feature/login ] && ok "github: the agent's branch is written into its topic" || bad "branch_sync: '$(topic_get "$bf" agent_branch)'"
 u=$(topic_get "$bf" updated); sleep 1; branch_sync; [ "$(topic_get "$bf" updated)" = "$u" ] && ok "github: an unchanged branch is not written again" || bad "branch rewritten"
-frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=60 bash ./bhote </dev/null)
+frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=150 bash ./bhote </dev/null)
 echo "$frame" | grep -A3 "Login form" | grep -q "⎇ feature/login" && ok "github: a branch line under the topic" || bad "panel branch line: $(echo "$frame" | grep -A3 'Login form')"
 ( topics_load; AG_N=0; AG_LINES=(); find_items; for (( k = 0; k < ${#FI_KIND[@]}; k++ )); do [ "${FI_REF[$k]}" = "$bid" ] && break; done
   case "${FI_LABEL[$k]}" in *"⎇ feature/login"*) exit 0 ;; *) exit 1 ;; esac ) && ok "github: the branch inline in the search" || bad "search branch"
 [ "$(BHOTE_NO_SYNC=1 bhote_cli show "$bid" --json | jq -r .agent.branch)" = feature/login ] && ok "github: agent.branch in the JSON" || bad "json branch"
-cfg_set GITHUB_BRANCHES off; frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=60 bash ./bhote </dev/null)
+cfg_set GITHUB_BRANCHES off; frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=150 bash ./bhote </dev/null)
 echo "$frame" | grep -q "⎇" && bad "branch shown with GITHUB_BRANCHES=off" || ok "github: off hides the branch"
 rm -rf "$T"; exit $fail

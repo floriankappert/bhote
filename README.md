@@ -36,7 +36,8 @@ right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the c
 | key | does |
 |---|---|
 | `↑↓` / `jk` | move |
-| `→` / `⏎`, `←` / `esc` | open the topic menu / go back |
+| `⏎` | jump to the topic's agent in herdr, like a click on it (no agent there: the topic's page) |
+| `→`, `←` / `esc` | the topic's page / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |
 | `t` | Steal & Transfer to another agent |
