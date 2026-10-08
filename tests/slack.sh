@@ -55,12 +55,14 @@ grep -q "slack_read_user_profile once" "$FAKE_LOG" && bad "asked for me again" |
 [ "$(topic_get "$f" status)" = review ] && [ "$(topic_get "$f" slack_msg)" = "Alex: Hi @Flo, Clause 7 is fine see from our side" ] && [ "$(topic_get "$f" slack_seen)" = "$new" ] \
   && ok "watch: someone else wrote → review, with who and what" || bad "review: $(topic_get "$f" status) '$(topic_get "$f" slack_msg)'"
 B show "$id" | grep -q "slack message: Alex: Hi @Flo, Clause 7" && ok "show: the Slack message" || bad "show message"
+page=$(SEL_ID=$id BHOTE_ONCE=1 BHOTE_VIEW=menu BHOTE_COLS=60 BHOTE_ROWS=50 bash ./bhote </dev/null 2>&1)
+case "$page" in *SLACK*"channel"*"Alex: Hi @Flo, Clause 7 is fine see from our side"*ACTIONS*) ok "topic page: the pin and the whole message" ;; *) bad "topic page: $(echo "$page" | head -30)" ;; esac
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)
 echo "$frame" | grep -q "slack · Alex: Hi @Flo" && ok "panel: the answer under the topic" || bad "panel review line"
 # waits again: the message goes, from now on; the same message again changes nothing
 B wait "$id" Legal >/dev/null; [ "$(topic_get "$f" status)" = waiting ] && [ -z "$(topic_get "$f" slack_msg)" ] && ok "wait again: the message goes, the pin stays" || bad "rewait"
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)
-echo "$frame" | grep -q "Legal · slack channel" && ok "panel: a waiting topic shows its pin" || bad "panel waiting line: $(echo "$frame" | grep -A2 Contract)"
+echo "$frame" | grep -q "for Legal · Slack monitor active (channel)" && ok "panel: a waiting topic shows its pin" || bad "panel waiting line: $(echo "$frame" | grep -A2 Contract)"
 slack_check; [ "$(topic_get "$f" status)" = waiting ] && ok "watch: an old message does not come back" || bad "old message re-triggered"
 # Claude fails: nothing changes, the state says so
 : > "$FAKE_ANSWER"; before=$(cat "$f"); slack_check

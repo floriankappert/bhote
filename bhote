@@ -969,8 +969,8 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
                      case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
                          idle|done) state=finished; sc=$GREEN; [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;; *) state=gone; sc=$D ;; esac
                  fi ;;
-            waiting) who=${T_WFOR[$i]:-?}; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
-                     [ -n "${T_SL[$i]}" ] && { state="slack ${T_SL[$i]}"; sc=$S; } ;;   # a pinned Slack channel is watched
+            waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
+                     [ -n "${T_SL[$i]}" ] && { state="Slack monitor active (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
             review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
                     [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]}; sc=$S; } ;;   # an answer in Slack
             next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
@@ -1696,6 +1696,11 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     if [ "$st" = waiting ] && [ -n "$wf" ]; then ago_set age "${ws:-$NOW}"; printf ' %s·%s %s%s%s %s· %s%s' "$D" "$X" "$BLUE" "$wf" "$X" "$D" "$age" "$X"; fi
     printf '\n'
     [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ ${D}· $am$X}"
+    if [ -n "$(topic_get "$f" slack_channel)" ] || [ -n "$(topic_get "$f" slack_msg)" ]; then   # the pin and the answer that came in
+        printf '\n  %sSLACK%s\n' "$D" "$X"
+        line=$(topic_get "$f" slack_label); [ -n "$line" ] && printf '  %s%s%s%s\n' "$S" "$line" "$X" "$( [ "$st" = waiting ] && printf ' %s· monitor active%s' "$D" "$X")"
+        line=$(topic_get "$f" slack_msg); [ -n "$line" ] && wrap_print 2 "$L" "$line"
+    fi
     printf '\n'; rule
     printf '\n  %sACTIONS%s\n' "$D" "$X"
     for (( i = 0; i < ${#MENU_ITEMS[@]}; i++ )); do
@@ -2038,7 +2043,7 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
     done
     [ "$n" -gt 0 ] || return 0
     me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); [ -n "$me" ] || { slack_me && me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); }   # who I am: once
-    j=$(claude_json "You check Slack for new messages, read-only. For each pin in this list: when thread_ts is set, call slack_read_thread(channel_id, message_ts=thread_ts, oldest), else slack_read_channel(channel_id, oldest, limit 20). Pins: [$pins]. Reply with only JSON, no prose: {\"pins\":[{\"topic\":\"<topic>\",\"error\":<null or short text>,\"messages\":[{\"ts\":\"<ts>\",\"user\":\"<user id>\",\"name\":\"<display name>\",\"text\":\"<first 100 characters>\"}]}]}. List only messages newer than oldest, the thread parent never." 150)
+    j=$(claude_json "You check Slack for new messages, read-only. For each pin in this list: when thread_ts is set, call slack_read_thread(channel_id, message_ts=thread_ts, oldest), else slack_read_channel(channel_id, oldest, limit 20). Pins: [$pins]. Reply with only JSON, no prose: {\"pins\":[{\"topic\":\"<topic>\",\"error\":<null or short text>,\"messages\":[{\"ts\":\"<ts>\",\"user\":\"<user id>\",\"name\":\"<display name>\",\"text\":\"<first 300 characters>\"}]}]}. List only messages newer than oldest, the thread parent never." 150)
     if [ -z "$j" ]; then printf 'error %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"; return 1; fi
     while IFS=$US read -r id maxts who txt; do
         [ -n "$id" ] || continue; f="$TOPIC_DIR/$id.topic"; [ -f "$f" ] || continue
@@ -2057,7 +2062,7 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
         .pins[]? | select(.topic | test("^[A-Za-z0-9_-]+$")) | . as $p
         | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")))] | sort_by(.ts | tonumber)) as $m
         | (if $me == "" then null else ([$m[] | select(.user != $me)] | last) end) as $o   # (who I am unknown: only move on)
-        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | clean | plain | .[0:100]) else "" end)] | join("\u001f")' 2>/dev/null)"
+        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | clean | plain | .[0:300]) else "" end)] | join("\u001f")' 2>/dev/null)"
     printf 'ok %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"
     poke
 }
