@@ -250,4 +250,11 @@ auto_assign
 topic_set "$t2" project "$bil"; topic_set "$t2" updated 1; topic_set "$t1" agent_pane ""; auto_assign
 [ "$(topic_get "$t2" agent_pane)" = w2:p1 ] && ok "auto-assign: a chosen project picks the agent of that project only" || bad "auto-assign bil: $(topic_get "$t2" agent_pane)"
 ) && true
+# the agent list says which topic an agent works on (not for a parked one)
+cfg_set HOST_LABEL Mac; rm -f "$TOPIC_DIR"/*.topic; topic_new "Fix the export" "" ""; wt="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wt" agent_pane w1:p1; topic_set "$wt" agent_machine "$HOST"; topic_set "$wt" status now
+frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=70 BHOTE_ROWS=150 bash ./bhote </dev/null)
+echo "$frame" | grep -q "∟ Fix the" && ok "agent list: the topic an agent works on stands behind its name" || bad "no topic behind the agent"
+topic_set "$wt" status later
+frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=70 BHOTE_ROWS=150 bash ./bhote </dev/null)
+echo "$frame" | grep -q "∟ Fix the" && bad "a parked topic is shown behind the agent" || ok "agent list: a parked topic is not shown"
 rm -rf "$T"; exit $fail

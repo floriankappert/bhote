@@ -1229,7 +1229,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         if [ "$pm" = "-" ]; then pcol=$D; else project_color_set pcol "$pname"; fi
         lines[$n]="  ${MUTED}┈┈${X} ${BOLD}${pcol}${cap}${X} ${MUTED}${DASH_LINE:0:$rest2}${X}"
         lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
-        local cells=() cid=() cwid=() nc2=0 pre plen rk rkst pcol
+        local cells=() cid=() cwid=() nc2=0 pre plen rk rkst pcol tt tj tw
         for rk in 0 1 2; do                                    # inside a project: the active ones first (orange), then those that need you (red), then the idle (grey)
         for mm in "${machines[@]}"; do
             pre=""; plen=0; [ "$nm" -gt 1 ] && { machine_code_set pre "$mm"; [ -n "$pre" ] && { pre="$pre|"; plen=${#pre}; }; }   # MAC|name
@@ -1244,7 +1244,14 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                 case "$st" in working|testing) nc=$ORANGE ;; blocked) nc=$NN ;; *) nc=$D ;; esac   # the whole agent: orange at work, red when it needs you, grey idle
                 clip_set label "$name" $(( cw - 3 - plen ))
                 if [ "$off" = 1 ]; then case "$st" in working|testing) ic="${MUTED}✶" ;; blocked) ic="${MUTED}◉" ;; done) ic="${MUTED}✓" ;; *) ic="${MUTED}○" ;; esac; nc=$MUTED; fi
-                dw_set plain "$label"; cells[$nc2]="$ic$X ${pre:+$D$pre$X}$nc$label$X"; cwid[$nc2]=$(( plain + plen + 2 )); cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
+                dw_set plain "$label"; cells[$nc2]="$ic$X ${pre:+$D$pre$X}$nc$label$X"; cwid[$nc2]=$(( plain + plen + 2 ))
+                tt=""; for (( tj = 0; tj < T_N; tj++ )); do   # the topic this agent works on (in work, review, waiting or next; a parked one is not "its" work)
+                    [ "${T_AP[$tj]}" = "$id" ] && [ "${T_AM[$tj]}" = "$m" ] || continue
+                    case "${T_STATUS[$tj]}" in now|review|waiting|next) tt=${T_TITLE[$tj]}; break ;; esac
+                done
+                if [ -n "$tt" ] && [ $(( cw - 1 - cwid[$nc2] )) -ge 8 ]; then clip_set tt "$tt" $(( cw - 2 - cwid[$nc2] )); dw_set tw "$tt"
+                    cells[$nc2]="${cells[$nc2]} ${MUTED}∟ ${D}$tt$X"; cwid[$nc2]=$(( cwid[$nc2] + 3 + tw )); fi   # (the topic after the name, as far as it fits)
+                cid[$nc2]="$m$US$id$US$raw"; nc2=$(( nc2 + 1 ))
             done
         done
         done
