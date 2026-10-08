@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.1.0}
+VERSION=${BHOTE_VERSION:-0.2.0}
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 
 # ── settings: ~/.config/bhote/config, plain KEY=value lines (never sourced). Everything that reaches beyond this machine
