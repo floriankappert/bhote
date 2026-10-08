@@ -23,7 +23,8 @@ is selected.
 | `,` | settings (the full key list is under *Hotkeys* there) · `S` welcome screen · `q` quit |
 
 The find key (settings › *Find key*, e.g. `ctrl+alt+t`, on the Mac ⌘T) opens a search popup over all agents and topics:
-type, choose, `⏎` jumps there; `ctrl+n` adds a topic (the search text is its start).
+type, choose, `⏎` jumps there; `x` (`ctrl+x` once something is typed) checks a topic off;
+`ctrl+n` adds a topic (the search text is its start). `⏎` on a topic opens its page here in the panel.
 
 Click an agent in the agent area to focus it in herdr. An agent on another machine is selected there; herdr lets only its
 client switch machines, so the key line says to switch to that machine in herdr.

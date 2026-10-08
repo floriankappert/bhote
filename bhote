@@ -75,6 +75,8 @@ STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machin
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
 REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
 MACHINES_OFF||list|Saved machines that stay out even with REMOTE_AGENTS=on
+PANEL_MIN_WIDTH|36|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
+PANEL_MAX_WIDTH|60|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|10|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|off|bool|An agent whose workspace runs tests counts as busy
@@ -415,20 +417,20 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
+    Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
     [ "$color" = 1 ] || { TEAL=""; ORANGE=""; return 0; }
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
         R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135")
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
-        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"
+        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; MUTED=$(rgb "69;71;90")
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "166;173;200")"; TITLESEL="${esc}[1m$(rgb "205;214;244")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "205;214;244")"; DESCSEL="${esc}[3m$(rgb "245;247;255")"     # the description italic in the full text colour
         stops=("148 226 213" "137 180 250" "203 166 247" "245 194 231" "250 179 135"); GRAD_ANSI=""
     else                                                     # the terminal's palette: magenta, red, cyan, yellow, ...
         R="${esc}[35m"; NN="${esc}[31m"; S="${esc}[36m"; C="${esc}[33m"; L="${esc}[1;39m"; D="${esc}[90m"; B=$D
-        Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"
+        Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
         SELBG="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
@@ -444,7 +446,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
             LATER) R=$(rgb "$v") ;; DONE) GREEN=$(rgb "$v") ;; ERROR) NN=$(rgb "$v") ;;
         esac
     done
-    TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
+    MUTED=${MUTED:-$B}; TEAL=$S; ORANGE=$C; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
     TITLE=${TITLE:-$L}; TITLESEL=${TITLESEL:-$LSEL}
 }
 theme_sig() {  # theme_sig <var>: the settings the colours come from, as one string (a change re-applies the theme)
@@ -453,7 +455,8 @@ theme_sig() {  # theme_sig <var>: the settings the colours come from, as one str
     printf -v "$1" '%s' "$_sig"
 }
 INNER=$(( WIDTH - 2 ))
-hline() { local _s; printf -v _s '%*s' "$1" ''; printf '%s' "${_s// /─}"; }   # n times ─ (GNU tr cannot map to a multibyte character)
+hline() { local _s; printf -v _s '%*s' "$1" ''; printf '%s' "${_s// /─}"; }
+dline() { local _s; printf -v _s '%*s' "$1" ''; printf '%s' "${_s// /┈}"; }   # the same, dashed (the machine dividers)   # n times ─ (GNU tr cannot map to a multibyte character)
 at_col() { [ "$color" = 1 ] && printf '%s[%dG' "$esc" "$1"; }
 
 # One framed line: the right edge is placed by cursor column, so wide or combining characters cannot push it.
@@ -956,18 +959,18 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             [ "$m" = "${machines[$k]}" ] || continue
-            case "$st" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
+            case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
             name_color_set nc "$name"; clip_set label "$name" $(( cw - 2 ))
             cell="$ic$X $nc$label$X"; dw_set plain "$label"; plain=$(( plain + 2 ))
-            case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id"; nb=$(( nb + 1 )) ;; esac
+            case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id$US$st"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id$US$st"; nb=$(( nb + 1 )) ;; esac
         done
         [ $(( nf + nb )) -gt 0 ] || continue
         # a caption for the machine when several machines are listed
         if [ "$nm" -gt 1 ]; then                              # a divider with the machine's name ("── Omarchy ─────"); only machines with agents
             local cap rest cw2; clip_set cap "${machines[$k]}" $(( ${#RULE_LINE} - 6 )); dw_set cw2 "$cap"
             rest=$(( ${#RULE_LINE} - 4 - cw2 )); [ "$rest" -lt 1 ] && rest=1
-            # (braces around the colours: bash 3.2 takes the first byte of a "─" right after $B into the variable name)
-            lines[$n]="  ${B}──${X} ${D}${cap}${X} ${B}${RULE_LINE:0:$rest}${X}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
+            # (braces around the colours: bash 3.2 takes the first byte of a "┈" right after $MUTED into the variable name)
+            lines[$n]="  ${MUTED}┈┈${X} ${D}${cap}${X} ${MUTED}${DASH_LINE:0:$rest}${X}"; lc[$n]=0; lid[$n]=""; rid[$n]=""; n=$(( n + 1 ))
         fi
         rows=$nf; [ "$nb" -gt "$rows" ] && rows=$nb
         for (( r = 0; r < rows; r++ )); do
@@ -1098,6 +1101,25 @@ herdr_keys_apply() {  # herdr_keys_apply <jump key|off> <find key|off>: 0 when h
 }
 jump_key_apply() { local _f; cfg_var _f FIND_KEY off; herdr_keys_apply "$1" "$_f"; }   # jump_key_apply <key|off>
 find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1"; }   # find_key_apply <key|off>
+# The panel's pane in herdr stays between PANEL_MIN_WIDTH and PANEL_MAX_WIDTH: after a resize has settled (a dragged divider,
+# a smaller window) the split is moved back (pane.resize takes a share of the split). Only when the panel is the right part
+# of a split; the agent next to it keeps at least 40 columns.
+panel_width_clamp() {
+    local p=${HERDR_PANE_ID:-} lo hi w sw want dir amt
+    case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
+    cfg_var lo PANEL_MIN_WIDTH 36; cfg_var hi PANEL_MAX_WIDTH 60; num_set lo "$lo" 36; num_set hi "$hi" 60; [ "$hi" -lt "$lo" ] && hi=$lo
+    read -r w sw <<< "$(herdr pane layout --pane "$p" 2>/dev/null | jq -r --arg p "$p" '
+        ([.result.layout.panes[] | select(.pane_id == $p)][0].rect) as $r
+        | ([.result.layout.splits[] | select(.direction == "right" and (((.rect.x + .rect.width * .ratio) - $r.x) | fabs) <= 2
+              and .rect.y <= $r.y and (.rect.y + .rect.height) >= ($r.y + $r.height))][0].rect.width // 0) as $sw
+        | "\($r.width // 0) \($sw)"' 2>/dev/null)"
+    num_set w "$w" 0; num_set sw "$sw" 0; [ "$w" -gt 0 ] && [ "$sw" -gt 0 ] || return 0
+    if [ "$w" -gt "$hi" ]; then want=$hi; dir=right
+    elif [ "$w" -lt "$lo" ]; then want=$lo; dir=left; [ $(( sw - want )) -ge 40 ] || return 0
+    else return 0; fi
+    amt=$(LC_ALL=C awk -v a="$w" -v b="$want" -v s="$sw" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
+    herdr pane resize --pane "$p" --direction "$dir" --amount "$amt" >/dev/null 2>&1
+}
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot): the key line says so for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
@@ -1190,6 +1212,8 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label"; the machine rows exi
         done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
         SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
     fi
+    SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
+    SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
@@ -1327,6 +1351,19 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
 # the main loop with USR1; the main loop is the only one that writes to the screen, so two writers can never mix their
 # escape sequences. It redraws just the dog, at an absolute position, so nothing flickers.
 ANIM_FILE="$RUN_DIR/anim"
+SPIN_FRAMES=("·" "✢" "✳" "✶" "✻" "✽" "✻" "✶" "✳" "✢")       # Claude Code's spinner, there and back
+spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the frame just drawn (from the agent map)
+    local div split line r l rr rest st; SPIN_CELLS=""
+    div=$(num_or "$(cat "$RUN_DIR/divrow" 2>/dev/null)" 0); [ "$div" -gt 0 ] || return 0
+    { IFS= read -r split; split=$(num_or "$split" 0)
+      while IFS=$'\036' read -r r l rr; do
+          for line in "l:$l" "r:$rr"; do
+              rest=${line#?:}; [ -n "$rest" ] || continue; st=${rest##*$US}
+              case "$st" in working|testing) ;; *) continue ;; esac
+              if [ "${line%%:*}" = l ]; then SPIN_CELLS="$SPIN_CELLS $(( div + 2 + r )):3"; else SPIN_CELLS="$SPIN_CELLS $(( div + 2 + r )):$(( split + 1 ))"; fi
+          done
+      done; } < "$RUN_DIR/agmap" 2>/dev/null
+}
 dog_ticker() {  # dog_ticker <main pid>
     local tick=0 closed tin idx last="" blink bl_last="" _an
     while true; do
@@ -1336,20 +1373,22 @@ dog_ticker() {  # dog_ticker <main pid>
         closed=0; [ $(( RANDOM % 14 )) -eq 0 ] && closed=1
         tin=0; [ $(( tick % 9 )) -ge 6 ] && tin=1
         idx=$(( closed + 2 * tin ))
-        cfg_var _an ANIMATION on; [ "$_an" = on ] || idx=0
-        [ "$idx $blink" = "$last" ] && continue
-        last="$idx $blink"; echo "$idx $blink" > "$ANIM_FILE"; kill -USR1 "$1" 2>/dev/null || exit 0
+        cfg_var _an ANIMATION on; [ "$_an" = on ] || { idx=0; tick=0; }
+        [ "$idx $blink $tick" = "$last" ] && continue           # (the tick: the star of the busy agents dances on every one)
+        last="$idx $blink $tick"; echo "$idx $blink $tick" > "$ANIM_FILE"; kill -USR1 "$1" 2>/dev/null || exit 0
     done
 }
 dog_animate() {  # the main loop's answer to USR1 (only on the splash and the list); draws only what changed
-    local idx blink
+    local idx blink tick c
     [ "$TOO_SMALL" = 1 ] && return 0
     [ "$1" = splash ] && ! splash_fits && return 0
-    read -r idx blink < "$ANIM_FILE" 2>/dev/null || { idx=0; blink=on; }
+    read -r idx blink tick < "$ANIM_FILE" 2>/dev/null || { idx=0; blink=on; tick=0; }
     case "$1" in
         splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at big $(( 4 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
                 if [ "$blink" != "${DRAWN_BLINK:-}" ]; then splash_prompt_at "$blink"; DRAWN_BLINK=$blink; fi ;;
-        main) ;;                                            # no dog in the list
+        main) [ -n "${SPIN_CELLS:-}" ] || return 0               # the busy agents' star, like Claude's: only its cells are drawn
+              num_set tick "$tick" 0; SPIN_CH=${SPIN_FRAMES[$(( tick % ${#SPIN_FRAMES[@]} ))]}
+              for c in $SPIN_CELLS; do printf '\033[%d;%dH%s%s%s' "${c%%:*}" "${c#*:}" "$ORANGE" "$SPIN_CH" "$X"; done ;;
     esac
 }
 
@@ -1386,7 +1425,7 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
         line=$(awk -F'\036' -v r="$rel" 'NR > 1 && $1 == r { print; exit }' "$RUN_DIR/agmap" 2>/dev/null)
         if [ -n "$line" ] && [ "$split" -gt 0 ]; then
             if [ "$x" -le "$split" ]; then ag=$(printf '%s' "$line" | cut -d$'\036' -f2); else ag=$(printf '%s' "$line" | cut -d$'\036' -f3); fi
-            [ -n "$ag" ] && { CLICK_M=${ag%%$US*}; CLICK_P=${ag#*$US}; MOUSE_KEY=AGENT; return; }
+            [ -n "$ag" ] && { CLICK_M=${ag%%$US*}; CLICK_P=${ag#*$US}; CLICK_P=${CLICK_P%%$US*}; MOUSE_KEY=AGENT; return; }
         fi
     fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
@@ -1790,7 +1829,7 @@ prompt_new_topic() {  # [text to start with] "Title", "Title; description", "Tit
 # The panel works between MIN and MAX columns: wider than MAX it uses only the left MAX columns, narrower than MIN (or shorter
 # than MIN_ROWS) it shows a hint instead of a broken picture. The start screen is a fixed picture (WIDTH x SPLASH_ROWS):
 # where it does not fit, the list is shown instead.
-MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-60}; MIN_ROWS=${BHOTE_MIN_ROWS:-20}; SPLASH_ROWS=39; TOO_SMALL=0
+MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-$(num_or "$(cfg_get PANEL_MAX_WIDTH 60)" 60)}; MIN_ROWS=${BHOTE_MIN_ROWS:-20}; SPLASH_ROWS=39; TOO_SMALL=0
 splash_fits() { [ "${REAL_COLS:-44}" -ge "$SPLASH_W" ] && [ "${REAL_ROWS:-40}" -ge "$SPLASH_ROWS" ]; }
 # The start screen fills the pane: the frame is as wide and as high as the pane; the extra width centres the content, the extra
 # height becomes space between the sections (all of it above the prompt, so the keys stay on the bottom edge).
@@ -1809,7 +1848,7 @@ term_size() {
     TOO_SMALL=0; { [ "$REAL_COLS" -lt "$MIN_COLS" ] || [ "$REAL_ROWS" -lt "$MIN_ROWS" ]; } && TOO_SMALL=1
     COLS=$REAL_COLS; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; [ "$COLS" -lt "$MIN_COLS" ] && COLS=$MIN_COLS
     ROWS=$REAL_ROWS; splash_geometry
-    RULE_LINE=$(hline $(( COLS - 5 )))
+    RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 )))
 }
 harden_perms() {  # data, config and their folders: this user only (older versions created them open)
     mkdir -p "$TOPIC_DIR" "$(dirname "$CONFIG_FILE")" 2>/dev/null
@@ -2377,7 +2416,7 @@ bhote_main() {
     if [ -n "${BHOTE_ONCE:-}" ] || [ ! -t 0 ]; then
         AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote
         collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
-        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); ui_load; bhote_draw "$view" | tr -d '\001'; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
+        COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 ))); ui_load; bhote_draw "$view" | tr -d '\001'; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
     fi
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
@@ -2404,7 +2443,8 @@ bhote_main() {
         printf '%s\033[0m\033[?25h\033[?1049l\033]2;\007' "$MOUSE_OFF" 2>/dev/null   # mouse off, colours, cursor, normal screen, title
     }
     trap 'cleanup; exit 0' INT TERM HUP QUIT EXIT
-    trap 'redraw=1; resize=1' WINCH
+    trap 'redraw=1; resize=1; CLAMP_AT=$(( SECONDS + 1 ))' WINCH       # (the width is checked once the resizing has settled)
+    CLAMP_AT=$(( SECONDS + 2 ))
     trap 'anim=1' USR1
     printf '\033[?1049h\033[?25l%s' "$MOUSE_ON"          # alternate screen, hidden cursor, mouse reports (wheel, divider)
     splash_fits || view=main
@@ -2419,11 +2459,19 @@ bhote_main() {
             read -r DOG_IDX _ < "$ANIM_FILE" 2>/dev/null || DOG_IDX=0
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
             bhote_paint "$view"; dog_prev_reset "$view"
+            if [ "$view" = main ]; then spin_cells; else SPIN_CELLS=""; fi
         elif [ "$anim" = 1 ]; then anim=0; dog_animate "$view"; fi
         [ "$view" = splash ] && [ -z "${SPLASH_SINCE:-}" ] && SPLASH_SINCE=$SECONDS
         [ "$view" = splash ] || SPLASH_SINCE=""
         tmo=1                                                  # (the 2 s checks below and the auto-close need a short timeout)
-        key=""; IFS= read -rsn1 -t "$tmo" key 2>/dev/null; rc=$?
+        key=""; rc=0
+        if [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && [ "${BASH_VERSINFO[0]}" -lt 4 ] && [ -n "$HAVE_PERL" ] \
+           && ! perl -MIO::Select -e 'exit(IO::Select->new(\*STDIN)->can_read(0.3) ? 0 : 1)' </dev/tty 2>/dev/null; then
+            rc=142                                             # the star dances in 0.3 s steps: bash 3.2 waits whole seconds only
+        else
+            [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && [ "${BASH_VERSINFO[0]}" -ge 4 ] && tmo=0.3
+            IFS= read -rsn1 -t "$tmo" key 2>/dev/null; rc=$?
+        fi
         [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
         if [ "$key" = $'\033' ]; then      # an arrow key (ESC [ A..D, ESC O A..D), a mouse report, another sequence, or a lone Esc
             read_soon k2
@@ -2526,10 +2574,12 @@ bhote_main() {
         # Every 2 seconds, when no key was read: did the agent lists, the topics or the sync state change? (Not tied to a read
         # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
         if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
+        if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ) & fi
         if [ -r "$SHARED_DIR/select" ]; then                   # bhote find chose a topic without an agent: select it here
-            local _sid _snc; read -r _sid _snc < "$SHARED_DIR/select" 2>/dev/null
-            if [ "$_sid $_snc" != "${SEL_SEEN:-}" ]; then
-                [ -n "${SEL_SEEN:-}" ] && case "$_sid" in ''|*[!A-Za-z0-9_-]*) ;; *) [ -f "$TOPIC_DIR/$_sid.topic" ] && { SEL_ID=$_sid; view=main; redraw=1; } ;; esac
+            local _sid _snc _sact; read -r _sid _snc _sact < "$SHARED_DIR/select" 2>/dev/null
+            if [ "$_sid $_snc" != "${SEL_SEEN:-}" ]; then        # (show: the topic's page, else the list with it selected)
+                [ -n "${SEL_SEEN:-}" ] && case "$_sid" in ''|*[!A-Za-z0-9_-]*) ;; *) [ -f "$TOPIC_DIR/$_sid.topic" ] && {
+                    SEL_ID=$_sid; view=main; [ "$_sact" = show ] && { view=menu; MENU_IDX=0; }; redraw=1; } ;; esac
                 SEL_SEEN="$_sid $_snc"
             fi
         else SEL_SEEN=${SEL_SEEN:-none}; fi
@@ -2812,8 +2862,8 @@ cli_show() {  # cli_show <file> [--json]
     return 0
 }
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
-# must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic jumps to its
-# agent, or, without one, to the bhote panel of the tab with the topic selected. Esc closes.
+# must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic opens its page
+# in the bhote panel of the tab. Esc closes.
 FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
 find_items() {  # topics in the list's status order (review, now, next, waiting, later, done), then the agents: busy, then free
     local i m id st name task lowsrc="" n=0 pass
@@ -2877,7 +2927,9 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
     for (( r = off; r < off + room && r < ${#rl[@]}; r++ )); do out+="${rl[$r]}"$'\033[K\n'; done
     [ "$n" -gt 0 ] || out+=$(printf '   %snothing matches%s' "$D" "$X")$'\033[K\n'
     out+=$'\033[J'
-    local hint="↑↓ choose · ⏎ jump · ^n new topic · esc close"; [ "$n" = 0 ] && [ -n "$1" ] && hint="⏎ new topic \"$1\" · esc close"
+    local hint="↑↓ choose · ⏎ open · x done · ^n new · esc close"
+    [ -n "$1" ] && hint="↑↓ choose · ⏎ open · ^x done · ^n new · esc close"
+    [ "$n" = 0 ] && [ -n "$1" ] && hint="⏎ new topic \"$1\" · esc close"
     printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$([ -n "$3" ] && printf '%s' "$S" || printf '%s' "$D")" "$(clip "${3:-$hint}" $(( w - 1 )))" "$X"
 }
 panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus (through herdr's socket: by pane id)
@@ -2894,9 +2946,9 @@ panel_focus_active() {  # the bhote panel of the tab under the popup gets the fo
 find_act() {  # find_act <item>: 0 = done (close), 1 = stay (FIND_NOTE says why)
     local i=$1 m=${FI_M[$1]} p=${FI_P[$1]}
     FIND_NOTE=""
-    if [ "${FI_KIND[$i]}" = topic ] && [ -z "$p" ]; then     # no agent: the panel of this tab, with the topic selected
-        printf '%s %s\n' "${FI_REF[$i]}" "$$$RANDOM" > "$SHARED_DIR/select" 2>/dev/null; poke
-        panel_focus_active || { FIND_NOTE="no bhote panel in this tab: the topic is selected in the panels"; return 1; }
+    if [ "${FI_KIND[$i]}" = topic ]; then                     # a topic: its page in the panel of this tab (the panel gets the focus)
+        printf '%s %s show\n' "${FI_REF[$i]}" "$$$RANDOM" > "$SHARED_DIR/select" 2>/dev/null; poke
+        panel_focus_active || { FIND_NOTE="no bhote panel in this tab: the panels show the topic"; return 1; }
         return 0
     fi
     [ -n "$m" ] || m=$HOST
@@ -2927,6 +2979,18 @@ find_main() {
                 note="added · ⏎ shows it in the panel"
             fi
             printf '%s\033[?25l' "$MOUSE_OFF"; trap - USR1           # ask leaves mouse reports on: here they would arrive as typing
+            continue
+        fi
+        if [ "$c" = $'\030' ] || { [ "$c" = x ] && [ -z "$q" ]; }; then   # Ctrl-X (or x while nothing is typed): the topic is done
+            if [ "${#FI_HIT[@]}" -gt 0 ] && [ "${FI_KIND[${FI_HIT[$sel]}]}" = topic ]; then
+                local xid=${FI_REF[${FI_HIT[$sel]}]} xf
+                xf="$TOPIC_DIR/$xid.topic"
+                if [ -f "$xf" ] && [ "$(topic_get "$xf" status)" != done ]; then
+                    topic_set "$xf" status done; poke; note="done: $(topic_get "$xf" title)"
+                    topics_load; find_items; find_filter "$q"
+                    for (( k = 0; k < ${#FI_HIT[@]}; k++ )); do [ "${FI_REF[${FI_HIT[$k]}]}" = "$xid" ] && { sel=$k; break; }; done
+                fi
+            else note="x checks off a topic"; fi
             continue
         fi
         case "$c" in
