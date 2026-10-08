@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in bhote does not work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Please check that you run the latest version (`bhote update`).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. bhote add "…"
+        2. press s in the panel
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: bhote version
+      description: "`bhote version`"
+    validations:
+      required: true
+  - type: input
+    id: herdr
+    attributes:
+      label: herdr version
+      description: "`herdr --version`"
+  - type: dropdown
+    id: os
+    attributes:
+      label: System
+      options: [macOS, Arch / Omarchy, other Linux]
+    validations:
+      required: true
+  - type: input
+    id: bash
+    attributes:
+      label: bash version
+      description: "`bash --version | head -1` (and `/bin/bash --version | head -1` on macOS)"
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed with
+      options: [Homebrew, Arch package, install.sh from a checkout]
+  - type: dropdown
+    id: machines
+    attributes:
+      label: Machines
+      options: [One machine, Several machines (remote agents or a replica)]
+  - type: textarea
+    id: config
+    attributes:
+      label: Settings
+      description: "The relevant lines of `bhote config list` (secrets are shown as `(set)`)."
+      render: text

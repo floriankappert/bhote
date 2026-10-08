@@ -1,0 +1,6 @@
+# shellcheck settings for bhote (bash 3.2 script; see CONTRIBUTING.md). CI runs: shellcheck -S error
+# SC1010: `done` as a case pattern or a word in a string, not the keyword
+# SC2034: variables set for the caller (printf -v, dynamic scope) look unused
+# SC1007: `local x= y` style empty assignments are intended
+# SC2155: `local x=$(...)` is used where the exit code does not matter
+disable=SC1010,SC2034,SC1007,SC2155

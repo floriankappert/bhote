@@ -34,11 +34,11 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TEST_MONITOR` | `off` | Test monitor | The last test runs above the agents: local runs, status files, CI test jobs. |
 | `TEST_EVERY` | `60` | Test interval (s) | Seconds between two test checks. |
 | `TEST_LOCAL` · `TEST_GITHUB` · `TEST_CIRCLECI` | `on` | Local runs · GitHub Actions · CircleCI | The test monitor's modules. |
-| `TEST_STATUS_DIR` | `~/.cache/ims-test-status` | Status files | Folder with live test status files (one JSON per suite, as IMS writes them). |
+| `TEST_STATUS_DIR` | `~/.cache/bhote/test-status` | Status files | Folder with live test status files (one JSON per suite, format in [Monitors](monitors.md)). |
 | `UPDATE_CHECK` | `on` | Check for updates | The collector asks GitHub for the newest `vX.Y.Z` tag every 6 hours. A newer version shows in Settings and in the head of the panel with the command that updates it (`brew update && brew upgrade bhote`, `git -C <checkout> pull`, …). `bhote update` asks right now. |
 | `AUTO_REVIEW` | `on` | Review topic for a question | An agent that has no topic and waits for an answer (herdr status *blocked*) or ends its turn with a question (its last line ends with “?”) gets a review topic “Question from <agent>” with the question as its description; it goes when the agent works again. A plain “done, okay” hand-back makes no topic. A topic in work goes to review when its agent hands back and returns to now when it works again. |
 | `MONITOR_ROWS` | `7` | Entries shown | Entries each monitor shows. |
-| `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN` or `~/.config/zsh/secrets.zsh`. |
+| `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |
 | `THEME` | `terminal` | Colours | `terminal`: the terminal's own 16 colours, so bhote follows the terminal theme (and Omarchy's system theme) at once. `catppuccin`: exact truecolor values. |
 | `COLOR_<ROLE>` | | | Overrides one role with `#rrggbb` in either theme. Roles: `TEXT`, `DIM`, `FRAME`, `SELECTION` (background), `ACCENT`, `NOW` (also busy agents), `WAITING`, `REVIEW`, `LATER`, `DONE` (also free agents), `ERROR`. Example: `bhote config set COLOR_NOW '#fab387'`. |
@@ -53,7 +53,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `JUMP_KEY` | | Jump key (herdr) | The herdr key that jumps between the agent and the bhote panel of the tab (e.g. `prefix+t`; `off` removes it). bhote writes it into herdr's `config.toml` (a block between `# >>> bhote` and `# <<< bhote`) and reloads herdr; a key herdr refuses changes nothing. |
 | `FIND_KEY` | | Find key (herdr) | The herdr key that opens `bhote find` as a popup (e.g. `ctrl+alt+t`; on macOS a terminal can send it for ⌘T). Written the same way. |
 | `SETUP_DONE` | | | The date the [setup wizard](setup.md) ran on this machine. Empty: it opens at the next start (`bhote config unset SETUP_DONE` brings it back). |
-| `PROJECT_COLORS` | `marketing=pink,ims=teal,bilendo=yellow,bhote=green,micro=mauve` | | Colour of the project captions in the agent list: part-of-name=colour, first match wins (`red teal peach mauve blue green yellow pink orange grey`); other projects are grey. A working agent is orange as a whole, one that needs you red, an idle one grey. |
+| `PROJECT_COLORS` | – | | Colour of the project captions in the agent list: part-of-name=colour, first match wins (`red teal peach mauve blue green yellow pink orange grey`); other projects are grey. A working agent is orange as a whole, one that needs you red, an idle one grey. |
 | `NAME_COLORS` | | | Colour agents by part of their name: `api=teal,web=mauve` (case-insensitive, first match wins). Colours: `red teal peach mauve blue green yellow`. |
 
 Numbers that are not plain digits fall back to their default. Values never contain control characters (they are removed when

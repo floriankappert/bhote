@@ -131,16 +131,16 @@ B add "Other topic" -s next >/dev/null; out=$(CLAUDECODE=1 HERDR_PANE_ID=w8:p2 B
 [ "$(echo "$out" | jq -r '.status + " " + .agent.pane')" = "now w8:p2" ] && ok "now by an agent: it takes the topic" || bad "now by agent: $out"
 B take "Other topic" >/dev/null 2>&1 && bad "take outside an agent accepted" || ok "take: only for an agent in herdr"
 # projects: records in the topic store (they travel with it), not topics; a worktree inherits its main repository's project
-mkdir -p "$T/ims"; git -C "$T/ims" init -q -b main; git -C "$T/ims" remote add origin git@github.com:Acme/IMS.git
-git -C "$T/ims" commit -q --allow-empty -m init; git -C "$T/ims" worktree add -q -b wt1 "$T/ims-wt1" 2>/dev/null
-B project add "IMS" >/dev/null && B project add "Bilendo Marketing" >/dev/null && ok "project add" || bad "project add"
-B project add "ims" >/dev/null 2>&1 && bad "the same project twice" || ok "project add: a name once"
-[ "$(B project list --json | jq -r 'map(.name) | join(",")')" = "Bilendo Marketing,IMS" ] && ok "project list: by name" || bad "project list: $(B project list --json)"
-B list --all | grep -q "IMS" && bad "a project shows up as a topic" || ok "projects are no topics"
-B project pin IMS "$T/ims" >/dev/null && [ "$(B project list --json | jq -r '.[] | select(.name == "IMS") | .repos[0]')" = github.com/acme/ims ] && ok "project pin <folder>: the origin as the key" || bad "pin folder: $(B project list --json)"
-[ "$(B project of "$T/ims-wt1")" = IMS ] && ok "project of a worktree: its main repository's project" || bad "worktree project: $(B project of "$T/ims-wt1" 2>&1)"
-B project pin "Bilendo Marketing" ws:marketing >/dev/null && B project list | grep -q "ws:marketing" && ok "project pin ws:<workspace>" || bad "pin ws"
-B project rename "Bilendo M" "Marketing" >/dev/null && B project list | grep -q "Marketing" && ok "project rename" || bad "rename"
+mkdir -p "$T/shop"; git -C "$T/shop" init -q -b main; git -C "$T/shop" remote add origin git@github.com:Acme/Shop.git
+git -C "$T/shop" commit -q --allow-empty -m init; git -C "$T/shop" worktree add -q -b wt1 "$T/shop-wt1" 2>/dev/null
+B project add "Shop" >/dev/null && B project add "Acme Marketing" >/dev/null && ok "project add" || bad "project add"
+B project add "shop" >/dev/null 2>&1 && bad "the same project twice" || ok "project add: a name once"
+[ "$(B project list --json | jq -r 'map(.name) | join(",")')" = "Acme Marketing,Shop" ] && ok "project list: by name" || bad "project list: $(B project list --json)"
+B list --all | grep -q "Shop" && bad "a project shows up as a topic" || ok "projects are no topics"
+B project pin Shop "$T/shop" >/dev/null && [ "$(B project list --json | jq -r '.[] | select(.name == "Shop") | .repos[0]')" = github.com/acme/shop ] && ok "project pin <folder>: the origin as the key" || bad "pin folder: $(B project list --json)"
+[ "$(B project of "$T/shop-wt1")" = Shop ] && ok "project of a worktree: its main repository's project" || bad "worktree project: $(B project of "$T/shop-wt1" 2>&1)"
+B project pin "Acme Marketing" ws:marketing >/dev/null && B project list | grep -q "ws:marketing" && ok "project pin ws:<workspace>" || bad "pin ws"
+B project rename "Acme M" "Marketing" >/dev/null && B project list | grep -q "Marketing" && ok "project rename" || bad "rename"
 B project rm Marketing >/dev/null && ! B project list | grep -q "Marketing" && ok "project rm" || bad "project rm"
 # an agent does not revive a topic the user parked or closed; the user (no agent) can, and `take` works on request
 B add "Parked one" -s later >/dev/null; pid=$(B list --all --json | jq -r '[.[] | select(.title=="Parked one")][0].id')

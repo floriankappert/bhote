@@ -49,7 +49,7 @@ topic_new "Third" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; PICK_MAP=(0); pick_d
 # events from herdr: an agent that stops working moves its topic to review and notifies
 unset CLAUDECODE; : > "$FAKE_LOG"
 topic_new "Evented" "" ""; ef="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
-topic_set "$ef" agent "IMS"; topic_set "$ef" agent_machine Mac; topic_set "$ef" agent_pane w5:p1; topic_set "$ef" agent_session "s-777"; topic_set "$ef" delegated 1
+topic_set "$ef" agent "Shop"; topic_set "$ef" agent_machine Mac; topic_set "$ef" agent_pane w5:p1; topic_set "$ef" agent_session "s-777"; topic_set "$ef" delegated 1
 HERDR_PLUGIN_EVENT_JSON='{"event":"pane_agent_status_changed","data":{"pane_id":"w5:p1","agent_status":"working"}}' cli_event
 [ "$(topic_get "$ef" status)" = now ] && ok "event: working keeps the topic running" || bad "working changed the topic"
 [ -e "$SHARED_DIR/poke" ] && ok "event: the collector is poked (panels update at once)" || bad "no poke"
@@ -85,7 +85,7 @@ topic_new "Other" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; : > "$FAKE_LOG"
 transfer_start "$of" Mac w2:p1 server Mac w3:p1 busy 2>/dev/null && bad "transfer to a busy agent was accepted" || ok "transfer: a busy target is refused"
 [ ! -s "$FAKE_LOG" ] && ok "transfer: nothing is sent when it is refused" || bad "sent although refused"
 # the wait is over: a waiting topic of an agent, set to now, makes that agent go on
-topic_new "Wait for deploy" "DevOps" "test the login"; wf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wf" agent IMS; topic_set "$wf" agent_machine Mac; topic_set "$wf" agent_pane w1:p1
+topic_new "Wait for deploy" "DevOps" "test the login"; wf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wf" agent Shop; topic_set "$wf" agent_machine Mac; topic_set "$wf" agent_pane w1:p1
 : > "$FAKE_LOG"; topic_resume "$wf"; wait
 grep -q "^agent prompt w1:p1 The wait is over (DevOps): Wait for deploy. Go on with: test the login" "$FAKE_LOG" && ok "resume: the waiting agent is told to go on" || bad "no resume prompt: $(cat "$FAKE_LOG")"
 [ "$(topic_get "$wf" status)" = now ] && ok "resume: the topic is running again" || bad "status after resume"
@@ -166,32 +166,32 @@ frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2;
 echo "$frame" | grep -q "LPT|root" && echo "$frame" | grep -q "|api" && ! echo "$frame" | grep -qi "^ *laptop *$" && ok "codes: CODE|name, no machine sub-captions (Laptop / root is LPT|root)" || bad "codes in the list: $frame"
 cfg_set REMOTE_AGENTS off
 # projects: this machine's agents get repo and project tokens (only on a change); the panel reads them back
-mkdir -p "$T/prj"; git -C "$T/prj" init -q -b main; git -C "$T/prj" remote add origin https://github.com/acme/ims.git
-BHOTE_NO_SYNC=1 bhote_cli project add IMS >/dev/null; BHOTE_NO_SYNC=1 bhote_cli project pin IMS "$T/prj" >/dev/null
+mkdir -p "$T/prj"; git -C "$T/prj" init -q -b main; git -C "$T/prj" remote add origin https://github.com/acme/shop.git
+BHOTE_NO_SYNC=1 bhote_cli project add Shop >/dev/null; BHOTE_NO_SYNC=1 bhote_cli project pin Shop "$T/prj" >/dev/null
 printf 'Mac%sw1:p1%st1%sa%s%s%s%s%s\n' "$US" "$US" "$US" "$US" "" "$US" "" "$US" > "$AGENT_META_L"; sed -i.bak "s#\$#$T/prj#" "$AGENT_META_L"
 : > "$FAKE_LOG"; project_sync
-grep -q "report-metadata w1:p1 --source bhote --token repo=github.com/acme/ims --token project=proj-ims" "$FAKE_LOG" && ok "projects: the agent gets its repo and project tokens" || bad "tokens: $(cat "$FAKE_LOG")"
-sed -i.bak "s#${US}a${US}${US}${US}#${US}a${US}github.com/acme/ims${US}proj-ims${US}#" "$AGENT_META_L"; : > "$FAKE_LOG"; project_sync
+grep -q "report-metadata w1:p1 --source bhote --token repo=github.com/acme/shop --token project=proj-shop" "$FAKE_LOG" && ok "projects: the agent gets its repo and project tokens" || bad "tokens: $(cat "$FAKE_LOG")"
+sed -i.bak "s#${US}a${US}${US}${US}#${US}a${US}github.com/acme/shop${US}proj-shop${US}#" "$AGENT_META_L"; : > "$FAKE_LOG"; project_sync
 [ -s "$FAKE_LOG" ] && bad "tokens set again: $(cat "$FAKE_LOG")" || ok "projects: unchanged tokens are not set again"
-agent_meta Mac w1:p1 && [ "$AM_PROJECT" = proj-ims ] && [ "$AM_TAB" = t1 ] && ok "projects: agent_meta reads project and tab" || bad "agent_meta: $AM_PROJECT $AM_TAB"
+agent_meta Mac w1:p1 && [ "$AM_PROJECT" = proj-shop ] && [ "$AM_TAB" = t1 ] && ok "projects: agent_meta reads project and tab" || bad "agent_meta: $AM_PROJECT $AM_TAB"
 # the agent list by project (the panel's own first, "no project" last), the topics of the panel's project
 BHOTE_NO_SYNC=1 bhote_cli project add Zeta >/dev/null
-printf 'Mac%sw1:p1%st1%sa%s%sproj-ims%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
+printf 'Mac%sw1:p1%st1%sa%s%sproj-shop%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
   "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
-collect_local >/dev/null 2>&1; printf 'Mac%sw1:p1%st1%sa%s%sproj-ims%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
+collect_local >/dev/null 2>&1; printf 'Mac%sw1:p1%st1%sa%s%sproj-shop%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
   "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
 grp=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"
   projects_load; CUR_PROJ=proj-zeta; agents_block | sed 's/\x1b\[[0-9;]*m//g' )
 caps=$(echo "$grp" | grep '┈┈' | sed 's/ *┈*$//; s/^ *┈┈ //' | tr '\n' '|')
-[ "$caps" = "Zeta|IMS|no project|" ] && ok "agents by project: the panel's own first, no project last" || bad "project captions: $caps"
-echo "$grp" | grep -A1 '┈┈ IMS' | tail -1 | grep -q 'Project A' && ok "agents by project: the agent under its project" || bad "agent under project: $grp"
+[ "$caps" = "Zeta|Shop|no project|" ] && ok "agents by project: the panel's own first, no project last" || bad "project captions: $caps"
+echo "$grp" | grep -A1 '┈┈ Shop' | tail -1 | grep -q 'Project A' && ok "agents by project: the agent under its project" || bad "agent under project: $grp"
 ( HERDR_PANE_ID=w9:p9; current_project; [ "$CUR_PROJ" = proj-zeta ] ) && ok "the panel's project: of the agent in its tab" || bad "current project"
-t1=$(BHOTE_NO_SYNC=1 bhote_cli add "Zeta work" -p Zeta --json | jq -r .id); BHOTE_NO_SYNC=1 bhote_cli add "IMS work" -p IMS >/dev/null; BHOTE_NO_SYNC=1 bhote_cli add "Loose work" >/dev/null
+t1=$(BHOTE_NO_SYNC=1 bhote_cli add "Zeta work" -p Zeta --json | jq -r .id); BHOTE_NO_SYNC=1 bhote_cli add "Shop work" -p Shop >/dev/null; BHOTE_NO_SYNC=1 bhote_cli add "Loose work" >/dev/null
 [ "$(BHOTE_NO_SYNC=1 bhote_cli show "$t1" --json | jq -r .project)" = Zeta ] && ok "add -p: the topic's project" || bad "topic project"
 blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=project; AG_N=0; topics_block | sed 's/\x1b\[[0-9;]*m//g' )
-echo "$blk" | grep -q "Zeta work" && echo "$blk" | grep -q "Loose work" && ! echo "$blk" | grep -q "IMS work" && ok "scope project: its topics and those without one" || bad "scope: $blk"
+echo "$blk" | grep -q "Zeta work" && echo "$blk" | grep -q "Loose work" && ! echo "$blk" | grep -q "Shop work" && ok "scope project: its topics and those without one" || bad "scope: $blk"
 blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=all; AG_N=0; topics_block )
-echo "$blk" | grep -q "IMS work" && ok "scope all: every topic" || bad "scope all"
+echo "$blk" | grep -q "Shop work" && ok "scope all: every topic" || bad "scope all"
 # Enter on a topic: its agent is focused in herdr (as a click), when herdr knows it now; else 1 (the page opens)
 jt=$(BHOTE_NO_SYNC=1 bhote_cli add "Jump topic" --json | jq -r .id); jf="$TOPIC_DIR/$jt.topic"
 ( SEL_ID=$jt; topics_load; AG_N=0; AG_LINES=(); topic_jump ) && bad "jump without an agent" || ok "enter: no agent, the page opens"
@@ -220,11 +220,11 @@ echo "$frame" | grep -q "⎇" && bad "branch shown with GITHUB_BRANCHES=off" || 
 ( machine_known() { return 0; }; agent_live "$HOST" w1:p1; [ "$LIVE_ST" = idle ] || [ "$LIVE_ST" = working ] || [ "$LIVE_ST" = done ] ) && ok "agent_live: a local answer is read" || bad "agent_live local: $LIVE_ST"
 # an agent without a topic: a review topic only when it asks something (blocked, or its last line is a question); gone when it works again
 ev() { HERDR_PLUGIN_EVENT_JSON=$(printf '{"data":{"pane_id":"%s","agent_status":"%s"}}' "$1" "$2") BHOTE_NO_SYNC=1 cli_event; }
-rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; cfg_set AUTO_REVIEW on; printf '%s\n' "$HOST${US}w9:p1${US}idle${US}IMS (main)${US}task" > "$AGENT_LOCAL"
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; cfg_set AUTO_REVIEW on; printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}task" > "$AGENT_LOCAL"
 ev w9:p1 idle; [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "auto review: an agent that was never busy gets no topic" || bad "auto review at start"
 BHOTE_FAKE_QUESTION="" ev w9:p1 working; BHOTE_FAKE_QUESTION="" ev w9:p1 idle; [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "auto review: a turn without a question makes no topic" || bad "auto review for a plain hand-back"
 ev w9:p1 working; BHOTE_FAKE_QUESTION="Soll ich pushen?" ev w9:p1 idle; af=$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | head -1)
-[ -n "$af" ] && [ "$(topic_get "$af" status)" = review ] && [ "$(topic_get "$af" auto)" = 1 ] && topic_get "$af" title | grep -q "IMS (main)" && [ "$(topic_get "$af" description)" = "Soll ich pushen?" ] && ok "auto review: a question makes a review topic with the question" || bad "auto review: $af"
+[ -n "$af" ] && [ "$(topic_get "$af" status)" = review ] && [ "$(topic_get "$af" auto)" = 1 ] && topic_get "$af" title | grep -q "Shop (main)" && [ "$(topic_get "$af" description)" = "Soll ich pushen?" ] && ok "auto review: a question makes a review topic with the question" || bad "auto review: $af"
 BHOTE_FAKE_QUESTION="Soll ich pushen?" ev w9:p1 idle; [ "$(ls "$TOPIC_DIR"/*.topic | wc -l | tr -d ' ')" = 1 ] && ok "auto review: once only" || bad "auto review twice"
 ev w9:p1 working; [ "$(topic_get "$af" deleted)" = 1 ] && ok "auto review: gone when the agent works again" || bad "auto review not removed"
 rm -f "$TOPIC_DIR"/*.topic; ev w9:p1 working; ev w9:p1 blocked; [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 1 ] && ok "auto review: an agent that waits for an answer (blocked) gets a topic" || bad "auto review blocked"
@@ -234,18 +234,18 @@ ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$tf" status)" = review ] && ok 
 ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and back to now when the agent works again" || bad "review->now: $(topic_get "$tf" status)"
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (
-rm -f "$TOPIC_DIR"/*.topic; project_new "IMS"; ims=$PROJ_ID; project_new "Bilendo"; bil=$PROJ_ID; project_new "Bilendo Marketing"; mkt=$PROJ_ID
-printf '%s\n' "$HOST${US}w1:p1${US}idle${US}ims-agent${US}t" "$HOST${US}w2:p1${US}idle${US}bil-agent${US}t" > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
-printf '%s\n' "$HOST${US}w1:p1${US}t1${US}a${US}${US}$ims${US}/x" "$HOST${US}w2:p1${US}t2${US}a${US}${US}$bil${US}/y" > "$AGENT_META_L"
+rm -f "$TOPIC_DIR"/*.topic; project_new "Shop"; shop=$PROJ_ID; project_new "Acme"; bil=$PROJ_ID; project_new "Acme Marketing"; mkt=$PROJ_ID
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}shop-agent${US}t" "$HOST${US}w2:p1${US}idle${US}bil-agent${US}t" > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
+printf '%s\n' "$HOST${US}w1:p1${US}t1${US}a${US}${US}$shop${US}/x" "$HOST${US}w2:p1${US}t2${US}a${US}${US}$bil${US}/y" > "$AGENT_META_L"
 agent_live() { LIVE_ST=idle; LIVE_SESS=s1; }; agent_taken() { return 1; }; notify() { :; }; agent_send() { echo "$1/$2" >> "$T/sent.log"; }
 cfg_set AUTO_ASSIGN on; : > "$T/sent.log"
-project_autoselect "Fix the IMS export"; [ "$PROJ_ID" = "$ims" ] && ok "project_autoselect: a project name as a word" || bad "autoselect ims: $PROJ_ID"
-project_autoselect "Bilendo Marketing page" ; [ "$PROJ_ID" = "$mkt" ] && ok "project_autoselect: the longest name wins" || bad "autoselect longest: $PROJ_ID"
-project_autoselect "claims processing" && bad "autoselect: ims inside a word" || ok "project_autoselect: not inside a word"
-topic_new "Fix the IMS export" "" ""; t1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t1" updated 1
+project_autoselect "Fix the Shop export"; [ "$PROJ_ID" = "$shop" ] && ok "project_autoselect: a project name as a word" || bad "autoselect shop: $PROJ_ID"
+project_autoselect "Acme Marketing page" ; [ "$PROJ_ID" = "$mkt" ] && ok "project_autoselect: the longest name wins" || bad "autoselect longest: $PROJ_ID"
+project_autoselect "workshop planning" && bad "autoselect: shop inside a word" || ok "project_autoselect: not inside a word"
+topic_new "Fix the Shop export" "" ""; t1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t1" updated 1
 topic_new "Something without a hint" "" ""; t2="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t2" updated 1
 auto_assign
-[ "$(topic_get "$t1" agent_pane)" = w1:p1 ] && [ "$(topic_get "$t1" project)" = "$ims" ] && ok "auto-assign: the project is chosen from the words and its agent is used" || bad "auto-assign ims: $(topic_get "$t1" agent_pane) $(topic_get "$t1" project)"
+[ "$(topic_get "$t1" agent_pane)" = w1:p1 ] && [ "$(topic_get "$t1" project)" = "$shop" ] && ok "auto-assign: the project is chosen from the words and its agent is used" || bad "auto-assign shop: $(topic_get "$t1" agent_pane) $(topic_get "$t1" project)"
 [ -z "$(topic_get "$t2" agent_pane)" ] && [ -z "$(topic_get "$t2" project)" ] && ok "auto-assign: a topic without a project does not start" || bad "auto-assign without project started"
 topic_set "$t2" project "$bil"; topic_set "$t2" updated 1; topic_set "$t1" agent_pane ""; auto_assign
 [ "$(topic_get "$t2" agent_pane)" = w2:p1 ] && ok "auto-assign: a chosen project picks the agent of that project only" || bad "auto-assign bil: $(topic_get "$t2" agent_pane)"
@@ -273,11 +273,11 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   agent_ref "$(echo "$y" | tr '[:upper:]' '[:lower:]')" && [ "$AR_NAME" = beta ] ) && ok "agent numbers: a code (any case) finds the agent" || bad "agent code ref"
 # Steal & Transfer into another project is refused (only on purpose)
 ( agent_live() { LIVE_ST=idle; LIVE_SESS=s1; LIVE_CWD=/x; }; notify() { :; }; agent_send() { :; }
-  rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Mac${US}w2:p1${US}t${US}a${US}${US}proj-ims${US}/y" > "$AGENT_META_L"; : > "$AGENT_META_R"
+  rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Mac${US}w2:p1${US}t${US}a${US}${US}proj-shop${US}/y" > "$AGENT_META_L"; : > "$AGENT_META_R"
   topic_new "Doorbell fix" "" ""; xf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$xf" project proj-omarchy; topic_set "$xf" agent_pane w3:p1; topic_set "$xf" agent_machine Mac
-  transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "IMS (main)" 2>/dev/null; [ $? = 3 ] || exit 1
+  transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "Shop (main)" 2>/dev/null; [ $? = 3 ] || exit 1
   [ -z "$(topic_get "$xf" transfer_to)" ] || exit 2
-  TRANSFER_FORCE=1 transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "IMS (main)" 2>/dev/null; [ -n "$(topic_get "$xf" transfer_to)" ] || exit 3
+  TRANSFER_FORCE=1 transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "Shop (main)" 2>/dev/null; [ -n "$(topic_get "$xf" transfer_to)" ] || exit 3
   exit 0 ) && ok "transfer: an agent of another project is refused, unless forced" || bad "transfer project guard: step $?"
 # a click on a topic: every row of an entry selects it, captions and gaps do not; the window stays while the selection is in it
 ( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; AG_N=0; AG_LINES=(); : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"

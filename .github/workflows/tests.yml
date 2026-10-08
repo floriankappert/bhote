@@ -1,0 +1,45 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: tests (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS, bash 3.2
+            os: macos-latest
+          - name: Linux, bash 5
+            os: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the system bash (3.2 on macOS, as on every Mac)
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin" && ln -sf /bin/bash "$RUNNER_TEMP/bin/bash"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Tools
+        run: |
+          bash --version | head -1
+          jq --version && python3 --version && git --version
+          git config --global user.name "bhote CI" && git config --global user.email "ci@example.invalid"
+          git config --global init.defaultBranch main
+      - name: Test suites
+        run: bash tests/run.sh
+
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (errors)
+        run: |
+          shellcheck --version | sed -n 2p
+          shellcheck -S error bhote install.sh tests/*.sh tools/*.sh herdr-plugin/*.sh omarchy-plugin/*.sh

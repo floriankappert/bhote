@@ -6,12 +6,12 @@ them, their modules and their connections; settings › *Projects* › *name* �
 
 ```
   ┈┈ Deployments ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-  ✶ IMS · Backend                  60% · 1m
-  ⏸ Bilendo Marketing · Production approval · 4m
-  ✓ IMS · Frontend     feat/secure-files · 23m
+  ✶ Shop · Backend                  60% · 1m
+  ⏸ Acme Marketing · Production approval · 4m
+  ✓ Shop · Frontend     feat/secure-files · 23m
   ┈┈ Tests ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈
-  ✓ IMS-wt1 · server         7508 passed · 29m
-  ✗ Bilendo · build              develop · 1h
+  ✓ Shop-wt1 · server         7508 passed · 29m
+  ✗ Acme · build              develop · 1h
 ```
 
 `✶` running (progress from the jobs' steps), `◌` queued, `⏸` waiting for an approval, `✓` done, `✗` failed, `⊘` canceled.
@@ -21,7 +21,7 @@ them, their modules and their connections; settings › *Projects* › *name* �
 | Connection | How | Used by |
 |---|---|---|
 | GitHub Actions | `gh` and its own login (`gh auth login`); bhote keeps no GitHub token | `DEPLOY_GITHUB`, `TEST_GITHUB` |
-| CircleCI | API v2 with a personal API token: `CIRCLECI_TOKEN` in the bhote config (settings › *Connections* › *CircleCI token*, kept `0600`, never printed), else `$CIRCLECI_TOKEN`, else a `CIRCLECI_TOKEN=` line in `~/.config/zsh/secrets.zsh`. The token reaches `curl` on stdin, never on a command line. | `DEPLOY_CIRCLECI`, `TEST_CIRCLECI` |
+| CircleCI | API v2 with a personal API token: `CIRCLECI_TOKEN` in the bhote config (settings › *Connections* › *CircleCI token*, kept `0600`, never printed), else `$CIRCLECI_TOKEN`. The token reaches `curl` on stdin, never on a command line. | `DEPLOY_CIRCLECI`, `TEST_CIRCLECI` |
 
 ## A project's CI
 
@@ -44,9 +44,14 @@ A deployment pipeline with a manual approval (a CircleCI `type: approval` job, a
   the run: project (from the repository), start, end, exit code, and the result line of Minitest, Vitest, RSpec, pytest or
   bhote's own tests (`12 runs · 1 failures · 0 errors`). The last 100 runs are kept in `$BHOTE_DATA/testruns/`. The bhote
   skill tells Claude Code agents to run tests this way while the test monitor is on.
-- **Live status files** (`TEST_STATUS_DIR`, default `~/.cache/ims-test-status`): one JSON per worktree and suite
-  (`tree`, `suite`, `done`, `total`, `passed`, `failed`, `startedAt`, `updatedAt` in ms, `ok`), as IMS's Vitest reporter
-  writes them. A running file that has not changed for 30 s counts as gone.
+- **Live status files** (`TEST_STATUS_DIR`, default `~/.cache/bhote/test-status`): one JSON file per worktree and suite,
+  written by your test reporter while the suite runs. A running file that has not changed for 30 s counts as gone.
+  ```json
+  {"tree": "web-wt1", "suite": "server", "done": 5, "total": 10, "passed": 40, "failed": 0,
+   "startedAt": 1791470000000, "updatedAt": 1791470042000, "ok": null}
+  ```
+  `tree`, `suite` and `startedAt` are required. `tree` and `suite` name the entry, `done`/`total` give the progress, `startedAt`/`updatedAt` are in milliseconds, and
+  `ok` is `true` or `false` once the run is over (`null` while it runs).
 
 ## How it runs
 

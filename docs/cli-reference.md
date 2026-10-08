@@ -134,7 +134,7 @@ status `now`. `bhote now <ref>` run by an agent does the same. Exit `1` outside 
 ### `bhote project [list]` · `add <name>` · `rename <ref> <name>` · `rm <ref>` · `pin <ref> <what>` · `unpin <ref> <key>` · `of [folder]`
 
 Projects group the agents (and the topics). An agent belongs to a project by its git repository, known by its key: the
-origin URL as `host/owner/name` (`git@github.com:Acme/IMS.git` → `github.com/acme/ims`) or `dir:<folder>` without a
+origin URL as `host/owner/name` (`git@github.com:Acme/Shop.git` → `github.com/acme/shop`) or `dir:<folder>` without a
 remote; a worktree has the key of its main repository, so it inherits the project. Outside a repository an agent belongs
 to a project by its herdr workspace (`ws:<name>`). `pin` takes a folder, an agent (`bhote agents`: its repository, else
 its workspace), `ws:<workspace>` or a key. `of` prints the project of a folder (default: here). Projects are records in
