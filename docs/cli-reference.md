@@ -236,7 +236,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `status` | `"now"` \| `"next"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
-| `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session"}` (each may be null). |
+| `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session", "branch"}` (each may be null; `branch`: the git branch it works on, `@1234abc` when detached). |
 | `slack` | object \| null | A Slack pin: `{"channel", "thread", "label", "message"}`; `message` is the last one from someone else (sender: text), while in review. |
 | `created` | integer \| null | |
 | `updated` | integer \| null | Last change; the newer one wins in a merge. |

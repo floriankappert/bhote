@@ -80,7 +80,8 @@
             "name",
             "machine",
             "pane",
-            "session"
+            "session",
+            "branch"
           ],
           "properties": {
             "name": {
@@ -110,6 +111,13 @@
                 "null"
               ],
               "description": "The agent's session id (herdr agent_session, = CLAUDE_CODE_SESSION_ID). Stable across herdr restarts."
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The git branch the agent works on (\"@1234abc\" when detached), read by the machine it runs on (GITHUB_BRANCHES)."
             }
           }
         }

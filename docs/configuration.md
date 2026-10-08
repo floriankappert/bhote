@@ -24,6 +24,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTO_ASSIGN_MACHINE` | `any` | Prefer agents on | Whose free agents come first: `any` (this machine first) or a machine label; when none is free there, the others. |
 | `AGENT_CAN_CLOSE` | `on` | Agents may close topics | An agent may set its topic to done itself; `off`: only to review, you close it. |
 | `NOTIFY` | `on` | herdr notifications | herdr notifications when a topic is ready for review or done, and when a waiting topic waits too long. |
+| `GITHUB_BRANCHES` | `on` | GitHub: agent branches | The git branch the agent of a topic works on, as a line under the topic (and inline in the search). Each machine reads it for its own agents from their working folder (`.git`, worktrees too) and writes it into the topic when it changes. |
 | `SLACK_WATCH` | `off` | Watch Slack pins (Claude) | This machine watches the Slack channels pinned to waiting topics (`bhote slack`) through Claude Code and its Slack connector, and sets a topic to review when someone else writes. One machine is enough. |
 | `SLACK_EVERY` | `120` | Slack interval (s) | Seconds between two Slack checks; each is one short Claude call (Haiku), and only while a waiting topic has a pin. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |

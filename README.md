@@ -12,6 +12,7 @@ A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you
 - Topics are plain files; they can be kept in sync with a second machine over ssh (opt-in).
 - **Steal & Transfer**: an agent commits its state with a handover on its branch, and a free agent takes over ([how](docs/steal-and-transfer.md)).
 - Agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on.
+- **GitHub**: the git branch a topic's agent works on, under the topic and in the search.
 - **Slack pins**: a waiting topic can carry a Slack channel, DM or thread; when someone writes there, it goes to review. Claude Code (its Slack connector) does the reading, so bhote needs no Slack token.
 - Themes: follows your terminal colours (and Omarchy's system theme) by default, or exact Catppuccin colours, each role overridable.
 - A setup wizard on the first start: machines in both directions, sync through herdr, notifications.

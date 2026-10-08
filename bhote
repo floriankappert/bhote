@@ -87,6 +87,7 @@ AUTO_ASSIGN|off|bool|A running (now) topic without an agent goes to the next fre
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
+GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
 SLACK_WATCH|off|bool|Watch the Slack channels pinned to waiting topics, from this machine (through Claude Code and its Slack connector; one machine is enough): a new message from someone else sets the topic to review
 SLACK_EVERY|120|int:30:3600|Seconds between two Slack checks (one short Claude call each, only while a waiting topic has a pin)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -201,28 +202,28 @@ store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STAT
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, next, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
-    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm seen n=0 a_as a_dl a_tn a_sl a_sm s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br seen n=0 a_as a_dl a_tn a_sl a_sm a_br s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
         [ -f "$f" ] || continue
-        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; seen=" "
+        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; br=""; seen=" "
         while IFS= read -r line; do
             k=${line%%=*}; v=${line#*=}
             case "$seen" in *" $k "*) continue ;; esac; seen="$seen$k "     # the FIRST value counts, everywhere (topic_get does the same)
-            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; esac
+            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; agent_branch) br=$v ;; esac
         done < "$f"
         [ "$del" = 1 ] && continue
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
         case "$st" in now|next|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
-        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; n=$(( n + 1 ))
+        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; n=$(( n + 1 ))
     done
-    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=()
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=()
     for s in review now next waiting later done; do             # review first: it waits for you
         for (( i = 0; i < n; i++ )); do
             [ "${a_st[$i]}" = "$s" ] || continue
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
-            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; m=$(( m + 1 ))
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; m=$(( m + 1 ))
         done
     done
     T_N=$m
@@ -712,7 +713,7 @@ ui_load() {
     fi
     [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
     NOW=$(( NOW_BASE + SECONDS ))
-    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
+    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
     if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
     STORE_TAG=""; [ "$U_STORE" = remote ] && [ "$st" = offline ] && STORE_TAG=" · offline"
@@ -741,6 +742,10 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
         fi
     fi
     if [ -z "$panes" ]; then panes=$(herdr "$@" pane list 2>/dev/null) || return 0; ws=$(herdr "$@" workspace list 2>/dev/null); fi
+    if [ $# -eq 0 ]; then                                      # this machine: where its agents work (their branch, see branch_sync)
+        printf '%s' "$panes" | jq -r '.result.panes[] | select(.agent) | [.pane_id, ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0000-\u001f]"; ""))] | join("\u001f")' > "$AGENT_CWD.tmp.$$" 2>/dev/null \
+            && mv "$AGENT_CWD.tmp.$$" "$AGENT_CWD" 2>/dev/null
+    fi
     # control characters out of every text (a name must not carry escape codes to the terminal), only plain pane ids
     local tb; cfg_var tb TESTS_BUSY off
     printf '%s\n%s\n' "$panes" "$ws" | jq -rs --arg m "$label" --arg tb "$tb" '
@@ -756,6 +761,32 @@ agents_put() {  # agents_put <tmp> <list file>: only a changed list replaces the
     mv "$1" "$2"; printf '%s %s\n' "$(date +%s)" "$$$RANDOM" > "$SHARED_DIR/agents.rev" 2>/dev/null
 }
 collect_local() { collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"; agents_put "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"; }
+AGENT_CWD="$SHARED_DIR/agents.cwd"                             # pane US working folder of this machine's agents (for their branch)
+git_branch_set() {  # git_branch_set <var> <folder>: the branch checked out there (worktrees too), "@1234abc" when detached; read from .git, no git call
+    local _d=$2 _h="" _g _l _n=0; printf -v "$1" '%s' ""
+    while [ -n "$_d" ] && [ "$_n" -lt 40 ]; do
+        if [ -d "$_d/.git" ]; then _h="$_d/.git/HEAD"; break; fi
+        if [ -f "$_d/.git" ]; then IFS= read -r _g < "$_d/.git"; _g=${_g#gitdir: }; case "$_g" in /*) ;; *) _g="$_d/$_g" ;; esac; _h="$_g/HEAD"; break; fi
+        [ "$_d" = / ] && break; _d=${_d%/*}; [ -n "$_d" ] || _d=/; _n=$(( _n + 1 ))
+    done
+    [ -n "$_h" ] && [ -r "$_h" ] || return 1
+    IFS= read -r _l < "$_h" || return 1
+    case "$_l" in "ref: refs/heads/"*) printf -v "$1" '%s' "${_l#ref: refs/heads/}" ;; [0-9a-f]*) printf -v "$1" '@%s' "${_l:0:7}" ;; *) return 1 ;; esac
+}
+branch_sync() {  # the topics of this machine's agents carry their branch (agent_branch, only written on a change: it travels with the topics)
+    [ "$(cfg_get GITHUB_BRANCHES on)" = on ] && [ -r "$AGENT_CWD" ] || return 0
+    local i p c br map=$'\n'
+    while IFS=$US read -r p c; do [ -n "$p" ] && map="$map$p$US$c"$'\n'; done < "$AGENT_CWD"
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
+        case "${T_STATUS[$i]}" in done|later) continue ;; esac
+        c=${map#*$'\n'"${T_AP[$i]}$US"}; [ "$c" = "$map" ] && continue; c=${c%%$'\n'*}
+        git_branch_set br "$c" || br=""
+        [ -n "$br" ] && [ "$br" != "${T_BR[$i]}" ] && topic_set "${T_FILE[$i]}" agent_branch "$br"
+    done
+    return 0
+}
 collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied
     local id label host prof enabled
     { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof enabled; do
@@ -825,6 +856,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
             [ -e "$SHARED_DIR/remote.due" ] && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine
             collect_local                                       # first what the panels show; the merge can take a moment
+            branch_sync
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
                 [ "$remote_due" = 1 ] && collect_remote
             elif [ -s "$AGENT_REMOTE" ]; then : > "$AGENT_REMOTE.tmp.$$"; agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"; fi
@@ -910,7 +942,7 @@ group() {  # group <CAPTION> [colour]: a status caption; everything below starts
 # One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
 # find it for scrolling (and strips it). Done entries are one muted line.
-topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> [compact 1]
+topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> [compact 1] [branch]
     # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
     local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n
     local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
@@ -935,6 +967,10 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     [ -n "$st" ] && printf '%s%s' "$mc" "$st"
     [ -n "$tm" ] && { [ -n "$who$st" ] && printf '%s · ' "$gc"; printf '%s%s' "$gc" "$tm"; }
     printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
+    if [ -n "${10:-}" ]; then                                  # the agent's git branch, a line of its own
+        local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
+        printf '%s  %s⎇ %s%s%*s%s\n' "$bg" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
+    fi
     [ "${9:-}" = 1 ] || printf '\n'
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
@@ -963,7 +999,8 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
         next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
         done) ago_set tm "${T_UPD[$i]:-$NOW}" ;;            # (the panel shows done ones in their own area, with this time)
     esac
-    TM_WHO=$who; TM_ST=$state; TM_SC=$sc; TM_TM=$tm
+    TM_WHO=$who; TM_ST=$state; TM_SC=$sc; TM_TM=$tm; TM_BR=""
+    [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && [ "${U_GITHUB:-on}" = on ] && TM_BR=${T_BR[$i]}   # the agent's branch
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
     local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0
@@ -986,7 +1023,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
-        topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
+        topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
     done
     if [ "$nlater" -gt 0 ]; then                                # where the others are
         local rest="$nlater parked"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
@@ -1325,6 +1362,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
             done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
             SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
         fi
+        SET_ROWS[${#SET_ROWS[@]}]="bool|GITHUB_BRANCHES|GitHub: agent branches"
         SET_ROWS[${#SET_ROWS[@]}]="bool|SLACK_WATCH|Slack monitor (Claude)"
         [ "$(cfg_get SLACK_WATCH off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="num|SLACK_EVERY|Slack interval (s)"
         return
@@ -1380,6 +1418,7 @@ bhote_settings() {
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
             CONNECTIONS) wrap_print 5 "$D" "$(connections_summary)" ;;
             SETUP) wrap_print 5 "$D" "Every step again: change it, or skip what is set." ;;
+            GITHUB_BRANCHES) wrap_print 5 "$D" "The branch a topic's agent works on, under the topic and in the search." ;;
             SLACK_WATCH) wrap_print 5 "$D" "Pinned Slack channels of waiting topics, read through Claude Code. One machine is enough." ;;
             REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
             JUMP_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = JUMP_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Jumps from the agent to this panel and back.')" ;;
@@ -1751,6 +1790,8 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     if [ "$st" = waiting ] && [ -n "$wf" ]; then ago_set age "${ws:-$NOW}"; printf ' %s·%s %s%s%s %s· %s%s' "$D" "$X" "$BLUE" "$wf" "$X" "$D" "$age" "$X"; fi
     printf '\n'
     [ -n "$ag" ] && printf '  %sagent%s %s%s%s%s\n' "$D" "$X" "$BLUE" "$(clip "$ag" $(( ${COLS:-44} - 12 )))" "$X" "${am:+ ${D}· $am$X}"
+    line=$(topic_get "$f" agent_branch); [ -n "$line" ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ "$(cfg_get GITHUB_BRANCHES on)" = on ] \
+        && printf '  %sbranch%s %s⎇ %s%s\n' "$D" "$X" "$S" "$(clip "$line" $(( ${COLS:-44} - 13 )))" "$X"
     if [ -n "$(topic_get "$f" slack_channel)" ] || [ -n "$(topic_get "$f" slack_msg)" ]; then   # the pin and the answer that came in
         printf '\n  %sSLACK%s\n' "$D" "$X"
         line=$(topic_get "$f" slack_label); [ -n "$line" ] && printf '  %s%s%s%s\n' "$S" "$line" "$X" "$( [ "$st" = waiting ] && printf ' %s· monitor%s' "$D" "$X")"
@@ -3284,7 +3325,7 @@ topic_json() {  # topic_json <file>
     case "$st" in now|next|waiting|review|later|done) ;; *) st=now ;; esac
     as=$(topic_get "$f" agent_session)
     [ "$st" = waiting ] || wf=""
-    [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")")
+    [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s,"branch":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")" "$(json_opt "$(topic_get "$f" agent_branch)")")
     local sch slack=null; sch=$(topic_get "$f" slack_channel)
     [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
 /g')")")
@@ -3317,7 +3358,7 @@ find_items() {  # topics in the list's status order (review, now, next, waiting,
     for (( i = 0; i < T_N; i++ )); do
         FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=${T_STATUS[$i]}; FI_REF[$n]=${T_ID[$i]}
         FI_GRP[$n]=${T_STATUS[$i]}
-        topic_meta "$i"; FI_LABEL[$n]=$TM_WHO; FI_SUB[$n]=$TM_ST; FI_SC[$n]=$TM_SC; FI_TM[$n]=$TM_TM   # the panel's meta line, 1:1
+        topic_meta "$i"; FI_LABEL[$n]="$TM_WHO${TM_BR:+${TM_WHO:+ · }⎇ $TM_BR}"; FI_SUB[$n]=$TM_ST; FI_SC[$n]=$TM_SC; FI_TM[$n]=$TM_TM   # the panel's meta line, 1:1 (the branch inline)
         lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} $TM_WHO $TM_ST topic"$'\n'; n=$(( n + 1 ))
     done
     for pass in busy free; do
