@@ -18,6 +18,13 @@ act() { if [ -n "${BHOTE_DRY:-}" ]; then echo "herdr $*"; else "$herdr" "$@"; fi
 command -v jq >/dev/null 2>&1 || exit 0
 if [ "$mode" != open ] && [ -r "$cfg" ] && grep -qx 'AUTOSTART=off' "$cfg"; then exit 0; fi
 
+# one run at a time: two runs (startup and an event) that both see "no panel" would split the tab twice
+lock="${TMPDIR:-/tmp}/bhote-open.$(id -u).lock"
+if ! mkdir "$lock" 2>/dev/null; then
+    [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ] && rmdir "$lock" 2>/dev/null   # left by a killed run
+    exit 0
+fi
+trap 'rmdir "$lock" 2>/dev/null' EXIT
 panes=$("$herdr" pane list 2>/dev/null) || exit 0
 # one line per tab: tab, pane that is the bhote panel ("" if none), its title, the pane to split (an agent pane first), focused 1/0
 tabs=$(printf '%s' "$panes" | jq -r '
