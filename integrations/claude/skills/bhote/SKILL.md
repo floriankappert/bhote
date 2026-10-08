@@ -1,6 +1,6 @@
 ---
 name: bhote
-description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, and when you are told to hand your work over (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
+description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
 ---
 
 # bhote: topics next to herdr
@@ -42,6 +42,20 @@ bhote review <id>
 When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
 Do not use `-w` for the user: waiting is for other people and things.
 
+## When you commit
+
+Whatever makes the commit (the user's own commit skill or slash command, or plain `git commit`), close the topics it
+finishes right after it:
+
+```sh
+bhote list --status review --json      # the topics waiting for the user's check
+bhote done <id>                        # each one this commit finishes
+```
+
+A topic belongs to the commit when it is yours (`bhote current`), when its `agent.branch` is the feature branch you committed on (not `main`, which many share),
+or when its title or description names the work the commit contains. Leave a topic whose work the commit only starts
+or does not touch, and topics of other repositories. Say in one line which topics you closed.
+
 ## Slack: pin a channel, DM or thread
 
 The user can pin Slack to a topic ("create a topic for X and pin Karen's Slack channel"). bhote then watches it while the
@@ -77,7 +91,32 @@ it names) with a handover in the commit message body (goal, what is done, what i
 there is a remote, note the branch and the commit, free the branch with `git switch --detach` if the other agent works in
 another worktree of the repository, then run the `bhote handover …` command it gives you and stop. When a prompt says
 "Steal & Transfer: take over …", switch to the branch (or the commit) it names, read the handover with
-`git log -1 <commit>`, and continue.
+`git log -1 <commit>`, and continue. The prompt assumes the repository you are in: when the work lives in another one
+(e.g. `~/Development/<repo>` next to yours), fetch and switch there, cloning it first if it is missing. A source only hands
+over what it knew: check the handover for what it says is missing before you build on it.
+
+### Starting a transfer for the user
+
+```sh
+bhote agents --json                                           # machine, pane, status, free
+bhote add "<what moves>" -d "<from where to where>" --json    # the topic it travels with
+bhote transfer <machine/pane> <machine/pane> --topic <id>     # from, to
+```
+
+- **Pass `--topic`.** Without it bhote takes the source's current topic, which is often unrelated.
+- **The target must be free** (idle or done), checked live right before the prompt. If *you* are the target you are
+  `working` while you run the command, so start it from a detached waiter and end your turn; the take-over prompt then
+  arrives as your next turn:
+  `setsid nohup bash -c 'until herdr pane list | jq -e ".result.panes[] | select(.pane_id==\"<your pane>\") | .agent_status | test(\"idle|done\")" >/dev/null; do sleep 10; done; bhote transfer …' >log 2>&1 </dev/null &`
+  (a `run_in_background` task does not do: it wakes you when it ends).
+- **The handover travels through git.** The source must work in a repository with a remote the target can reach. When it
+  works outside one (e.g. its home directory), prepare it first with a prompt: clone the repository, `git switch -c <branch>`,
+  write its state as files, do not commit yet. Never let it `git init` a home directory.
+- **Look at the target's working tree.** Uncommitted files at the paths the source commits block `git switch`; have the
+  source write to a separate path (e.g. `docs/<machine>/`).
+- **Agents on another machine:** prompt with `herdr --machine <label> agent prompt <pane> "<text>"`; read status and folder
+  with `herdr --machine <label> pane list | jq '.result.panes[] | select(.pane_id=="<pane>") | {agent_status, cwd}'`.
+  Wait for `idle`/`done` before the transfer.
 
 ## Useful
 
