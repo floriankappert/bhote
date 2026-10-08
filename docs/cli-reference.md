@@ -121,8 +121,10 @@ new topic.
 The pin is watched while the topic **waits**, by the machine with `SLACK_WATCH=on` (see configuration): every
 `SLACK_EVERY` seconds bhote asks Claude Code (`claude -p`, Haiku, only the read-only tools of its Slack connector; bhote
 keeps no Slack token) for newer messages. A message from someone else sets the topic to `review`, with a herdr
-notification; the message (sender and up to 300 characters) is in `slack.message` and on the topic page. Your own
-messages only move the watch on.
+notification; the message (sender and up to 1500 characters, all messages of one check together) is in `slack.message`
+and on the topic page. While the topic stays in that review, the pin is still watched: further messages (a sentence that
+goes on in a second message, a reply from someone else) join it, with a notification each. Your own messages only move
+the watch on.
 
 ### `bhote take <ref>`
 
@@ -253,7 +255,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session", "branch"}` (each may be null; `branch`: the git branch it works on, `@1234abc` when detached). |
 | `project` | string \| null | The topic's project (its name). |
-| `slack` | object \| null | A Slack pin: `{"channel", "thread", "label", "message"}`; `message` is the last one from someone else (sender: text), while in review. |
+| `slack` | object \| null | A Slack pin: `{"channel", "thread", "label", "message"}`; `message` is what came from others (senders: text), while in review. |
 | `created` | integer \| null | |
 | `updated` | integer \| null | Last change; the newer one wins in a merge. |
 

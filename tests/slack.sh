@@ -84,6 +84,15 @@ echo "$frame" | grep -q "slack · Akrur: Hi, Set up: • Bucket: b-1 and" && ! e
   for (( k = 0; k < ${#FI_KIND[@]}; k++ )); do [ "${FI_REF[$k]}" = "$id" ] && break; done
   [ "${FI_LABEL[$k]}" = slack ] && [ "${FI_SUB[$k]:0:20}" = "Akrur: Hi, Set up: •" ] && [ "${FI_TM[$k]}" = "just now" ] ) \
   && ok "search: the same meta line as the panel (who, state, time)" || bad "search meta differs"
+# under review from Slack it stays watched: what follows (a sentence going on, someone else) joins the message
+B add "Manual review" --slack "https://acme.slack.com/archives/C0777ABC" >/dev/null; B review "Manual review" >/dev/null
+seen=$(topic_get "$f" slack_seen); a=$(( ${seen%.*} + 10 )).000100; b=$(( ${seen%.*} + 20 )).000100
+printf '{"pins":[{"topic":"%s","messages":[{"ts":"%s","user":"U3","name":"Akrur","text":"want me to test it"},{"ts":"%s","user":"U4","name":"Bo","text":"+1"}]}]}' "$id" "$a" "$b" > "$FAKE_ANSWER"
+: > "$FAKE_LOG"; slack_check
+[ "$(topic_get "$f" status)" = review ] && [ "$(topic_get "$f" slack_seen)" = "$b" ] \
+  && [ "$(topic_get "$f" slack_msg)" = 'Akrur, Bo: Hi, ¶ ¶ Set up: ¶ • Bucket: `b-1` and `SECURE_FILES_BUCKET` ¶ ¶ Open: ¶ 1. *Verify* the scan ¶ 2. *Then* remove the flag ¶ ¶ want me to test it ¶ ¶ +1' ] \
+  && ok "watch: a follow-up under review joins the message (all senders)" || bad "follow-up: '$(topic_get "$f" slack_msg)'"
+grep -q "C0777ABC" "$FAKE_LOG" && bad "a review topic Slack did not put there is watched" || ok "watch: a review topic without a Slack message is not asked"
 # waits again: the message goes, from now on; the same message again changes nothing
 B wait "$id" Legal >/dev/null; [ "$(topic_get "$f" status)" = waiting ] && [ -z "$(topic_get "$f" slack_msg)" ] && ok "wait again: the message goes, the pin stays" || bad "rewait"
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=40 bash ./bhote </dev/null)

@@ -26,7 +26,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `NOTIFY` | `on` | herdr notifications | herdr notifications when a topic is ready for review or done, and when a waiting topic waits too long. |
 | `GITHUB_BRANCHES` | `on` | GitHub: agent branches | The git branch the agent of a topic works on, as a line under the topic (and inline in the search). Each machine reads it for its own agents from their working folder (`.git`, worktrees too) and writes it into the topic when it changes. |
 | `SLACK_WATCH` | `off` | Watch Slack pins (Claude) | This machine watches the Slack channels pinned to waiting topics (`bhote slack`) through Claude Code and its Slack connector, and sets a topic to review when someone else writes. One machine is enough. |
-| `SLACK_EVERY` | `120` | Slack interval (s) | Seconds between two Slack checks; each is one short Claude call (Haiku), and only while a waiting topic has a pin. |
+| `SLACK_EVERY` | `120` | Slack interval (s) | Seconds between two Slack checks; each is one short Claude call (Haiku), and only while a waiting topic (or one Slack put under review) has a pin. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |
 | `THEME` | `terminal` | Colours | `terminal`: the terminal's own 16 colours, so bhote follows the terminal theme (and Omarchy's system theme) at once. `catppuccin`: exact truecolor values. |
 | `COLOR_<ROLE>` | | | Overrides one role with `#rrggbb` in either theme. Roles: `TEXT`, `DIM`, `FRAME`, `SELECTION` (background), `ACCENT`, `NOW` (also busy agents), `WAITING`, `REVIEW`, `LATER`, `DONE` (also free agents), `ERROR`. Example: `bhote config set COLOR_NOW '#fab387'`. |

@@ -2329,7 +2329,7 @@ new_topic_from() {  # new_topic_from <text>: the same syntax as the prompt, with
 # ── Slack pins: a waiting topic can carry a Slack channel, DM or thread (slack_channel, slack_thread, slack_label). With
 # SLACK_WATCH=on the collector of this machine asks Claude Code every SLACK_EVERY seconds (claude -p, Haiku, only the read-only
 # Slack tools of its connector: bhote holds no Slack token) for messages newer than slack_seen; one from someone else sets the
-# topic to review (slack_msg: who and what). BHOTE_CLAUDE replaces the claude command (the tests use a fake).
+# topic to review (slack_msg: who and what). A topic Slack put under review stays watched: what follows joins its message. BHOTE_CLAUDE replaces the claude command (the tests use a fake).
 SLACK_TOOLS="mcp__claude_ai_Slack__slack_read_channel mcp__claude_ai_Slack__slack_read_thread mcp__claude_ai_Slack__slack_read_user_profile mcp__claude_ai_Slack__slack_search_channels mcp__claude_ai_Slack__slack_search_users"
 claude_json() {  # claude_json <prompt> [timeout s]: one headless Claude call with the Slack tools; prints the JSON of its answer
     local cl=${BHOTE_CLAUDE:-claude} dir="$DATA_DIR/slack" out p k
@@ -2400,13 +2400,15 @@ slack_me() {  # slack_me: the Slack user id of this Claude connector (kept in $D
     mkdir -p "$DATA_DIR/slack"; printf '%s\n' "$id" > "$DATA_DIR/slack/me"
 }
 slack_check() {  # one round of the watch: every waiting topic with a pin, in one Claude call
-    local i f pins="" me j n=0 id st ts maxts who txt
+    local i f pins="" seens="" me j n=0 id st ts maxts who txt
     topics_load
     for (( i = 0; i < T_N; i++ )); do
-        [ "${T_STATUS[$i]}" = waiting ] || continue; f=${T_FILE[$i]}
+        f=${T_FILE[$i]}
+        case "${T_STATUS[$i]}" in waiting) ;; review) [ -n "$(topic_get "$f" slack_msg)" ] || continue ;; *) continue ;; esac   # (review: Slack put it there, a follow-up joins)
         local ch th seen; ch=$(topic_get "$f" slack_channel); [ -n "$ch" ] || continue
         th=$(topic_get "$f" slack_thread); seen=$(topic_get "$f" slack_seen 0)
         pins="$pins${pins:+,}$(printf '{"topic":%s,"channel_id":%s,"thread_ts":%s,"oldest":%s}' "$(json_str "${T_ID[$i]}")" "$(json_str "$ch")" "$(json_opt "$th")" "$(json_str "$seen")")"; n=$(( n + 1 ))
+        seens="$seens${seens:+,}$(json_str "${T_ID[$i]}"):$(json_str "$seen")"
     done
     [ "$n" -gt 0 ] || return 0
     me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); [ -n "$me" ] || { slack_me && me=$(cat "$DATA_DIR/slack/me" 2>/dev/null); }   # who I am: once
@@ -2418,19 +2420,29 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
         case "$maxts" in ''|*[!0-9.]*) continue ;; esac
         awk -v a="$maxts" -v b="$seen" 'BEGIN { exit !(a + 0 > b + 0) }' || continue
         topic_set "$f" slack_seen "$maxts"
-        if [ -n "$who" ] && [ "$st" = waiting ]; then             # someone else wrote: the topic waits for you now
+        [ -n "$who" ] || continue
+        if [ "$st" = waiting ]; then                               # someone else wrote: the topic waits for you now
             topic_set "$f" status review; topic_set "$f" slack_msg "$who: $txt"
             notify "Slack: $(topic_get "$f" title)" "$who: $txt" request
+        elif [ "$st" = review ]; then                              # more came in (a sentence often goes on in a second message): it joins
+            local old ow ot n; old=$(topic_get "$f" slack_msg); ow=${old%%: *}; ot=${old#*: }; [ "$ow" = "$old" ] && { ow=""; ot=$old; }
+            while [ -n "$who" ]; do n=${who%%, *}; [ "$n" = "$who" ] && who="" || who=${who#*, }
+                case ", $ow, " in *", $n, "*) ;; *) ow="${ow:+$ow, }$n" ;; esac; done
+            ot="$ot ¶ ¶ $txt"; [ "${#ot}" -gt 3000 ] && ot="… ${ot:${#ot}-2990}"   # the newest part counts
+            topic_set "$f" slack_msg "$ow: $ot"
+            notify "Slack: $(topic_get "$f" title)" "${n:-$ow}: $txt" request
         fi
-    done <<< "$(printf '%s' "$j" | jq -r --arg me "$me" '
+    done <<< "$(printf '%s' "$j" | jq -r --arg me "$me" --argjson seen "{$seens}" '
         def clean: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
         def plain: gsub("<@[A-Z0-9]+\\|(?<n>[^>]+)>"; "@\(.n)") | gsub("<[!#@][^>|]*\\|(?<n>[^>]+)>"; "\(.n)") | gsub("<(?<u>https?:[^>|]+)\\|(?<t>[^>]+)>"; .t)
             | gsub("<(?<u>https?:[^>]+)>"; .u) | gsub("<@[A-Z0-9]+>"; "@someone") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")
             | gsub("  +"; " ");   # Slack markup out (mentions, links, entities); *bold* and `code` stay for the topic page
         .pins[]? | select(.topic | test("^[A-Za-z0-9_-]+$")) | . as $p
-        | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")))] | sort_by(.ts | tonumber)) as $m
-        | (if $me == "" then null else ([$m[] | select(.user != $me)] | last) end) as $o   # (who I am unknown: only move on)
-        | [$p.topic, ($m | last | .ts // ""), (if $o then ($o.name // $o.user // "someone" | clean) else "" end), (if $o then ($o.text // "" | gsub("\\r"; "") | gsub("\\n[ \\t]*\\n\\s*"; " ¶ ¶ ") | gsub("\\n"; " ¶ ") | clean | plain | .[0:1500]) else "" end)] | join("\u001f")' 2>/dev/null)"
+        | ([.messages[]? | select((.ts // "" | tostring | test("^[0-9]+\\.[0-9]+$")) and (.ts != ($p.thread_ts // "")) and ((.ts | tonumber) > ($seen[$p.topic] // "0" | tonumber)))] | sort_by(.ts | tonumber)) as $m
+        | (if $me == "" then [] else [$m[] | select(.user != $me)] end) as $o   # all of someone else (who I am unknown: only move on)
+        | [$p.topic, ($m | last | .ts // ""),
+           ($o | map(.name // .user // "someone" | clean) | reduce .[] as $n ([]; if index([$n]) then . else . + [$n] end) | join(", ")),
+           ($o | map(.text // "" | gsub("\\r"; "") | gsub("\\n[ \\t]*\\n\\s*"; " ¶ ¶ ") | gsub("\\n"; " ¶ ") | clean | plain) | join(" ¶ ¶ ") | .[0:1500])] | join("\u001f")' 2>/dev/null)"
     printf 'ok %s\n' "$(date +%s)" > "$SHARED_DIR/slack.status"
     poke
 }
@@ -3633,7 +3645,7 @@ topic_json() {  # topic_json <file>
     [ "$st" = waiting ] || wf=""
     [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s,"branch":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")" "$(json_opt "$(topic_get "$f" agent_branch)")")
     local sch slack=null; sch=$(topic_get "$f" slack_channel)
-    [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
+    [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg | sed 's/ ¶ ¶ / ¶  ¶ /g; s/ ¶ /\
 /g')")")
     local pj; pj=$(topic_get "$f" project); [ -n "$pj" ] && { [ "${P_N:-0}" -gt 0 ] || projects_load; pj=$(project_name "$pj" || true); }
     printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"project":%s,"created":%s,"updated":%s}' \
@@ -3652,7 +3664,7 @@ cli_show() {  # cli_show <file> [--json]
     if [ "$st" = waiting ] && [ -n "$wf" ]; then printf '  waiting for: %s (%s)\n' "$wf" "$(ago "$ws")"; fi
     local spj; spj=$(topic_get "$f" project); [ -n "$spj" ] && { projects_load; printf '  project: %s\n' "$(project_name "$spj" || echo "$spj")"; }
     if [ -n "$(topic_get "$f" slack_channel)" ]; then printf '  slack: %s%s\n' "$(topic_get "$f" slack_label)" "$( [ "$st" = waiting ] && echo " (watched)")"; fi
-    if [ "$st" = review ] && [ -n "$(topic_get "$f" slack_msg)" ]; then printf '  slack message: %s\n' "$(topic_get "$f" slack_msg | sed 's/ ¶ /\
+    if [ "$st" = review ] && [ -n "$(topic_get "$f" slack_msg)" ]; then printf '  slack message: %s\n' "$(topic_get "$f" slack_msg | sed 's/ ¶ ¶ / ¶  ¶ /g; s/ ¶ /\
     /g')"; fi
     return 0
 }
