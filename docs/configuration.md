@@ -17,7 +17,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `PANEL_MIN_WIDTH` | `36` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
 | `PANEL_MAX_WIDTH` | `60` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
-| `REMOTE_EVERY` | `10` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
+| `REMOTE_EVERY` | `5` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
 | `TESTS_BUSY` | `off` | Running tests = agent busy | An agent whose herdr workspace runs tests (its `tests` token starts with `◌`) counts as busy. |
 | `AUTO_ASSIGN` | `off` | Auto-assign now topics | A running (`now`) topic without an agent goes to the next free agent by itself, 20 s after its last change (time to add a description); the agent is checked live first and you get a notification. It runs once per machine: with two machines sharing topics, switch it on on one of them. |
 | `AUTO_ASSIGN_MACHINE` | `any` | Prefer agents on | Whose free agents come first: `any` (this machine first) or a machine label; when none is free there, the others. |

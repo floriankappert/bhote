@@ -78,7 +78,7 @@ MACHINES_OFF||list|Saved machines that stay out even with REMOTE_AGENTS=on
 PANEL_MIN_WIDTH|36|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
 PANEL_MAX_WIDTH|60|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
-REMOTE_EVERY|10|int:1:3600|Seconds between two queries of the other machines and the regular merge
+REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|off|bool|An agent whose workspace runs tests counts as busy
 AUTO_ASSIGN|off|bool|A running (now) topic without an agent goes to the next free agent by itself, 20 s after its last change
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
@@ -740,14 +740,18 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
         | .[0].result.panes[] | select(.agent) | select(.pane_id | test("^[A-Za-z0-9:_-]+$"))
         | [($m | clean), .pane_id, (if ($tb == "on") and ($t[.workspace_id] // false) and ((.agent_status // "") != "working") then "testing" else ((.agent_status // "") | tostring | clean) end), (($w[.workspace_id] // .workspace_id // "") | tostring | clean), ((.tokens.task // "") | tostring | clean | ltrimstr("∟ "))] | join("\u001f")' 2>/dev/null
 }
-collect_local() { collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"; mv "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"; }
+agents_put() {  # agents_put <tmp> <list file>: only a changed list replaces the old one, and counts up the revision the panels watch
+    if cmp -s "$1" "$2" 2>/dev/null; then rm -f "$1"; return 0; fi
+    mv "$1" "$2"; printf '%s %s\n' "$(date +%s)" "$$$RANDOM" > "$SHARED_DIR/agents.rev" 2>/dev/null
+}
+collect_local() { collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"; agents_put "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"; }
 collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied
     local id label host prof enabled
     { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof enabled; do
           [ "$label" = "$HOST" ] && continue                   # would look like this machine's own agents (HOST_LABEL clash)
           [ "$enabled" = enabled ] && machine_wanted "$label" && collect_one "$label" --machine "$label"
       done; } > "$AGENT_REMOTE.tmp.$$"
-    mv "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
+    agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
 }
 remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND hours: a notification (remembered locally)
     local h i f now id; cfg_var h WAIT_REMIND 24; num_set h "$h" 24; [ "$h" -gt 0 ] || return 0
@@ -800,27 +804,27 @@ auto_assign() {
     done
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
-    local n=0 every_l every_r
+    local every_l every_r last_r=-999999 w
     while true; do
         kill -0 "$1" 2>/dev/null || exit 0                   # the panel is gone (also after kill -9): stop, never loop on alone
-        cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 10
-        case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=10 ;; esac
+        cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
+        case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         if collector_lead "$1"; then
+            local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
+            collect_local                                       # first what the panels show; the merge can take a moment
             # the data location: at once after a local change, otherwise as often as the remote agents
             if [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; store_sync; [ $? = 2 ] && : > "$STORE_DIRTY"
-            elif [ $(( n % (every_r / every_l + 1) )) -eq 0 ]; then store_sync; fi
-            collect_local
+            elif [ "$remote_due" = 1 ]; then store_sync; fi
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
-                [ $(( n % (every_r / every_l + 1) )) -eq 0 ] && collect_remote
-            else : > "$AGENT_REMOTE"; fi
+                [ "$remote_due" = 1 ] && collect_remote
+            elif [ -s "$AGENT_REMOTE" ]; then : > "$AGENT_REMOTE.tmp.$$"; agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"; fi
             remind_waiting
             auto_assign
-            n=$(( n + 1 ))
-        else n=0; fi
-        local w=0; while [ "$w" -lt "$every_l" ]; do              # wait in 1 s steps: a poke (agent event, CLI change) ends it
+        fi
+        w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
             if [ -e "$SHARED_DIR/poke" ] && [ "$(readlink "$SHARED_DIR/collector.lock" 2>/dev/null)" = "$1" ]; then
                 rm -f "$SHARED_DIR/poke"; break                     # only the collector takes the poke (the others would swallow it)
-            fi; sleep 1; w=$(( w + 1 )); done
+            fi; sleep 0.2; w=$(( w + 1 )); done
     done
 }
 
@@ -997,7 +1001,7 @@ agents_block() {  # two columns: free agents (idle, done) left, busy ones right;
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             [ "$m" = "${machines[$k]}" ] || continue
             case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
-            name_color_set nc "$name"; clip_set label "$name" $(( cw - 2 ))
+            name_color_set nc "$name"; clip_set label "$name" $(( cw - 3 ))
             cell="$ic$X $nc$label$X"; dw_set plain "$label"; plain=$(( plain + 2 ))
             case "$st" in idle|done) f[$nf]=$cell; fw[$nf]=$plain; fid[$nf]="$m$US$id$US$st"; nf=$(( nf + 1 )) ;; *) b[$nb]=$cell; bid[$nb]="$m$US$id$US$st"; nb=$(( nb + 1 )) ;; esac
         done
@@ -2665,6 +2669,10 @@ bhote_main() {
         # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
         if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
         if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ) & fi
+        if [ -z "$key" ]; then                                 # the agent lists changed (the collector counts a revision up): at once
+            local _rev=""; read -r _rev < "$SHARED_DIR/agents.rev" 2>/dev/null
+            if [ "$_rev" != "${AG_REV:-}" ]; then AG_REV=$_rev; case "$view" in main) redraw=1 ;; esac; fi
+        fi
         if [ -r "$SHARED_DIR/select" ]; then                   # bhote find chose a topic without an agent: select it here
             local _sid _snc _sact; read -r _sid _snc _sact < "$SHARED_DIR/select" 2>/dev/null
             if [ "$_sid $_snc" != "${SEL_SEEN:-}" ]; then        # (show: the topic's page, else the list with it selected)
@@ -2959,14 +2967,27 @@ cli_show() {  # cli_show <file> [--json]
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
 # must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic opens its page
 # in the bhote panel of the tab. Esc closes.
-FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
+FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=()
+find_state() {  # find_state <topic index>: FS_TXT, FS_COL: what its agent does, as the list says it
+    local ast; FS_TXT=""; FS_COL=$D
+    case "${T_STATUS[$1]}" in
+        now) if [ -n "${T_TN[$1]}" ]; then FS_TXT="handing over → ${T_TN[$1]}"; FS_COL=$C
+             elif [ -n "${T_AP[$1]}" ]; then agent_state_set ast "${T_AM[$1]}" "${T_AP[$1]}"
+                 case "$ast" in working) FS_TXT=working; FS_COL=$ORANGE ;; testing) FS_TXT="running tests"; FS_COL=$ORANGE ;; blocked) FS_TXT="needs you"; FS_COL=$NN ;;
+                     idle|done) FS_TXT=finished; FS_COL=$GREEN ;; *) FS_TXT=gone ;; esac
+             fi ;;
+        review) FS_TXT="ready for review"; FS_COL=$BLUE ;;
+        waiting) [ -n "${T_AG[$1]}" ] && { FS_TXT="${T_AG[$1]} waits"; FS_COL=$Y; } ;;
+    esac
+}
 find_items() {  # topics in the list's status order (review, now, next, waiting, later, done), then the agents: busy, then free
     local i m id st name task lowsrc="" n=0 pass
-    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
+    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=()
     for (( i = 0; i < T_N; i++ )); do
         FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=${T_STATUS[$i]}; FI_REF[$n]=${T_ID[$i]}
         FI_GRP[$n]=${T_STATUS[$i]}; FI_LABEL[$n]="${T_AG[$i]}${T_AG[$i]:+${T_WFOR[$i]:+ · }}${T_WFOR[$i]}"
-        lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} topic"$'\n'; n=$(( n + 1 ))
+        find_state "$i"; FI_SUB[$n]=$FS_TXT; FI_SC[$n]=$FS_COL
+        lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} $FS_TXT topic"$'\n'; n=$(( n + 1 ))
     done
     for pass in busy free; do
         for (( i = 0; i < AG_N; i++ )); do
@@ -3005,12 +3026,15 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
         else
             case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; next) ic="${S}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
         fi
+        local sb=${FI_SUB[$i]:-} sbw=0 sep=""
         clip_set nm "${FI_NAME[$i]}" $(( w * 3 / 5 )); dw_set nw "$nm"
-        clip_set lb "${FI_LABEL[$i]}" $(( w - 8 - nw )); dw_set lw "$lb"
-        pad=$(( w - 8 - nw - lw )); [ "$pad" -lt 0 ] && pad=0
+        [ -n "$sb" ] && { clip_set sb "$sb" $(( w - 8 - nw )); dw_set sbw "$sb"; }  # the state first: it must not be cut away
+        [ -n "$sb" ] && [ -n "${FI_LABEL[$i]}" ] && sep=" · "
+        clip_set lb "${FI_LABEL[$i]}" $(( w - 8 - nw - sbw - ${#sep} )); dw_set lw "$lb"; [ -n "$lb" ] || sep=""
+        pad=$(( w - 8 - nw - lw - ${#sep} - sbw )); [ "$pad" -lt 0 ] && pad=0
         [ "$k" = "$sel" ] && sr=${#rl[@]}
-        if [ "$k" = "$sel" ]; then line=$(printf '%s   %s%s %s%s%s  %s%s%*s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$DSEL" "$lb" "$pad" "" "$X")
-        else line=$(printf '   %s%s %s%s%s  %s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$D" "$lb" "$X"); fi
+        if [ "$k" = "$sel" ]; then line=$(printf '%s   %s%s %s%s%s  %s%s%s%s%s%*s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$DSEL" "$lb" "$sep" "${FI_SC[$i]:-}" "$sb" "$pad" "" "$X")
+        else line=$(printf '   %s%s %s%s%s  %s%s%s%s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$D" "$lb" "$sep" "${FI_SC[$i]:-}" "$sb" "$X"); fi
         rl[${#rl[@]}]=$line; rh[${#rh[@]}]=$k
     done
     off=0; [ "$sr" -ge "$room" ] && off=$(( sr - room + 1 ))
