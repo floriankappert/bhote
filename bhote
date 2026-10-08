@@ -2956,7 +2956,10 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
     out+=$(printf ' %s▶%s %s%s%s\033[7m \033[27m %s%d/%d%s' "$ORANGE" "$X" "$L" "$line" "$X" "$D" "$n" "${#FI_KIND[@]}" "$X")$'\033[K\n'
     out+=$(printf ' %s%s%s' "$B" "$(hline $(( w - 1 )))" "$X")$'\033[K\n'
     for (( r = off; r < off + room && r < ${#rl[@]}; r++ )); do out+="${rl[$r]}"$'\033[K\n'; done
-    [ "$n" -gt 0 ] || out+=$(printf '   %snothing matches%s' "$D" "$X")$'\033[K\n'
+    if [ "$n" = 0 ]; then                                     # nothing found: Enter makes it a topic
+        if [ -n "$1" ]; then clip_set line "$1" $(( w - 40 )); out+=$(printf '   %snothing matches · %s⏎ %screate "%s"%s' "$D" "$S" "$L" "$line" "$X")$'\033[K\n'
+        else out+=$(printf '   %snothing matches%s' "$D" "$X")$'\033[K\n'; fi
+    fi
     out+=$'\033[J'
     local hint="↑↓ choose · ⏎ open · x done · ^n new · esc close"
     [ -n "$1" ] && hint="↑↓ choose · ⏎ open · ^x done · ^n new · esc close"
