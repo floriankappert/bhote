@@ -106,7 +106,7 @@ HB config set JUMP_KEY prefix+t >/dev/null && grep -q '^key = "prefix+t"' "$T/xd
 cp "$T/xdg/herdr/config.toml" "$T/before"; HB config set JUMP_KEY bad+x >/dev/null 2>&1; rc=$?
 [ "$rc" = 1 ] && cmp -s "$T/before" "$T/xdg/herdr/config.toml" && ok "jump key: a key herdr refuses changes nothing" || bad "refused key: rc=$rc"
 HB config set JUMP_KEY off >/dev/null && ! grep -q 'bhote' "$T/xdg/herdr/config.toml" && grep -q 'prefix = "ctrl+space"' "$T/xdg/herdr/config.toml" && ok "jump key: off removes only bhote's block" || bad "off: $(cat "$T/xdg/herdr/config.toml")"
-HB config set FIND_KEY ctrl+alt+t >/dev/null && grep -q "^command = \"'.*bhote' find\"" "$T/xdg/herdr/config.toml" && grep -q 'type = "popup"' "$T/xdg/herdr/config.toml" && ok "find key: a popup running bhote find" || bad "find key: $(cat "$T/xdg/herdr/config.toml")"
+HB config set FIND_KEY ctrl+alt+t >/dev/null && grep -q '^command = "bhote.panel.search"' "$T/xdg/herdr/config.toml" && ok "find key: a popup running bhote find" || bad "find key: $(cat "$T/xdg/herdr/config.toml")"
 HB config set JUMP_KEY ctrl+alt+t >/dev/null 2>&1 && bad "jump key = find key accepted" || ok "jump key and find key must differ"
 HB config set FIND_KEY off >/dev/null && ! grep -q 'bhote' "$T/xdg/herdr/config.toml" && ok "find key: off removes the block" || bad "find off"
 B find </dev/null >/dev/null 2>&1 && bad "find without a terminal" || ok "find: needs a terminal"

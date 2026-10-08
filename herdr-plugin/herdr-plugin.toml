@@ -1,6 +1,6 @@
 id = "bhote.panel"
 name = "Bhote Panel"
-version = "0.4.0"
+version = "0.5.0"
 min_herdr_version = "0.8.2"
 description = "Opens the Bhote side panel (topics + agents) on the right of every tab, about as wide as the herdr sidebar, when herdr starts"
 platforms = ["macos", "linux"]
@@ -33,3 +33,17 @@ id = "focus"
 title = "Bhote: jump to the panel and back"
 contexts = ["global"]
 command = ["sh", "focus.sh"]
+
+[[actions]]
+id = "search"
+title = "Bhote: search and jump"
+contexts = ["global"]
+command = ["sh", "search_open.sh"]
+
+[[panes]]
+id = "search"
+title = "bhote search"
+placement = "popup"
+width = "70%"
+height = "70%"
+command = ["sh", "search.sh"]

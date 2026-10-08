@@ -1053,12 +1053,10 @@ key_ok() {  # key_ok <herdr key>: plain key syntax only (it goes into a TOML str
     [ "${#1}" -le 40 ] || { echo "bhote: the key is too long" >&2; return 1; }
 }
 herdr_keys_apply() {  # herdr_keys_apply <jump key|off> <find key|off>: 0 when herdr took both
-    local j=$1 fk=$2 old tmp out bin
+    local j=$1 fk=$2 old tmp out
     case "$j" in off|none) j="" ;; esac; case "$fk" in off|none) fk="" ;; esac
     { [ -z "$j" ] || key_ok "$j"; } && { [ -z "$fk" ] || key_ok "$fk"; } || return 1
     [ -n "$j" ] && [ "$j" = "$fk" ] && { echo "bhote: the jump key and the find key must differ" >&2; return 1; }
-    bin=$(command -v bhote 2>/dev/null); [ -n "$bin" ] || bin=$0; case "$bin" in /*) ;; *) bin="$PWD/$bin" ;; esac
-    case "$bin" in *[\"\'\\]*|*[[:cntrl:]]*) [ -n "$fk" ] && { echo "bhote: odd characters in the path of bhote" >&2; return 1; } ;; esac
     mkdir -p "$(dirname "$HERDR_CONFIG")" && touch "$HERDR_CONFIG" || return 1
     old=$(mktemp "$RUN_DIR/herdrcfg.XXXXXX") && cp "$HERDR_CONFIG" "$old" || return 1
     tmp=$(mktemp "$HERDR_CONFIG.XXXXXX") || return 1
@@ -1071,7 +1069,7 @@ herdr_keys_apply() {  # herdr_keys_apply <jump key|off> <find key|off>: 0 when h
         [ -s "$tmp" ] && [ -n "$(tail -c1 "$tmp")" ] && printf '\n' >> "$tmp"
         { printf '\n# >>> bhote (settings › Jump key, Find key; bhote rewrites this block)\n'
           [ -n "$j" ] && printf '[[keys.command]]\nkey = "%s"\ntype = "plugin_action"\ncommand = "bhote.panel.focus"\ndescription = "Bhote panel"\n' "$j"
-          [ -n "$fk" ] && printf '[[keys.command]]\nkey = "%s"\ntype = "popup"\ncommand = "%s find"\ndescription = "Bhote: find and jump"\nwidth = "70%%"\nheight = "70%%"\n' "$fk" "'$bin'"
+          [ -n "$fk" ] && printf '[[keys.command]]\nkey = "%s"\ntype = "plugin_action"\ncommand = "bhote.panel.search"\ndescription = "bhote search"\n' "$fk"
           printf '# <<< bhote\n'; } >> "$tmp"
     fi
     mv "$tmp" "$HERDR_CONFIG"
@@ -2799,69 +2797,76 @@ cli_show() {  # cli_show <file> [--json]
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
 # must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic jumps to its
 # agent, or, without one, to the bhote panel of the tab with the topic selected. Esc closes.
-FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=()
-find_items() {
-    local i m id st name task ic lowsrc="" n=0
-    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=()
-    for (( i = 0; i < AG_N; i++ )); do
-        IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        FI_KIND[$n]=agent; FI_NAME[$n]=$name; FI_M[$n]=$m; FI_P[$n]=$id; FI_ST[$n]=$st; FI_REF[$n]=""
-        FI_LABEL[$n]="$m${task:+ · $task}"; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
-    done
-    for (( i = 0; i < T_N; i++ )); do                          # open topics first (list order), done ones at the end
-        [ "${T_STATUS[$i]}" = done ] && continue
+FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
+find_items() {  # topics in the list's status order (review, now, waiting, later, done), then the agents: busy, then free
+    local i m id st name task lowsrc="" n=0 pass
+    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
+    for (( i = 0; i < T_N; i++ )); do
         FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=${T_STATUS[$i]}; FI_REF[$n]=${T_ID[$i]}
-        FI_LABEL[$n]="${T_STATUS[$i]}${T_AG[$i]:+ · ${T_AG[$i]}}${T_WFOR[$i]:+ · ${T_WFOR[$i]}}"
+        FI_GRP[$n]=${T_STATUS[$i]}; FI_LABEL[$n]="${T_AG[$i]}${T_AG[$i]:+${T_WFOR[$i]:+ · }}${T_WFOR[$i]}"
         lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} topic"$'\n'; n=$(( n + 1 ))
     done
-    for (( i = 0; i < T_N; i++ )); do
-        [ "${T_STATUS[$i]}" = done ] || continue
-        FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=done; FI_REF[$n]=${T_ID[$i]}
-        FI_LABEL[$n]="done${T_AG[$i]:+ · ${T_AG[$i]}}"; lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} done ${T_AG[$i]} topic"$'\n'; n=$(( n + 1 ))
+    for pass in busy free; do
+        for (( i = 0; i < AG_N; i++ )); do
+            IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+            case "$st" in idle|done) [ "$pass" = free ] || continue ;; *) [ "$pass" = busy ] || continue ;; esac
+            FI_KIND[$n]=agent; FI_NAME[$n]=$name; FI_M[$n]=$m; FI_P[$n]=$id; FI_ST[$n]=$st; FI_REF[$n]=""; FI_GRP[$n]=$pass
+            FI_LABEL[$n]="$m${task:+ · $task}"; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
+        done
     done
     i=0; while IFS= read -r m; do FI_LOW[$i]=$m; i=$(( i + 1 )); done <<< "$(printf '%s' "$lowsrc" | tr '[:upper:]' '[:lower:]')"
 }
 FI_HIT=()
-find_filter() {  # find_filter <query>: FI_HIT = the matching items; names that start with the query first
-    local q w i ok first=() rest=() words=()
-    q=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"
+find_filter() {  # find_filter <query>: FI_HIT = the matching items (every word must appear), in their group order
+    local q w i ok words=()
+    q=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"; FI_HIT=()
     for (( i = 0; i < ${#FI_KIND[@]}; i++ )); do
         ok=1; for w in ${words[@]+"${words[@]}"}; do case "${FI_LOW[$i]}" in *"$w"*) ;; *) ok=0; break ;; esac; done
-        [ "$ok" = 1 ] || continue
-        case "${FI_LOW[$i]}" in "${words[0]:-}"*) first[${#first[@]}]=$i ;; *) rest[${#rest[@]}]=$i ;; esac
+        [ "$ok" = 1 ] && FI_HIT[${#FI_HIT[@]}]=$i
     done
-    FI_HIT=(${first[@]+"${first[@]}"} ${rest[@]+"${rest[@]}"})
 }
-find_draw() {  # find_draw <query> <selected hit> <note>
-    local rows cols w i k n off sel=$2 out ic nm lb lw nw pad line
+find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a caption per group (like the panel's list)
+    local rows cols w i k n off sel=$2 out ic nm lb lw nw pad line room sr=0 r prev="" cap cc
+    local rl=() rh=()                                          # screen rows: their text, and the hit they show (-1 = caption)
     read -r rows cols < <(stty size </dev/tty 2>/dev/null); rows=${rows:-20}; cols=${cols:-60}; w=$(( cols - 2 ))
-    n=${#FI_HIT[@]}; local room=$(( rows - 4 )); [ "$room" -lt 1 ] && room=1
-    off=0; [ "$sel" -ge "$room" ] && off=$(( sel - room + 1 ))
-    out=$'\033[H'
-    clip_set line "$1" $(( w - 14 ))
-    out+=$(printf ' %s▶%s %s%s%s\033[7m \033[27m%*s%s%d/%d%s' "$ORANGE" "$X" "$L" "$line" "$X" 1 "" "$D" "$n" "${#FI_KIND[@]}" "$X")$'\033[K\n'
-    out+=$(printf ' %s%s%s' "$B" "$(hline $(( w - 1 )))" "$X")$'\033[K\n'
-    for (( k = off; k < off + room && k < n; k++ )); do
+    n=${#FI_HIT[@]}; room=$(( rows - 4 )); [ "$room" -lt 1 ] && room=1
+    for (( k = 0; k < n; k++ )); do
         i=${FI_HIT[$k]}
+        if [ "${FI_GRP[$i]}" != "$prev" ]; then
+            prev=${FI_GRP[$i]}
+            case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
+                done) cap=DONE; cc=$GREEN ;; busy) cap="AGENTS · BUSY"; cc=$ORANGE ;; free) cap="AGENTS · FREE"; cc=$GREEN ;; *) cap=$prev; cc=$D ;; esac
+            rl[${#rl[@]}]=$(printf ' %s%s%s' "$cc" "$cap" "$X"); rh[${#rh[@]}]=-1
+        fi
         if [ "${FI_KIND[$i]}" = agent ]; then
             case "${FI_ST[$i]}" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
         else
             case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
         fi
         clip_set nm "${FI_NAME[$i]}" $(( w * 3 / 5 )); dw_set nw "$nm"
-        clip_set lb "${FI_LABEL[$i]}" $(( w - 6 - nw )); dw_set lw "$lb"
-        pad=$(( w - 6 - nw - lw )); [ "$pad" -lt 0 ] && pad=0
-        if [ "$k" = "$sel" ]; then out+=$(printf '%s %s%s %s%s%s  %s%s%*s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$DSEL" "$lb" "$pad" "" "$X")
-        else out+=$(printf ' %s%s %s%s%s  %s%s%s' "$ic" "$X" "$L" "$nm" "$X" "$D" "$lb" "$X"); fi
-        out+=$'\033[K\n'
+        clip_set lb "${FI_LABEL[$i]}" $(( w - 8 - nw )); dw_set lw "$lb"
+        pad=$(( w - 8 - nw - lw )); [ "$pad" -lt 0 ] && pad=0
+        [ "$k" = "$sel" ] && sr=${#rl[@]}
+        if [ "$k" = "$sel" ]; then line=$(printf '%s   %s%s %s%s%s  %s%s%*s %s' "$SELBG" "$ic" "$X$SELBG" "$LSEL" "$nm" "$X$SELBG" "$DSEL" "$lb" "$pad" "" "$X")
+        else line=$(printf '   %s%s %s%s%s  %s%s%s' "$ic" "$X" "$TITLE" "$nm" "$X" "$D" "$lb" "$X"); fi
+        rl[${#rl[@]}]=$line; rh[${#rh[@]}]=$k
     done
+    off=0; [ "$sr" -ge "$room" ] && off=$(( sr - room + 1 ))
+    [ "$sr" -gt 0 ] && [ "${rh[$(( sr - 1 ))]}" = -1 ] && [ "$off" -gt $(( sr - 1 )) ] && off=$(( sr - 1 ))   # its caption stays in view
+    out=$'\033[H'
+    clip_set line "$1" $(( w - 14 ))
+    out+=$(printf ' %s▶%s %s%s%s\033[7m \033[27m %s%d/%d%s' "$ORANGE" "$X" "$L" "$line" "$X" "$D" "$n" "${#FI_KIND[@]}" "$X")$'\033[K\n'
+    out+=$(printf ' %s%s%s' "$B" "$(hline $(( w - 1 )))" "$X")$'\033[K\n'
+    for (( r = off; r < off + room && r < ${#rl[@]}; r++ )); do out+="${rl[$r]}"$'\033[K\n'; done
     [ "$n" -gt 0 ] || out+=$(printf '   %snothing matches%s' "$D" "$X")$'\033[K\n'
     out+=$'\033[J'
     printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$([ -n "$3" ] && printf '%s' "$S" || printf '%s' "$D")" "$(clip "${3:-↑↓ choose · ⏎ jump · esc close}" $(( w - 1 )))" "$X"
 }
 panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus (through herdr's socket: by pane id)
     local act tab pan sock=${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}
-    act=${HERDR_ACTIVE_PANE_ID:-}; [ -n "$act" ] || act=$(herdr pane list 2>/dev/null | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
+    act=${HERDR_ACTIVE_PANE_ID:-}
+    [ -n "$act" ] || act=$(printf '%s' "${HERDR_PLUGIN_CONTEXT_JSON:-}" | jq -r '[.. | objects | (.focused_pane_id? // .pane_id?) | strings][0] // empty' 2>/dev/null)
+    [ -n "$act" ] || act=$(herdr pane list 2>/dev/null | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
     tab=$(herdr pane list 2>/dev/null | jq -r --arg p "$act" '[.result.panes[] | select(.pane_id == $p)][0].tab_id // empty')
     pan=$(herdr pane list 2>/dev/null | jq -r --arg t "$tab" '[.result.panes[] | select(.tab_id == $t and (.agent // "") == "" and (.terminal_title_stripped // "") == "Bhote")][0].pane_id // empty')
     case "$pan" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
@@ -2889,7 +2894,7 @@ find_main() {
     ui_load; topics_load; find_items; find_filter ""
     _s=$(stty -g </dev/tty 2>/dev/null); stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null
     trap 'stty "$_s" </dev/tty 2>/dev/null; printf "\033[?25h"; exit 0' INT TERM HUP
-    printf '\033[?25l\033[2J'
+    printf '\033]2;bhote search\007\033[?25l\033[2J'
     while true; do
         [ "$sel" -ge "${#FI_HIT[@]}" ] && sel=$(( ${#FI_HIT[@]} - 1 )); [ "$sel" -lt 0 ] && sel=0
         find_draw "$q" "$sel" "$note"; note=""
