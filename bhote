@@ -3132,6 +3132,26 @@ cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote
     [ "$done_n" -gt 0 ] || return 1
     printf 'Now open Claude Code and say: /bhote-install  (it sets up the rest: herdr plugin, hooks, machines, monitors).\n'
 }
+cli_reload() {  # bhote reload: restarts every bhote panel of this machine (after an update). Never types into a panel that still runs:
+    # the old panel is ended first (its main process, by group), and only a pane that is a plain shell again gets the command.
+    command -v herdr >/dev/null 2>&1 || { echo "bhote: herdr is not here" >&2; return 1; }
+    local pane pgid cl n=0 skipped=0 k alive bin; bin=$(command -v bhote 2>/dev/null); [ -n "$bin" ] || bin="$HOME/.local/bin/bhote"
+    while IFS= read -r pane; do
+        [ -n "$pane" ] || continue
+        read -r pgid cl <<< "$(herdr pane process-info --pane "$pane" 2>/dev/null | jq -r '.result.process_info as $i | ($i.foreground_process_group_id // "") as $g | ([$i.foreground_processes[]? | select(.pid == $g) | (.cmdline // "")][0] // "") | "\($g) \(.)"' 2>/dev/null)"
+        case "$pgid" in ''|*[!0-9]*) continue ;; esac
+        case "$cl" in *bhote) ;; *) continue ;; esac              # the leader of the foreground group must be the bhote script itself
+        [ -n "${BHOTE_DRY:-}" ] && { echo "would restart $pane (group $pgid: $cl)"; continue; }
+        kill -TERM "$pgid" 2>/dev/null
+        for (( k = 0; k < 20; k++ )); do                            # up to 5 s for it to end (it restores the terminal)
+            alive=$(herdr pane process-info --pane "$pane" 2>/dev/null | jq -r '[.result.process_info.foreground_processes[]? | select((.cmdline // "") | test("bhote"))] | length' 2>/dev/null)
+            [ "${alive:-1}" = 0 ] && break; sleep 0.25
+        done
+        if [ "${alive:-1}" = 0 ]; then herdr pane run "$pane" "'$bin'" >/dev/null 2>&1 && n=$(( n + 1 ))
+        else skipped=$(( skipped + 1 )); echo "bhote: $pane did not end, left alone" >&2; fi
+    done <<< "$(herdr pane list 2>/dev/null | jq -r '.result.panes[] | select((.agent // "") == "") | .pane_id' 2>/dev/null)"
+    printf 'reloaded %d panel(s)%s\n' "$n" "$( [ "$skipped" -gt 0 ] && echo ", $skipped left alone")"
+}
 cli_update() {  # bhote update: asks GitHub now; prints whether there is a newer version and the command that updates
     update_fetch || { echo "bhote: could not ask GitHub (offline?)" >&2; return 1; }
     update_load
@@ -4733,6 +4753,7 @@ bhote — topics and agents next to herdr.
   bhote setup [--json]               the setup wizard (--json: only what is in place)
   bhote skills [install]             put the Claude Code skills bhote and bhote-install into every Claude profile (then /bhote-install)
   bhote update                       is there a newer version, and the command that updates it
+  bhote reload                       restart the bhote panels of this machine (after an update)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
@@ -4764,6 +4785,7 @@ bhote_cli() {
         current) bhote_info; cli_current ;;
         bar) cli_bar ;;
         update) cli_update ;;
+        reload) cli_reload ;;
         skills) cli_skills "$@" ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
