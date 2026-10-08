@@ -4,14 +4,14 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// bhote in the bar: the dog, and the number of things for you (topics in review, agents that wait for an answer) in the
+// bhote in the bar: the number of things for you (topics in review, agents that wait for an answer) in the
 // urgent colour. The data is `bhote bar` (Waybar-style JSON from the topic files and the panels' agent lists: no herdr call).
 // Left click: the herdr window and its bhote panel. Right click: the bhote search. Middle click: refresh.
 BarWidget {
   id: root
   moduleName: "bhote.bar"
 
-  property string label: "\u{f0a43}"
+  property string label: ""
   property string tip: "bhote"
   property string cls: "idle"
   readonly property string here: decodeURIComponent(Qt.resolvedUrl(".").toString().replace(/^file:\/\//, ""))
@@ -41,7 +41,7 @@ BarWidget {
         var j = null
         try { j = JSON.parse(String(text || "")) } catch (e) {}
         if (!j) { root.cls = "idle"; root.tip = "bhote: no answer (is bhote installed?)"; return }
-        root.label = j.text || "\u{f0a43}"
+        root.label = j.text || ""
         root.tip = j.tooltip || "bhote"
         root.cls = j["class"] || "idle"
       }

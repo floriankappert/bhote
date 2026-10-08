@@ -39,7 +39,6 @@ NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-trans
 #   TESTS_BUSY=on|off      an agent whose workspace is running tests counts as busy, not free (default off)
 #   HOST_LABEL=Name        how this machine is called in the agent lists (default: Mac on macOS, else the host name)
 #   NAME_COLORS=a=teal,b=mauve   colour agents by a part of their name (case-insensitive); colours: red teal peach mauve blue green yellow
-#   ANIMATION=on|off       the dog blinks and pants (default on)
 #   SPLASH_AUTOCLOSE=on|off   the welcome screen closes by itself after SPLASH_SECONDS (default on, 15)
 #   AUTOSTART=on|off       the herdr plugin opens the panel next to the agents when herdr starts (default on)
 CONFIG_FILE=${BHOTE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/config}
@@ -110,7 +109,6 @@ MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is cou
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, or a CIRCLECI_TOKEN= line in ~/.config/zsh/secrets.zsh)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
 THEME|terminal|enum:terminal:catppuccin|Colours: terminal (follows the terminal and system theme) or catppuccin (exact colours)
-ANIMATION|on|bool|The dog on the welcome screen blinks and pants
 SPLASH_AUTOCLOSE|on|bool|The welcome screen closes by itself
 SPLASH_SECONDS|15|int:1:600|Seconds until the welcome screen closes itself
 AUTOSTART|on|bool|The herdr plugin opens the panel next to the agents when herdr starts
@@ -546,8 +544,6 @@ dog_rgb() {   # letter -> r;g;b
 }
 DOG_W=38
 DOG_H=32
-DOG_MINI_W=14
-DOG_MINI_H=12
 DOG_ROWS_0='
 ......................................|.................aa....a..............
 ..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
@@ -565,14 +561,6 @@ aabaccccccCkkkkkkppppkkkkkkccccccba...|aaaabbbcccCckkkkkppppkkkkkcbcccccbaa..
 .aaaaabccccCkkkkkppppkkkkkccbcbbbaba..|....aabccccccCkkkkppkkkkcCccbbabbaaa..
 ....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
 .....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
-'
-DOG_MINI_ROWS_0='
-...aabbbbaa...|..abbccccbba..
-.addcCffCcdda.|.addhhffhhdda.
-abdcifffficdba|abccifffficcba
-abcffmmmmffcba|abcfkkkkkkfcba
-abckkkppkkkcba|abcckkppkkccba
-.abbcckkccbba.|...aabbbbaa...
 '
 DOG_ROWS_1='
 ......................................|.................aa....a..............
@@ -592,14 +580,6 @@ aabaccccccCkkkkkkppppkkkkkkccccccba...|aaaabbbcccCckkkkkppppkkkkkcbcccccbaa..
 ....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
 .....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
 '
-DOG_MINI_ROWS_1='
-...aabbbbaa...|..abbccccbba..
-.addcCffCcdda.|.addhhffhhdda.
-abdcffffffcdba|abccifffficcba
-abcffmmmmffcba|abcfkkkkkkfcba
-abckkkppkkkcba|abcckkppkkccba
-.abbcckkccbba.|...aabbbbaa...
-'
 DOG_ROWS_2='
 ......................................|.................aa....a..............
 ..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
@@ -618,14 +598,6 @@ aabaccccccCkkkkkkkkkkkkkkkkccccccba...|aaaabbbcccCckkkkkkkkkkkkkkcbcccccbaa..
 ....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
 .....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
 '
-DOG_MINI_ROWS_2='
-...aabbbbaa...|..abbccccbba..
-.addcCffCcdda.|.addhhffhhdda.
-abdcifffficdba|abccifffficcba
-abcffmmmmffcba|abcfkkkkkkfcba
-abckkkkkkkkcba|abcckkkkkkccba
-.abbcckkccbba.|...aabbbbaa...
-'
 DOG_ROWS_3='
 ......................................|.................aa....a..............
 ..........aaa..aaba..abaa.............|.....d....baaaaabbaaaabaaa.aa...d.....
@@ -643,14 +615,6 @@ aabaccccccCkkkkkkkkkkkkkkkkccccccba...|aaaabbbcccCckkkkkkkkkkkkkkcbcccccbaa..
 .aaaaabccccCkkkkkkkkkkkkkkccbcbbbaba..|....aabccccccCkkkkkkkkkkcCccbbabbaaa..
 ....aabbbbbbccCbkkkkkkccbbcbbbaaaaa...|....aaabbbabcccbccccbcbcbbbbbba.......
 .....aabb.bbbcbabbbbbbbbbababba.......|..........babbaaabababbbbaaaaaa.......
-'
-DOG_MINI_ROWS_3='
-...aabbbbaa...|..abbccccbba..
-.addcCffCcdda.|.addhhffhhdda.
-abdcffffffcdba|abccifffficcba
-abcffmmmmffcba|abcfkkkkkkfcba
-abckkkkkkkkcba|abcckkkkkkccba
-.abbcckkccbba.|...aabbbbaa...
 '
 # The escape codes of every colour are made once (DOGC_x = foreground, DOGB_x = background), so drawing needs no
 # subshell per cell. Two pixel rows per text row: ▀ with the upper pixel as foreground, the lower one as background.
@@ -679,42 +643,40 @@ dog_lines() {  # dog_lines <rows> <width>  ->  array DOGL with one coloured stri
         DOGL[$n]=$out; n=$(( n + 1 ))
     done <<< "$rows"
 }
-dog_rows() {  # dog_rows <big|mini> <variant 0..3>  ->  the rows text of that variant
-    local v; if [ "$1" = big ]; then v="DOG_ROWS_$2"; else v="DOG_MINI_ROWS_$2"; fi
+dog_rows() {  # dog_rows <variant 0..3>  ->  the rows text of that variant of the big dog
+    local v="DOG_ROWS_$1"
     printf '%s' "${!v}"
 }
 # The coloured rows of every picture are kept in variables (DOGR_<kind>_<variant>, rows joined by ): made once in dog_warm
 # at the start, so a repaint or an animation step never has to build a picture again.
-dog_lines_for() {  # dog_lines_for <big|mini> <variant>  ->  array DOGL
-    local v="DOGR_$1_$2" s n=0 w; s=${!v}
+dog_lines_for() {  # dog_lines_for <variant>  ->  array DOGL
+    local v="DOGR_big_$1" s n=0; s=${!v}
     if [ -z "$s" ]; then
-        if [ "$1" = big ]; then w=$DOG_W; else w=$DOG_MINI_W; fi
-        dog_lines "$(dog_rows "$1" "$2")" "$w"
+        dog_lines "$(dog_rows "$1")" "$DOG_W"
         for (( n = 0; n < ${#DOGL[@]}; n++ )); do s="$s${DOGL[$n]}"$''; done
         printf -v "$v" '%s' "$s"; return
     fi
     DOGL=(); n=0
     while [ -n "$s" ]; do DOGL[$n]=${s%%$''*}; s=${s#*$''}; n=$(( n + 1 )); done
 }
-dog_warm() { local k i; for k in big mini; do for i in 0 1 2 3; do dog_lines_for $k $i; done; done; }
+dog_warm() { local i; for i in 0 1 2 3; do dog_lines_for $i; done; }
 dog() {  # the big dog, centred in the frame
     local i
-    dog_lines_for big "${DOG_IDX:-0}"
+    dog_lines_for "${DOG_IDX:-0}"
     for (( i = 0; i < ${#DOGL[@]}; i++ )); do mid "$(printf '%*s' "$DOG_W" '')" "${DOGL[$i]}" "$DOG_W"; done
 }
 # For the animation only the text rows that differ from what is on screen are written (eyes, tongue), at an absolute
-# position. DOG_PREV_B / DOG_PREV_M remember the rows on screen; dog_prev_reset sets them after every full repaint.
-DOG_PREV_B=(); DOG_PREV_M=()
-dog_prev_reset() {  # dog_prev_reset <splash|main>: only the dog that is on screen
-    if [ "$1" = splash ]; then dog_lines_for big "${DOG_IDX:-0}"; DOG_PREV_B=("${DOGL[@]}")
-    else dog_lines_for mini "${DOG_IDX:-0}"; DOG_PREV_M=("${DOGL[@]}"); fi
+# position. DOG_PREV_B remembers the rows on screen; dog_prev_reset sets it after every full repaint (the welcome screen only).
+DOG_PREV_B=()
+dog_prev_reset() {  # dog_prev_reset <splash|main>
+    [ "$1" = splash ] || return 0
+    dog_lines_for "${DOG_IDX:-0}"; DOG_PREV_B=("${DOGL[@]}")
 }
-dog_at() {  # dog_at <big|mini> <row> <col>
-    local kind=$1 row=$2 col=$3 i
-    dog_lines_for "$kind" "${DOG_IDX:-0}"
+dog_at() {  # dog_at <row> <col>: the big dog of the welcome screen
+    local row=$1 col=$2 i
+    dog_lines_for "${DOG_IDX:-0}"
     for (( i = 0; i < ${#DOGL[@]}; i++ )); do
-        if [ "$kind" = big ]; then [ "${DOG_PREV_B[$i]:-}" = "${DOGL[$i]}" ] && continue; DOG_PREV_B[$i]=${DOGL[$i]}
-        else [ "${DOG_PREV_M[$i]:-}" = "${DOGL[$i]}" ] && continue; DOG_PREV_M[$i]=${DOGL[$i]}; fi
+        [ "${DOG_PREV_B[$i]:-}" = "${DOGL[$i]}" ] && continue; DOG_PREV_B[$i]=${DOGL[$i]}
         printf '%s[%d;%dH%s' "$esc" $(( row + i )) "$col" "${DOGL[$i]}"
     done
 }
@@ -1591,7 +1553,6 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
     SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
     SET_ROWS[${#SET_ROWS[@]}]="enum|THEME|Colours"
-    SET_ROWS[${#SET_ROWS[@]}]="bool|ANIMATION|Animation (blink, pant)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="bool|UPDATE_CHECK|Check for updates"
@@ -1832,7 +1793,7 @@ spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the fr
       done; } < "$RUN_DIR/agmap" 2>/dev/null
 }
 dog_ticker() {  # dog_ticker <main pid>
-    local tick=0 closed tin idx last="" blink bl_last="" _an
+    local tick=0 closed tin idx last="" blink bl_last=""
     while true; do
         if [ ! -e "$RUN_DIR/anim.want" ]; then sleep 1; kill -0 "$1" 2>/dev/null || exit 0; continue; fi   # nothing to animate (the main loop says when)
         sleep 0.3; tick=$(( tick + 1 ))
@@ -1841,7 +1802,6 @@ dog_ticker() {  # dog_ticker <main pid>
         closed=0; [ $(( RANDOM % 14 )) -eq 0 ] && closed=1
         tin=0; [ $(( tick % 9 )) -ge 6 ] && tin=1
         idx=$(( closed + 2 * tin ))
-        cfg_var _an ANIMATION on; [ "$_an" = on ] || { idx=0; blink=on; }   # off: the dog and the prompt hold still; the busy star still dances
         [ "$idx $blink $tick" = "$last" ] && continue           # (the tick: the star of the busy agents dances on every one)
         last="$idx $blink $tick"; echo "$idx $blink $tick" > "$ANIM_FILE"; kill -USR1 "$1" 2>/dev/null || exit 0
     done
@@ -1852,7 +1812,7 @@ dog_animate() {  # the main loop's answer to USR1 (only on the splash and the li
     [ "$1" = splash ] && ! splash_fits && return 0
     { read -r idx blink tick < "$ANIM_FILE"; } 2>/dev/null || { idx=0; blink=on; tick=0; }
     case "$1" in
-        splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at big $(( 4 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
+        splash) if [ "$idx" != "${DRAWN_IDX:-}" ]; then DOG_IDX=$idx; dog_at $(( 4 + SG0 )) $(( 2 + (WIDTH - 2 - DOG_W) / 2 )); DRAWN_IDX=$idx; fi
                 if [ "$blink" != "${DRAWN_BLINK:-}" ]; then splash_prompt_at "$blink"; DRAWN_BLINK=$blink; fi ;;
         main) [ -n "${SPIN_CELLS:-}" ] || return 0               # the busy agents' star, like Claude's: only its cells are drawn
               num_set tick "$tick" 0; SPIN_CH=${SPIN_FRAMES[$(( tick % ${#SPIN_FRAMES[@]} ))]}
@@ -3250,7 +3210,7 @@ setup_sum_twoway() { w_ok "other machines" "can reach $HOST over ssh (checked in
 setup_sum_topics() { w_ok "topics" "$(store_summary)"; }
 setup_sum_agents() { w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"; w_ok "push states" "$(cfg_get PUSH_STATES on)"; }
 setup_sum_behaviour() { w_ok "agents close" "$(cfg_get AGENT_CAN_CLOSE on)"; w_ok "auto-assign" "$(cfg_get AUTO_ASSIGN off)"; w_ok "notifications" "$(cfg_get NOTIFY on)"; w_ok "reminder" "$(cfg_get WAIT_REMIND 24) h"; w_ok "tests = busy" "$(cfg_get TESTS_BUSY off)"; w_ok "slack monitor" "$(cfg_get SLACK_WATCH off)"; }
-setup_sum_panel() { w_ok "autostart" "$(cfg_get AUTOSTART on)"; w_ok "animation" "$(cfg_get ANIMATION on)"; w_ok "jump key" "${FOCUS_KEY:-$(cfg_get JUMP_KEY off)}"; w_ok "find key" "${FIND_KEY_SHOW:-$(cfg_get FIND_KEY off)}"; }
+setup_sum_panel() { w_ok "autostart" "$(cfg_get AUTOSTART on)"; w_ok "jump key" "${FOCUS_KEY:-$(cfg_get JUMP_KEY off)}"; w_ok "find key" "${FIND_KEY_SHOW:-$(cfg_get FIND_KEY off)}"; }
 w_run() {  # w_run <what> <command...>: runs it visibly (ssh may ask for a password here), then says how it went
     printf '\n  %s→ %s%s\n' "$C" "$1" "$X"; w_log "run: $1"; shift
     local out="$RUN_DIR/wrun.$$"
@@ -3744,8 +3704,6 @@ setup_step_panel() {
     local r
     w_yn "Open the panel next to your agents when herdr starts?" "$([ "$(cfg_get AUTOSTART on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set AUTOSTART on ;; 1) cfg_set AUTOSTART off ;; esac
-    w_yn "Let the dog on the welcome screen blink and pant?" "$([ "$(cfg_get ANIMATION on)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
-    case $r in 0) cfg_set ANIMATION on ;; 1) cfg_set ANIMATION off ;; esac
     focus_key_set FOCUS_KEY
     if [ -n "$FOCUS_KEY" ]; then w_ok "jump key" "$FOCUS_KEY: agent ⇄ panel"
     else
@@ -4180,8 +4138,8 @@ cli_bar() {  # bhote bar: one line for a status bar (Waybar-style JSON: text, to
         case "$st" in working|testing) busy=$(( busy + 1 )) ;; blocked) blk=$(( blk + 1 )); line="  ◉ $name ($m)"; tip="$tip"$'\n'"$line" ;; esac
     done < <(agents_all)
     n=$(( rv + blk ))
-    local text="󰩃" cls=idle head
-    [ "$n" -gt 0 ] && { text="󰩃 $n"; cls=attention; }
+    local text="" cls=idle head
+    [ "$n" -gt 0 ] && { text="$n"; cls=attention; }
     [ "$n" = 0 ] && [ "$busy" -gt 0 ] && cls=busy
     head="bhote: $rv in review · $blk need an answer · $busy busy · $nw now · $wt waiting"
     printf '{"text":%s,"tooltip":%s,"class":%s,"review":%d,"blocked":%d,"busy":%d,"now":%d,"waiting":%d}\n' \

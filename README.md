@@ -61,7 +61,7 @@ git clone https://github.com/floriankappert/bhote && cd bhote && ./install.sh
 
 `install.sh` links `~/.local/bin/bhote` (update with `git pull`) and, when herdr is present, the plugin `bhote.panel`, which
 opens the panel on the right of the agent pane of every tab when herdr starts (`AUTOSTART=off` in the config switches that
-off; the action "Bhote: open panel" opens it by hand). On Omarchy it also links the bar widget `bhote.bar`: the dog and the
+off; the action "Bhote: open panel" opens it by hand). On Omarchy it also links the bar widget `bhote.bar`: the
 number of things for you (topics in review, agents that need an answer), the list on hover, a click jumps to the bhote
 panel in herdr (right click: the search). `bhote bar` prints the same as Waybar-style JSON for any other bar.
 
@@ -107,7 +107,6 @@ Stored in `~/.config/bhote/config` (`KEY=value`, never sourced); the panel's set
 | `MACHINES_OFF` | | saved machines that stay out |
 | `TESTS_BUSY` | `off` | an agent whose workspace runs tests counts as busy (reads the `tests` workspace token) |
 | `SPLASH_AUTOCLOSE`, `SPLASH_SECONDS` | `on`, `15` | the welcome screen closes by itself |
-| `ANIMATION` | `on` | the dog blinks and pants |
 | `HOST_LABEL` | `Mac` / host name | how this machine is called in the lists |
 | `NAME_COLORS` | | colour agents by part of their name, e.g. `api=teal,web=mauve` |
 | `AUTOSTART` | `on` | the herdr plugin opens the panel at start |

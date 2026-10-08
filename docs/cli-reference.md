@@ -234,7 +234,7 @@ their branches) and writes it into the project. `check` fetches both monitors no
 
 ### `bhote bar`
 
-One line for a status bar, Waybar-style JSON: `text` (the dog and the number of things for you), `tooltip`, `class`
+One line for a status bar, Waybar-style JSON: `text` (the number of things for you; empty when nothing waits), `tooltip`, `class`
 (attention, busy, idle) and the counts. The Omarchy bar widget `bhote.bar` shows it.
 
 ### `bhote find`
