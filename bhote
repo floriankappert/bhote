@@ -190,7 +190,7 @@ topic_new() {  # topic_new <title> [waiting for] [description]
 }
 store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STATE:-}" = offline ] && STORE_TAG_OUT=" · offline"; printf '%s' "$STORE_TAG_OUT"; }
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
-# and grew with the square of the count). Order: review, now, waiting, later, done; inside a group by file name = by creation.
+# and grew with the square of the count). Order: review, now, next, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
     local f line k v id title st wf ws up del desc ag am ap as dl tn seen n=0 a_as a_dl a_tn s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
@@ -203,13 +203,13 @@ topics_load() {
         done < "$f"
         [ "$del" = 1 ] && continue
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
-        case "$st" in now|waiting|review|later|done) ;; *) st=now ;; esac
+        case "$st" in now|next|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
         a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; n=$(( n + 1 ))
     done
     T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=()
-    for s in review now waiting later done; do                  # review first: it waits for you
+    for s in review now next waiting later done; do             # review first: it waits for you
         for (( i = 0; i < n; i++ )); do
             [ "${a_st[$i]}" = "$s" ] || continue
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
@@ -218,15 +218,21 @@ topics_load() {
     done
     T_N=$m
 }
-sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the first); needs topics_load first
+panel_shows() { case "$1" in now|next|review|waiting) return 0 ;; esac; return 1; }   # the panel lists these; later and done only in search and CLI
+sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the first shown one); needs topics_load first
     local i; SEL_IDX=0
     for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && { SEL_IDX=$i; return; }; done
+    for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && { SEL_IDX=$i; return; }; done
 }
 topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
 sel_file() { topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"; }
 sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game
     [ -n "${T_N:-}" ] || topics_load; [ "$T_N" -gt 0 ] || return 0   # the arrays of the last frame; ui_load reloads right after
-    sel_index; SEL_IDX=$(( (SEL_IDX + $1 + T_N) % T_N )); SEL_ID=${T_ID[$SEL_IDX]}
+    sel_index; local i=$SEL_IDX k
+    for (( k = 0; k < T_N; k++ )); do                          # the next shown one (a parked/done one is skipped)
+        i=$(( (i + $1 + T_N) % T_N )); panel_shows "${T_STATUS[$i]}" && break
+    done
+    panel_shows "${T_STATUS[$i]}" && { SEL_IDX=$i; SEL_ID=${T_ID[$i]}; }
 }
 topic_files() { topics_ordered; }
 topics_count() { topics_load; echo "$T_N"; }
@@ -870,18 +876,22 @@ agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | 
     done
     printf -v "$1" '%s' "$gone"
 }
-topics_block() {  # the topics, grouped by status (now, waiting, later, done); done ones are capped at DONE_MAX (default 7)
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc ndone=0 hidden=0 max
+topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked and done ones only counted
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc ndone=0 hidden=0 max nlater=0 ndn=0 shown=0
     num_set max "${U_DONE_MAX:-}" 7
     sel_index
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
+        if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected one stays: chosen in the search, or just checked off)
+            case "$st" in later) nlater=$(( nlater + 1 )) ;; done) ndn=$(( ndn + 1 )) ;; esac; continue
+        fi
+        shown=$(( shown + 1 ))
         if [ "$st" = done ]; then                              # beyond the cap only the selected one is shown
             ndone=$(( ndone + 1 ))
             if [ "$ndone" -gt "$max" ] && [ "$i" != "$SEL_IDX" ]; then hidden=$(( hidden + 1 )); continue; fi
         fi
         if [ "$st" != "$prev" ]; then
-            case "$st" in now) label=NOW; lc=$ORANGE ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
+            case "$st" in now) label=NOW; lc=$ORANGE ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             group "$label" "$lc"; prev=$st
         fi
         who=""; state=""; tm=""; sc=$D                        # the meta line: who · state · time
@@ -895,14 +905,19 @@ topics_block() {  # the topics, grouped by status (now, waiting, later, done); d
                  fi ;;
             waiting) who=${T_WFOR[$i]:-?}; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; } ;;
             review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}" ;;
-            later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
+            next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
             done) tc="$([ "$color" = 1 ] && printf '%s[1m' "$esc")$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp"
     done
     [ "$hidden" -gt 0 ] && printf '  %s+%d more%s\n' "$D" "$hidden" "$X"
-    [ "$T_N" -gt 0 ] || printf '\n  %sno topics yet · n adds one%s\n\n' "$D" "$X"
+    [ "$shown" -gt 0 ] || printf '\n  %snothing on now · n adds one%s\n' "$D" "$X"
+    if [ $(( nlater + ndn )) -gt 0 ]; then                      # where the others are
+        local rest=""; [ "$nlater" -gt 0 ] && rest="$nlater parked"; [ "$ndn" -gt 0 ] && rest="${rest:+$rest · }$ndn done"
+        [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
+        printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
+    fi
 }
 name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS rule (part-of-name=colour) that matches, else plain
     local _r _p _c _col="$L"
@@ -1512,13 +1527,14 @@ menu_build() {  # menu_build <file>
     MENU_ITEMS=("start|Start with agent ...")
     [ "$st" = waiting ] && [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="resume|The wait is over: $ag goes on"
     [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
+    [ "$st" = next ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="next|Up next"
     MENU_ITEMS=("${MENU_ITEMS[@]}" "wait|Waiting for ..." "later|Park for later" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
 }
 bhote_menu() {  # the topic's page: title and description in full (wrapped), its status, then the numbered actions
     local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
     menu_build "$f"
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ws=$(topic_get "$f" waiting_since); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine)
-    case "$st" in now) sc=$ORANGE ;; waiting) sc=$Y ;; review) sc=$BLUE ;; later) sc=$R ;; done) sc=$GREEN ;; *) sc=$D ;; esac
+    case "$st" in now) sc=$ORANGE ;; next) sc=$S ;; waiting) sc=$Y ;; review) sc=$BLUE ;; later) sc=$R ;; done) sc=$GREEN ;; *) sc=$D ;; esac
     printf '\n  %sTITLE%s\n' "$D" "$X"
     wrap_print 2 "$TITLE" "$(topic_get "$f" title '(untitled)')"
     printf '\n  %sDESCRIPTION%s\n' "$D" "$X"
@@ -1736,6 +1752,7 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         resume) topic_resume "$f" ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
            topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)" ;;
+        next) topic_set "$f" status next ;;
         later) topic_set "$f" status later ;;
         done) topic_set "$f" status done ;;
         rename) ask "Title: " "$(topic_get "$f" title)" || return 0; [ -n "$ANSWER" ] && topic_set "$f" title "$ANSWER"; [ -n "$ANSWER" ] || return 0 ;;
@@ -2774,7 +2791,7 @@ topic_n() {  # topic_n <file>: its number in `bhote list --all` (1-based); needs
 topic_json() {  # topic_json <file>
     local f=$1 st wf ag am ap as agent=null
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane)
-    case "$st" in now|waiting|review|later|done) ;; *) st=now ;; esac
+    case "$st" in now|next|waiting|review|later|done) ;; *) st=now ;; esac
     as=$(topic_get "$f" agent_session)
     [ "$st" = waiting ] || wf=""
     [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")")
@@ -2798,7 +2815,7 @@ cli_show() {  # cli_show <file> [--json]
 # must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic jumps to its
 # agent, or, without one, to the bhote panel of the tab with the topic selected. Esc closes.
 FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
-find_items() {  # topics in the list's status order (review, now, waiting, later, done), then the agents: busy, then free
+find_items() {  # topics in the list's status order (review, now, next, waiting, later, done), then the agents: busy, then free
     local i m id st name task lowsrc="" n=0 pass
     FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=()
     for (( i = 0; i < T_N; i++ )); do
@@ -2834,14 +2851,14 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
         i=${FI_HIT[$k]}
         if [ "${FI_GRP[$i]}" != "$prev" ]; then
             prev=${FI_GRP[$i]}
-            case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
+            case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; next) cap=NEXT; cc=$S ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
                 done) cap=DONE; cc=$GREEN ;; busy) cap="AGENTS · BUSY"; cc=$ORANGE ;; free) cap="AGENTS · FREE"; cc=$GREEN ;; *) cap=$prev; cc=$D ;; esac
             rl[${#rl[@]}]=$(printf ' %s%s%s' "$cc" "$cap" "$X"); rh[${#rh[@]}]=-1
         fi
         if [ "${FI_KIND[$i]}" = agent ]; then
             case "${FI_ST[$i]}" in working) ic="${ORANGE}◐" ;; testing) ic="${ORANGE}◌" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
         else
-            case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
+            case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; next) ic="${S}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
         fi
         clip_set nm "${FI_NAME[$i]}" $(( w * 3 / 5 )); dw_set nw "$nm"
         clip_set lb "${FI_LABEL[$i]}" $(( w - 8 - nw )); dw_set lw "$lb"
@@ -2939,10 +2956,10 @@ bhote_help() {
 bhote — topics and agents next to herdr.
 
   bhote                              the panel
-  bhote add <title> [options]        new topic   -d <text> description · @Name or -w Name waiting for Name · -s now|later|done
+  bhote add <title> [options]        new topic   -d <text> description · @Name or -w Name waiting for Name · -s now|next|later|done
   bhote list [--all] [-s <status>]   the open topics (--all: also done ones), numbered
   bhote show <ref>                   one topic
-  bhote now|review|later|done <ref>  start or resume · ready for review · park · mark done
+  bhote now|next|review|later|done <ref>   start or resume · up next · ready for review · park · mark done
   bhote wait <ref> <Name>            waiting for Name (from now)
   bhote rename <ref> <title>         new title
   bhote desc <ref> [<text>]          new description (at most 140 characters; none = remove it)
@@ -2996,7 +3013,7 @@ bhote_cli() {
                       *) title="${title:+$title }$1" ;;
                   esac; shift
               done
-              case "$st" in ''|now|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, review, later, done" >&2; return 1 ;; esac
+              case "$st" in ''|now|next|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, next, review, later, done" >&2; return 1 ;; esac
               [ "$st" = waiting ] && [ -z "$who" ] && { echo "bhote: waiting needs a name (@Name or -w Name)" >&2; return 1; }
               [ "${#desc}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
               topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
@@ -3005,11 +3022,11 @@ bhote_cli() {
                   bhote_info; agent_note "$f"; topic_set "$f" agent_machine "$HOST"
                   [ -n "${HERDR_WORKSPACE_ID:-}" ] && topic_set "$f" agent "$(herdr workspace list 2>/dev/null | jq -r --arg w "$HERDR_WORKSPACE_ID" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // "agent"' 2>/dev/null)"
               fi
-              case "$st" in later|done|review) topic_set "$f" status "$st" ;; esac
+              case "$st" in next|later|done|review) topic_set "$f" status "$st" ;; esac
               cli_done; topics_load; cli_show "$f" $json ;;
         list|ls) local all="" only="" i first=1
               while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --status|-s) only=${2:-}; shift ;; *) echo "bhote: unknown option '$1' for list" >&2; return 1 ;; esac; shift; done
-              case "$only" in ''|now|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, waiting, review, later, done" >&2; return 1 ;; esac
+              case "$only" in ''|now|next|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, next, waiting, review, later, done" >&2; return 1 ;; esac
               NOW=$(date +%s); topics_load
               [ -n "$json" ] && printf '['
               for (( i = 0; i < T_N; i++ )); do
@@ -3026,7 +3043,7 @@ bhote_cli() {
               done
               if [ -n "$json" ]; then printf ']\n'; fi; return 0 ;;
         show) local f; f=$(topic_ref "${1:-}") || return $?; topics_load; cli_show "$f" $json ;;
-        done|now|review|later|wait|rename|desc|rm)
+        done|now|next|review|later|wait|rename|desc|rm)
               local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
               f=$(topic_ref_sync "$ref") || return $?; shift
               case "$cmd" in
@@ -3041,6 +3058,7 @@ bhote_cli() {
                            bhote_info; topic_resume "$f"            # the wait is over: its agent gets told and goes on
                        else topic_set "$f" status now; topic_set "$f" waiting_for ""; fi ;;
                   later) topic_set "$f" status later ;;
+                  next) topic_set "$f" status next ;;
                   wait) [ -n "${1:-}" ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name>)" >&2; return 1; }
                         topic_set "$f" status waiting; topic_set "$f" waiting_for "$*"; topic_set "$f" waiting_since "$(date +%s)" ;;
                   rename) [ -n "${1:-}" ] || { echo "bhote: rename needs a title" >&2; return 1; }; topic_set "$f" title "$*" ;;

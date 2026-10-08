@@ -58,7 +58,7 @@ Creates a topic. Words without a leading dash form the title; a title that start
 |---|---|
 | `-d`, `--desc <text>` | Description, at most 140 characters (longer text is cut, with a warning). |
 | `@Name`, `-w`, `--waiting <Name>` | The topic waits for Name; `waiting_since` is now. |
-| `-s`, `--status <now\|waiting\|review\|later\|done>` | Initial status (default `now`, or `waiting` with a name; `waiting` needs a name). Another value is exit `1`. |
+| `-s`, `--status <now\|next\|waiting\|review\|later\|done>` | Initial status (default `now`, or `waiting` with a name; `waiting` needs a name). Another value is exit `1`. |
 
 ```console
 $ bhote add Price list approval @Alex
@@ -72,7 +72,7 @@ Exit `1` without a title.
 
 ### `bhote list [--all] [-s <status>]`
 
-The topics in list order: `review`, `now`, `waiting`, `later`, then (with `--all`) `done`; within a group by creation. The numbers
+The topics in list order: `review`, `now`, `next`, `waiting`, `later`, then (with `--all`) `done`; within a group by creation. The numbers
 are the [refs](#topic-refs).
 
 | Option | |
@@ -93,10 +93,10 @@ With `--json`: an array of [topic objects](#json-output) (`[]` when there are no
 
 One topic. With `--json`: one [topic object](#json-output).
 
-### `bhote now <ref>` · `bhote review <ref>` · `bhote later <ref>` · `bhote done <ref>`
+### `bhote now <ref>` · `bhote next <ref>` · `bhote review <ref>` · `bhote later <ref>` · `bhote done <ref>`
 
-Set the status: start or resume (`now`, also clears a waiting name), hand over for review (`review`), park (`later`), check
-off (`done`). Print the topic.
+Set the status: start or resume (`now`, also clears a waiting name), up next (`next`), hand over for review (`review`), park
+(`later`), check off (`done`). Print the topic.
 
 When a **waiting** topic belongs to an agent (the agent created it, see the bhote skill) and you set it to `now`, that agent
 gets a prompt: "The wait is over (<who>): <title>. Go on with: <description>". `bhote now <ref> --quiet` skips the prompt.
@@ -219,7 +219,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `n` | integer | Position in `bhote list --all` at the time of the call; a valid ref until topics change. |
 | `title` | string | Never empty. |
 | `description` | string \| null | At most 140 characters. |
-| `status` | `"now"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
+| `status` | `"now"` \| `"next"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session"}` (each may be null). |

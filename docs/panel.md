@@ -4,6 +4,10 @@
 60 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
+The list shows what is on: **review**, **now**, **next** and **waiting**. Parked (`later`) and done topics stay out; a line at
+the end counts them, and the search (find key) and the CLI reach them. A topic chosen in the search stays visible while it
+is selected.
+
 ## Keys
 
 | Key | List |

@@ -44,8 +44,7 @@
     },
     "status": {
       "enum": [
-        "now",
-        "waiting",
+        "now", "next", "waiting",
         "review",
         "later",
         "done"

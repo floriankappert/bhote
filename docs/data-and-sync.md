@@ -23,7 +23,7 @@ agent_pane=wA:p1
 | Key | |
 |---|---|
 | `id` | `<created>-<random>`; also the file name. Only `[A-Za-z0-9_-]`. |
-| `status` | `now`, `waiting`, `review`, `later` or `done`; anything else reads as `now`. |
+| `status` | `now`, `next`, `waiting`, `review`, `later` or `done`; anything else reads as `now`. |
 | `created`, `updated`, `waiting_since` | Unix seconds. `updated` grows with every change (also within the same second). |
 | `deleted` | `1` = a tombstone: hidden everywhere, kept so that the deletion reaches the replica. |
 | `agent`, `agent_machine`, `agent_pane`, `agent_session` | Set when the topic was handed to a herdr agent (or an agent created it). |
