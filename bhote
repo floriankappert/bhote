@@ -23,7 +23,7 @@ else
 fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
-VERSION=${BHOTE_VERSION:-0.5.0}
+VERSION=${BHOTE_VERSION:-0.5.1}
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
 NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
@@ -249,7 +249,7 @@ sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; return; }; done
 }
 topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
-sel_file() { topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"; }
+sel_file() { [ -n "${T_N:-}" ] || topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"; }   # (the arrays of the last frame; ui_load reloads after every change)
 sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game
     [ -n "${T_N:-}" ] || topics_load; [ "$T_N" -gt 0 ] || return 0   # the arrays of the last frame; ui_load reloads right after
     sel_index; local i=$SEL_IDX k
@@ -299,8 +299,17 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
     [ -s "$tmp/rejected" ] && echo "bhote: $(wc -l < "$tmp/rejected" | tr -d ' ') topic(s) from $label were not taken (malformed, from the future, or too many)" >&2
     # 2) per topic: the newer one wins, in both directions
     { ls "$tmp/remote" 2>/dev/null; ls "$TOPIC_DIR" 2>/dev/null; } | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*\.topic$' | sort -u > "$tmp/ids"
+    # only the topics that differ go through the loop below (a round with nothing to merge forks a handful of times, not 5 per topic):
+    # stamps and checksums of both sides are read in one pass; a name refused from the other side is neither pulled nor pushed
+    awk -F= 'FNR == 1 { s = 0 } $1 == "updated" && !s { s = 1; print FILENAME "\t" $2 }' "$tmp/remote"/*.topic "$TOPIC_DIR"/*.topic > "$tmp/stamps" 2>/dev/null
+    cksum "$tmp/remote"/*.topic "$TOPIC_DIR"/*.topic > "$tmp/sums" 2>/dev/null
+    awk -v rd="$tmp/remote/" -v fs="$tmp/stamps" -v fc="$tmp/sums" -v fr="$tmp/rejected" '
+        FILENAME == fr { rej[$0] = 1; next }
+        FILENAME == fs { split($0, a, "\t"); p = a[1]; n = p; sub(/^.*\//, "", n); st[(index(p, rd) == 1) ? "r" : "l", n] = a[2] + 0; next }
+        FILENAME == fc { p = $3; n = p; sub(/^.*\//, "", n); sm[(index(p, rd) == 1) ? "r" : "l", n] = $1 " " $2; next }
+        { n = $0; if (n in rej) next; hl = (("l", n) in sm); hr = (("r", n) in sm); l = st["l", n] + 0; r = st["r", n] + 0
+          if (!hl || !hr || l != r) print n; else if (l != 0 && sm["l", n] != sm["r", n]) print n }' "$tmp/rejected" "$tmp/stamps" "$tmp/sums" "$tmp/ids" > "$tmp/todo"
     while IFS= read -r f; do
-        grep -qxF "$f" "$tmp/rejected" 2>/dev/null && continue   # refused from the other side: neither pulled nor pushed
         l=0; r=0
         [ -f "$TOPIC_DIR/$f" ] && l=$(topic_get "$TOPIC_DIR/$f" updated 0)
         [ -f "$tmp/remote/$f" ] && r=$(topic_get "$tmp/remote/$f" updated 0)
@@ -320,7 +329,7 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
             if [ "$cr" -gt "$cl" ]; then cp "$tmp/remote/$f" "$TOPIC_DIR/$f.tmp.$$" && mv "$TOPIC_DIR/$f.tmp.$$" "$TOPIC_DIR/$f"
             elif [ "$via" != herdr ]; then store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0; fi
         fi
-    done < "$tmp/ids"
+    done < "$tmp/todo"
     rm -rf "$tmp"
     local tomb old=$(( NOW_SYNC - 30 * 86400 ))                 # deletions travel as tombstones; after 30 days both sides have them
     for tomb in $(grep -l '^deleted=1' "$TOPIC_DIR"/*.topic 2>/dev/null); do
@@ -354,11 +363,11 @@ herdr_dump() {  # herdr_dump <machine label>: the other machine's topics through
     # and herdr keeps the output in that plugin's log, which this machine reads. No ssh of our own.
     # (the newest dump in the log before we ask is the baseline: only a newer one counts. No clocks of two machines compared.)
     local m=$1 i out base q='def lid: (.log_id // "" | tostring | capture("(?<n>[0-9]+)$").n // "0" | tonumber);'
-    base=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r "$q"' [.result.logs[] | select(.action_id == "dump") | lid] | max // 0' 2>/dev/null)
+    base=$(with_timeout 20 herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r "$q"' [.result.logs[] | select(.action_id == "dump") | lid] | max // 0' 2>/dev/null)
     base=$(num_or "$base" 0)
-    herdr --machine "$m" plugin action invoke dump --plugin bhote.panel >/dev/null 2>&1 || return 1
+    with_timeout 20 herdr --machine "$m" plugin action invoke dump --plugin bhote.panel >/dev/null 2>&1 || return 1
     for (( i = 0; i < 20; i++ )); do
-        out=$(herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r --argjson b "$base" "$q"'
+        out=$(with_timeout 20 herdr --machine "$m" plugin log list --plugin bhote.panel 2>/dev/null | jq -r --argjson b "$base" "$q"'
             [.result.logs[] | select(.action_id == "dump" and .status == "succeeded" and (lid > $b))] | last | .stdout // empty' 2>/dev/null)
         [ -n "$out" ] && { printf '%s\n' "$out" | dump_unpack; return 0; }
         sleep 0.5
@@ -747,16 +756,17 @@ US=$'\037'      # field separator of the agent lists: not whitespace, so empty f
 AGENT_LOCAL="$SHARED_DIR/agents.local"
 AGENT_REMOTE="$SHARED_DIR/agents.remote"
 agents_all() { cat "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null; }
+herdr_m() { if [ "${1:-}" = --machine ]; then with_timeout 20 herdr "$@"; else herdr "$@"; fi; }   # another machine: a hung ssh ends as an error
 collect_one() {  # collect_one <machine label> [herdr options: --machine X]
     local label=$1 panes="" ws="" snap; shift
     if [ $# -gt 0 ]; then                                      # another machine: one call (each one costs an ssh connection)
-        snap=$(herdr "$@" api snapshot 2>/dev/null)
+        snap=$(herdr_m "$@" api snapshot 2>/dev/null)
         if [ -n "$snap" ]; then
             panes=$(printf '%s' "$snap" | jq -c '{result: {panes: (.result.snapshot.panes // empty)}}' 2>/dev/null)
             ws=$(printf '%s' "$snap" | jq -c '{result: {workspaces: (.result.snapshot.workspaces // [])}}' 2>/dev/null)
         fi
     fi
-    if [ -z "$panes" ]; then panes=$(herdr "$@" pane list 2>/dev/null) || { [ $# -gt 0 ] && return 2; return 0; }; ws=$(herdr "$@" workspace list 2>/dev/null); fi
+    if [ -z "$panes" ]; then panes=$(herdr_m "$@" pane list 2>/dev/null) || { [ $# -gt 0 ] && return 2; return 0; }; ws=$(herdr_m "$@" workspace list 2>/dev/null); fi
     if [ -n "${COLLECT_META:-}" ]; then                       # per pane: its tab, whether an agent runs there, the repo and project tokens
         printf '%s' "$panes" | jq -r --arg m "$label" '.result.panes[]? | [$m, .pane_id, (.tab_id // ""), (if .agent then "a" else "" end), (.tokens.repo // ""), (.tokens.project // ""), (.foreground_cwd // .cwd // "")] | map(tostring | gsub("[\u0000-\u001f]"; "")) | join("\u001f")' >> "$COLLECT_META" 2>/dev/null
     fi
@@ -902,19 +912,22 @@ auto_assign() {
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
-    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t
+    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead
+    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
-        kill -0 "$1" 2>/dev/null || exit 0                   # the panel is gone (also after kill -9): stop, never loop on alone
+        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
+        lead=0
         if collector_lead "$1"; then
-            local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
+            lead=1; local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
             [ -e "$SHARED_DIR/remote.due" ] && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine
             collect_local                                       # first what the panels show; the merge can take a moment
             branch_sync; project_sync
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
-                [ "$remote_due" = 1 ] && collect_remote
+                # in the background (a slow machine must not hold up the local agents, auto-assign and the reminders); one at a time
+                if [ "$remote_due" = 1 ] && ! { [ -n "$rem_pid" ] && kill -0 "$rem_pid" 2>/dev/null; }; then ( collect_remote ) & rem_pid=$!; fi
             elif [ -s "$AGENT_REMOTE" ]; then : > "$AGENT_REMOTE.tmp.$$"; agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"; fi
             # the data location: at once after a local change, otherwise every REMOTE_EVERY seconds (its own clock: a push of
             # the other machine's agents does not move it). In the background: over herdr a merge takes a few seconds, and an
@@ -938,6 +951,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             remind_waiting
             auto_assign
         fi
+        if [ "$lead" = 0 ]; then sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here, one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
             if [ -e "$SHARED_DIR/poke" ] && [ "$(readlink "$SHARED_DIR/collector.lock" 2>/dev/null)" = "$1" ]; then
                 rm -f "$SHARED_DIR/poke"; break                     # only the collector takes the poke (the others would swallow it)
@@ -1160,7 +1174,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     [ "$AG_N" -gt 0 ] || { agent_footer; return; }
     # each agent's project (from the collected tokens), the machines, the projects in their order
     local apj=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
-    local metas; metas=$(cat "$AGENT_META_L" "$AGENT_META_R" 2>/dev/null)
+    local metas; metas_read metas
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
         apj[$i]=""; case "$metas" in *"$m$US$id$US"*) local rest=${metas#*"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
@@ -1225,7 +1239,12 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     agent_footer
 }
 machine_offline() {  # machine_offline <label>: 0 when its last fetch failed (herdr reconnecting)
-    [ -r "$SHARED_DIR/machines.offline" ] && grep -qxF "$1" "$SHARED_DIR/machines.offline" 2>/dev/null
+    local _l; [ -r "$SHARED_DIR/machines.offline" ] || return 1
+    while IFS= read -r _l; do [ "$_l" = "$1" ] && return 0; done < "$SHARED_DIR/machines.offline"; return 1
+}
+metas_read() {  # metas_read <var>: the pane meta lists of both machines in one variable (no subshell, no cat)
+    local _m="" _l _f; for _f in "$AGENT_META_L" "$AGENT_META_R"; do [ -r "$_f" ] && while IFS= read -r _l; do _m="$_m$_l"$'\n'; done < "$_f"; done
+    printf -v "$1" '%s' "$_m"
 }
 agent_footer() {
     # saved machines exist but are not asked: say so, and where to change it
@@ -1740,7 +1759,7 @@ ANIM_FILE="$RUN_DIR/anim"
 SPIN_FRAMES=("·" "✢" "✳" "✶" "✻" "✽" "✻" "✶" "✳" "✢")       # Claude Code's spinner, there and back
 spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the frame just drawn (from the agent map)
     local div split line r l rr rest st; SPIN_CELLS=""
-    div=$(num_or "$(cat "$RUN_DIR/divrow" 2>/dev/null)" 0); [ "$div" -gt 0 ] || return 0
+    read -r div < "$RUN_DIR/divrow" 2>/dev/null; num_set div "${div:-}" 0; [ "$div" -gt 0 ] || return 0
     { IFS= read -r split; split=$(num_or "$split" 0)
       while IFS=$'\036' read -r r l rr; do
           for line in "l:$l" "r:$rr"; do
@@ -1753,6 +1772,7 @@ spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the fr
 dog_ticker() {  # dog_ticker <main pid>
     local tick=0 closed tin idx last="" blink bl_last="" _an
     while true; do
+        if [ ! -e "$RUN_DIR/anim.want" ]; then sleep 1; kill -0 "$1" 2>/dev/null || exit 0; continue; fi   # nothing to animate (the main loop says when)
         sleep 0.3; tick=$(( tick + 1 ))
         kill -0 "$1" 2>/dev/null || exit 0
         blink=on; [ $(( (tick / 2) % 2 )) -eq 1 ] && blink=off
@@ -2165,7 +2185,7 @@ current_project() {  # CUR_PROJ: the project of this panel: of the agent in its 
     while IFS=$US read -r m p t a r j c; do [ "$t" = "$mytab" ] && [ "$a" = a ] && [ -n "$j" ] && { CUR_PROJ=$j; return 0; }; done < "$AGENT_META_L"
 }
 topics_projects() {  # T_EPJ: each topic's project: its own, else its agent's
-    local i metas rest t a rr jj cc; T_EPJ=(); metas=$(cat "$AGENT_META_L" "$AGENT_META_R" 2>/dev/null)
+    local i metas rest t a rr jj cc; T_EPJ=(); metas_read metas
     for (( i = 0; i < T_N; i++ )); do
         T_EPJ[$i]=${T_PJ[$i]}
         if [ -z "${T_EPJ[$i]}" ] && [ -n "${T_AP[$i]}" ]; then
@@ -2490,9 +2510,10 @@ claude_json() {  # claude_json <prompt> [timeout s]: one headless Claude call wi
     local cl=${BHOTE_CLAUDE:-claude} dir="$DATA_DIR/slack" out p k
     command -v "$cl" >/dev/null 2>&1 || return 3
     mkdir -p "$dir"; out=$(mktemp "$RUN_DIR/claude.XXXXXX")
-    # outside herdr's view (no agent in this pane) and not as a nested session; in a folder of its own (no project files)
+    # outside herdr's view (no agent in this pane) and not as a nested session; in a folder of its own (no project files).
+    # Slack text is untrusted: no built-in tools, none of the user's allow rules (--setting-sources project), nothing outside --allowedTools
     ( cd "$dir" && exec env -u HERDR_ENV -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID -u HERDR_SOCKET_PATH -u CLAUDECODE \
-        -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT "$cl" -p "$1" --model haiku --allowedTools $SLACK_TOOLS \
+        -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_ENTRYPOINT "$cl" -p "$1" --model haiku --tools "" --setting-sources project --permission-mode dontAsk --allowedTools $SLACK_TOOLS \
         --no-session-persistence --output-format json ) > "$out" 2>/dev/null </dev/null & p=$!
     ( trap 'kill "$w" 2>/dev/null; exit 0' TERM; sleep "${2:-120}" & w=$!; wait "$w"; kill "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & k=$!
     wait "$p" 2>/dev/null; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null   # (the watchdog takes its sleep along: no output kept open)
@@ -2562,6 +2583,7 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
         case "${T_STATUS[$i]}" in waiting) ;; review) [ -n "$(topic_get "$f" slack_msg)" ] || continue ;; *) continue ;; esac   # (review: Slack put it there, a follow-up joins)
         local ch th seen; ch=$(topic_get "$f" slack_channel); [ -n "$ch" ] || continue
         th=$(topic_get "$f" slack_thread); seen=$(topic_get "$f" slack_seen 0)
+        case "$ch" in *[!A-Z0-9]*) continue ;; esac; case "$th" in *[!0-9.]*) continue ;; esac; case "$seen" in ''|*[!0-9.]*) seen=0 ;; esac   # (pins from synced files go into the prompt)
         pins="$pins${pins:+,}$(printf '{"topic":%s,"channel_id":%s,"thread_ts":%s,"oldest":%s}' "$(json_str "${T_ID[$i]}")" "$(json_str "$ch")" "$(json_opt "$th")" "$(json_str "$seen")")"; n=$(( n + 1 ))
         seens="$seens${seens:+,}$(json_str "${T_ID[$i]}"):$(json_str "$seen")"
     done
@@ -2631,10 +2653,19 @@ circleci_get() {  # circleci_get <API v2 path>: its JSON; 1 without a token or o
     case "$1" in *[!A-Za-z0-9/_.?=\&-]*) return 1 ;; esac
     printf 'header = "Circle-Token: %s"\n' "$t" | curl -sf --max-time 8 -K - "https://circleci.com/api/v2/$1"
 }
-gh_ok() {  # 0 when gh is there and logged in (asked once per process)
-    [ -n "${GH_OK:-}" ] && return "$GH_OK"
-    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then GH_OK=0; else GH_OK=1; fi
-    return "$GH_OK"
+with_timeout() {  # with_timeout <seconds> <command…>: its output, its status; killed (status 143) when it does not end in time
+    local o p k rc d=${TMPDIR:-/tmp}; [ -d "${RUN_DIR:-}" ] && d=$RUN_DIR
+    o=$(mktemp "$d/to.XXXXXX") || return 1
+    "${@:2}" > "$o" 2>/dev/null </dev/null & p=$!
+    ( trap 'kill "$w" 2>/dev/null; exit 0' TERM; sleep "$1" & w=$!; wait "$w"; kill "$p" 2>/dev/null ) >/dev/null 2>&1 </dev/null & k=$!
+    wait "$p" 2>/dev/null; rc=$?; kill "$k" 2>/dev/null; wait "$k" 2>/dev/null
+    cat "$o"; rm -f "$o"; return "$rc"
+}
+gh_t() { with_timeout 25 gh "$@"; }   # a gh call that cannot hang the monitor
+gh_ok() {  # 0 when gh is there and logged in (a yes is kept for the life of the process, a no is asked again)
+    [ "${GH_OK:-}" = 0 ] && return 0
+    if command -v gh >/dev/null 2>&1 && with_timeout 15 gh auth status >/dev/null 2>&1; then GH_OK=0; return 0; fi
+    return 1
 }
 gh_user() { gh api user --jq .login 2>/dev/null; }
 mon_label() {  # mon_label <name> <map "a=A,b=B">: the label of a workflow or job (its map entry, else the name without "Deployment"/"deploy-")
@@ -2674,17 +2705,17 @@ monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAME
     local IFS=,; for k in $repos; do case "$k" in github.com/*/*) slug=${k#github.com/}; break ;; esac; done; unset IFS
     [ -n "$slug" ] || { MD_WHY="no GitHub repository pinned"; return 1; }
     gh_ok || { MD_WHY="gh is not logged in (gh auth login)"; return 1; }
-    y=$(gh api "repos/$slug/contents/.circleci/config.yml" --jq .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null)
+    y=$(gh_t api "repos/$slug/contents/.circleci/config.yml" --jq .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null)
     if [ -n "$y" ]; then                                       # CircleCI: the deploy jobs and the branches they run on
         MD_CI="circleci:gh/$slug"
         MD_BRANCHES=$(printf '%s\n' "$y" | mon_deploy_branches)
         return 0
     fi
-    local wfs; wfs=$(gh workflow list -R "$slug" --json name --jq '.[].name' 2>/dev/null)
+    local wfs; wfs=$(gh_t workflow list -R "$slug" --json name --jq '.[].name' 2>/dev/null)
     [ -n "$wfs" ] || { MD_WHY="no CI found (no .circleci/config.yml, no GitHub workflows)"; return 1; }
     MD_CI="github:$slug"                                       # GitHub Actions: the workflows called "…deploy…", on the default branch
     MD_NAMES=$(printf '%s\n' "$wfs" | grep -i deploy | awk '{ l = $0; sub(/ [Dd]eployment$/, "", l); printf "%s%s=%s", (n++ ? "," : ""), $0, l }')
-    def=$(gh repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null)
+    def=$(gh_t repo view "$slug" --json defaultBranchRef --jq .defaultBranchRef.name 2>/dev/null)
     MD_BRANCHES=${def:-main}
     return 0
 }
@@ -2707,9 +2738,19 @@ mon_line() {  # mon_line <time> <project> <label> <state> <done> <total> <note> 
     local a out="" i=0; for a in "$@"; do i=$(( i + 1 )); out="$out${a//[[:cntrl:]]/ }"; [ "$i" -lt $# ] && out="$out$US"; done
     printf '%s\n' "$out"
 }
-deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>
-    local runs id wf st cc cr br url title t s d tot
-    runs=$(gh run list -R "$2" --limit 20 --json databaseId,workflowName,status,conclusion,createdAt,headBranch,displayTitle,url 2>/dev/null) || return 1
+deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>: filtered on the server (the last runs of each workflow, or of each branch)
+    local runs="" part e b id wf st cc cr br url title t s d tot got=0 f="databaseId,workflowName,status,conclusion,createdAt,headBranch,displayTitle,url"
+    local names=() brs=() IFS=,
+    for e in $4; do [ -n "${e%%=*}" ] && names[${#names[@]}]=${e%%=*}; done
+    for b in ${3:-main}; do brs[${#brs[@]}]=$b; done
+    unset IFS
+    if [ ${#names[@]} -gt 0 ]; then
+        for e in "${names[@]}"; do part=$(gh_t run list -R "$2" --workflow "$e" --limit 5 --json "$f") && { runs="$runs$part"$'\n'; got=1; }; done
+    else
+        for b in "${brs[@]}"; do part=$(gh_t run list -R "$2" --branch "$b" --limit 50 --json "$f") && { runs="$runs$part"$'\n'; got=1; }; done
+    fi
+    [ "$got" = 1 ] || return 1
+    runs=$(printf '%s' "$runs" | jq -s '(add // []) | unique_by(.databaseId)' 2>/dev/null) || return 1
     while IFS=$US read -r id wf st cc cr br title url; do
         case ",${3:-main}," in *",$br,"*) ;; *) continue ;; esac
         mon_match "$wf" "$4" deploy || continue
@@ -2718,7 +2759,7 @@ deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>
             completed:*) continue ;; waiting:*) s=approval ;; in_progress:*) s=running ;; *) s=queued ;;
         esac
         d=""; tot=""
-        if [ "$s" = running ]; then read -r d tot < <(gh run view "$id" -R "$2" --json jobs --jq '[.jobs[].steps[]] | "\(map(select(.status == "completed")) | length) \(length)"' 2>/dev/null); fi
+        if [ "$s" = running ]; then read -r d tot < <(gh_t run view "$id" -R "$2" --json jobs --jq '[.jobs[].steps[]] | "\(map(select(.status == "completed")) | length) \(length)"' 2>/dev/null); fi
         case "$title" in *" from "*/*) title=${title##* from }; title=${title#*/} ;; esac
         mon_line "$(mon_iso "$cr")" "$1" "$(mon_label "$wf" "$4")" "$s" "$d" "$tot" "$title" "$url"
     done < <(printf '%s' "$runs" | jq -r '.[] | [.databaseId, .workflowName, .status, .conclusion, .createdAt, .headBranch, .displayTitle, .url] | map(tostring | gsub("[\u0000-\u001f]"; " ")) | join("\u001f")')
@@ -2726,35 +2767,36 @@ deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>
 circleci_state() {  # a workflow's status -> ours (empty: leave it out)
     case "$1" in success) echo ok ;; failed|error|unauthorized) echo failed ;; failing|running) echo running ;; on_hold) echo approval ;; canceled) echo canceled ;; *) ;; esac
 }
-circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline its first workflow: wid US status US created US number US subject US branch US jobs JSON
+circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline each workflow (the newest of a name): wid US status US created US number US subject US branch US jobs JSON
     local q="project/$1/pipeline" pid num subj br wj
     [ -n "$2" ] && q="$q?branch=$2"
     while IFS=$US read -r pid num subj br; do
         [ -n "$pid" ] || continue
         wj=$(circleci_get "pipeline/$pid/workflow") || continue
-        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '.items[0] // empty | [.id, .status, .created_at, $n, $s, $b] | join("\u001f")'
+        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '(.items // []) | group_by(.name) | map(max_by(.created_at)) | .[] | [.id, .status, .created_at, $n, $s, $b] | join("\u001f")'
     done < <(circleci_get "$q" | jq -r --argjson k "$3" '.items[:$k][] | [.id, (.number | tostring), ((.vcs.commit.subject // "") | gsub("[\u0000-\u001f]"; " ")), (.vcs.branch // "")] | join("\u001f")' 2>/dev/null)
 }
 deploys_circleci() {  # deploys_circleci <project> <slug> <branch=Label,…> <job names>
-    local e b lab wid st cr num subj br s jobs d tot
+    local e b lab wid st cr num subj br s jobs d tot map=${3:-}
+    [ -n "$map" ] || map="="                                   # no branches given: every branch, labelled with the pipeline's own
     while IFS= read -r e; do
-        b=${e%%=*}; lab=${e#*=}; [ -n "$b" ] || continue
+        b=${e%%=*}; lab=${e#*=}; [ -n "$e" ] || continue
         while IFS=$US read -r wid st cr num subj br; do
             s=$(circleci_state "$st"); [ -n "$s" ] || continue
             jobs=$(circleci_get "workflow/$wid/job") || continue
             printf '%s' "$jobs" | jq -e --arg m "${4:-}" '[.items[] | select(if $m == "" then (.name | test("deploy|approv"; "i")) else (.name as $n | $m | split(",") | map(split("=")[0]) | index($n)) end)] | length > 0' >/dev/null 2>&1 || continue
-            read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select(.status | test("success|failed|canceled|not_run|infrastructure_fail|timedout"))] as $f | "\($f | length) \(.items | length)"')
-            mon_line "$(mon_iso "$cr")" "$1" "$lab" "$s" "$d" "$tot" "${subj:0:60}" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+            read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select(.status | test("^(success|failed|canceled|not_run|infrastructure_fail|timedout)$"))] as $f | "\($f | length) \(.items | length)"')
+            mon_line "$(mon_iso "$cr")" "$1" "${lab:-$br}" "$s" "$d" "$tot" "${subj:0:60}" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
         done < <(circleci_workflows "$2" "$b" 2)
-    done <<< "$(printf '%s' "${3:-}" | tr ',' '\n')"
+    done <<< "$(printf '%s' "$map" | tr ',' '\n')"
 }
 tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jobs of the last runs (a run's jobs are read once per state)
     local runs id wf st up br url jf j s n f p
-    runs=$(gh run list -R "$2" --limit 8 --json databaseId,workflowName,status,updatedAt,headBranch,url 2>/dev/null) || return 1
+    runs=$(gh_t run list -R "$2" --limit 8 --json databaseId,workflowName,status,updatedAt,headBranch,url 2>/dev/null) || return 1
     mkdir -p "$SHARED_DIR/ghjobs" 2>/dev/null
     while IFS=$US read -r id wf st up br url; do
         jf="$SHARED_DIR/ghjobs/$id-${up//[!0-9]/}"
-        [ -s "$jf" ] || { gh run view "$id" -R "$2" --json jobs > "$jf.tmp" 2>/dev/null && mv "$jf.tmp" "$jf"; rm -f "$jf.tmp"; }
+        [ -s "$jf" ] || { gh_t run view "$id" -R "$2" --json jobs > "$jf.tmp" 2>/dev/null && mv "$jf.tmp" "$jf"; rm -f "$jf.tmp"; }
         j=$(jq -r --arg m "${3:-}" '[.jobs[] | select(if $m == "" then (.name | test("test"; "i")) else (.name as $n | $m | split(",") | index($n | sub(" \\([0-9]+/[0-9]+\\)$"; ""))) end)]
             | select(length > 0) | [ (if any(.status != "completed") then "running" elif any(.conclusion == "failure" or .conclusion == "timed_out") then "failed"
                 elif all(.conclusion == "success" or .conclusion == "skipped") then "ok" else "canceled" end),
@@ -2769,9 +2811,9 @@ tests_circleci() {  # tests_circleci <project> <slug> <job names>: the test jobs
     local wid st cr num subj br jobs j s d tot nm
     while IFS=$US read -r wid st cr num subj br; do
         jobs=$(circleci_get "workflow/$wid/job") || continue
-        j=$(printf '%s' "$jobs" | jq -r --arg m "${3:-}" '[.items[] | select(if $m == "" then (.name | test("test|build"; "i")) else (.name as $n | $m | split(",") | index($n)) end)]
-            | select(length > 0) | [ (if any(.status == "running" or .status == "queued" or .status == "blocked") then "running" elif any(.status == "failed" or .status == "infrastructure_fail" or .status == "timedout") then "failed"
-                elif all(.status == "success") then "ok" else "canceled" end), (map(select(.status != "running" and .status != "queued" and .status != "blocked")) | length), length, .[0].name ] | map(tostring) | join("\u001f")' 2>/dev/null)
+        j=$(printf '%s' "$jobs" | jq -r --arg m "${3:-}" 'def term: IN("success","failed","canceled","not_run","infrastructure_fail","timedout","unauthorized","terminated-unknown","retried"); [.items[] | select(if $m == "" then (.name | test("test|build"; "i")) else (.name as $n | $m | split(",") | index($n)) end)]
+            | select(length > 0) | [ (if any(.status | term | not) then "running" elif any(.status == "failed" or .status == "infrastructure_fail" or .status == "timedout") then "failed"
+                elif all(.status == "success") then "ok" else "canceled" end), (map(select(.status | term)) | length), length, .[0].name ] | map(tostring) | join("\u001f")' 2>/dev/null)
         [ -n "$j" ] || continue
         IFS=$US read -r s d tot nm <<< "$j"
         mon_line "$(mon_iso "$cr")" "$1" "$nm" "$s" "$d" "$tot" "$br" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
@@ -2791,10 +2833,12 @@ tests_local() {  # the local runs (bhote test run) and the live status files (TE
     for f in "$dir"/*.json; do
         [ -f "$f" ] || continue
         jq -r --argjson now "$now" '
+            def c: tostring | gsub("[\u0000-\u001f\u007f]"; " ");
+            def n: (. // "") | tostring | if test("^[0-9]+$") then . else "" end;
             select(.tree and .suite and .startedAt) | ((.updatedAt // .startedAt) / 1000 | floor) as $up
             | (if .ok == true then "ok" elif .ok == false then "failed" elif ($now - $up) > 30 then "canceled" else "running" end) as $s
-            | [(.startedAt / 1000 | floor), .tree, .suite, $s, (.done // ""), (.total // ""),
-               ((if (.failed // 0) > 0 then "\(.failed) failed · " else "" end) + "\(.passed // 0) passed"), ""] | map(tostring) | join("\u001f")' "$f" 2>/dev/null
+            | [(.startedAt / 1000 | floor | tostring), (.tree | c), (.suite | c), $s, (.done | n), (.total | n),
+               (((if (.failed // 0) > 0 then "\(.failed) failed · " else "" end) + "\(.passed // 0) passed") | c), ""] | join("\u001f")' "$f" 2>/dev/null
     done
 }
 monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project with CI (and the local runs); the list, newest first
@@ -2820,9 +2864,9 @@ monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project wit
 }
 test_summary() {  # test_summary <log>: the result line of the usual frameworks, short (412 passed · 2 failed)
     tail -n 80 "$1" 2>/dev/null | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | awk '
-        /[0-9]+ runs?, [0-9]+ assertions?/ { r = $0; sub(/^.*[^0-9]([0-9]+ runs?)/, "\\1", r); split(r, a, /, */); m = a[1] " · " a[3] " · " a[4] }   # Minitest
+        /[0-9]+ runs?, [0-9]+ assertions?/ { if (match($0, /[0-9]+ runs?, /)) { r = substr($0, RSTART); split(r, a, /, */); m = a[1] " · " a[3] " · " a[4] } }   # Minitest
         /^ *Tests +[0-9]/ { v = $0; sub(/^ *Tests +/, "", v); sub(/ *\(.*$/, "", v); gsub(/ *\| */, " · ", v); m = v }                           # Vitest
-        /[0-9]+ examples?, [0-9]+ failures?/ { v = $0; sub(/^.*[^0-9]([0-9]+ examples?)/, "\\1", v); m = v }                                  # RSpec
+        /[0-9]+ examples?, [0-9]+ failures?/ { if (match($0, /[0-9]+ examples?, /)) m = substr($0, RSTART) }                                  # RSpec
         /^=+ .*[0-9]+ (passed|failed).* =+$/ { v = $0; gsub(/^=+ | =+$/, "", v); m = v }                                                     # pytest
         /^ok   / { ok++ } /^FAIL / { fl++ }                                                                                                # bhote
         END { if (m == "" && (ok || fl)) m = ok " ok" (fl ? " · " fl " FAIL" : ""); print substr(m, 1, 60) }'
@@ -2845,31 +2889,37 @@ mon_age() {  # mon_age <seconds ago>: 40s, 5m, 3h, 2d
     local a=$1; [ "$a" -lt 0 ] && a=0
     if [ "$a" -lt 60 ]; then printf '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf '%dh' $(( a / 3600 )); else printf '%dd' $(( a / 86400 )); fi
 }
+mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a subshell
+    local a; num_set a "$2" "$NOW"; a=$(( NOW - a )); [ "$a" -lt 0 ] && a=0
+    if [ "$a" -lt 60 ]; then printf -v "$1" '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf -v "$1" '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf -v "$1" '%dh' $(( a / 3600 )); else printf -v "$1" '%dd' $(( a / 86400 )); fi
+}
 monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last entries (nothing when the monitor is off or has none)
-    local kind=$1 max=$2 cap t pj lb st d tot note url n=0 ic tx right lw rw left now w=$(( ${COLS:-44} - 4 ))
+    local kind=$1 max=$2 cap t pj lb st d tot note url n=0 ic tx right lw rw left pad age w=$(( ${COLS:-44} - 4 ))
     case "$kind" in deploys) cap="Deployments" ;; *) cap="Tests" ;; esac
     [ -s "$SHARED_DIR/$kind.list" ] || return 0
-    now=$(date +%s)
+    [ -n "${NOW:-}" ] || NOW=$(date +%s)
     local rest; rest=$(( ${#RULE_LINE} - 4 - ${#cap} )); [ "$rest" -lt 1 ] && rest=1
     printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$cap" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
     while IFS=$US read -r t pj lb st d tot note url && [ "$n" -lt "$max" ]; do
         case "$st" in
-            running) ic="${ORANGE}✶"; tx="running"; [ -n "$d" ] && [ -n "$tot" ] && [ "$tot" -gt 0 ] 2>/dev/null && tx="$(( d * 100 / tot ))%" ;;
+            running) ic="${ORANGE}✶"; tx="running"; case "$d:$tot" in *[!0-9:]*|:*|*:) ;; *) [ "$tot" -gt 0 ] && tx="$(( d * 100 / tot ))%" ;; esac ;;
             queued) ic="${D}◌"; tx="queued" ;; approval) ic="${Y}⏸"; tx="approval" ;; ok) ic="${GREEN}✓"; tx="" ;;
             failed) ic="${NN}✗"; tx="failed" ;; *) ic="${D}⊘"; tx="canceled" ;;
         esac
         [ "$kind" = tests ] && [ -n "$note" ] && [ "$st" != running ] && tx=$note
         [ -z "$tx" ] && [ -n "$note" ] && tx=${note:0:18}           # a deployment that went through: where it came from
-        right="${tx:+$tx · }$(mon_age $(( now - t )))"; dw_set rw "$right"
+        clip_set tx "$tx" $(( w / 2 )); mon_age_set age "$t"
+        right="${tx:+$tx · }$age"; dw_set rw "$right"
         clip_set left "$pj · $lb" $(( w - rw - 3 )); dw_set lw "$left"
-        printf '  %s%s %s%s%*s%s%s%s\n' "$ic" "$X" "$L" "$left" $(( w - 2 - lw - rw )) "" "$D" "$right" "$X"
+        pad=$(( w - 2 - lw - rw )); [ "$pad" -lt 1 ] && pad=1
+        printf '  %s%s %s%s%*s%s%s%s\n' "$ic" "$X" "$L" "$left" "$pad" "" "$D" "$right" "$X"
         n=$(( n + 1 ))
     done < "$SHARED_DIR/$kind.list"
 }
 monitors_block() {  # both monitors (when on), above the agents
-    local r; num_set r "$(cfg_get MONITOR_ROWS 5)" 5
-    [ "$(cfg_get DEPLOY_MONITOR off)" = on ] && monitor_block deploys "$r"
-    [ "$(cfg_get TEST_MONITOR off)" = on ] && monitor_block tests "$r"
+    local r dm tm; cfg_var r MONITOR_ROWS 5; num_set r "$r" 5; cfg_var dm DEPLOY_MONITOR off; cfg_var tm TEST_MONITOR off
+    [ "$dm" = on ] && monitor_block deploys "$r"
+    [ "$tm" = on ] && monitor_block tests "$r"
     return 0
 }
 cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now when the list is older than its interval)
@@ -2880,6 +2930,7 @@ cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now w
     [ -n "$json" ] && printf '['
     while IFS=$US read -r t pj lb st d tot note url; do
         [ -n "$t" ] || continue
+        case "$t" in *[!0-9]*) continue ;; esac; case "$d" in ''|*[!0-9]*) d="" ;; esac; case "$tot" in ''|*[!0-9]*) tot="" ;; esac
         if [ -n "$json" ]; then [ "$first" = 1 ] || printf ','; first=0
             printf '{"time":%s,"project":%s,"label":%s,"state":%s,"done":%s,"total":%s,"note":%s,"url":%s}' "$t" "$(json_str "$pj")" "$(json_str "$lb")" "$(json_str "$st")" "${d:-null}" "${tot:-null}" "$(json_opt "$note")" "$(json_opt "$url")"
         else printf '%-9s %-20s %-16s %s %s\n' "$st" "${pj:0:20}" "${lb:0:16}" "$(mon_age $(( $(date +%s) - t )))" "$note"; fi
@@ -3492,7 +3543,8 @@ setup_step_monitors() {  # the deployment and the test monitor: on or off, which
     for (( i = 0; i < P_N; i++ )); do
         if monitor_detect "${P_FILE[$i]}"; then
             local was; was=$(topic_get "${P_FILE[$i]}" ci)
-            topic_set "${P_FILE[$i]}" ci "$MD_CI"; topic_set "${P_FILE[$i]}" deploy_branches "$MD_BRANCHES"
+            [ "$was" = "$MD_CI" ] && [ -n "$(topic_get "${P_FILE[$i]}" deploy_branches)" ] || topic_set "${P_FILE[$i]}" deploy_branches "$MD_BRANCHES"   # (branches set by hand stay)
+            topic_set "${P_FILE[$i]}" ci "$MD_CI"
             [ "$was" = "$MD_CI" ] && [ -n "$(topic_get "${P_FILE[$i]}" deploy_names)" ] || topic_set "${P_FILE[$i]}" deploy_names "$MD_NAMES"   # (names set by hand stay)
             w_ok "${P_NAME[$i]}" "$(monitor_describe "${P_FILE[$i]}")"
         else w_warn "${P_NAME[$i]}" "${MD_WHY:-no CI}"; fi
@@ -3676,7 +3728,7 @@ bhote_main() {
     printf '\033[?1049h\033[?25l%s' "$MOUSE_ON"          # alternate screen, hidden cursor, mouse reports (wheel, divider)
     splash_fits || view=main
     collector "$$" & pids="$!"
-    echo "0 on" > "$ANIM_FILE"; dog_ticker $$ & pids="$pids $!"
+    echo "0 on" > "$ANIM_FILE"; : > "$RUN_DIR/anim.want"; dog_ticker $$ & pids="$pids $!"
     local back=main
     redraw=1
     while true; do
@@ -3688,6 +3740,7 @@ bhote_main() {
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
             bhote_paint "$view"; dog_prev_reset "$view"
             if [ "$view" = main ]; then spin_cells; else SPIN_CELLS=""; fi
+            if [ "$view" = splash ] || [ -n "$SPIN_CELLS" ]; then [ -e "$RUN_DIR/anim.want" ] || : > "$RUN_DIR/anim.want"; else [ ! -e "$RUN_DIR/anim.want" ] || rm -f "$RUN_DIR/anim.want"; fi
         elif [ "$anim" = 1 ]; then anim=0; dog_animate "$view"; fi
         [ "$view" = splash ] && [ -z "${SPLASH_SINCE:-}" ] && SPLASH_SINCE=$SECONDS
         [ "$view" = splash ] || SPLASH_SINCE=""
@@ -3822,7 +3875,7 @@ bhote_main() {
         else SEL_SEEN=${SEL_SEEN:-none}; fi
         if [ -z "$key" ] && [ "$SECONDS" -ge $(( ${chk:-0} + 2 )) ]; then
             chk=$SECONDS
-            m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; cat "$CONFIG_FILE" 2>/dev/null; } | cksum )   # also the settings: a new theme shows at once
+            m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.at" "$SHARED_DIR/tests.at" 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; cat "$CONFIG_FILE" 2>/dev/null; } | cksum )   # also the settings: a new theme shows at once
             if [ "$m1" != "$last_m" ]; then last_m=$m1; case "$view" in main|settings) redraw=1 ;; esac; fi
         fi
     done
@@ -4407,8 +4460,8 @@ Settings: ~/.config/bhote/config (or in the panel: ",").
 HELP
 }
 bhote_cli() {
-    local a json="" args=()
-    for a in "$@"; do if [ "$a" = --json ]; then json=--json; else args[${#args[@]}]=$a; fi; done   # --json anywhere, also first
+    local a json="" rest="" args=()
+    for a in "$@"; do [ "$a" = -- ] && rest=1; if [ -z "$rest" ] && [ "$a" = --json ]; then json=--json; else args[${#args[@]}]=$a; fi; done   # (after -- it belongs to the command)   # --json anywhere, also first
     set -- ${args[@]+"${args[@]}"}
     local cmd=${1:-}; [ $# -gt 0 ] && shift
     AGENT_SEND_SYNC=1                                               # a command waits for herdr and says when a prompt failed
@@ -4425,7 +4478,7 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current ;;
-        bar) bhote_info; cli_bar ;;
+        bar) cli_bar ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;

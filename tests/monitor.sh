@@ -131,6 +131,11 @@ printf '{"tree":"web-wt1","suite":"server","done":5,"total":10,"passed":40,"fail
 printf '{"tree":"web-wt1","suite":"client","done":9,"total":9,"passed":90,"failed":2,"startedAt":1000,"updatedAt":2000,"finished":true,"ok":false}' > "$HOME/.cache/ims-test-status/web-wt1.client.json"
 l=$(tests_local)
 echo "$l" | grep -q "web-wt1${US}server${US}running${US}5${US}10" && echo "$l" | grep -q "web-wt1${US}client${US}failed${US}9${US}9${US}2 failed · 90 passed" && ok "status files: running with progress, failed with counts" || bad "status files: $l"
+printf '{"tree":"evil\\u001b[31m","suite":"s","done":"a[$(touch %s/pwned)]","total":"9","passed":1,"failed":0,"startedAt":%s,"updatedAt":%s,"ok":null}' "$T" "$ms" "$ms" > "$HOME/.cache/ims-test-status/evil.json"
+l=$(tests_local | grep evil); rm -f "$HOME/.cache/ims-test-status/evil.json"
+case "$l" in *$'\033'*) bad "status file: escape code kept" ;; *) [ -n "$l" ] && ok "status file: control characters are cleaned" || bad "status file: dropped: $l" ;; esac
+printf 'x  3 runs, 9 assertions, 1 failures, 0 errors, 0 skips\n' > "$T/m.log"; [ "$(test_summary "$T/m.log")" = "3 runs · 1 failures · 0 errors" ] && ok "summary: Minitest after other text" || bad "minitest: $(test_summary "$T/m.log")"
+[ -e "$T/pwned" ] && bad "status file: a command ran" || ok "status file: a number field cannot run a command"
 
 # one round, newest first; the panel block; the monitor off: nothing
 echo "TEST_MONITOR=on" >> "$T/config"; echo "DEPLOY_MONITOR=on" >> "$T/config"
