@@ -1731,7 +1731,9 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
         menu_num_line "$sl" "$(( i + 1 ))" "${MENU_ITEMS[$i]#*|}"
     done
     printf '\n'; rule
-    printf '  %s%s%s\n' "$D" "$(clip "↑↓ 1-9 choose · ⏎ do it / edit · esc back" $(( ${COLS:-44} - 4 )))" "$X"
+    if [ -n "${FLASH_MSG:-}" ] && [ "$SECONDS" -lt "${FLASH_UNTIL:-0}" ]; then   # what just happened (a Slack pin: asking, pinned, why not)
+        case "$FLASH_MSG" in "✓"*) wrap_print 2 "$GREEN" "$FLASH_MSG" ;; "✗"*) wrap_print 2 "$NN" "$FLASH_MSG" ;; *) wrap_print 2 "$S" "$FLASH_MSG" ;; esac
+    else printf '  %s%s%s\n' "$D" "$(clip "↑↓ 1-9 choose · ⏎ do it / edit · esc back" $(( ${COLS:-44} - 4 )))" "$X"; fi
 }
 # Title and description on the topic page are choices, too (MENU_IDX -2 and -1, above the actions): on the bar when chosen,
 # and edited in place (EDIT_FIELD): the field is then one line, marked with \002 so that bhote_paint knows its row (EDIT_ROW)
@@ -1979,10 +1981,14 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
            topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; slack_rewait "$f" ;;
         slack) if [ -n "$(topic_get "$f" slack_channel)" ]; then slack_pin "$f" off; return 0; fi
-           ask "Slack link, #channel or @person: " || return 0; [ -n "$ANSWER" ] || return 0
-           case "$ANSWER" in \#*|@*) FLASH_MSG="asking Claude for $ANSWER ..."; FLASH_UNTIL=$(( SECONDS + 60 )); bhote_paint menu ;; esac
-           if slack_pin "$f" "$ANSWER" 2>/dev/null; then FLASH_MSG="Slack pinned: watched while it waits"; else FLASH_MSG="Slack: not found ($ANSWER)"; fi
-           FLASH_UNTIL=$(( SECONDS + 4 )); return 0 ;;
+           ask "Slack: a link, #channel, @person or a name: " || return 0; [ -n "$ANSWER" ] || return 0
+           case "$ANSWER" in http*) ;; *) FLASH_MSG="… asking Claude for $ANSWER (a few seconds)"; FLASH_UNTIL=$(( SECONDS + 120 )); bhote_paint menu ;; esac
+           local perr; perr=$(slack_pin "$f" "$ANSWER" 2>&1 >/dev/null)
+           if [ -z "$perr" ] || [ -n "$(topic_get "$f" slack_channel)" ]; then
+               FLASH_MSG="✓ pinned $(topic_get "$f" slack_label)$( [ "$(topic_get "$f" status)" = waiting ] && echo ': watched while it waits' || echo ': watched once it waits')"
+               [ "$(cfg_get SLACK_WATCH off)" = on ] || FLASH_MSG="$FLASH_MSG (Slack monitor is off here: settings › Connections)"
+           else FLASH_MSG="✗ ${perr#bhote: }"; fi
+           FLASH_UNTIL=$(( SECONDS + 8 )); return 0 ;;
         next) topic_set "$f" status next ;;
         later) topic_set "$f" status later ;;
         done) topic_set "$f" status done ;;
@@ -2043,18 +2049,27 @@ slack_pin_parse() {  # slack_pin_parse <link | #channel | @person>: SP_CH, SP_TS
             case "$a" in *thread_ts=*) SP_TS=${a#*thread_ts=}; SP_TS=${SP_TS%%[!0-9.]*} ;; esac   # a reply in a thread: its thread
             case "$SP_CH" in D*) SP_LABEL="DM" ;; *) SP_LABEL="channel" ;; esac; [ -n "$SP_TS" ] && SP_LABEL="thread" ;;
         \#?*|@?*) SP_NAME=$a; SP_LABEL=$a ;;
+        *[![:space:]]*) [ "${#a}" -le 80 ] || return 1; SP_NAME=$a; SP_LABEL=$a ;;   # a plain name: a person (their DM) or a channel
         *) return 1 ;;
     esac
     case "$SP_CH" in *[!A-Z0-9]*) return 1 ;; esac; case "$SP_TS" in *[!0-9.]*) return 1 ;; esac
     return 0
 }
-slack_resolve() {  # slack_resolve <#channel | @person>: SP_CH (a channel id, or a user id for the DM), through Claude
-    local j what
-    if [ "${1#@}" != "$1" ]; then what="user whose name or display name is '${1#@}' (slack_search_users)"
-    else what="channel named '${1#\#}' (slack_search_channels, public and private)"; fi
-    j=$(claude_json "Find the Slack $what. Reply with only JSON: {\"id\":\"<the id>\"} or {\"id\":null} when there is no clear match." 90) || return 1
-    SP_CH=$(printf '%s' "$j" | jq -r '.id // empty' 2>/dev/null)
-    case "$SP_CH" in ''|*[!A-Z0-9]*) SP_CH=""; return 1 ;; esac
+slack_resolve() {  # slack_resolve <#channel | @person | name>: SP_CH (a channel id, or a user id for the DM), SP_LABEL; SP_ERR why not
+    local j what kind name; SP_ERR=""
+    case "$1" in
+        @*) what="user whose name or display name is '${1#@}' (slack_search_users)" ;;
+        \#*) what="channel named '${1#\#}' (slack_search_channels, public and private)" ;;
+        *) what="user or channel called '$1': a person's name means the user (slack_search_users), otherwise a channel (slack_search_channels, public and private)" ;;
+    esac
+    command -v "${BHOTE_CLAUDE:-claude}" >/dev/null 2>&1 || { SP_ERR="no claude command here (Claude Code with its Slack connector)"; return 1; }
+    j=$(claude_json "Find the Slack $what. Reply with only JSON: {\"id\":\"<the id>\",\"kind\":\"user\" or \"channel\",\"name\":\"<its name>\"}, or {\"id\":null} when there is no clear match." 90) \
+        || { SP_ERR="Claude did not answer (is its Slack connector set up?)"; return 1; }
+    SP_CH=$(printf '%s' "$j" | jq -r '.id // empty' 2>/dev/null); kind=$(printf '%s' "$j" | jq -r '.kind // empty' 2>/dev/null)
+    name=$(printf '%s' "$j" | jq -r '.name // empty' 2>/dev/null | tr -d '[:cntrl:]' | cut -c1-40)
+    case "$SP_CH" in ''|*[!A-Z0-9]*) SP_CH=""; SP_ERR="no clear match for '$1' in Slack"; return 1 ;; esac
+    case "$1" in @*|\#*) ;; *) if [ "$kind" = channel ] || [ "${SP_CH#C}" != "$SP_CH" ]; then SP_LABEL="#${name:-$1}"; else SP_LABEL="@${name:-$1}"; fi ;; esac
+    return 0
 }
 slack_rewait() {  # slack_rewait <file>: waits again: no Slack message from before counts (the newer of now and the last seen one)
     local f=$1 seen now; topic_set "$f" slack_msg ""
@@ -2068,8 +2083,8 @@ slack_pin() {  # slack_pin <file> <link | #channel | @person | off>: pins (or un
     if [ "$2" = off ] || [ "$2" = none ]; then
         for k in slack_channel slack_thread slack_label slack_seen slack_msg; do topic_set "$f" "$k" ""; done; return 0
     fi
-    slack_pin_parse "$2" || { echo "bhote: a Slack link (copy link), #channel or @person" >&2; return 1; }
-    if [ -n "$SP_NAME" ]; then slack_resolve "$SP_NAME" || { echo "bhote: Slack: $SP_NAME not found (or Claude Code with its Slack connector is not set up)" >&2; return 1; }; fi
+    slack_pin_parse "$2" || { echo "bhote: a Slack link (copy link), #channel, @person or a name" >&2; return 1; }
+    if [ -n "$SP_NAME" ]; then slack_resolve "$SP_NAME" || { echo "bhote: Slack: ${SP_ERR:-$SP_NAME not found}" >&2; return 1; }; fi
     topic_set "$f" slack_channel "$SP_CH"; topic_set "$f" slack_thread "$SP_TS"; topic_set "$f" slack_label "$SP_LABEL"
     topic_set "$f" slack_seen "$(date +%s).000000"; topic_set "$f" slack_msg ""
 }

@@ -27,7 +27,8 @@ slack_pin_parse "https://acme.slack.com/archives/C0123ABC/p1712345678123456" && 
 slack_pin_parse "https://acme.slack.com/archives/C0123ABC/p1712345999000100?thread_ts=1712345678.123456&cid=C0123ABC" && [ "$SP_TS" = 1712345678.123456 ] && ok "link: a reply points to its thread" || bad "reply link: $SP_TS"
 slack_pin_parse "https://acme.slack.com/archives/D0456DEF" && [ "$SP_LABEL" = DM ] && ok "link: a DM" || bad "dm link"
 slack_pin_parse "#sales-ops" && [ "$SP_NAME" = "#sales-ops" ] && [ -z "$SP_CH" ] && ok "name: #channel is looked up" || bad "#name"
-slack_pin_parse "hello" && bad "plain text accepted" || ok "plain text is refused"
+slack_pin_parse "Jakob Beyer" && [ "$SP_NAME" = "Jakob Beyer" ] && ok "name: a plain name is looked up (person or channel)" || bad "plain name"
+slack_pin_parse "   " && bad "blank accepted" || ok "a blank pin is refused"
 slack_pin_parse 'https://acme.slack.com/archives/C01;rm' && bad "odd channel id accepted" || ok "an odd channel id is refused"
 
 # add/wait with a pin; the JSON carries it
@@ -40,6 +41,9 @@ B add "Price list" >/dev/null; B slack "Price list" "#sales-ops" >/dev/null 2>&1
 [ "$(B show "Price list" --json | jq -r .slack.channel)" = C0999XYZ ] && ok "bhote slack #channel: looked up through Claude" || bad "slack #channel: $(B show "Price list" --json)"
 grep -q "ENV herdr= pane= cc= cwd=$BHOTE_DATA/slack" "$FAKE_LOG" && ok "claude runs outside herdr and any session, in its own folder" || bad "claude env: $(grep ENV "$FAKE_LOG" | tail -1)"
 echo '{"id":null}' > "$FAKE_ANSWER"; B slack "Price list" "@nobody" >/dev/null 2>&1 && bad "an unknown person was pinned" || ok "an unknown #channel/@person is refused"
+echo '{"id":"U0JB","kind":"user","name":"Jakob Beyer"}' > "$FAKE_ANSWER"; B slack "Price list" "Jakob Beyer" >/dev/null 2>&1
+[ "$(B show "Price list" --json | jq -r '.slack.channel + " " + .slack.label')" = "U0JB @Jakob Beyer" ] && ok "bhote slack <name>: a person, pinned as their DM" || bad "name pin: $(B show "Price list" --json | jq -c .slack)"
+err=$(BHOTE_CLAUDE=/nonexistent B slack "Price list" "@x" 2>&1 >/dev/null); case "$err" in *"no claude command"*) ok "without claude: says why" ;; *) bad "no-claude message: $err" ;; esac
 B slack "Price list" off >/dev/null; [ "$(B show "Price list" --json | jq -r .slack)" = null ] && ok "bhote slack off: unpinned" || bad "unpin"
 
 # the watch: a message from someone else → review; my own only moves on; older ones are ignored
