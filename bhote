@@ -1340,12 +1340,16 @@ panel_width_clamp() {
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot): the key line says so for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
-topic_jump() {  # the selected topic's agent, focused in herdr (as a click on it does); 1 when it has none that herdr knows now
+topic_jump() {  # the selected topic's agent, shown in herdr; in another tab of this machine the focus goes to the panel there, the topic selected. 1 when it has no agent that herdr knows now
     local f m p ast; f=$(sel_file); [ -n "$f" ] || return 1
     m=$(topic_get "$f" agent_machine); p=$(topic_get "$f" agent_pane); [ -n "$p" ] || return 1
     [ -n "$m" ] || m=$HOST
     agent_state_set ast "$m" "$p"; case "$ast" in gone|off-*) return 1 ;; esac   # not there (any more), or its machine does not answer
-    agent_jump "$m" "$p"
+    [ "$m" = "$HOST" ] || { agent_jump "$m" "$p"; return; }
+    case "$p" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
+    # another tab: herdr shows it, the focus goes to the bhote panel there, and that panel has the topic selected (all do)
+    printf '%s %s list\n' "$(topic_id "$f")" "$$$RANDOM" > "$SHARED_DIR/select" 2>/dev/null
+    ( herdr agent focus "$p" >/dev/null 2>&1; panel_focus_of "$p" "${HERDR_PANE_ID:-}" ) >/dev/null 2>&1 </dev/null &
 }
 agent_jump() {  # agent_jump <machine> <pane>
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
@@ -3751,14 +3755,19 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
     local hc=$D; [ -n "$3" ] && hc=$S; clip_set tl "${3:-$hint}" $(( w - 1 ))
     printf '%s\033[%d;1H %s%s%s\033[K' "$out" "$rows" "$hc" "$tl" "$X"
 }
-panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus (through herdr's socket: by pane id)
-    local act tab pan sock=${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}
+panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus
+    local act
     act=${HERDR_ACTIVE_PANE_ID:-}
     [ -n "$act" ] || act=$(printf '%s' "${HERDR_PLUGIN_CONTEXT_JSON:-}" | jq -r '[.. | objects | (.focused_pane_id? // .pane_id?) | strings][0] // empty' 2>/dev/null)
     [ -n "$act" ] || act=$(herdr pane list 2>/dev/null | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')
-    tab=$(herdr pane list 2>/dev/null | jq -r --arg p "$act" '[.result.panes[] | select(.pane_id == $p)][0].tab_id // empty')
+    panel_focus_of "$act"
+}
+panel_focus_of() {  # panel_focus_of <pane> [<not this one>]: the bhote panel of that pane's tab gets the focus (herdr's socket: by pane id)
+    local tab pan sock=${HERDR_SOCKET_PATH:-${XDG_CONFIG_HOME:-$HOME/.config}/herdr/herdr.sock}
+    tab=$(herdr pane list 2>/dev/null | jq -r --arg p "$1" '[.result.panes[] | select(.pane_id == $p)][0].tab_id // empty')
     pan=$(herdr pane list 2>/dev/null | jq -r --arg t "$tab" '[.result.panes[] | select(.tab_id == $t and (.agent // "") == "" and (.terminal_title_stripped // "") == "Bhote")][0].pane_id // empty')
     case "$pan" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
+    [ "$pan" = "${2:-}" ] && return 0                          # the agent's tab is this panel's own: the agent keeps the focus
     perl -MIO::Socket::UNIX -e 'my $s = IO::Socket::UNIX->new(Peer => $ARGV[0]) or exit 1;
         print $s qq({"id":"bhote-find","method":"pane.focus","params":{"pane_id":"$ARGV[1]"}}\n); my $r = <$s>; exit(defined $r && $r =~ /"result"/ ? 0 : 1)' "$sock" "$pan"
 }

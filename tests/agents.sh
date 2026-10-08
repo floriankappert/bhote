@@ -181,6 +181,7 @@ jt=$(BHOTE_NO_SYNC=1 bhote_cli add "Jump topic" --json | jq -r .id); jf="$TOPIC_
 topic_set "$jf" agent_machine "$HOST"; topic_set "$jf" agent_pane "w2:p1"; : > "$FAKE_LOG"
 ( SEL_ID=$jt; topics_load; AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"; topic_jump ) \
   && sleep 0.3 && grep -q "agent focus w2:p1" "$FAKE_LOG" && ok "enter: the topic's agent is focused in herdr" || bad "jump: $(cat "$FAKE_LOG")"
+read -r sid _ sact < "$SHARED_DIR/select" 2>/dev/null; [ "$sid $sact" = "$jt list" ] && ok "enter: the panels select the topic (the one in the agent's tab gets the focus)" || bad "jump select: $(cat "$SHARED_DIR/select" 2>&1)"
 topic_set "$jf" agent_pane "w7:p7"; ( SEL_ID=$jt; topics_load; AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"; topic_jump ) \
   && bad "jump to a gone agent" || ok "enter: a gone agent, the page opens"
 # GitHub: the branch of a topic's agent, read by the machine it runs on; a line in the panel, inline in the search, in the JSON
