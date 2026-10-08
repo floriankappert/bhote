@@ -1506,7 +1506,7 @@ dog_ticker() {  # dog_ticker <main pid>
         closed=0; [ $(( RANDOM % 14 )) -eq 0 ] && closed=1
         tin=0; [ $(( tick % 9 )) -ge 6 ] && tin=1
         idx=$(( closed + 2 * tin ))
-        cfg_var _an ANIMATION on; [ "$_an" = on ] || { idx=0; tick=0; }
+        cfg_var _an ANIMATION on; [ "$_an" = on ] || { idx=0; blink=on; }   # off: the dog and the prompt hold still; the busy star still dances
         [ "$idx $blink $tick" = "$last" ] && continue           # (the tick: the star of the busy agents dances on every one)
         last="$idx $blink $tick"; echo "$idx $blink $tick" > "$ANIM_FILE"; kill -USR1 "$1" 2>/dev/null || exit 0
     done
