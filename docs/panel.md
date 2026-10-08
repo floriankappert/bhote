@@ -28,8 +28,11 @@ The find key (settings › *Find key*, e.g. `ctrl+alt+t`, on the Mac ⌘T) opens
 type, choose, `⏎` jumps there; `x` (`ctrl+x` once something is typed) checks a topic off;
 `ctrl+n` adds a topic (the search text is its start). `⏎` on a topic opens its page here in the panel.
 
-Click an agent in the agent area to focus it in herdr. An agent on another machine is selected there; herdr lets only its
-client switch machines, so the key line says so, with the keys (herdr 0.9.3 has no call that switches its window to another machine).
+Click a topic (any of its lines, also a done one) to select it, as the arrows do; the list stays where it is while the
+selected topic is in view; a double click opens its page, where a click on an action runs it and a click on the title or
+description edits it in place. Click an agent in the agent area to focus it in herdr. An agent on another machine is
+selected there; herdr lets only its client switch machines, so the key line says so, with the keys (herdr 0.9.3 has no
+call that switches its window to another machine).
 
 From anywhere in herdr, the key bound to `bhote.panel.focus` ([herdr plugin](herdr-plugin.md), e.g. prefix then `t`) jumps
 to the panel and back; the panel shows it bottom right (`Ctrl+B|T ⇄` (the keys as they are on the keyboard of the machine you type on: Ctrl+Option+T on a Mac, Ctrl+Alt+T elsewhere)).
