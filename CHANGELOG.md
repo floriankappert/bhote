@@ -5,7 +5,12 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-09
+
 ### Added
+- Topics in the panel are cards: an own background (lighter when selected, a step lighter under the pointer), the status
+  colour as a bar on the left edge, half-block edges above and below. Each topic is one row taller. The panel now asks the
+  terminal for mouse motion (for the hover) and redraws only when the card under the pointer changes.
 - Contributor files: CONTRIBUTING, code of conduct, security policy, support, issue and pull request templates,
   CODEOWNERS, `.editorconfig`, `.shellcheckrc`, an architecture guide (`docs/architecture.md`).
 - CI: the test suites on macOS (bash 3.2) and Linux, shellcheck, and a release check for `v*` tags
@@ -113,7 +118,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [0.1.0] - 2026-10-07
 - First release: topics and agents next to herdr.
 
-[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.5.8...HEAD
+[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/floriankappert/bhote/compare/v0.5.8...v0.6.0
 [0.5.8]: https://github.com/floriankappert/bhote/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/floriankappert/bhote/compare/v0.5.6...v0.5.7
 [0.5.6]: https://github.com/floriankappert/bhote/compare/v0.5.5...v0.5.6
