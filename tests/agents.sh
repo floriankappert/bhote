@@ -333,7 +333,8 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   AG_N=0; AG_LINES=(); COLS=44; ROWS=40; agents_block >/dev/null; spin_cells; [ -z "$SPIN_CELLS" ] || exit 3
   rm -rf "$R"; exit 0 ) && ok "no agents: no error text, and the old agent map is gone" || bad "agent map without agents: step $?"
 # the search popup: no free agents; the done topics only the newest 25 (+ a count) until something is typed, then all of them
-( rm -f "$TOPIC_DIR"/*.topic; for i in $(seq 1 30); do topic_new "Done topic $i" "" "" >/dev/null; f=$(ls -t "$TOPIC_DIR"/*.topic | head -1); topic_set "$f" status done; sleep 0.01; done
+( rm -f "$TOPIC_DIR"/*.topic; for i in $(seq 1 30); do topic_new "Done topic $i" "" "" >/dev/null; f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" status done
+      { grep -v '^updated=' "$f"; echo "updated=$(( 1700000000 + i ))"; } > "$f.x" && mv "$f.x" "$f"; done          # (distinct times: the newest is topic 30)
   topic_new "Open topic" "" "" >/dev/null
   AG_N=2; AG_LINES=("Mac${US}w1:p1${US}idle${US}IMS free${US}" "Mac${US}w2:p1${US}working${US}IMS busy${US}x"); topics_load; find_items
   find_filter ""; [ "$FI_MORE" = 5 ] || exit 1; [ "${#FI_HIT[@]}" = 27 ] || exit 2                      # 25 done + the open one + the busy agent
