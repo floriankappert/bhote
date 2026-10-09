@@ -1058,12 +1058,12 @@ wrap_lines() {  # wrap_lines <array var> <width> <max lines> <text>: the text in
         elif [ $(( _lw + 1 + _ww )) -le "$_w" ]; then _line="$_line $_word"; _lw=$(( _lw + 1 + _ww ))
         else
             if [ "$_n" -ge $(( _m - 1 )) ]; then _more=1; break; fi
-            eval "$_v[$_n]=\$_line"; _n=$(( _n + 1 )); _line=$_word; _lw=$_ww
+            eval "${_v}[$_n]=\$_line"; _n=$(( _n + 1 )); _line=$_word; _lw=$_ww
         fi
     done
     set +f
     [ "$_more" = 1 ] && { clip_set _line "$_line $_word" "$_w"; [ "${_line: -1}" = "…" ] || _line="${_line:0:$(( ${#_line} - 1 ))}…"; }
-    [ -n "$_line" ] && eval "$_v[$_n]=\$_line"
+    [ -n "$_line" ] && eval "${_v}[$_n]=\$_line"
 }
 # One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
