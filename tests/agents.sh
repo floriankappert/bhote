@@ -284,12 +284,14 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   for i in 1 2 3 4 5 6 7 8 9 10; do topic_new "Click topic $i" "desc $i" "" >/dev/null; done
   COLS=44; ROWS=30; ui_load; fr=$(bhote_view); [ -s "$RUN_DIR/tmap" ] || exit 1
   while IFS=$'\036' read -r r t; do ln=$(printf '%s\n' "$fr" | sed -n "${r}p")
-      case "$ln" in *"Click topic"*|*"∟"*) ;; *) exit 2 ;; esac; done < "$RUN_DIR/tmap"
+      case "$ln" in *"Click topic"*|*"∟"*|*▄*|*▀*) ;; *) exit 2 ;; esac; done < "$RUN_DIR/tmap"
   hd=$(( $(head -1 "$RUN_DIR/tmap" | cut -d$'\036' -f1) - 1 )); mouse_event "0;5;$hd" M; [ -z "$MOUSE_KEY" ] || exit 3   # the caption
   r=$(awk -F'\036' 'NR > 1 && $2 != p { n++ } { p = $2 } n == 3 { print $1; exit }' "$RUN_DIR/tmap"); mouse_event "0;5;$r" M
   [ "$MOUSE_KEY" = TOPIC ] || exit 4; off=$(cat "$RUN_DIR/toff")
   SEL_ID=$CLICK_T; ui_load; fr2=$(bhote_view); [ "$(cat "$RUN_DIR/toff")" = "$off" ] || exit 5
-  [ "$(printf '%s\n' "$fr" | sed -n "${r}p")" = "$(printf '%s\n' "$fr2" | sed -n "${r}p")" ] || exit 6
+  nf() { sed -n "${1}p" | sed 's/┊//g; s/^ *//; s/ *$//'; }   # (the selected entry has a dotted frame, in the gaps and at its sides)
+  [ "$(printf '%s\n' "$fr" | nf "$r")" = "$(printf '%s\n' "$fr2" | nf "$r")" ] || exit 6
+  [ "$(printf '%s\n' "$fr" | wc -l)" = "$(printf '%s\n' "$fr2" | wc -l)" ] || exit 7
   exit 0 ) && ok "click: a topic's rows select it, the list does not jump" || bad "topic click: step $?"
 ( mkdir -p "$RUN_DIR"; printf '9\036t1\n9\036t1\n' > "$RUN_DIR/tmap"; : > "$RUN_DIR/divrow"; CLICK_LAST=""
   mouse_event "0;5;9" M; [ "$MOUSE_KEY" = TOPIC ] || exit 1; mouse_event "0;5;9" m; mouse_event "0;5;9" M; [ "$MOUSE_KEY" = OPEN ] || exit 2
