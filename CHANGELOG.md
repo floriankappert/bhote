@@ -8,6 +8,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ### Added
 - `AGENT_TOPICS` (settings: *Agents may create topics*, default `on`): `off` stops agents from creating topics with
   `bhote add`; the "Question from" topics stay with `AUTO_REVIEW`.
+- A Dracula theme: `THEME=dracula` (settings › *Colours*), with the exact colours of the Dracula palette.
 
 ## [0.6.0] - 2026-10-09
 

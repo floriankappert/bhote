@@ -39,7 +39,7 @@ The script is ordered top to bottom; every part starts with a `# ── name` li
 |---|---|
 | settings | the `SETTINGS` table (key, default, type, description) and `cfg_var`/`cfg_get`/`cfg_set`, number guards (`num_or`, `num_set`) |
 | topics | the topic store: `topics_load` (the `T_*` arrays), `topic_get`/`topic_set`, the replica and `store_sync` |
-| themes | the colour roles for `THEME=terminal` and `THEME=catppuccin`, `COLOR_*` overrides |
+| themes | the colour roles for `THEME=terminal`, `THEME=catppuccin` and `THEME=dracula`, `COLOR_*` overrides |
 | the agents of every machine | `collect_one`, `collect_local`/`collect_remote`, the collector loop, auto-assign, `bhote event` effects |
 | the topic list | the main view: head, topics, done area, agents (`topics_block`, `done_block`, `agents_block`, `bhote_view`) |
 | the settings screen | the rows of every settings page and their keys |
