@@ -195,6 +195,14 @@ topic_get() {  # topic_get <file> <key> [default]
     printf '%s' "${v:-$3}"
 }
 DESC_MAX=140                                                          # a description is a short note, not a document
+# One writer per topic at a time (the panel, the collector, `bhote event`, an agent's CLI call): a read-modify-write without
+# it loses the other writer's key. A folder, because mkdir is atomic; not a pid, because the collector shares the panel's $$.
+topic_lock() {  # topic_lock <file>: 0 when the lock is ours; after about 5 s the lock counts as left by a killed writer
+    local _i
+    for (( _i = 0; _i < 100; _i++ )); do mkdir "$1.lock" 2>/dev/null && return 0; sleep 0.05; done
+    rm -rf "$1.lock"; mkdir "$1.lock" 2>/dev/null
+}
+topic_unlock() { rmdir "$1.lock" 2>/dev/null; return 0; }
 topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     local f=$1 now old v=${3//[[:cntrl:]]/}; now=$(date +%s)      # no control character in a value: a newline would add keys
     [ "$2" = description ] && v=${v:0:$DESC_MAX}
@@ -204,10 +212,15 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
         case "$dsc" in "Reopened "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*) dsc=${dsc#Reopened ????-??-??}; dsc=${dsc#.}; dsc=${dsc# } ;; esac
         topic_set "$f" description "$pre${dsc:+ $dsc}"
     fi
+    local locked=0; topic_lock "$f" && locked=1                  # (without it after the wait: written anyway, as before)
     old=$(num_or "$(topic_get "$f" updated 0)" 0); [ "$now" -le "$old" ] && now=$(( old + 1 ))   # a change always counts as newer
-    local tmp; tmp=$(mktemp "$f.XXXXXX") || return 1           # unique: the collector runs in a subshell with the same $$
-    local x='^updated='; [ "$2" = status ] && [ "$v" != now ] && x='^updated=|^transfer_to=|^transfer_to_name=|^transfer_from='
-    { grep -v -E -e "^$2=" -e "$x" "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$tmp" && mv "$tmp" "$f"
+    local tmp rc=1; tmp=$(mktemp "$f.XXXXXX")                    # unique: the collector runs in a subshell with the same $$
+    if [ -n "$tmp" ]; then
+        local x='^updated='; [ "$2" = status ] && [ "$v" != now ] && x='^updated=|^transfer_to=|^transfer_to_name=|^transfer_from='
+        { grep -v -E -e "^$2=" -e "$x" "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$tmp" && mv "$tmp" "$f" && rc=0
+    fi
+    [ "$locked" = 1 ] && topic_unlock "$f"
+    [ "$rc" = 0 ] || return 1
     : > "$STORE_DIRTY"
 }
 topic_new() {  # topic_new <title> [waiting for] [description]
@@ -337,7 +350,7 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
         elif [ "$l" = "$r" ] && [ "$l" != 0 ] && [ -f "$tmp/remote/$f" ] && ! cmp -s "$TOPIC_DIR/$f" "$tmp/remote/$f"; then
             # the same stamp, other contents: both sides decide the same way (the larger checksum wins)
             local cl cr; cl=$(cksum < "$TOPIC_DIR/$f" | cut -d' ' -f1); cr=$(cksum < "$tmp/remote/$f" | cut -d' ' -f1)
-            if [ "$cr" -gt "$cl" ]; then cp "$tmp/remote/$f" "$TOPIC_DIR/$f.tmp.$$" && mv "$TOPIC_DIR/$f.tmp.$$" "$TOPIC_DIR/$f"
+            if [ "$cr" -gt "$cl" ]; then local tf; tf=$(mktemp "$TOPIC_DIR/$f.XXXXXX") && cp "$tmp/remote/$f" "$tf" && mv "$tf" "$TOPIC_DIR/$f"   # (a unique name: two merges may meet)
             elif [ "$via" != herdr ]; then store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0; fi
         fi
     done < "$tmp/todo"
@@ -351,7 +364,7 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
 topics_dump() {  # topics_dump [max bytes]: every topic in one stream, the most recently changed first: "@@name" before each,
     # "@@END" at the end (the merge needs it). With a limit, it stops before that many bytes (only whole topics).
     local max=${1:-0}
-    ls "$TOPIC_DIR" 2>/dev/null | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*\.topic$' | sed "s#^#$TOPIC_DIR/#" > "$RUN_DIR/dumplist" 2>/dev/null
+    ls "$TOPIC_DIR" 2>/dev/null | grep -E '^[A-Za-z0-9][A-Za-z0-9_-]*\.topic$' | sed "s#^#$TOPIC_DIR/#" 2>/dev/null > "$RUN_DIR/dumplist"
     if [ -s "$RUN_DIR/dumplist" ]; then
         tr '\n' '\0' < "$RUN_DIR/dumplist" | xargs -0 awk -F= '$1 == "updated" && !(FILENAME in u) { u[FILENAME] = $2 + 0 }
             END { for (f in u) print u[f], f } ' 2>/dev/null | sort -rn | cut -d' ' -f2- | tr '\n' '\0' \
@@ -405,13 +418,19 @@ lock_take() {  # lock_take <path> <pid>: 0 when it is (now) ours
     ln -s "$2" "$1" 2>/dev/null
 }
 lock_drop() { [ "$(readlink "$1" 2>/dev/null)" = "$2" ] && rm -f "$1"; return 0; }   # lock_drop <path> <pid>: only our own
+self_pid_set() {  # self_pid_set <var>: the pid of THIS (sub)shell. $$ is the main shell's in every subshell (the collector, a background
+    # sync), and bash 3.2 has no BASHPID. sh's parent is the shell that runs it, as long as no $(...) stands in between: hence the file.
+    if [ -n "${BASHPID:-}" ]; then printf -v "$1" '%s' "$BASHPID"; return 0; fi
+    local _spf="$RUN_DIR/pid.$RANDOM$RANDOM"
+    sh -c 'echo $PPID' 2>/dev/null > "$_spf"; read -r "$1" < "$_spf"; rm -f "$_spf"
+}
 # One sync at a time over all panels of this machine (and the CLI). store_sync returns 2 when another sync is running.
 store_sync() {
-    local lock=$SHARED_DIR/sync.lock rc
-    mkdir -p "$DATA_DIR"
-    lock_take "$lock" "$$" || return 2
+    local lock=$SHARED_DIR/sync.lock rc me
+    mkdir -p "$DATA_DIR"; self_pid_set me                         # (not $$: the panel's own sync and the collector's would share it)
+    lock_take "$lock" "$me" || return 2
     store_sync_run; rc=$?
-    lock_drop "$lock" "$$"
+    lock_drop "$lock" "$me"
     return $rc
 }
 store_summary() {  # one line for the settings screen: where the data lives and whether it is in step
@@ -769,7 +788,7 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
         | [($m | clean), .pane_id, (if ($tb == "on") and ($t[.workspace_id] // false) and ((.agent_status // "") != "working") then "testing" else ((.agent_status // "") | tostring | clean) end), (($w[.workspace_id] // .workspace_id // "") | tostring | clean), ((.tokens.task // "") | tostring | clean | ltrimstr("∟ "))] | join("\u001f")' 2>/dev/null
 }
 agents_put() {  # agents_put <tmp> <list file>: only a changed list replaces the old one, and counts up the revision the panels watch
-    if cmp -s "$1" "$2" 2>/dev/null; then rm -f "$1"; return 0; fi
+    if cmp -s "$1" "$2" 2>/dev/null; then rm -f "$1"; touch "$2" 2>/dev/null; return 0; fi   # (its time says "fresh" to bhote find)
     mv "$1" "$2"; printf '%s %s\n' "$(date +%s)" "$$$RANDOM" > "$SHARED_DIR/agents.rev" 2>/dev/null
 }
 collect_local() {
@@ -903,7 +922,7 @@ auto_assign() {
                 pick="$m$US$id$US$name"; sess=$LIVE_SESS; break 2
             done
         done
-        [ -n "$pick" ] || return 0                             # no free agent now: the next round
+        [ -n "$pick" ] || continue                             # no free agent of this project now: the next round (another project may have one)
         IFS=$US read -r m id name <<< "$pick"; used="$used $m/$id"; f=${T_FILE[$i]}
         [ "$(topic_get "$f" status)" = now ] && [ -z "$(topic_get "$f" agent_pane)" ] || continue   # changed meanwhile
         topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
@@ -1201,7 +1220,9 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
     agent_divider
-    [ "$AG_N" -gt 0 ] || { agent_footer; return; }
+    if [ "$AG_N" = 0 ]; then                                     # no agents: no clickable row and no star to dance (no old map stays)
+        echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
+    fi
     # each agent's project (from the collected tokens), the machines, the projects in their order
     local apj=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
     local metas; metas_read metas
@@ -1273,9 +1294,9 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         done
     done
     shown=$n; [ "$shown" -gt "$maxr" ] && shown=$maxr
-    if [ -n "$want" ]; then echo "$maxr"; else echo "$shown"; fi > "$RUN_DIR/agrows" 2>/dev/null   # the rows shown: where a drag starts
+    if [ -n "$want" ]; then echo "$maxr"; else echo "$shown"; fi 2>/dev/null > "$RUN_DIR/agrows"   # the rows shown: where a drag starts
     # for a click: line (counted from the first agent line) US left agent (machine US pane) US right agent; first line: the column split
-    { echo "$(( cw + 3 ))"; for (( r = 0; r < shown; r++ )); do printf '%s\036%s\036%s\n' "$r" "${lid[$r]:-}" "${rid[$r]:-}"; done; } > "$RUN_DIR/agmap" 2>/dev/null
+    { echo "$(( cw + 3 ))"; for (( r = 0; r < shown; r++ )); do printf '%s\036%s\036%s\n' "$r" "${lid[$r]:-}" "${rid[$r]:-}"; done; } 2>/dev/null > "$RUN_DIR/agmap"
     for (( r = 0; r < n; r++ )); do
         if [ "$r" -lt "$shown" ]; then printf '%s\n' "${lines[$r]}"; else hidden=$(( hidden + lc[$r] )); fi
     done
@@ -1527,7 +1548,7 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
         elif [ $(( sel + sh )) -gt $(( prev + content )) ]; then off=$(( sel + sh - content ))
         else off=$prev; fi
         [ "$off" -gt "$sel" ] && off=$sel; [ "$off" -lt 0 ] && off=0; [ "$off" -gt $(( th - content )) ] && off=$(( th - content ))
-        echo "$off" > "$RUN_DIR/toff" 2>/dev/null
+        echo "$off" 2>/dev/null > "$RUN_DIR/toff"
         view_put "$off" $(( off + content ))
         printf ' %s↑↓ %d more lines%s\n' "$D" $(( th - content )) "$X"; VP_ROW=$(( VP_ROW + 1 ))
     else                                # hardly any room: as many topic lines as fit, never more than the pane
@@ -1536,8 +1557,8 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     for (( i = 0; i < pad; i++ )); do printf '\n'; done; VP_ROW=$(( VP_ROW + pad ))
     [ "$dh" -gt 0 ] && { view_lines tl tr sel "$dblk"; view_put 0 "${#tl[@]}"; }
     [ "$mh" -gt 0 ] && printf '%s\n' "$mblk"
-    printf '%s' "$VP_MAP" > "$RUN_DIR/tmap" 2>/dev/null           # the topics' rows on screen: a click selects one
-    echo $(( ${ROWS:-40} - bh + 1 )) > "$RUN_DIR/divrow" 2>/dev/null     # the divider is the first line of the bottom part
+    printf '%s' "$VP_MAP" 2>/dev/null > "$RUN_DIR/tmap"           # the topics' rows on screen: a click selects one
+    echo $(( ${ROWS:-40} - bh + 1 )) 2>/dev/null > "$RUN_DIR/divrow"     # the divider is the first line of the bottom part
     printf '%s' "$bottom"
 }
 view_lines() {  # view_lines <lines var> <refs var> <selected var> <text>: the lines without their markers (topic_item), the topic
@@ -1876,7 +1897,7 @@ spin_cells() {  # SPIN_CELLS = "row:col ..." of the busy agents' icons in the fr
               case "$st" in working|testing) ;; *) continue ;; esac
               if [ "${line%%:*}" = l ]; then SPIN_CELLS="$SPIN_CELLS $(( div + 1 + r )):3"; else SPIN_CELLS="$SPIN_CELLS $(( div + 1 + r )):$(( split + 1 ))"; fi
           done
-      done; } < "$RUN_DIR/agmap" 2>/dev/null
+      done; } 2>/dev/null < "$RUN_DIR/agmap"
 }
 dog_ticker() {  # dog_ticker <main pid>
     local tick=0 closed tin idx last="" blink bl_last=""
@@ -4207,7 +4228,7 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
         out="${out}${fl[$i]}"$'\033[K'
         [ -n "${fr[$i]}" ] && map="$map$(( i - off + 1 ))"$'\036'"${fr[$i]}"$'\n'
     done
-    printf '%s' "$map" > "$RUN_DIR/pmap" 2>/dev/null                 # the clickable rows of this frame (row \036 index)
+    printf '%s' "$map" 2>/dev/null > "$RUN_DIR/pmap"                 # the clickable rows of this frame (row \036 index)
     [ -n "${EDIT_LINE:-}" ] && { EDIT_ROW=$(( EDIT_LINE - off + 1 )); EDIT_LINE=""; }
     printf '\033[H%s\033[J' "$out"
 }
@@ -4509,8 +4530,9 @@ cli_project() {  # bhote project [list] | add <name> | rename <ref> <name> | rm 
             case "$key" in
                 ws:*) ;;
                 /*|.|./*|~*) git_repo_key_set k "${key/#\~/$HOME}" && key=$k || { echo "bhote: no git repository at $key (pin its workspace: ws:<name>)" >&2; return 1; } ;;
-                *) if [ "$sub" = pin ] && agent_ref "$key" 2>/dev/null; then       # an agent: its repository, else its workspace
-                       agent_meta "$AR_M" "$AR_ID"; if [ -n "$AM_REPO" ]; then key=$AM_REPO; else key="ws:$AR_NAME"; fi
+                *) [ "$sub" = pin ] && cli_agents_load                     # (an agent ref needs the agents and their repositories)
+                   if [ "$sub" = pin ] && agent_ref "$key" 2>/dev/null; then       # an agent: its repository, else its workspace
+                       agent_meta "$AR_M" "$AR_P"; if [ -n "$AM_REPO" ]; then key=$AM_REPO; else key="ws:$AR_NAME"; fi
                    fi ;;
             esac
             if [ "${key#ws:}" != "$key" ]; then ws=$(topic_get "$f" workspaces)
@@ -4866,6 +4888,7 @@ bhote_cli() {
               case "$st" in ''|now|next|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, next, review, later, done" >&2; return 1 ;; esac
               [ "$st" = waiting ] && [ -z "$who" ] && { echo "bhote: waiting needs a name (@Name or -w Name)" >&2; return 1; }
               [ "${#desc}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
+              local pf=""; if [ -n "$proj" ]; then pf=$(project_ref "$proj") || return $?; fi   # before the topic exists: an error changes nothing
               topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
               f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
               if is_agent; then                                     # created by an agent: it is that agent's topic
@@ -4873,7 +4896,7 @@ bhote_cli() {
                   [ -n "${HERDR_WORKSPACE_ID:-}" ] && topic_set "$f" agent "$(herdr workspace list 2>/dev/null | jq -r --arg w "$HERDR_WORKSPACE_ID" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // "agent"' 2>/dev/null)"
               fi
               case "$st" in next|later|done|review) topic_set "$f" status "$st" ;; esac
-              if [ -n "$proj" ]; then local pf; pf=$(project_ref "$proj") || return $?; topic_set "$f" project "$(topic_id "$pf")"
+              if [ -n "$pf" ]; then topic_set "$f" project "$(topic_id "$pf")"
               elif is_agent; then local rk; git_repo_key_set rk "$PWD"; projects_load            # an agent's topic: the project of its repository
                   project_for "$rk" "$(topic_get "$f" agent)" && topic_set "$f" project "$PROJ_ID"; fi
               [ -n "$pin" ] && { slack_pin "$f" "$pin" || echo "bhote: the topic is there, without the Slack pin" >&2; }

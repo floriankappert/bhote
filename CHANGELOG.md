@@ -23,6 +23,16 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The CircleCI token is no longer read from `~/.config/zsh/secrets.zsh`; use `bhote config set CIRCLECI_TOKEN …` or
   `$CIRCLECI_TOKEN`.
 
+### Fixed
+- Two changes to the same topic at once (panel, collector, an agent's CLI call) no longer lose one of them.
+- Auto-assign goes on with the other projects when one project has no free agent.
+- `bhote project pin <project> <agent>` pins the agent's repository (else its workspace), not the reference itself.
+- No error text in the panel and no stale spinner or click targets when there are no agents.
+- `bhote add -p <unknown project>` creates nothing.
+- The search popup no longer asks herdr again when the agent lists are fresh but unchanged.
+- Two merges with the data location can no longer run at once in one panel.
+- `tests/cli.sh` no longer sends a real herdr notification.
+
 ## [0.5.8] - 2026-10-08
 - The hotkey is written with the prefix and the key apart: Ctrl+B|T (Ctrl+Option+T on a Mac, Ctrl+Alt+T elsewhere).
 - A click or Enter on an agent (or its topic) on another machine focuses it there and says which keys switch to that
