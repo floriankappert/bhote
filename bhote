@@ -26,7 +26,7 @@ WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.7.0}
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
-FEATURE_LEVEL=2
+FEATURE_LEVEL=3
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
 NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
@@ -74,8 +74,9 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
 # Every setting: KEY|default|type|description. Types: bool (on/off), int:min:max, enum:a:b, text, list (comma-separated).
 # The panel, `bhote config` and docs/configuration.md all follow this table; a value that does not fit is refused.
 SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it opens at the next start)
-STORE|local|enum:local:remote|Where the topics are kept: local, or a replica on STORE_MACHINE
+STORE|local|enum:local:remote:kharka|Where the topics are kept: local, a replica on STORE_MACHINE, or kharka (a local-first store on every machine)
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
+KHARKA||text|The kharka binary for STORE=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
 PUSH_STATES|on|bool|When an agent here changes its state, tell the other machines at once (through herdr), so that their panels show it within a second (only with REMOTE_AGENTS on)
 REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
@@ -169,6 +170,8 @@ machine_wanted() {  # machine_wanted <label>: remote queries on, and this machin
 # background whenever it can be reached; while it cannot, bhote simply keeps working locally ("offline") and the changes
 # wait. Merging is per topic, the newer `updated` wins (a deleted topic stays as a tombstone with deleted=1 so that the
 # deletion travels, too). BHOTE_SSH replaces ssh (the tests use a fake one); BHOTE_REMOTE_DIR the folder on the machine.
+# STORE=kharka: the same, with kharka (github.com/jakobbeyer/kharka) as the other side: its daemon on this machine holds a
+# replica of everything and syncs with the other machines through its hub, so the merge never leaves the machine.
 DATA_DIR=${BHOTE_DATA:-${XDG_DATA_HOME:-$HOME/.local/share}/bhote}
 TOPIC_DIR=$DATA_DIR/topics
 REMOTE_TOPIC_DIR=${BHOTE_REMOTE_DIR:-.local/share/bhote/topics}      # relative to the remote home
@@ -182,10 +185,109 @@ store_sh() { local host=$1 script=$2; store_ssh "$host" "sh -c $(printf '%q' "$s
 store_host() {  # store_host <saved machine label> -> its ssh target
     herdr machine list 2>/dev/null | awk -F'\t' -v l="$1" '$2 == l { print $3; exit }'
 }
-store_note() {  # store_note ok|offline
-    local ok_at; ok_at=$(awk -F= '$1 == "ok_at" { print $2 }' "$STORE_STATUS" 2>/dev/null)
+store_synced() { case "$(cfg_get STORE local)" in remote|kharka) return 0 ;; esac; return 1; }   # is there a replica to merge with?
+store_place() {  # where the replica is: the machine's label, kharka, or local
+    case "$(cfg_get STORE local)" in remote) cfg_get STORE_MACHINE '?' ;; kharka) printf 'kharka' ;; *) printf 'local' ;; esac
+}
+# kharka holds every topic file as one entry, its KEY=value lines as a JSON object: bhote.topics/<id>, and the records
+# bhote.projects/proj-…, bhote.machines/mach-…, bhote.agentnums/an-…. The binary: $KHARKA, else the setting KHARKA, else kharka
+# on the PATH; the daemon is found where kharka looks itself ($KHARKA_SOCKET, else its default socket).
+kharka_bin_set() { local _kbv=${KHARKA:-}; [ -n "$_kbv" ] || cfg_var _kbv KHARKA ""; printf -v "$1" '%s' "${_kbv:-kharka}"; }   # kharka_bin_set <var> (an odd name: never the caller's)
+kharka_run() { local _kb; kharka_bin_set _kb; "$_kb" "$@"; }   # kharka_run <kharka arguments>
+kharka_found() { local _kb; kharka_bin_set _kb; command -v "$_kb" >/dev/null 2>&1; }
+kharka_key() {  # kharka_key <file name>: the key of its entry (KHARKA_JQ_KEY below decides the same way)
+    local id=${1%.topic}
+    case "$id" in
+        proj-*) printf 'bhote.projects/%s' "$id" ;; mach-*) printf 'bhote.machines/%s' "$id" ;;
+        an-*) printf 'bhote.agentnums/%s' "$id" ;; *) printf 'bhote.topics/%s' "$id" ;;
+    esac
+}
+# The jq of the entries. An entry counts only under the key kharka_key gives its id (bhote.projects/proj-z, never
+# bhote.topics/proj-z: the two would stand for one file). A value becomes the file's lines, a file becomes a value; the dump and
+# the push use the same lines, so that a file pushed and read back is byte for byte the file that was pushed.
+KHARKA_JQ_KEY='def file: sub("^[^/]*/"; "") + ".topic";
+    def wanted: (.key | test("^bhote\\.(topics|projects|machines|agentnums)/[A-Za-z0-9][A-Za-z0-9_-]*$"))
+        and (.value | type == "object")
+        and ((.key | sub("/.*$"; "")) == (.key | sub("^[^/]*/"; "")
+            | if startswith("proj-") then "bhote.projects" elif startswith("mach-") then "bhote.machines"
+              elif startswith("an-") then "bhote.agentnums" else "bhote.topics" end));'
+KHARKA_JQ_LINES='to_entries[] | select(.value | type == "string") | "\(.key)=\(.value | gsub("[\u0000-\u001f]"; ""))"'
+# shellcheck disable=SC2016  # ($k and $v are jq variables)
+KHARKA_JQ_VALUE='reduce (inputs | select(test("^[a-z_]+=")) | [sub("=.*$"; ""), sub("^[a-z_]+="; "")]) as [$k, $v]
+    ({}; if has($k) then . else .[$k] = $v end)'
+kharka_dump() {  # kharka_dump <scratch dir>: every bhote entry in kharka as a dump (the format of topics_dump), and each
+    # file's stamp in kharka in <dir>/hlcs, for the conditional push and delete (not "stamps": the merge has a file of that
+    # name). Nothing at all (no @@END) when the daemon does not answer; its complaint is in <dir>/err.
+    local d=$1
+    kharka_run ls bhote. --entries > "$d/entries" 2> "$d/err" || return 1
+    jq -r "$KHARKA_JQ_KEY"' select(wanted) | "\(.key | file)\t\(.hlc)"' "$d/entries" > "$d/hlcs" 2>/dev/null || return 1
+    jq -r "$KHARKA_JQ_KEY"' select(wanted) | "\n@@\(.key | file)", (.value | '"$KHARKA_JQ_LINES"')' "$d/entries" 2>/dev/null || return 1
+    printf '\n@@END\n'
+}
+kharka_stamp() { awk -F'\t' -v f="$2" '$1 == f { print $2; exit }' "$1/hlcs" 2>/dev/null; }   # kharka_stamp <scratch dir> <file name>
+kharka_push() {  # kharka_push <topic file> <scratch dir> [stamp] [the dump's copy]: the file as its entry; with a stamp only
+    # while the entry still has it (another machine's write in the meantime is not overwritten: exit 4, and the merge runs again).
+    # Afterwards the local file has the form kharka gives back (a final newline, only KEY=value lines, each key once, valid
+    # UTF-8, no control characters): else it would differ from its entry on every round and be pushed every round.
+    local f=$1 d=$2/push rc=0 tf args=()
+    mkdir -p "$d" && cp "$f" "$d/was" 2>/dev/null || return 1
+    jq -Rn "$KHARKA_JQ_VALUE" < "$d/was" > "$d/value" 2>/dev/null && jq -r "$KHARKA_JQ_LINES" "$d/value" > "$d/lines" 2>/dev/null || return 1
+    if [ -n "${4:-}" ] && cmp -s "$d/lines" "$4"; then :       # kharka has it already: only the local file was not in its form
+    else
+        [ -n "${3:-}" ] && args=(--if-hlc "$3")
+        kharka_run put "$(kharka_key "${f##*/}")" - "${args[@]}" < "$d/value" > /dev/null 2> "$2/err"; rc=$?
+    fi
+    if [ "$rc" = 0 ] && ! cmp -s "$d/was" "$d/lines" && cmp -s "$d/was" "$f"; then   # (not when it changed meanwhile)
+        tf=$(mktemp "$f.XXXXXX") && cp "$d/lines" "$tf" && mv "$tf" "$f"
+    fi
+    return $rc
+}
+kharka_err_set() {  # kharka_err_set <var> <file>: kharka's complaint in one clean line (for store.status and the summary)
+    local _ke=""; { IFS= read -r _ke < "$2"; } 2>/dev/null
+    _ke=${_ke//[[:cntrl:]]/}; _ke=${_ke#kharka: }; printf -v "$1" '%s' "${_ke:0:200}"
+}
+# The collector follows `kharka watch bhote.`: every change there (another machine's, or our own push) asks for a merge and
+# wakes the collector at once. The watch and the loop that reads it are two processes joined by a fifo, so that both have a
+# pid of their own and both are stopped (a pipeline in the background leaves its first command running). They are started
+# from a subshell: no jobs of the collector, whose shell would print "Terminated" into the panel when they are stopped.
+kharka_follow_start() {  # kharka_follow_start <collector pid>: sets KW_WATCH and KW_READ
+    local fifo="$RUN_DIR/kharka.watch"
+    rm -f "$fifo" "$fifo.pids"; mkfifo "$fifo" 2>/dev/null || return 1
+    ( kharka_run watch bhote. > "$fifo" 2>/dev/null & w=$!; kharka_follow_read "$fifo" "$w" "$1" & echo "$w $!" > "$fifo.pids" )
+    read -r KW_WATCH KW_READ < "$fifo.pids" 2>/dev/null; rm -f "$fifo.pids"
+    [ -n "$KW_READ" ]
+}
+kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid>: until the watch ends or the collector is gone
+    local line s
+    while true; do
+        s=$SECONDS
+        if IFS= read -r -t 5 line; then [ -n "$line" ] && { : > "$STORE_DIRTY"; poke; }
+        elif [ $(( SECONDS - s )) -lt 4 ]; then break          # the watch ended (bash 3.2 tells a timeout from the end only by the time)
+        else kill -0 "$3" 2>/dev/null || break; fi             # quiet for 5 s: is the collector still there? (after a kill -9 nobody stops us)
+    done < "$1"
+    kill "$2" 2>/dev/null
+}
+kharka_follow_stop() { [ -n "${KW_READ:-}" ] && kill "$KW_READ" 2>/dev/null; [ -n "${KW_WATCH:-}" ] && kill "$KW_WATCH" 2>/dev/null; KW_READ=""; KW_WATCH=""; }
+kharka_follow_keep() {  # kharka_follow_keep <collector pid>: every round of the lead collector: the follower runs while
+    # STORE=kharka. One that ended soon (no daemon) starts again after 5, 10, 20 … at most 60 s, not on every round.
+    local _ks; cfg_var _ks STORE local; [ "$_ks" = kharka ] || { kharka_follow_stop; return 0; }
+    [ -n "${KW_READ:-}" ] && kill -0 "$KW_READ" 2>/dev/null && return 0
+    if [ -n "${KW_READ:-}" ]; then
+        kharka_follow_stop
+        if [ $(( SECONDS - ${KW_AT:-0} )) -lt 60 ]; then KW_WAIT=$(( ${KW_WAIT:-0} > 0 ? KW_WAIT * 2 : 5 )); [ "$KW_WAIT" -gt 60 ] && KW_WAIT=60
+        else KW_WAIT=0; fi
+        KW_NEXT=$(( SECONDS + KW_WAIT ))
+    fi
+    [ "$SECONDS" -ge "${KW_NEXT:-0}" ] || return 0
+    kharka_follow_start "$1" || return 0
+    KW_AT=$SECONDS; : > "$STORE_DIRTY"                         # a merge: what changed while nobody followed
+}
+store_note() {  # store_note ok|offline|again [KEY=value lines]: the state, when it was last in step, and what the transport adds
+    # (kharka: its hub, the writes the hub does not have yet, the last complaint). again: kharka changed during the merge.
+    local ok_at tf; ok_at=$(awk -F= '$1 == "ok_at" { print $2 }' "$STORE_STATUS" 2>/dev/null)
     [ "$1" = ok ] && ok_at=$(date +%s)
-    printf 'state=%s\nok_at=%s\n' "$1" "${ok_at:-0}" > "$STORE_STATUS"
+    tf=$(mktemp "$STORE_STATUS.XXXXXX") || return 1
+    { printf 'state=%s\nok_at=%s\n' "$1" "${ok_at:-0}"; if [ -n "${2:-}" ]; then printf '%s\n' "$2"; fi; } > "$tf" && mv "$tf" "$STORE_STATUS"
 }
 topic_id() { local _b=${1##*/}; printf '%s' "${_b%.topic}"; }   # the id IS the file name (checked: [A-Za-z0-9_-]); never trust an id= line
 topic_get() {  # topic_get <file> <key> [default]
@@ -238,7 +340,12 @@ topic_new() {  # topic_new <title> [waiting for] [description]
     NEW_TOPIC_ID=$id
     : > "$STORE_DIRTY"
 }
-store_tag() { STORE_TAG_OUT=""; [ "${U_STORE:-}" = remote ] && [ "${U_STORE_STATE:-}" = offline ] && STORE_TAG_OUT=" · offline"; printf '%s' "$STORE_TAG_OUT"; }
+store_tag() {  # the note after the topic count: offline, or (kharka) a hub that is away
+    STORE_TAG_OUT=""
+    case "${U_STORE:-}" in remote|kharka) [ "${U_STORE_STATE:-}" = offline ] && STORE_TAG_OUT=" · offline" ;; esac
+    [ "${U_STORE:-}" = kharka ] && [ -z "$STORE_TAG_OUT" ] && [ -n "${U_STORE_HUB:-}" ] && [ "${U_STORE_HUB_ONLINE:-}" = false ] && STORE_TAG_OUT=" · hub offline"
+    printf '%s' "$STORE_TAG_OUT"
+}
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, next, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
@@ -297,21 +404,32 @@ age_set() {  # age_set <var> <epoch>: "now" / "5m" / "3h" / "2d", relative to NO
 age_text() { age_set _AGE "$1"; printf '%s' "$_AGE"; }
 ago_set() { age_set "$1" "$2"; if [ "${!1}" = now ]; then printf -v "$1" '%s' 'just now'; else printf -v "$1" '%s ago' "${!1}"; fi; }   # "3h ago"
 ago() { ago_set _AGO "$1"; printf '%s' "$_AGO"; }
-store_sync_run() {  # merge the local copy with the replica on the chosen machine. Returns 1 while that machine is unreachable.
-    [ "$(cfg_get STORE local)" = remote ] || { rm -f "$STORE_STATUS"; return 0; }
-    local label host tmp f l r ok=1 NOW_SYNC via n; NOW_SYNC=$(date +%s)
-    label=$(cfg_get STORE_MACHINE ''); host=$(store_host "$label"); cfg_var via SYNC_VIA herdr
-    [ -n "$host" ] || { store_note offline; return 1; }        # not a saved herdr machine (both transports need that)
+store_sync_run() {  # merge the local copy with the replica (a machine, or kharka). Returns 1 while it is unreachable, 3 when
+    # kharka changed during the merge (a write of ours was refused by --if-hlc: the merge has to run again).
+    store_synced || { rm -f "$STORE_STATUS"; return 0; }
+    local label host tmp f l r ok=1 NOW_SYNC via n again=0 err="" rc; NOW_SYNC=$(date +%s)
+    local old=$(( NOW_SYNC - 30 * 86400 ))                      # deletions travel as tombstones; after 30 days both sides have them
+    if [ "$(cfg_get STORE local)" = kharka ]; then             # kharka's daemon on this machine is the other side
+        label=kharka; host=""; via=kharka
+        command -v jq >/dev/null 2>&1 || { store_note offline "error=jq is not installed"; return 1; }
+        kharka_found || { kharka_bin_set err; store_note offline "error=no kharka binary: $err (the setting KHARKA)"; return 1; }
+    else
+        label=$(cfg_get STORE_MACHINE ''); host=$(store_host "$label"); cfg_var via SYNC_VIA herdr
+        [ -n "$host" ] || { store_note offline; return 1; }    # not a saved herdr machine (both transports need that)
+    fi
     tmp=$(mktemp -d "${TMPDIR:-/tmp}/bhote.sync.XXXXXX"); mkdir -p "$TOPIC_DIR"
     # 1) everything the machine has: one stream, "@@name" before each file
     # (a newline before every marker: a file without a final newline must not swallow the next one; at most 8 MB are read)
-    if [ "$via" = herdr ]; then herdr_dump "$label" 2>/dev/null | head -c 8000001 > "$tmp/dump"
+    if [ "$via" = kharka ]; then kharka_dump "$tmp" | head -c 8000001 > "$tmp/dump"
+    elif [ "$via" = herdr ]; then herdr_dump "$label" 2>/dev/null | head -c 8000001 > "$tmp/dump"
     else store_sh "$host" "umask 077; mkdir -p $REMOTE_TOPIC_DIR && cd $REMOTE_TOPIC_DIR && for f in *.topic; do [ -f \"\$f\" ] && { printf '\\n@@%s\\n' \"\$f\"; cat \"\$f\"; }; done; echo; echo @@END" 2>/dev/null | head -c 8000001 > "$tmp/dump"; fi
     # only a complete dump counts (ssh can die in the middle and still leave a plausible half): it must end with the @@END line
     if [ "$(wc -c < "$tmp/dump")" -gt 8000000 ] || [ "$(tail -n 1 "$tmp/dump")" != "@@END" ]; then
         # through herdr a cut-off dump means: more topics than herdr hands over (64 KB packed); ssh has no such limit
         [ "$via" = herdr ] && [ -s "$tmp/dump" ] && echo "bhote: the topics of $label do not fit through herdr; SYNC_VIA=ssh has no limit" >&2
-        rm -rf "$tmp"; store_note offline; return 1
+        if [ "$via" = kharka ]; then kharka_err_set err "$tmp/err"; store_note offline "error=${err:-the kharka daemon did not answer}"
+        else store_note offline; fi
+        rm -rf "$tmp"; return 1
     fi
     # only plain topic names are accepted from the other side: a name like ../../x must never become a path
     mkdir "$tmp/remote"; awk -v d="$tmp/remote" '/^@@/ { if (f != "") close(f); f = ""; if ($0 ~ /^@@[A-Za-z0-9][A-Za-z0-9_-]*\.topic$/) f = d "/" substr($0, 3); next } $0 == "" { next } f != "" { print > f }' "$tmp/dump"
@@ -347,6 +465,11 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
             # a local change that happened during the dump must not be overwritten
             if [ -f "$TOPIC_DIR/$f" ] && [ "$(num_or "$(topic_get "$TOPIC_DIR/$f" updated 0)" 0)" != "$l" ]; then rm -f "$pt"; continue; fi
             mv "$pt" "$TOPIC_DIR/$f"
+        elif [ "$l" -gt "$r" ] && [ "$via" = kharka ]; then
+            # a tombstone that is cleared below is not pushed first (the clearing deletes the entry)
+            [ "$l" -lt "$old" ] && [ "$(topic_get "$TOPIC_DIR/$f" deleted 0)" = 1 ] && continue
+            kharka_push "$TOPIC_DIR/$f" "$tmp" "$(kharka_stamp "$tmp" "$f")"; rc=$?
+            case "$rc" in 0) ;; 4) again=1 ;; *) ok=0; kharka_err_set err "$tmp/err" ;; esac
         elif [ "$l" -gt "$r" ] && [ "$via" != herdr ]; then     # through herdr the other side pulls by itself: nothing is pushed
             # pushed only when the remote file is still what the dump showed (an edit there in the meantime wins the next round)
             store_sh "$host" "umask 077; f=$REMOTE_TOPIC_DIR/$f; cur=\$(sed -n 's/^updated=//p' \"\$f\" 2>/dev/null | head -1); if [ \"\${cur:-0}\" = $r ]; then cat > \"\$f.tmp\" && mv \"\$f.tmp\" \"\$f\"; else cat >/dev/null; fi" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0
@@ -354,15 +477,34 @@ store_sync_run() {  # merge the local copy with the replica on the chosen machin
             # the same stamp, other contents: both sides decide the same way (the larger checksum wins)
             local cl cr; cl=$(cksum < "$TOPIC_DIR/$f" | cut -d' ' -f1); cr=$(cksum < "$tmp/remote/$f" | cut -d' ' -f1)
             if [ "$cr" -gt "$cl" ]; then local tf; tf=$(mktemp "$TOPIC_DIR/$f.XXXXXX") && cp "$tmp/remote/$f" "$tf" && mv "$tf" "$TOPIC_DIR/$f"   # (a unique name: two merges may meet)
+            elif [ "$via" = kharka ]; then
+                kharka_push "$TOPIC_DIR/$f" "$tmp" "$(kharka_stamp "$tmp" "$f")" "$tmp/remote/$f"; rc=$?
+                case "$rc" in 0) ;; 4) again=1 ;; *) ok=0; kharka_err_set err "$tmp/err" ;; esac
             elif [ "$via" != herdr ]; then store_sh "$host" "umask 077; cat > $REMOTE_TOPIC_DIR/$f.tmp && mv $REMOTE_TOPIC_DIR/$f.tmp $REMOTE_TOPIC_DIR/$f" < "$TOPIC_DIR/$f" 2>/dev/null || ok=0; fi
         fi
     done < "$tmp/todo"
-    rm -rf "$tmp"
-    local tomb old=$(( NOW_SYNC - 30 * 86400 ))                 # deletions travel as tombstones; after 30 days both sides have them
+    local tomb st
     for tomb in $(grep -l '^deleted=1' "$TOPIC_DIR"/*.topic 2>/dev/null); do
-        [ "$(num_or "$(topic_get "$tomb" updated 0)" 0)" -lt "$old" ] && rm -f "$tomb"
+        [ "$(num_or "$(topic_get "$tomb" updated 0)" 0)" -lt "$old" ] || continue
+        if [ "$via" = kharka ] && st=$(kharka_stamp "$tmp" "${tomb##*/}") && [ -n "$st" ]; then
+            # deleted in kharka too (it keeps a tombstone of its own), only while the entry is what the merge read: an
+            # entry written again meanwhile (exit 4) is merged first, and the local tombstone stays for that
+            kharka_run del "$(kharka_key "${tomb##*/}")" --if-hlc "$st" >/dev/null 2> "$tmp/err"; rc=$?
+            case "$rc" in 0) ;; 4) again=1; continue ;; *) ok=0; kharka_err_set err "$tmp/err"; continue ;; esac
+        fi
+        rm -f "$tomb"
     done
-    if [ "$ok" = 1 ]; then store_note ok; else store_note offline; return 1; fi
+    rm -rf "$tmp"
+    if [ "$ok" != 1 ]; then
+        if [ "$via" = kharka ]; then store_note offline "error=${err:-kharka refused a write}"; else store_note offline; fi
+        return 1
+    fi
+    [ "$via" = kharka ] || { store_note ok; return 0; }
+    # kharka: in step with the daemon here; how far the others are is the daemon's hub and its pending writes
+    local status; status=$(kharka_run status 2>/dev/null | jq -r '"hub=\(.hub // "" | gsub("[\u0000-\u001f]"; ""))",
+        "hub_online=\(.online == true)", "pending=\(.pending // 0 | tostring | gsub("[^0-9]"; ""))"' 2>/dev/null)
+    if [ "$again" = 1 ]; then store_note again "$status"; return 3; fi
+    store_note ok "$status"
 }
 topics_dump() {  # topics_dump [max bytes]: every topic in one stream, the most recently changed first: "@@name" before each,
     # "@@END" at the end (the merge needs it). With a limit, it stops before that many bytes (only whole topics).
@@ -427,24 +569,37 @@ self_pid_set() {  # self_pid_set <var>: the pid of THIS (sub)shell. $$ is the ma
     local _spf="$RUN_DIR/pid.$RANDOM$RANDOM"
     sh -c 'echo $PPID' 2>/dev/null > "$_spf"; read -r "$1" < "$_spf"; rm -f "$_spf"
 }
-# One sync at a time over all panels of this machine (and the CLI). store_sync returns 2 when another sync is running.
+# One sync at a time over all panels of this machine (and the CLI). store_sync returns 2 when another sync is running (or
+# kharka kept changing during the merge: then the collector merges again in a moment).
 store_sync() {
     local lock=$SHARED_DIR/sync.lock rc me
     mkdir -p "$DATA_DIR"; self_pid_set me                         # (not $$: the panel's own sync and the collector's would share it)
     lock_take "$lock" "$me" || return 2
     store_sync_run; rc=$?
+    [ "$rc" = 3 ] && { store_sync_run; rc=$?; }                   # kharka changed during the merge: once more at once
     lock_drop "$lock" "$me"
+    [ "$rc" = 3 ] && { : > "$STORE_DIRTY"; poke; rc=2; }          # and still: the collector merges again in a moment
     return $rc
 }
 store_summary() {  # one line for the settings screen: where the data lives and whether it is in step
-    local label st ok_at pending f n=0
-    if [ "$(cfg_get STORE local)" != remote ]; then printf 'local only (%s)' "${TOPIC_DIR/#$HOME/~}"; return; fi
-    label=$(cfg_get STORE_MACHINE '?')
-    st=$(awk -F= '$1 == "state" { print $2 }' "$STORE_STATUS" 2>/dev/null); ok_at=$(num_or "$(awk -F= '$1 == "ok_at" { print $2 }' "$STORE_STATUS" 2>/dev/null)" 0)
+    local label st="" ok_at=0 f n=0 line err="" hub="" hub_online="" pending=0 more=""
+    store_synced || { printf 'local only (%s)' "${TOPIC_DIR/#$HOME/~}"; return; }
+    label=$(store_place)
+    if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do
+        case "$line" in state=*) st=${line#*=} ;; ok_at=*) num_set ok_at "${line#*=}" 0 ;; error=*) err=${line#*=} ;;
+            hub=*) hub=${line#*=} ;; hub_online=*) hub_online=${line#*=} ;; pending=*) num_set pending "${line#*=}" 0 ;; esac
+    done < "$STORE_STATUS"; fi
+    err=${err//[[:cntrl:]]/}; hub=${hub//[[:cntrl:]]/}
+    if [ "$label" = kharka ]; then                             # in step with the daemon here; the others through its hub
+        if [ -z "$hub" ]; then more=" · no hub: this machine only"
+        elif [ "$hub_online" != true ]; then more=" · hub offline"; [ "$pending" -gt 0 ] && more="$more, $pending pending"
+        elif [ "$pending" -gt 0 ]; then more=" · $pending pending"; fi
+    fi
     case "$st" in
-        ok) printf 'in sync with %s (%s)%s' "$label" "$(ago "$ok_at")" "$([ "$(cfg_get SYNC_VIA herdr)" = herdr ] && printf ' through herdr; %s should pull from here too' "$label")" ;;
+        ok) printf 'in sync with %s (%s)%s%s' "$label" "$(ago "$ok_at")" "$more" "$([ "$label" != kharka ] && [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && printf ' through herdr; %s should pull from here too' "$label")" ;;
+        again) printf 'merging with %s again (an entry changed during the merge)%s' "$label" "$more" ;;
         offline) for f in "$TOPIC_DIR"/*.topic; do [ -f "$f" ] && [ "$(num_or "$(topic_get "$f" updated 0)" 0)" -gt "$ok_at" ] && n=$(( n + 1 )); done
-                 printf 'OFFLINE: saving locally, %s change(s) wait for %s' "$n" "$label" ;;
+                 printf 'OFFLINE: saving locally, %s change(s) wait for %s%s' "$n" "$label" "$([ "$label" = kharka ] && printf ' (%s)' "${err:-is a kharka daemon running?}")" ;;
         *) printf 'connecting to %s ...' "$label" ;;
     esac
 }
@@ -745,7 +900,8 @@ ui_load() {
     [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
     NOW=$(( NOW_BASE + SECONDS ))
     cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
-    if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; esac; done < "$STORE_STATUS"; fi
+    U_STORE_HUB=""; U_STORE_HUB_ONLINE=""
+    if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; hub=*) U_STORE_HUB=${line#hub=} ;; hub_online=*) U_STORE_HUB_ONLINE=${line#hub_online=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
     if [ -n "${KEYS_CACHE:-}" ] && [ "$KEYS_CACHE" -nt "$RUN_DIR/keys.loaded" ]; then focus_key_set FOCUS_KEY; cfg_var FIND_KEY_SHOW FIND_KEY off; key_pretty FIND_KEY_SHOW "$FIND_KEY_SHOW"; fi   # (the other machine's keys arrived or changed)
     local _sd _wl; cfg_var _sd SETUP_DONE ""; cfg_var _wl WIZARD_LEVEL ""; num_set _wl "$_wl" 1; NEWFEAT=0
@@ -754,7 +910,7 @@ ui_load() {
     HEAD_ROWS=0; HEAD_NOTE=""
     [ -n "$UPD_LATEST" ] && { [ -n "${UPD_CMD:-}" ] || UPD_CMD=$(update_command); HEAD_NOTE="⬆ Update available v$UPD_LATEST · , settings"; HEAD_ROWS=1; }
     [ "$NEWFEAT" = 1 ] && HEAD_ROWS=$(( HEAD_ROWS + 1 ))
-    STORE_TAG=""; [ "$U_STORE" = remote ] && [ "$st" = offline ] && STORE_TAG=" · offline"
+    store_tag > /dev/null; STORE_TAG=$STORE_TAG_OUT
     AG_N=0; AG_LINES=()
     for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do
         [ -r "$f" ] && while IFS= read -r line; do [ -n "$line" ] && { AG_LINES[$AG_N]=$line; AG_N=$(( AG_N + 1 )); }; done < "$f"
@@ -963,10 +1119,12 @@ auto_assign() {
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
     local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999 last_h=-999999 key_pid="" mux_pid="" last_x=-999999
-    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
+    local KW_READ="" KW_WATCH="" KW_AT=0 KW_WAIT=0 KW_NEXT=0 me every_s   # the kharka follower (kharka_follow_keep)
+    self_pid_set me 2>/dev/null; [ -n "$me" ] || me=$1                 # (the follower ends when this pid is gone; else the panel's)
+    trap 'kharka_follow_stop; kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
-        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
+        kill -0 "$1" 2>/dev/null || { kharka_follow_stop; kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         lead=0
@@ -983,10 +1141,13 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             # the data location: at once after a local change, otherwise every REMOTE_EVERY seconds (its own clock: a push of
             # the other machine's agents does not move it). In the background: over herdr a merge takes a few seconds, and an
             # agent push must not wait for it. One at a time (its pid: in a subshell $$ is ours, so the lock alone cannot tell)
+            # With kharka its watch asks for a merge and wakes us at once (kharka_follow_keep); every minute is only a safety net.
+            kharka_follow_keep "$me"
+            cfg_var every_s STORE local; if [ "$every_s" = kharka ]; then every_s=60; else every_s=$every_r; fi
             if [ -n "$sync_pid" ] && kill -0 "$sync_pid" 2>/dev/null; then :
             elif [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; last_s=$SECONDS
                 ( store_sync; [ $? = 2 ] && : > "$STORE_DIRTY" ) & sync_pid=$!
-            elif [ $(( SECONDS - last_s )) -ge "$every_r" ]; then last_s=$SECONDS; ( store_sync ) & sync_pid=$!; fi
+            elif [ $(( SECONDS - last_s )) -ge "$every_s" ]; then last_s=$SECONDS; ( store_sync ) & sync_pid=$!; fi
             if [ "$(cfg_get SLACK_WATCH off)" = on ] && ! { [ -n "$slack_pid" ] && kill -0 "$slack_pid" 2>/dev/null; }; then
                 cfg_var every_k SLACK_EVERY 120; num_set every_k "$every_k" 120
                 [ $(( SECONDS - last_k )) -ge "$every_k" ] && { last_k=$SECONDS; ( slack_check ) & slack_pid=$!; }   # in the background: a call takes seconds
@@ -1013,7 +1174,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             remind_waiting
             auto_assign
         fi
-        if [ "$lead" = 0 ]; then sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here, one sleep
+        if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
             if [ -e "$SHARED_DIR/poke" ] && [ "$(readlink "$SHARED_DIR/collector.lock" 2>/dev/null)" = "$1" ]; then
                 rm -f "$SHARED_DIR/poke"; break                     # only the collector takes the poke (the others would swallow it)
@@ -1721,7 +1882,10 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
 SET_ROWS=()
 settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or the connections page (SET_PAGE=connections)
     if [ "${SET_PAGE:-main}" = connections ]; then           # everything that reaches beyond this machine
-        SET_ROWS=("choice|STORE|Data location" "enum|SYNC_VIA|Sync through" "bool|REMOTE_AGENTS|Remote agents (via herdr)")
+        SET_ROWS=("choice|STORE|Data location")
+        if [ "$(cfg_get STORE local)" = kharka ]; then SET_ROWS[${#SET_ROWS[@]}]="text|KHARKA|kharka binary"   # (kharka is its own way)
+        else SET_ROWS[${#SET_ROWS[@]}]="enum|SYNC_VIA|Sync through"; fi
+        SET_ROWS[${#SET_ROWS[@]}]="bool|REMOTE_AGENTS|Remote agents (via herdr)"
         if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
             SET_ROWS[${#SET_ROWS[@]}]="bool|PUSH_STATES|Push agent states at once"
             local id label host prof enabled
@@ -1785,7 +1949,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="link|HOTKEYS|Hotkeys"
 }
 connections_summary() {  # one line under "Connections": where the topics are, remote agents, Slack
-    local t="topics $( [ "$(cfg_get STORE local)" = remote ] && cfg_get STORE_MACHINE '?' || echo local)"
+    local t="topics $(store_place)"
     [ "$(cfg_get REMOTE_AGENTS off)" = on ] && t="$t · remote agents" || t="$t · no remote agents"
     [ "$(cfg_get SLACK_WATCH off)" = on ] && t="$t · Slack monitor"
     printf '%s' "$t"
@@ -1809,7 +1973,7 @@ bhote_settings() {
             bool|sbool) setting_row "$key"; def=${S_DEF:-off}; cfg_var v "$key" $def; [ "$kind" = sbool ] && ind=2
                   if [ "$v" = on ]; then vp="[x]"; vc="${GREEN}[x]${X}"; else vp="[ ]"; vc="${D}[ ]${X}"; fi ;;
             choice) cfg_var v STORE local
-                  if [ "$v" = remote ]; then cfg_var v STORE_MACHINE '?'; vp="‹ $v ›"; else vp="‹ local ›"; fi; vc="${C}${vp}${X}" ;;
+                  case "$v" in remote) cfg_var v STORE_MACHINE '?'; vp="‹ $v ›" ;; kharka) vp="‹ kharka ›" ;; *) vp="‹ local ›" ;; esac; vc="${C}${vp}${X}" ;;
             machine) ind=2; cfg_var off MACHINES_OFF ""
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
@@ -1841,6 +2005,7 @@ bhote_settings() {
         fi
         case "$key" in
             STORE) wrap_print 5 "$D" "$(store_summary)" ;;
+            KHARKA) wrap_print 5 "$D" "Empty: kharka on the PATH. The other machines need STORE=kharka too, and a kharka daemon on the same hub." ;;
             CONNECTIONS) wrap_print 5 "$D" "$(connections_summary)" ;;
             PROJECTS) projects_load; wrap_print 5 "$D" "$( [ "$P_N" -gt 0 ] && printf '%s' "$(for (( q = 0; q < P_N; q++ )); do printf '%s%s' "${P_NAME[$q]}" "$( [ $q -lt $(( P_N - 1 )) ] && echo ', ')"; done)" || echo 'none yet: agents by project')" ;;
             TOPICS_SCOPE) wrap_print 5 "$D" "project: only the topics of the project of this tab's agent (and those without one)." ;;
@@ -1895,14 +2060,15 @@ hk() {  # hk <keys> <what>
     local w=$(( ${COLS:-44} - 18 )) t k; clip_set t "$2" "$w"; pad_set k "$1" 12
     printf '   %s%s%s %s\n' "$C" "$k" "$X" "$t"
 }
-store_cycle() {  # step the data location through: local, then every saved machine (→ / space forward, ← back)
+store_cycle() {  # step the data location through: local, kharka (when it is installed), then every saved machine (→ / space forward, ← back)
     local opts=(local) id label host prof enabled cur i n k=$1 dir=1
-    while IFS=$US read -r id label host prof enabled; do label=${label//[[:cntrl:]]/}; [ -n "$label" ] && opts[${#opts[@]}]="$label"; done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
-    cur=local; [ "$(cfg_get STORE local)" = remote ] && cur=$(cfg_get STORE_MACHINE '')
+    kharka_found && opts[${#opts[@]}]="kharka"
+    while IFS=$US read -r id label host prof enabled; do label=${label//[[:cntrl:]]/}; [ -n "$label" ] && [ "$label" != kharka ] && opts[${#opts[@]}]="$label"; done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
+    cur=$(store_place)
     n=${#opts[@]}; [ "$k" = LEFT ] && dir=$(( n - 1 ))
     for (( i = 0; i < n; i++ )); do [ "${opts[$i]}" = "$cur" ] && break; done
     i=$(( (i + dir) % n ))
-    if [ "${opts[$i]}" = local ]; then cfg_set STORE local; else cfg_set STORE remote STORE_MACHINE "${opts[$i]}"; fi
+    case "${opts[$i]}" in local) cfg_set STORE local ;; kharka) cfg_set STORE kharka ;; *) cfg_set STORE remote STORE_MACHINE "${opts[$i]}" ;; esac
     : > "$STORE_DIRTY"
 }
 settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C/D)
@@ -3921,10 +4087,17 @@ setup_step_topics() {
     w_screen 5 "TOPICS" || return
     w_say "Where your topics live. The local copy is always the working copy; another machine can hold a replica."; w_line
     w_opt 1 "only on this machine"; w_opt 2 "in step with a machine, through herdr (recommended)"; w_opt 3 "in step with a machine, through ssh"
+    w_opt 4 "in step through kharka (its daemon on every machine; each machine needs STORE=kharka too)"
     local c m labels="" label host en r cur; cfg_var cur STORE local
-    w_choose c "Choose:" 123 "$([ "$cur" = remote ] && { [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3; } || echo 1)" || return
+    w_choose c "Choose:" 1234 "$(case "$cur" in remote) [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3 ;; kharka) echo 4 ;; *) echo 1 ;; esac)" || return
     case "$c" in
         1) cfg_set STORE local; w_ok "topics" "only here" ;;
+        4) if ! kharka_found; then w_bad "kharka" "not installed (cargo install --git https://github.com/jakobbeyer/kharka), or set KHARKA"; w_continue; return; fi
+           cfg_set STORE kharka; w_ok "topics" "in step through kharka"
+           kharka_run status >/dev/null 2>&1 || w_warn "kharka" "no daemon answers here: start one (kharka daemon --hub …)"
+           w_say "The other machines share these topics once they run bhote with STORE=kharka too (this step there, or bhote config set STORE kharka), and a kharka daemon on the same hub."
+           printf '\n  %s→ a first merge%s\n' "$C" "$X"
+           store_sync >/dev/null 2>&1; case $? in 0) w_ok "merge" "$(store_summary)" ;; *) w_warn "merge" "$(store_summary)" ;; esac ;;
         2|3) while IFS=$US read -r label host en <&3; do labels="${labels:+$labels, }$label"; done 3<<< "$(w_machines)"
              [ -n "$labels" ] || { w_bad "no machine" "add one in step 3 first"; w_continue; return; }
              w_read m "Which machine ($labels):" "$(cfg_get STORE_MACHINE "${labels%%,*}")"; [ "$W_QUIT" = 1 ] && return
@@ -4097,7 +4270,7 @@ setup_step_panel() {
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
     w_screen 11 "DONE" || return
     w_ok "machine" "$HOST"
-    w_ok "topics" "$([ "$(cfg_get STORE local)" = remote ] && printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" || echo 'only here')"
+    w_ok "topics" "$(case "$(cfg_get STORE local)" in remote) printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" ;; kharka) echo 'through kharka' ;; *) echo 'only here' ;; esac)"
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
     w_ok "autostart" "$(cfg_get AUTOSTART on)"
     local label host en n known
@@ -4112,13 +4285,13 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
             *) w_warn "$label → $HOST" "cannot tell" ;;
         esac
     done 3<<< "$(w_machines)"
-    if [ "$(cfg_get STORE local)" = remote ]; then
+    if store_synced; then
         store_sync >/dev/null 2>&1; case $? in 0) w_ok "topics merge" "works" ;; 2) w_warn "topics merge" "busy, it runs again by itself" ;; *) w_bad "topics merge" "$(store_summary)" ;; esac
     fi
     w_line; w_say "Change anything later in the settings (,), or run the setup again: settings › Setup wizard, or bhote setup. A log of this setup: ${W_LOG/#$HOME/~}"
     w_continue
 }
-step_level() { case "$1" in monitors) echo 2 ;; *) echo 1 ;; esac; }   # the feature level that brought the step
+step_level() { case "$1" in topics) echo 3 ;; monitors) echo 2 ;; *) echo 1 ;; esac; }   # the feature level that brought the step
 bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     local st old_int; W_QUIT=0; ask_drain                      # keys typed before it opened must not answer its first questions
     old_int=$(trap -p INT); trap 'W_QUIT=1' INT                 # Ctrl-C ends the wizard (and only the wizard)
@@ -4402,7 +4575,7 @@ json_str() { printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\
 title_has() { local r=1; shopt -s nocasematch; [[ $1 == *"$2"* ]] && r=0; shopt -u nocasematch; return $r; }   # case-insensitive, multibyte-safe
 topic_ref_sync() {  # topic_ref_sync <ref>: like topic_ref, but when nothing matches and a replica exists, merge once and look again
     local r; topic_ref "$1" && return 0; r=$?
-    [ "$r" = 1 ] && [ -z "${BHOTE_NO_SYNC:-}" ] && [ "$(cfg_get STORE local)" = remote ] || return $r
+    [ "$r" = 1 ] && [ -z "${BHOTE_NO_SYNC:-}" ] && store_synced || return $r
     store_sync >/dev/null 2>&1; topic_ref "$1" 2>/dev/null
 }
 topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bhote list`, an id (prefix), or part of the title.
@@ -4504,7 +4677,7 @@ cli_event() {
     local prev="" sf="$SHARED_DIR/evstate/${pane//[^A-Za-z0-9:_-]/}"
     if [ -n "$pane" ] && [ "$pane" != - ]; then mkdir -p "$SHARED_DIR/evstate" 2>/dev/null; { read -r prev < "$sf"; } 2>/dev/null; printf '%s\n' "$st" > "$sf" 2>/dev/null; fi
     case "$st" in done|idle|blocked|working) ;; *) return 0 ;; esac
-    [ "$(cfg_get STORE local)" = remote ] && store_sync >/dev/null 2>&1   # the topic may have been handed out on the other machine
+    store_synced && store_sync >/dev/null 2>&1   # the topic may have been handed out on the other machine
     [ "$pane" = - ] && pane=""; [ "$sess" = - ] && sess=""
     topics_load; now=$(date +%s)
     local hit=0 auto
@@ -4744,11 +4917,11 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
 }
 cli_done() {  # after a change: merge with the data location (silent when the data is only local)
     [ -n "${BHOTE_NO_SYNC:-}" ] && return 0
-    [ "$(cfg_get STORE local)" = remote ] || return 0
+    store_synced || return 0
     store_sync >/dev/null 2>&1; case $? in
         0) ;;
         2) : > "$STORE_DIRTY" ;;                              # a panel is syncing right now: it takes this change with it
-        *) echo "bhote: saved locally; $(cfg_get STORE_MACHINE) is not reachable, it will be merged later" >&2 ;;
+        *) echo "bhote: saved locally; $(store_place) is not reachable, it will be merged later" >&2 ;;
     esac
 }
 # The JSON of one topic: the same object for `list --json`, `show --json` and every changing command with --json (schema:
@@ -5169,9 +5342,9 @@ bhote_cli() {
               cli_done
               if [ "$cmd" = rm ]; then if [ -n "$json" ]; then printf '{"deleted":%s}\n' "$(json_str "$rid")"; else echo "deleted"; fi
               else topics_load; cli_show "$f" $json; fi ;;
-        sync) local m; m=$(cfg_get STORE_MACHINE '')
+        sync) local m; m=$(store_place)
               sync_out() { if [ -n "$json" ]; then printf '{"sync":%s,"machine":%s}\n' "$(json_str "$1")" "$(json_opt "$m")"; fi; }
-              if [ "$(cfg_get STORE local)" != remote ]; then sync_out local; [ -n "$json" ] || echo "data location is local, nothing to merge"
+              if ! store_synced; then sync_out local; [ -n "$json" ] || echo "data location is local, nothing to merge"
               else store_sync; case $? in
                   0) sync_out ok; [ -n "$json" ] || echo "in sync with $m" ;;
                   2) sync_out busy; echo "bhote: another sync is running right now, try again in a moment" >&2; return 1 ;;

@@ -26,7 +26,7 @@ wide, with a small sheepdog that guards the herd.
 - **Projects:** an agent belongs to a project by its git repository (worktrees inherit); the panel can list only its project's topics. **GitHub:** the branch a topic's agent works on.
 - **Deployment and test monitor:** the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test jobs, local runs through `bhote test run`, live status files) of your projects, seven each, with progress bars, above the agents.
 - **Search from anywhere in herdr** (the find key, e.g. `ctrl+alt+t`): all agents and topics, `⏎` jumps there, `ctrl+n` adds a topic.
-- **Topics are plain files**, kept in sync with a second machine through herdr's own connection (opt-in); **update notice** when a newer version is out.
+- **Topics are plain files**, kept in sync with a second machine through herdr's own connection, or with every machine through [kharka](https://github.com/jakobbeyer/kharka) (opt-in); **update notice** when a newer version is out.
 - **Omarchy bar widget**, themes (terminal colours, Catppuccin or Dracula, each role overridable), a **setup wizard** and the Claude skill `/bhote-install`.
 - A **CLI** (every command with `--json`) to create and close topics from scripts and agents.
 
@@ -126,8 +126,8 @@ is on by default. Every key is in the **[configuration reference](docs/configura
 
 ## Data and safety
 
-Topics live in `${XDG_DATA_HOME:-~/.local/share}/bhote/topics` (one small file per topic). With a replica machine, the
-local copy stays the working copy; the newer `updated` wins per topic, deletions travel as tombstones, and while the
+Topics live in `${XDG_DATA_HOME:-~/.local/share}/bhote/topics` (one small file per topic). With a replica machine (or
+kharka, `STORE=kharka`), the local copy stays the working copy; the newer `updated` wins per topic, deletions travel as tombstones, and while the
 machine is not reachable bhote works offline and merges later ([data and sync](docs/data-and-sync.md)).
 
 bhote opens no connection to another machine unless you switch it on. Names that arrive from a replica are validated before
