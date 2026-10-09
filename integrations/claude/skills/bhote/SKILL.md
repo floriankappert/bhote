@@ -36,8 +36,73 @@ the work belongs under review, also when nobody gave you a topic. Before you wri
 ```sh
 bhote current --json                       # your topic, or null
 bhote add "<the work, short>" -d "<what the user has to check or decide, at most 140 characters>" --json   # only when null
-bhote review <id>
+bhote review <id> --summary "<what you did, 2-3 short sentences>" \
+  --ask "<button label>" --reply "<what you should be told to do>"
 ```
+
+### The card: summary and buttons
+
+The card is what the user reads and answers **without opening your session**. It is an accelerator, not a form: the user can
+always type something else, and often does, so a wrong button is worse than none.
+
+**`--summary`** (at most 240 characters), in this order: (1) the result in one clause, (2) what is open or unverified (not committed,
+not tested, not deployed), (3) anything only the user can do (rotate a secret, approve, log in). Not the way you got there. A warning
+that only stands in your long message gets lost; put it in the summary.
+
+**What users answer to a hand-back:** about a third *yes, do that*, a tenth a *commit pipeline* (almost always one of commit, commit +
+push, commit + PR + merge), a few *I did my part* (done, finished, deployed) and a few *no*. More than half is something no button can
+carry: a new instruction, data you asked for, a counter-question, a change of direction. So offer buttons only where one press starts
+a clear next step:
+
+| The hand-back is … | You pass |
+|---|---|
+| a proposal you ended with "Soll ich X?" | `--ask` **X itself**, named by what it does (`Repo anlegen`), never a bare `Ja` |
+| finished work to commit | the variants in use, shortest first: `Commit`, `Commit + Push`, `Commit, PR, Merge` (at most three; only what the project has). Each reply names its scope **and what it does not do** (`kein Push`): an agent that goes beyond its button breaks the trust in all of them |
+| waiting for something the user does (deploy, login, a manual step) | `--ask "Erledigt"`, reply `Erledigt, mach weiter.`; the summary says what to do |
+| two real alternatives of one decision | one `--ask` each, your recommendation first |
+| **two or more open points, or open questions, or data you need, or a choice the user will probably redirect** | **`--look`, no action buttons**: one generic button *Review ansehen* that only takes the user to your session (it sends nothing, the topic stays in review). The summary names how many points are open |
+
+Never a `Nein`/`Stopp` button: the user types that. Never two buttons that answer different questions (a commit **and** a design
+decision): a press ends the review, so the other question would be lost. Offer the one that blocks, and when you go on, hand back
+again with a **new card** for what is still open.
+
+**Labels** say what the button does, in the user's language, **up to three words, as few as the meaning allows**: one word beats two,
+two beat three, but when one word means something different from the longer version, use the longer (`Commit` is not `Commit + Push`).
+Keys `1`, `2`, `3` are shown in front of them.
+
+**`--reply` is the instruction you will receive**, as if the user had typed it. Write one complete order to yourself, in the user's
+language, with everything you need and its limits, so that you never have to ask again: not `commit`, but `Committe die Änderungen im
+Export-Modul und den beiden Tests über den normalen Weg. Kein Push, kein Deploy.` A press is a promise: when you get the reply, do
+exactly that and do not ask for confirmation again.
+
+```sh
+bhote review <id> --summary "Fix im Export fertig, Tests grün. Nichts committet, nichts deployt." \
+  --ask "Commit" --reply "Committe die Änderungen im Export-Modul und den beiden Tests über den normalen Weg. Kein Push, kein Deploy." \
+  --ask "Commit + Push" --reply "Committe die Änderungen über den normalen Weg und pushe den Branch. Kein PR, kein Deploy."
+bhote review <id> --summary "Zwei offene Punkte: Freigabe der Schnittstelle und der Fix für den Import. Details in der Session." --look
+```
+
+**Examples** (the situation → the card → the buttons):
+
+| Situation | Text in the card | Buttons |
+|---|---|---|
+| Fix done, you asked "Soll ich committen?" | Fix im Export fertig, Tests grün. Nichts committet, nichts deployt. | `Commit` · `Commit + Push` · `Commit, PR, Merge` |
+| Feature done, the user usually merges | Neue Filter im Report fertig, Tests grün. Nächster Schritt wäre der PR, Review offen. | `Commit, PR, Merge` · `Commit + Push` |
+| You proposed creating a repository | Skripte und Doku liegen vor, nichts committet. Vorschlag: neues privates Repo `export-tools`. | `Repo anlegen` |
+| You wait for a deploy only the user can start | Fix gebaut und getestet. Zum Prüfen muss er in Staging deployt werden, das kannst nur du. | `Erledigt` |
+| You wait for a login on a device | Installation fertig. Es fehlt eine Anmeldung am Gerät, die nur du machen kannst. | `Erledigt` |
+| Two ways, you recommend the second | Zwei Wege: A läuft sofort lokal, B dauerhaft im Container. Ich empfehle B. | `Im Container` · `Sofort lokal` |
+| A choice with your proposal | Ansicht fertig. Offen: welche Bereiche einklappbar sind. Vorschlag: nur Archiv und Berichte. | `Nur Archiv, Berichte` · `Alle` |
+| Migration written, never run | Migration und Test geschrieben, Tests grün. Die Migration lief noch nicht gegen eine Datenbank. Nichts committet. | `Migration testen` · `Commit` |
+| A secret showed up in the chat | Aufgabe erledigt. Ein Zugangstoken lag im Klartext im Chat: bitte rotieren, das kannst nur du. | `Erledigt` |
+| Release prepared, version unclear | Release vorbereitet. Vorschlag 0.6.0 statt 0.5.9, weil viele Änderungen enthalten sind. | `0.6.0 freigeben` · `0.5.9` |
+| Branch pushed | Branch ist gepusht, Tests grün. Nächster Schritt: PR gegen main. | `PR öffnen` |
+| A read-only check you offered | Die Option aktiviert nur, was in der Konfiguration freigeschaltet ist. Ob dort etwas steht, weiß ich nicht. | `Konfiguration prüfen` |
+| Two open points | Zwei offene Punkte: Freigabe der Schnittstelle und der Fix für den Import. Details in der Session. | `Review ansehen` (`--look`) |
+| An open scope question | Eintrag hängt an drei Datensätzen, Löschen kaskadiert. Offen: ganz löschen oder nur ausblenden? | `Review ansehen` (`--look`) |
+| You need a fact from the user | Ich brauche eine Information von dir: Läuft die Anwendung im Produktivmodus? Davon hängt der Test ab. | `Review ansehen` (`--look`) |
+
+Your final message in the session says the same in full, with the proposal as its last line, so that card and message never disagree.
 
 bhote also watches herdr: when you wait for an answer or end your turn with a question and have no topic, a review topic
 "Question from <you>" appears by itself and goes away when you work again. A topic you create yourself, with what the user has to check or decide in the description,

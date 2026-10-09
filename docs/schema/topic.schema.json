@@ -16,6 +16,7 @@
     "agent",
     "slack",
     "project",
+    "review",
     "created",
     "updated"
   ],
@@ -177,6 +178,55 @@
         "null"
       ],
       "description": "The project's name (the topic's own, set by bhote add --project, an agent's repository or the panel's tab); null: none."
+    },
+    "review": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "description": "The card an agent put under a review topic: what it did, and the buttons (at most three) with what each one sends to the agent. Null when the topic is not in review or has no card (`bhote review <ref> --summary … --ask … --reply …`).",
+      "properties": {
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 240
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "reply",
+              "jump"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 24,
+                "description": "The button's label, e.g. \"Commit?\"."
+              },
+              "reply": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 400,
+                "description": "The text the agent gets when the button is pressed (default: the label without the question mark, in lower case). Null for the jump button."
+              },
+              "jump": {
+                "type": "boolean",
+                "description": "True for the generic button \"Review ansehen\" (--look): it focuses the agent and sends nothing; the topic stays in review."
+              }
+            }
+          }
+        }
+      }
     },
     "created": {
       "type": [

@@ -194,6 +194,7 @@ topic_get() {  # topic_get <file> <key> [default]
     case "$v" in *[[:cntrl:]]*) v=${v//[[:cntrl:]]/} ;; esac      # a topic may come from another machine: never print its escape codes
     printf '%s' "${v:-$3}"
 }
+REVIEW_NOTE_MAX=240                                                    # the summary under a review topic (a few lines in the card)
 DESC_MAX=140                                                          # a description is a short note, not a document
 # One writer per topic at a time (the panel, the collector, `bhote event`, an agent's CLI call): a read-modify-write without
 # it loses the other writer's key. A folder, because mkdir is atomic; not a pid, because the collector shares the panel's $$.
@@ -217,6 +218,7 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     local tmp rc=1; tmp=$(mktemp "$f.XXXXXX")                    # unique: the collector runs in a subshell with the same $$
     if [ -n "$tmp" ]; then
         local x='^updated='; [ "$2" = status ] && [ "$v" != now ] && x='^updated=|^transfer_to=|^transfer_to_name=|^transfer_from='
+        [ "$2" = status ] && [ "$v" != review ] && x="$x|^review_note=|^review_ask=|^review_reply="   # (the card under a review topic goes with the review)
         { grep -v -E -e "^$2=" -e "$x" "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$tmp" && mv "$tmp" "$f" && rc=0
     fi
     [ "$locked" = 1 ] && topic_unlock "$f"
@@ -479,14 +481,14 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    PINK=""; Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; CARDBG=""; CARDSEL=""; CARDHOV=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
+    PINK=""; Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; CARDBG=""; CARDSEL=""; CARDHOV=""; CARDSUB=""; CARDBTN=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
     [ "$color" = 1 ] || { TEAL=""; ORANGE=""; PINK=""; return 0; }
     ORANGE=""
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
         R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135"); PINK=$(rgb "245;194;231"); ORANGE=$(rgb "217;119;87")   # (ORANGE: Claude's own, not Catppuccin's peach)
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
-        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;58;60;82m"; CARDHOV="${esc}[48;2;43;44;63m"; MUTED=$(rgb "69;71;90")
+        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;49;50;68m"; CARDHOV="${esc}[48;2;40;41;58m"; CARDSUB="${esc}[48;2;25;25;38m"; CARDBTN="${esc}[48;2;108;112;134m${esc}[1;38;2;30;30;46m"; MUTED=$(rgb "69;71;90")
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "166;173;200")"; TITLESEL="${esc}[1m$(rgb "205;214;244")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "205;214;244")"; DESCSEL="${esc}[3m$(rgb "245;247;255")"     # the description italic in the full text colour
@@ -496,7 +498,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         PINK="${esc}[95m"; ORANGE="${esc}[38;5;173m"; Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
-        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;5;238m"; CARDHOV="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
+        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;46;46;60m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits); CARDBTN="${esc}[48;5;244m${esc}[1;38;5;232m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
         TITLE="${esc}[1;37m"; TITLESEL="${esc}[1;97m"                            # a topic: the title bold in the softer colour,
         DESC="${esc}[3;39m"; DESCSEL="${esc}[3;97m"                              # the description italic in the full text colour
     fi
@@ -1047,6 +1049,22 @@ rule() { printf '  %s%s%s\n' "$B" "${RULE_LINE:-──────────�
 group() {  # group <CAPTION> [colour]: a status caption; everything below starts in the same column
     printf '\n  %s%s%s\n' "${2:-$D}" "$1" "$X"
 }
+wrap_lines() {  # wrap_lines <array var> <width> <max lines> <text>: the text in words, cut into lines; what does not fit goes as "…" at the end of the last line
+    local _v=$1 _w=$2 _m=$3 _line="" _word _ww _lw=0 _n=0 _more=0; eval "$_v=()"
+    set -f
+    for _word in $4; do
+        dw_set _ww "$_word"; [ "$_ww" -gt "$_w" ] && { clip_set _word "$_word" "$_w"; dw_set _ww "$_word"; }
+        if [ -z "$_line" ]; then _line=$_word; _lw=$_ww
+        elif [ $(( _lw + 1 + _ww )) -le "$_w" ]; then _line="$_line $_word"; _lw=$(( _lw + 1 + _ww ))
+        else
+            if [ "$_n" -ge $(( _m - 1 )) ]; then _more=1; break; fi
+            eval "$_v[$_n]=\$_line"; _n=$(( _n + 1 )); _line=$_word; _lw=$_ww
+        fi
+    done
+    set +f
+    [ "$_more" = 1 ] && { clip_set _line "$_line $_word" "$_w"; [ "${_line: -1}" = "…" ] || _line="${_line:0:$(( ${#_line} - 1 ))}…"; }
+    [ -n "$_line" ] && eval "$_v[$_n]=\$_line"
+}
 # One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
 # gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
 # find it for scrolling (and strips it). Done entries are one muted line. With TI_REF set every line starts with \035id\035
@@ -1057,7 +1075,9 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
     local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
     local bl="  " gap=${TI_FRAME:-0} bar=""        # TI_FRAME (the panel's list): every entry is a card, the selected one a lighter card
-    if [ "$gap" = 1 ]; then bg=$CARDBG; bar=${2:-$D}; [ -n "${TI_REF:-}" ] && [ "$TI_REF" = "${HOVER_ID:-}" ] && bg=$CARDHOV; fi   # (hovered: a step lighter)
+    local hov=0
+    if [ "$gap" = 1 ]; then bg=$CARDBG; bar=${TI_BAR:-${2:-$D}}; [ -n "${TI_REF:-}" ] && [ "$TI_REF" = "${HOVER_ID:-}" ] && { bg=$CARDHOV; hov=1; }; fi   # (hovered: a step lighter)
+    if [ "$hov" = 1 ] && [ "$1" != 1 ]; then dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL; fi          # (and its small text readable on the lighter ground)
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
         bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac   # muted (done) titles: readable
@@ -1086,6 +1106,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
         printf '%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
     fi
+    if [ "$gap" = 1 ] && [ -n "${11:-}${12:-}" ]; then ti_subcard "$rm" "$bg" "${11:-}" "${12:-}" "${TI_REF:-}" "$w" "$bl"; fi
     if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi
 }
 # Cards: the row above an entry is its top edge, a lower half block (▄) in the card colour, the row below its bottom edge, an upper
@@ -1094,6 +1115,50 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
 ti_edge() {  # ti_edge <ref marker> <card background> <▄|▀>
     local _s; printf -v _s '%*s' $(( ${COLS:-44} - 2 )) ''; _s=${_s// /$3}
     printf '%s%s%s%s\n' "$1" "${2//\[48;/[38;}" "$_s" "$X"
+}
+# The card under a review topic: what the agent did (a few lines, a card of its own, a step lighter) and, docked to its bottom
+# edge on the right, the button with the action (key y). The button row's ref carries its columns, "<id>!<from>!<to>" (1-based),
+# so that a click on it can be told from a click on the card.
+ti_subcard() {  # ti_subcard <ref marker> <card bg> <note> <ask: labels joined by ¦> <topic id> <card width> <left edge: the bar>
+    local rm=$1 bg=$2 note=$3 ask=$4 id=$5 w=$6 bl=$7 sub=$CARDSUB sfg lines=() l lw pad sw=$(( $6 - 4 )) iw=$(( $6 - 6 ))
+    sfg=${sub//\[48;/[38;}
+    local edge; printf -v edge '%*s' "$sw" ''; edge=${edge// /▄}
+    printf '%s%s%s%s%s%s%s  %s\n' "$rm" "$bg" "$bl" "$sfg" "$edge" "$X" "$bg" "$X"                   # (the top edge: half a row of air above the text)
+    if [ -n "$note" ]; then
+        wrap_lines lines "$iw" 3 "$note"
+        for l in "${lines[@]}"; do
+            dw_set lw "$l"; printf -v pad '%*s' $(( iw - lw )) ''
+            printf '%s%s%s%s %s%s%s %s%s  %s\n' "$rm" "$bg" "$bl" "$sub" $'\033[38;2;238;240;250m' "$l" "$pad" "$X" "$bg" "$X"   # (brighter than the other text: it sits on the darkest ground)
+        done
+    fi
+    if [ -n "$ask" ]; then                                       # up to three buttons, flush right: side by side with two columns between them, else one under the other
+        local labs=() rest=$ask lab n=0 i tot=0 gapw=2 bws=() texts=() btnbg row gp start ranges rid k
+        while [ -n "$rest" ] && [ "$n" -lt 3 ]; do lab=${rest%%¦*}; labs[$n]=$lab; n=$(( n + 1 )); [ "$rest" = "$lab" ] && break; rest=${rest#*¦}; done
+        for (( i = 0; i < n; i++ )); do
+            lab=${labs[$i]}; clip_set lab "$lab" $(( sw - 6 )); texts[$i]=" [$(( i + 1 ))] $lab "; dw_set lw "${texts[$i]}"; bws[$i]=$lw; tot=$(( tot + lw ))
+        done
+        tot=$(( tot + gapw * (n - 1) ))
+        case "$BLUE" in *"[38;"*) btnbg=${BLUE//\[38;/[48;} ;; *) btnbg=${BLUE//\[3/[4} ;; esac     # the button has the colour of review (the fg of BLUE as a background)
+        btnbg="$btnbg"$'\033[1;38;2;24;24;37m'
+        if [ "$tot" -le "$sw" ]; then                             # side by side: one row, the ref carries every button's columns
+            start=$(( 2 + sw - tot )); ranges=""; printf -v pad '%*s' $(( sw - tot )) ''; row=$pad
+            for (( i = 0; i < n; i++ )); do
+                [ "$i" -gt 0 ] && { printf -v gp '%*s' "$gapw" ''; row="$row$gp"; start=$(( start + gapw )); }
+                row="$row$btnbg${texts[$i]}$X$bg"; ranges="$ranges!$(( start + 1 ))!$(( start + bws[i] ))"; start=$(( start + bws[i] ))
+            done
+            rid=""; [ -n "$id" ] && rid=$'\035'"$id$ranges"$'\035'
+            printf '%s%s%s%s%s  %s\n' "$rid" "$bg" "$bl" "$row" "$X$bg" "$X"
+        else                                                      # too wide: a row each (the labels stay whole); the filler pairs 0!0 keep the button's number in the ref
+            for (( i = 0; i < n; i++ )); do
+                printf -v pad '%*s' $(( sw - bws[i] )) ''; ranges=""; for (( k = 0; k < i; k++ )); do ranges="$ranges!0!0"; done
+                ranges="$ranges!$(( 2 + sw - bws[i] + 1 ))!$(( 2 + sw ))"
+                rid=""; [ -n "$id" ] && rid=$'\035'"$id$ranges"$'\035'
+                printf '%s%s%s%s%s%s%s%s  %s\n' "$rid" "$bg" "$bl" "$pad" "$btnbg" "${texts[$i]}" "$X" "$bg" "$X"
+            done
+        fi
+    else
+        printf '%s%s%s%s%s%s%s  %s\n' "$rm" "$bg" "$bl" "$sfg" "${edge//▄/▀}" "$X" "$bg" "$X"
+    fi
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
     local _i _m _id _st _r _x gone=gone
@@ -1125,7 +1190,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
     [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && [ "${U_GITHUB:-on}" = on ] && TM_BR=${T_BR[$i]}   # the agent's branch
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0 TI_REF
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0 TI_REF TI_BAR rn ra rline
     sel_index
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1151,7 +1216,12 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1; TI_REF=${T_ID[$i]}
-        topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
+        rn=""; ra=""; TI_BAR=$lc                                 # (the bar on the card has the colour of its group: review blue, now orange, next teal, waiting yellow)
+        if [ "$st" = review ]; then                              # the card the agent put under it (summary and the action's button)
+            while IFS= read -r rline; do case "$rline" in review_note=*) rn=${rline#*=} ;; review_ask=*) ra=${rline#*=} ;; esac; done < "${T_FILE[$i]}"
+            rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
+        fi
+        topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
     done
     if [ "$nlater" -gt 0 ]; then                                # where the others are
         local rest="$nlater parked"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
@@ -2007,7 +2077,7 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     if [ "$b" = 35 ]; then                                    # the pointer moves over the panel: the card under it is hovered (HOVER when that changed)
         local hr ht hid="" hd; hd=$(cat "$RUN_DIR/divrow" 2>/dev/null); hd=$(num_or "$hd" 0)
         if [ "$hd" = 0 ] || [ "$y" -lt "$hd" ]; then
-            while IFS=$'\036' read -r hr ht; do [ "$hr" = "$y" ] && { hid=$ht; break; }; done 2>/dev/null < "$RUN_DIR/tmap"
+            while IFS=$'\036' read -r hr ht; do [ "$hr" = "$y" ] && { hid=${ht%%!*}; break; }; done 2>/dev/null < "$RUN_DIR/tmap"   # (a button row's ref is <id>!<from>!<to>)
         fi
         [ "$hid" = "$HOVER_ID" ] || { HOVER_ID=$hid; MOUSE_KEY=HOVER; }
         return
@@ -2026,7 +2096,11 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && { [ "$div" = 0 ] || [ "$y" -lt "$div" ]; }; then   # above it: a topic?
         local r t; while IFS=$'\036' read -r r t; do
-            [ "$r" = "$y" ] && [ -n "$t" ] && { CLICK_T=$t; MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
+            [ "$r" = "$y" ] && [ -n "$t" ] && {
+                case "$t" in *"!"*) local rng=${t#*!}; CLICK_T=${t%%!*}; t=$CLICK_T                      # the button of a review card: its columns are in the ref
+                    local bn=1 b1 b2; while [ -n "$rng" ]; do b1=${rng%%!*}; rng=${rng#*!}; b2=${rng%%!*}; case "$rng" in *!*) rng=${rng#*!} ;; *) rng="" ;; esac   # from, to, from, to ...
+                        [ "$x" -ge "$b1" ] && [ "$x" -le "$b2" ] && { CLICK_N=$bn; MOUSE_KEY=ACT; return; }; bn=$(( bn + 1 )); done ;; *) CLICK_T=$t ;; esac
+                MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
         done 2>/dev/null < "$RUN_DIR/tmap"
     fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
@@ -2708,6 +2782,24 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
     esac
     return 1
 }
+review_act() {  # review_act <file> [button 1-3, default 1]: a button of a review card: the agent gets its reply (as if you typed it), the topic goes on now
+    local f=$1 n=${2:-1} ask rep am ap ag; [ -f "$f" ] || return 1
+    [ "$(topic_get "$f" status)" = review ] || return 1
+    ask=$(topic_get "$f" review_ask); rep=$(topic_get "$f" review_reply); [ -n "$ask" ] || return 1
+    while [ "$n" -gt 1 ]; do case "$ask" in *¦*) ask=${ask#*¦}; rep=${rep#*¦} ;; *) return 1 ;; esac; n=$(( n - 1 )); done
+    rep=${rep%%¦*}
+    if [ "$rep" = @jump ]; then                                  # "Review ansehen": show the agent, the topic stays where it is
+        [ -n "$(topic_get "$f" agent_pane)" ] && agent_jump "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)"; return 0
+    fi
+    am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane); ag=$(topic_get "$f" agent)
+    if [ -n "$ap" ] && [ -n "$rep" ]; then
+        agent_live "$am" "$ap"
+        case "$LIVE_ST" in gone|noagent) notify "bhote" "${ag:-The agent} is not there any more: nothing sent" request; return 1 ;; esac
+        agent_send "$am" "$ap" "$rep" || return 1
+    fi
+    topic_set "$f" status now; poke
+}
+topic_file_of() { printf '%s/%s.topic' "$TOPIC_DIR" "${1//[!A-Za-z0-9_-]/}"; }
 topic_resume() {  # topic_resume <file>: a waiting topic of an agent: the wait is over, the agent goes on (a prompt through herdr)
     local f=$1 id title wf desc am ap ag
     id=$(topic_id "$f"); title=$(topic_get "$f" title); wf=$(topic_get "$f" waiting_for); desc=$(topic_get "$f" description)
@@ -4173,6 +4265,8 @@ bhote_main() {
                 DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
                 TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; redraw=1; } ;;      # a click on a topic selects it, like the arrows
+                ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
+                y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
                 OPEN) [ "$view" = main ] && { SEL_ID=$CLICK_T; view=menu; MENU_IDX=0; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
@@ -4629,9 +4723,17 @@ topic_json() {  # topic_json <file>
     [ -n "$sch" ] && slack=$(printf '{"channel":%s,"thread":%s,"label":%s,"message":%s}' "$(json_str "$sch")" "$(json_opt "$(topic_get "$f" slack_thread)")" "$(json_opt "$(topic_get "$f" slack_label)")" "$(json_opt "$(topic_get "$f" slack_msg | sed 's/ ¶ ¶ / ¶  ¶ /g; s/ ¶ /\
 /g')")")
     local pj; pj=$(topic_get "$f" project); [ -n "$pj" ] && { [ "${P_N:-0}" -gt 0 ] || projects_load; pj=$(project_name "$pj" || true); }
-    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"project":%s,"created":%s,"updated":%s}' \
+    local rv=null; [ "$st" = review ] && [ -n "$(topic_get "$f" review_note)$(topic_get "$f" review_ask)" ] && {
+        local ra rr la lr acts="" first=1; ra=$(topic_get "$f" review_ask); rr=$(topic_get "$f" review_reply)
+        while [ -n "$ra" ]; do                                    # the buttons: labels and replies, joined by ¦
+            la=${ra%%¦*}; lr=${rr%%¦*}; acts="$acts$( [ "$first" = 1 ] || printf ',' )$( if [ "$lr" = @jump ]; then printf '{"label":%s,"reply":null,"jump":true}' "$(json_str "$la")"; else printf '{"label":%s,"reply":%s,"jump":false}' "$(json_str "$la")" "$(json_str "$lr")"; fi )"; first=0
+            [ "$ra" = "$la" ] && break; ra=${ra#*¦}; rr=${rr#*¦}
+        done
+        rv=$(printf '{"summary":%s,"actions":[%s]}' "$(json_opt "$(topic_get "$f" review_note)")" "$acts")
+    }
+    printf '{"id":%s,"n":%s,"title":%s,"description":%s,"status":%s,"waiting_for":%s,"waiting_since":%s,"agent":%s,"slack":%s,"project":%s,"review":%s,"created":%s,"updated":%s}' \
         "$(json_str "$(topic_id "$f")")" "$(topic_n "$f")" "$(json_str "$(topic_get "$f" title)")" "$(json_opt "$(topic_get "$f" description)")" \
-        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" "$slack" "$(json_opt "$pj")" \
+        "$(json_str "$st")" "$(json_opt "$wf")" "$( [ -n "$wf" ] && json_num "$(topic_get "$f" waiting_since)" || printf 'null')" "$agent" "$slack" "$(json_opt "$pj")" "$rv" \
         "$(json_num "$(topic_get "$f" created)")" "$(json_num "$(topic_get "$f" updated)")"
 }
 cli_show() {  # cli_show <file> [--json]
@@ -4963,7 +5065,23 @@ bhote_cli() {
                   review) if is_agent && case "$(topic_get "$f" status)" in later|done) true ;; *) false ;; esac; then
                            echo "bhote: this topic is $(topic_get "$f" status) (the user put it there): it is not moved to review" >&2; return 1
                        fi
-                       topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request; poke ;;
+                       local rnote="" rasks=() rreps=() rn=0
+                       while [ $# -gt 0 ]; do case "$1" in                    # --ask <label> [--reply <text>], up to three times: one button each
+                           --summary) rnote=${2:-}; shift ;;
+                           --look) rasks=("Review ansehen"); rreps=("@jump"); rn=1 ;;           # the one generic button: jump to the agent, the topic stays in review
+                           --ask) [ "$rn" -lt 3 ] || { echo "bhote: at most three --ask" >&2; return 1; }
+                                  rasks[$rn]=${2:-}; rreps[$rn]=""; rn=$(( rn + 1 )); shift ;;
+                           --reply) [ "$rn" -gt 0 ] || { echo "bhote: --reply belongs to an --ask before it" >&2; return 1; }
+                                    rreps[$(( rn - 1 ))]=${2:-}; shift ;;
+                           *) echo "bhote: unknown option '$1' for review" >&2; return 1 ;; esac; shift; done
+                       topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request
+                       local ri rl="" rr="" lab rep
+                       for (( ri = 0; ri < rn; ri++ )); do
+                           lab=${rasks[$ri]//¦/}; lab=${lab:0:24}; [ -n "$lab" ] || continue; rep=${rreps[$ri]//¦/}
+                           [ -n "$rep" ] || { rep=${lab%\?}; rep=$(printf '%s' "$rep" | tr '[:upper:]' '[:lower:]'); }   # default: the label as a sentence
+                           rl="$rl${rl:+¦}$lab"; rr="$rr${rr:+¦}${rep:0:400}"
+                       done
+                       topic_set "$f" review_note "${rnote:0:$REVIEW_NOTE_MAX}"; topic_set "$f" review_ask "$rl"; topic_set "$f" review_reply "$rr"; poke ;;
                   now) if is_agent && case "$(topic_get "$f" status)" in later|done) true ;; *) false ;; esac; then   # the user parked or closed it: an agent does not revive it
                            echo "bhote: this topic is $(topic_get "$f" status) (the user put it there): leave it. When the user asks you to work on it, run: bhote take <ref>" >&2; return 1
                        fi
