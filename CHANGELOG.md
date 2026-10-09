@@ -5,12 +5,20 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-09
+
 ### Added
+- Review card: `bhote review <ref> --summary <text> --look` puts a summary sub-card and a jump button (*Review ansehen*)
+  under a topic in review; the card is gone when the topic moves on. `--ask` collapses to the same jump button, never to
+  a button that triggers an action. `bhote show --json` has `review.summary` and `review.actions`.
+- On hover the card's coloured left bar turns coral.
 - `AGENT_TOPICS` (settings: *Agents may create topics*, default `on`): `off` stops agents from creating topics with
   `bhote add`; the "Question from" topics stay with `AUTO_REVIEW`.
 - A Dracula theme: `THEME=dracula` (settings › *Colours*), with the exact colours of the Dracula palette.
 
 ### Changed
+- The search popup no longer lists free agents; it shows only the newest 25 done topics and "+N more done tasks"
+  until something is typed, then the search reaches all.
 - `bhote skills install` and the setup link the skills into a git checkout instead of copying them, so they no longer go
   stale after a `git pull`; earlier copies become links. A package (brew, AUR) still copies.
 
@@ -133,7 +141,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [0.1.0] - 2026-10-07
 - First release: topics and agents next to herdr.
 
-[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/floriankappert/bhote/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/floriankappert/bhote/compare/v0.5.8...v0.6.0
 [0.5.8]: https://github.com/floriankappert/bhote/compare/v0.5.7...v0.5.8
 [0.5.7]: https://github.com/floriankappert/bhote/compare/v0.5.6...v0.5.7

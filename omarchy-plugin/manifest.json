@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "bhote.bar",
   "name": "bhote",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": "Florian Kappert, Jakob Beyer",
   "license": "MIT",
   "description": "bhote in the Omarchy bar: what waits for you (topics in review, agents that need an answer), the busy agents, and a click to the bhote panel in herdr.",
