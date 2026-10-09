@@ -4755,21 +4755,26 @@ cli_show() {  # cli_show <file> [--json]
 # ── bhote find: a search over all agents and topics, for a herdr popup (settings › Find key). Type to filter (every word
 # must appear), ↑↓ choose, ⏎ jump: an agent is focused in herdr (on another machine: selected there); a topic opens its page
 # in the bhote panel of the tab. Esc closes.
-FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=(); FI_TM=()
-find_items() {  # topics in the list's status order (review, now, next, waiting, later, done), then the agents: busy, then free
-    local i m id st name task lowsrc="" n=0 pass
-    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=(); FI_TM=()
-    for (( i = 0; i < T_N; i++ )); do
+FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=(); FI_TM=(); FI_DR=(); FI_MORE=0
+DONE_SHOWN=25                                                  # the popup lists this many done topics (the newest); the search reaches all
+find_items() {  # topics in the list's status order (review, now, next, waiting, later), the done ones newest first, then the busy agents (free agents are not in the popup)
+    local i m id st name task lowsrc="" n=0 pass order dr=0 dn
+    FI_KIND=(); FI_LABEL=(); FI_LOW=(); FI_NAME=(); FI_M=(); FI_P=(); FI_REF=(); FI_ST=(); FI_GRP=(); FI_SUB=(); FI_SC=(); FI_TM=(); FI_DR=()
+    order=(); for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] || order[${#order[@]}]=$i; done
+    dn=$(for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && printf '%s %s\n' "${T_UPD[$i]:-0}" "$i"; done | sort -k1,1nr -k2,2nr | cut -d' ' -f2)
+    for i in $dn; do order[${#order[@]}]=$i; done
+    for i in ${order[@]+"${order[@]}"}; do
+        [ "${T_STATUS[$i]}" = done ] && { FI_DR[$n]=$dr; dr=$(( dr + 1 )); }
         FI_KIND[$n]=topic; FI_NAME[$n]=${T_TITLE[$i]}; FI_M[$n]=${T_AM[$i]}; FI_P[$n]=${T_AP[$i]}; FI_ST[$n]=${T_STATUS[$i]}; FI_REF[$n]=${T_ID[$i]}
         FI_GRP[$n]=${T_STATUS[$i]}
         topic_meta "$i"; FI_LABEL[$n]="$TM_WHO${TM_BR:+${TM_WHO:+ · }⎇ $TM_BR}"; FI_SUB[$n]=$TM_ST; FI_SC[$n]=$TM_SC; FI_TM[$n]=$TM_TM   # the panel's meta line, 1:1 (the branch inline)
         [ "${T_STATUS[$i]}" = done ] && { done_mc "$i"; [ -n "$DONE_MC" ] && FI_TM[$n]="$DONE_MC ${TM_TM}"; }   # a done one: the machine that did it, in front of the time
         lowsrc="$lowsrc${T_TITLE[$i]} ${T_DESC[$i]} ${T_STATUS[$i]} ${T_AG[$i]} ${T_WFOR[$i]} $TM_WHO $TM_ST topic"$'\n'; n=$(( n + 1 ))
     done
-    for pass in busy free; do
+    for pass in busy; do
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-            case "${st#off-}" in idle|done) [ "$pass" = free ] || continue ;; *) [ "$pass" = busy ] || continue ;; esac
+            case "${st#off-}" in idle|done) continue ;; esac                 # a free agent: not in the popup
             FI_KIND[$n]=agent; FI_NAME[$n]=$name; FI_M[$n]=$m; FI_P[$n]=$id; FI_ST[$n]=$st; FI_REF[$n]=""; FI_GRP[$n]=$pass
             FI_LABEL[$n]="$m${task:+ · $task}"; FI_TM[$n]=""; case "$st" in off-*) FI_LABEL[$n]="$m reconnecting${task:+ · $task}" ;; esac; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
         done
@@ -4779,8 +4784,9 @@ find_items() {  # topics in the list's status order (review, now, next, waiting,
 FI_HIT=()
 find_filter() {  # find_filter <query>: FI_HIT = the matching items (every word must appear), in their group order
     local q w i ok words=()
-    q=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"; FI_HIT=()
+    q=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"; FI_HIT=(); FI_MORE=0
     for (( i = 0; i < ${#FI_KIND[@]}; i++ )); do
+        if [ ${#words[@]} = 0 ] && [ -n "${FI_DR[$i]:-}" ] && [ "${FI_DR[$i]}" -ge "$DONE_SHOWN" ]; then FI_MORE=$(( FI_MORE + 1 )); continue; fi   # nothing typed: only the newest done topics
         ok=1; for w in ${words[@]+"${words[@]}"}; do case "${FI_LOW[$i]}" in *"$w"*) ;; *) ok=0; break ;; esac; done
         [ "$ok" = 1 ] && FI_HIT[${#FI_HIT[@]}]=$i
     done
@@ -4793,6 +4799,7 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
     for (( k = 0; k < n; k++ )); do
         i=${FI_HIT[$k]}
         if [ "${FI_GRP[$i]}" != "$prev" ]; then
+            [ "$prev" = done ] && [ "$FI_MORE" -gt 0 ] && { printf -v line '   %s+%d more done tasks%s' "$D" "$FI_MORE" "$X"; rl[${#rl[@]}]=$line; rh[${#rh[@]}]=-1; }
             prev=${FI_GRP[$i]}
             case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; next) cap=NEXT; cc=$S ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
                 done) cap=DONE; cc=$GREEN ;; busy) cap="AGENTS · BUSY"; cc=$ORANGE ;; free) cap="AGENTS · FREE"; cc=$GREEN ;; *) cap=$prev; cc=$D ;; esac
@@ -4817,6 +4824,7 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
             printf -v line '   %s%s %s%s%s  %s%s%s%s%s%s%s%*s%s%s%s' "$ic" "$X" "$nmc" "$nm" "$X" "$lbc" "$lb" "$D" "$sep" "${FI_SC[$i]:-}" "$sb" "$X" "$pad" "" "$D" "$tm" "$X"; fi
         rl[${#rl[@]}]=$line; rh[${#rh[@]}]=$k
     done
+    [ "$prev" = done ] && [ "$FI_MORE" -gt 0 ] && { printf -v line '   %s+%d more done tasks%s' "$D" "$FI_MORE" "$X"; rl[${#rl[@]}]=$line; rh[${#rh[@]}]=-1; }
     off=0; [ "$sr" -ge "$room" ] && off=$(( sr - room + 1 ))
     [ "$sr" -gt 0 ] && [ "${rh[$(( sr - 1 ))]}" = -1 ] && [ "$off" -gt $(( sr - 1 )) ] && off=$(( sr - 1 ))   # its caption stays in view
     out=$'\033[H'

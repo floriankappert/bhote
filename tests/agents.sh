@@ -332,4 +332,14 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '12\n0\036Mac%sw1:p1%sworking\036\n' "$US" "$US" > "$R/agmap"; spin_cells; [ -n "$SPIN_CELLS" ] || exit 2
   AG_N=0; AG_LINES=(); COLS=44; ROWS=40; agents_block >/dev/null; spin_cells; [ -z "$SPIN_CELLS" ] || exit 3
   rm -rf "$R"; exit 0 ) && ok "no agents: no error text, and the old agent map is gone" || bad "agent map without agents: step $?"
+# the search popup: no free agents; the done topics only the newest 25 (+ a count) until something is typed, then all of them
+( rm -f "$TOPIC_DIR"/*.topic; for i in $(seq 1 30); do topic_new "Done topic $i" "" "" >/dev/null; f=$(ls -t "$TOPIC_DIR"/*.topic | head -1); topic_set "$f" status done; sleep 0.01; done
+  topic_new "Open topic" "" "" >/dev/null
+  AG_N=2; AG_LINES=("Mac${US}w1:p1${US}idle${US}IMS free${US}" "Mac${US}w2:p1${US}working${US}IMS busy${US}x"); topics_load; find_items
+  find_filter ""; [ "$FI_MORE" = 5 ] || exit 1; [ "${#FI_HIT[@]}" = 27 ] || exit 2                      # 25 done + the open one + the busy agent
+  find_filter "IMS free"; [ "${#FI_HIT[@]}" = 0 ] || exit 3                                              # a free agent is not there, not even in the search
+  find_filter "done topic"; [ "${#FI_HIT[@]}" = 30 ] && [ "$FI_MORE" = 0 ] || exit 4                      # the search reaches every done topic
+  find_filter ""; first=${FI_HIT[1]}; [ "${FI_NAME[$first]}" = "Done topic 30" ] || exit 5                # the newest done topic first
+  COLS=80; ROWS=60; find_filter ""; out=$(find_draw "" 0 ""); case "$out" in *"+5 more done tasks"*) ;; *) exit 6 ;; esac
+  exit 0 ) && ok "find popup: no free agents, the newest 25 done topics and +N more, the search finds all" || bad "find popup done/free: step $?"
 rm -rf "$T"; exit $fail
