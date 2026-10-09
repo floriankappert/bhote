@@ -265,8 +265,9 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 
 ### `bhote skills [install]`
 
-Copies the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`,
-`~/.claude*`) and says to continue with `/bhote-install`.
+Puts the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`,
+`~/.claude*`) and says to continue with `/bhote-install`. From a git checkout each skill is a link into it (it stays current
+with every `git pull`; an earlier copy that holds only `SKILL.md` becomes a link), from a package a copy.
 
 ### `bhote update`
 

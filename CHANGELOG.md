@@ -10,6 +10,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   `bhote add`; the "Question from" topics stay with `AUTO_REVIEW`.
 - A Dracula theme: `THEME=dracula` (settings › *Colours*), with the exact colours of the Dracula palette.
 
+### Changed
+- `bhote skills install` and the setup link the skills into a git checkout instead of copying them, so they no longer go
+  stale after a `git pull`; earlier copies become links. A package (brew, AUR) still copies.
+
 ### Fixed
 - The ssh masters that herdr leaves behind for every `herdr --machine` call (one per call, in `/tmp/herdr-ssh-*`) no
   longer pile up: with `REMOTE_AGENTS` on and herdr 0.9.1 (`ControlPersist=yes`) they reached the process limit within a

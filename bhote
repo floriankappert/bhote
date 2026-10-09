@@ -3327,7 +3327,21 @@ monitors_block() {  # both monitors (when on), above the agents
     [ "$tm" = on ] && monitor_block tests "$r"
     return 0
 }
-cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote-install into every Claude profile (copies)
+skill_put() {  # skill_put <source folder> <skill folder>: a link into a checkout (current with every git pull), a copy from a
+    # package (brew's share folder is per version: a link would break with the next upgrade). A copy from before becomes a link.
+    local s=$1 t=$2
+    if [ -e "$(w_self_dir)/.git" ]; then
+        if [ -d "$t" ] && [ ! -L "$t" ]; then
+            [ "$(ls -A "$t")" = SKILL.md ] || { echo "bhote: ${t/#$HOME/~} holds more than SKILL.md: left as it is" >&2; return 1; }
+            rm -f "$t/SKILL.md" && rmdir "$t" || return 1
+        fi
+        mkdir -p "$(dirname "$t")" && ln -sfn "$s" "$t"
+    else
+        if [ -L "$t" ]; then rm -f "$t"; fi                                   # a link into a checkout that is no longer used
+        mkdir -p "$t" && cp "$s/SKILL.md" "$t/SKILL.md"
+    fi
+}
+cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote-install into every Claude profile (skill_put)
     local sd d n dirs=() seen=" " done_n=0 prof
     sd=$(w_share integrations/claude/skills) || { echo "bhote: the skills are not part of this installation" >&2; return 1; }
     sd=$sd/integrations/claude/skills
@@ -3338,7 +3352,7 @@ cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote
     for prof in "${dirs[@]}"; do
         for n in bhote bhote-install; do
             [ -f "$sd/$n/SKILL.md" ] || continue
-            mkdir -p "$prof/skills/$n" && cp "$sd/$n/SKILL.md" "$prof/skills/$n/SKILL.md" && { printf 'skill %s -> %s\n' "$n" "${prof/#$HOME/~}/skills/$n"; done_n=$(( done_n + 1 )); }
+            skill_put "$sd/$n" "$prof/skills/$n" && { printf 'skill %s -> %s\n' "$n" "${prof/#$HOME/~}/skills/$n"; done_n=$(( done_n + 1 )); }
         done
     done
     [ "$done_n" -gt 0 ] || return 1
@@ -3745,8 +3759,8 @@ setup_step_checks() {
     elif [ -d "$cdir" ] && [ -f "$src/SKILL.md" ]; then
         w_warn "Claude skill" "not installed: agents do not create waiting topics"
         w_yn "Install the bhote skill for Claude Code (${sk/#$HOME/~})?" Y; r=$?; [ $r = 3 ] && return
-        [ $r = 0 ] && { mkdir -p "$sk" && cp "$src/SKILL.md" "$sk/SKILL.md" && w_ok "Claude skill" "installed" || w_bad "Claude skill" "could not be copied"
-            [ -f "${src}-install/SKILL.md" ] && mkdir -p "${sk}-install" && cp "${src}-install/SKILL.md" "${sk}-install/SKILL.md" && w_ok "Claude skill" "bhote-install: an agent can set bhote up on a machine"; }
+        [ $r = 0 ] && { skill_put "$src" "$sk" && w_ok "Claude skill" "installed" || w_bad "Claude skill" "could not be installed"
+            [ -f "${src}-install/SKILL.md" ] && skill_put "${src}-install" "${sk}-install" && w_ok "Claude skill" "bhote-install: an agent can set bhote up on a machine"; }
     fi
     w_continue
 }
