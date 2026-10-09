@@ -479,14 +479,14 @@ gradient() {            # gradient <text> : colours the characters of one line l
 THEME_SIG=""
 hex_rgb() { local h=${1#\#}; case "$h" in [0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]) printf '%d;%d;%d' "0x${h:0:2}" "0x${h:2:2}" "0x${h:4:2}" ;; *) return 1 ;; esac; }
 theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrides
-    PINK=""; Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
+    PINK=""; Y=""; GREEN=""; BLUE=""; B=""; SELBG=""; CARDBG=""; CARDSEL=""; CARDHOV=""; MUTED=""; R=""; NN=""; S=""; C=""; L=""; D=""; LSEL=""; DSEL=""; DESC=""; DESCSEL=""; TITLE=""; TITLESEL=""
     [ "$color" = 1 ] || { TEAL=""; ORANGE=""; PINK=""; return 0; }
     ORANGE=""
     local th v k; cfg_var th THEME terminal
     if [ "$th" = catppuccin ]; then
         R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135"); PINK=$(rgb "245;194;231"); ORANGE=$(rgb "217;119;87")   # (ORANGE: Claude's own, not Catppuccin's peach)
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
-        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; MUTED=$(rgb "69;71;90")
+        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;58;60;82m"; CARDHOV="${esc}[48;2;43;44;63m"; MUTED=$(rgb "69;71;90")
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "166;173;200")"; TITLESEL="${esc}[1m$(rgb "205;214;244")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "205;214;244")"; DESCSEL="${esc}[3m$(rgb "245;247;255")"     # the description italic in the full text colour
@@ -496,7 +496,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         PINK="${esc}[95m"; ORANGE="${esc}[38;5;173m"; Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
-        SELBG="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
+        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;5;238m"; CARDHOV="${esc}[48;5;236m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
         TITLE="${esc}[1;37m"; TITLESEL="${esc}[1;97m"                            # a topic: the title bold in the softer colour,
         DESC="${esc}[3;39m"; DESCSEL="${esc}[3;97m"                              # the description italic in the full text colour
     fi
@@ -504,7 +504,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         cfg_var v "COLOR_$k" ""; [ -n "$v" ] || continue; v=$(hex_rgb "$v") || continue
         case "$k" in
             TEXT) L="${esc}[1m$(rgb "$v")"; LSEL=$L; TITLE=$L; TITLESEL=$L; DESC="${esc}[3m$(rgb "$v")"; DESCSEL=$DESC ;;
-            DIM) D=$(rgb "$v"); DSEL=$D ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m" ;;
+            DIM) D=$(rgb "$v"); DSEL=$D ;; FRAME) B=$(rgb "$v") ;; SELECTION) SELBG="${esc}[48;2;${v}m"; CARDSEL=$SELBG ;;
             ACCENT) S=$(rgb "$v") ;; NOW) C=$(rgb "$v"); ORANGE=$C ;; WAITING) Y=$(rgb "$v") ;; REVIEW) BLUE=$(rgb "$v") ;;
             LATER) R=$(rgb "$v") ;; DONE) GREEN=$(rgb "$v") ;; ERROR) NN=$(rgb "$v") ;;
         esac
@@ -1056,13 +1056,18 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n rm=""
     [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
     local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
+    local bl="  " gap=${TI_FRAME:-0} bar=""        # TI_FRAME (the panel's list): every entry is a card, the selected one a lighter card
+    if [ "$gap" = 1 ]; then bg=$CARDBG; bar=${2:-$D}; [ -n "${TI_REF:-}" ] && [ "$TI_REF" = "${HOVER_ID:-}" ] && bg=$CARDHOV; fi   # (hovered: a step lighter)
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
         bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac   # muted (done) titles: readable
+        [ "$gap" = 1 ] && bg=$CARDSEL
     fi
-    printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
-    [ -n "$d" ] && printf '%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
-    [ -n "$who$st$tm" ] || { [ "${9:-}" = 1 ] || printf '\n'; return 0; }
+    [ "$gap" = 1 ] && bl="${bar}▌${X}${bg} "                 # the status colour as a bar on the left edge (review blue, now orange, waiting yellow)
+    if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▄; fi
+    printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+    [ -n "$d" ] && printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
+    [ -n "$who$st$tm" ] || { if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi; return 0; }
     room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
     local ww sw; [ -n "$who" ] && clip_set who "$who" "$room"; dw_set ww "$who"; dw_set sw "$st"
     n=$(( ww + sw + ${#tm} + (ww > 0 && sw > 0 ? 3 : 0) + (${#tm} > 0 && ww + sw > 0 ? 3 : 0) ))
@@ -1071,7 +1076,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         if [ -n "$who" ]; then clip_set st "$st" $(( room - ww - 3 )); else clip_set st "$st" "$room"; fi
         dw_set sw "$st"; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) ))
     fi
-    printf '%s%s  %s∟ ' "$rm" "$bg" "$gc"
+    printf '%s%s%s%s∟ ' "$rm" "$bg" "$bl" "$gc"
     [ -n "$who" ] && printf '%s%s' "$wc" "$who"
     [ -n "$who" ] && [ -n "$st" ] && printf '%s · ' "$gc"
     [ -n "$st" ] && printf '%s%s' "$mc" "$st"
@@ -1079,9 +1084,16 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
     if [ -n "${10:-}" ]; then                                  # the agent's git branch, a line of its own
         local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
-        printf '%s%s  %s⎇ %s%s%*s%s\n' "$rm" "$bg" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
+        printf '%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
     fi
-    [ "${9:-}" = 1 ] || printf '\n'
+    if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi
+}
+# Cards: the row above an entry is its top edge, a lower half block (▄) in the card colour, the row below its bottom edge, an upper
+# half block (▀): half a row of air inside the card on both sides, and the other halves of the two rows between two cards are the
+# gap. The edge rows belong to the card (a click on them selects it).
+ti_edge() {  # ti_edge <ref marker> <card background> <▄|▀>
+    local _s; printf -v _s '%*s' $(( ${COLS:-44} - 2 )) ''; _s=${_s// /$3}
+    printf '%s%s%s%s\n' "$1" "${2//\[48;/[38;}" "$_s" "$X"
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
     local _i _m _id _st _r _x gone=gone
@@ -1120,6 +1132,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
     fi
     [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
+    local TI_FRAME=1 TI_OPEN=0
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
@@ -1129,7 +1142,8 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         fi
         if [ "$st" != "$prev" ]; then
             case "$st" in now) label=NOW; lc=$ORANGE ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
-            group "$label" "$lc"; prev=$st
+            printf '\n'                                                  # (a card brings its own edges, the caption its blank row)
+            printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$st
         fi
         topic_meta "$i"; who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
@@ -1975,7 +1989,7 @@ ask_drain() {  # throw away input that is still waiting (the rest of a multi-lin
 }
 # The divider above the agents is a handle like herdr's sidebar split: press on it, drag, release. Its row is written by the frame
 # (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is kept as AGENT_ROWS in the config.
-MOUSE_ON=$'\033[?1002h\033[?1006h'; MOUSE_OFF=$'\033[?1002l\033[?1006l'; DRAG=0; DRAG_ROWS=""
+MOUSE_ON=$'\033[?1003h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1006l'; DRAG=0; DRAG_ROWS=""; HOVER_ID=""   # (1003: also motion without a button, for the hover on the cards)
 # Terminals report presses, not double clicks: a second press on the same topic within half a second is one (OPEN: its page).
 # Milliseconds from perl (bash 3.2 has no EPOCHREALTIME); without perl only two presses in the same second count.
 CLICK_LAST=""; CLICK_AT=0
@@ -1990,6 +2004,14 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     b=${1%%;*}; rest=${1#*;}; x=${rest%%;*}; y=${rest#*;}
     case "$b$x$y" in *[!0-9]*) return ;; esac
     case "$b" in 64|65|66|67) return ;; esac                 # the wheel does nothing (it must not move the selection)
+    if [ "$b" = 35 ]; then                                    # the pointer moves over the panel: the card under it is hovered (HOVER when that changed)
+        local hr ht hid="" hd; hd=$(cat "$RUN_DIR/divrow" 2>/dev/null); hd=$(num_or "$hd" 0)
+        if [ "$hd" = 0 ] || [ "$y" -lt "$hd" ]; then
+            while IFS=$'\036' read -r hr ht; do [ "$hr" = "$y" ] && { hid=$ht; break; }; done 2>/dev/null < "$RUN_DIR/tmap"
+        fi
+        [ "$hid" = "$HOVER_ID" ] || { HOVER_ID=$hid; MOUSE_KEY=HOVER; }
+        return
+    fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ]; then  # a row of this frame that bhote_paint noted (an action on the topic's page)?
         local r t; while IFS=$'\036' read -r r t; do [ "$r" = "$y" ] && { CLICK_I=$t; MOUSE_KEY=ITEM; return; }; done 2>/dev/null < "$RUN_DIR/pmap"
     fi
@@ -4083,6 +4105,7 @@ bhote_main() {
             elif [ -z "$k2" ]; then key=ESC
             else key=""; fi                                    # Alt+key: nothing
         fi
+        if [ "$key" = HOVER ]; then key=""; [ "$view" = main ] && redraw=1; fi   # the pointer moved onto another card (or off the cards)
         if [ "${SETUP_PENDING:-}" = 1 ]; then
             if [ "$view" != splash ]; then                     # the pane got too small for the welcome screen: next start
                 SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; lock_drop "$SHARED_DIR/setup.lock" "$$"
