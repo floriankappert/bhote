@@ -28,6 +28,9 @@ bhote add "Review of PR #1412" -w "Alex" -d "then merge and test the release not
 Keep the returned `id`. Tell the user in one sentence what you wait for, then stop or do other work. When the user marks
 the topic as `now` in bhote, you get a prompt "The wait is over …" with the description: continue from there.
 
+If `bhote add` creates nothing because agents may not create topics here (`AGENT_TOPICS=off`: it prints `null` and says
+so), go on without a topic and do not try again. This holds for every `bhote add` below.
+
 ## When you hand the work back to the user
 
 Whenever you end a turn and the next step is the user's (check a result, decide, grant a permission, answer a question),

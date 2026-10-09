@@ -5,6 +5,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- `AGENT_TOPICS` (settings: *Agents may create topics*, default `on`): `off` stops agents from creating topics with
+  `bhote add`; the "Question from" topics stay with `AUTO_REVIEW`.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added
