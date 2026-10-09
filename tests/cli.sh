@@ -193,4 +193,18 @@ B review "$rid" --ask a --ask b --ask c --ask d >/dev/null 2>&1 && bad "review a
 B review "$rid" --reply x >/dev/null 2>&1 && bad "review accepted --reply without --ask" || ok "review: --reply needs an --ask before it"
 B review "$rid" --nope >/dev/null 2>&1 && bad "review accepted an unknown option" || ok "review: an unknown option is exit 1"
 B now "$rid" >/dev/null; [ "$(B show "$rid" --json | jq -c .review)" = null ] && ok "the review card goes when the topic leaves review" || bad "review card stayed: $(B show "$rid" --json | jq -c .review)"
+# skills: a link into a checkout (an earlier copy becomes one, a folder with own files stays), a copy from a package
+SH=$T/home; mkdir -p "$SH/.claude/skills/bhote" "$SH/.claude2/skills/bhote-install"; echo old > "$SH/.claude/skills/bhote/SKILL.md"
+echo own > "$SH/.claude2/skills/bhote-install/notes.md"
+HOME=$SH CLAUDE_CONFIG_DIR= B skills install >/dev/null 2>"$T/err"
+[ "$(readlink "$SH/.claude/skills/bhote")" = "$PWD/integrations/claude/skills/bhote" ] && [ -L "$SH/.claude/skills/bhote-install" ] \
+    && ok "skills from a checkout: links, an earlier copy became one" || bad "skills links: $(ls -la "$SH/.claude/skills")"
+[ ! -L "$SH/.claude2/skills/bhote-install" ] && [ -f "$SH/.claude2/skills/bhote-install/notes.md" ] && grep -q "more than SKILL.md" "$T/err" \
+    && ok "skills: a folder with own files is left as it is" || bad "skills own files: $(cat "$T/err")"
+HOME=$SH CLAUDE_CONFIG_DIR= B skills install >/dev/null 2>&1; [ -L "$SH/.claude/skills/bhote" ] && ok "skills install twice: still a link" || bad "skills twice"
+P=$T/pkg; mkdir -p "$P/bin" "$P/share/bhote"; cp bhote "$P/bin/"; cp -R integrations "$P/share/bhote/"
+HOME=$SH CLAUDE_CONFIG_DIR= bash "$P/bin/bhote" skills install >/dev/null 2>&1
+[ ! -L "$SH/.claude/skills/bhote" ] && cmp -s "$SH/.claude/skills/bhote/SKILL.md" integrations/claude/skills/bhote/SKILL.md \
+    && ok "skills from a package: a copy, the link from before is gone" || bad "skills package: $(ls -la "$SH/.claude/skills")"
+
 rm -rf "$T"; exit $fail
