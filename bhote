@@ -88,6 +88,7 @@ TESTS_BUSY|off|bool|An agent whose workspace runs tests counts as busy
 AUTO_ASSIGN|off|bool|A running (now) topic with a project and without an agent goes to the next free agent OF THAT PROJECT by itself, 20 s after its last change (a topic without a project gets it from a project name in its title or description; if there is none, nothing starts)
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
+AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
 SLACK_WATCH|off|bool|Watch the Slack channels pinned to waiting topics, from this machine (through Claude Code and its Slack connector; one machine is enough): a new message from someone else sets the topic to review
@@ -1671,6 +1672,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTO_ASSIGN|Auto-assign now topics"
     [ "$(cfg_get AUTO_ASSIGN off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|AUTO_ASSIGN_MACHINE|Prefer agents on"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
     SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
     SET_ROWS[${#SET_ROWS[@]}]="enum|THEME|Colours"
@@ -4912,6 +4914,10 @@ bhote_cli() {
               [ "$st" = waiting ] && [ -z "$who" ] && { echo "bhote: waiting needs a name (@Name or -w Name)" >&2; return 1; }
               [ "${#desc}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
               local pf=""; if [ -n "$proj" ]; then pf=$(project_ref "$proj") || return $?; fi   # before the topic exists: an error changes nothing
+              if [ "$(cfg_get AGENT_TOPICS on)" != on ] && is_agent; then   # agents make no topics here: not an error (the agent goes on without one)
+                  echo "bhote: agents do not create topics here (AGENT_TOPICS=off): nothing created, go on without one" >&2
+                  [ -n "$json" ] && echo null; return 0
+              fi
               topic_new "$title" "$who" "$desc" || { echo "bhote: a title is needed (bhote add <title>)" >&2; return 1; }
               f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
               if is_agent; then                                     # created by an agent: it is that agent's topic

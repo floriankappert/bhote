@@ -108,6 +108,11 @@ CLAUDECODE=1 CLAUDE_CODE_SESSION_ID=abc-123 B done "Agent task" >/dev/null 2>&1
 [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = review ] && ok "AGENT_CAN_CLOSE=off: an agent's done becomes review" || bad "agent closed although not allowed"
 B done "Agent task" >/dev/null; [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = done ] && ok "AGENT_CAN_CLOSE=off: you can still close it" || bad "user could not close"
 B config unset AGENT_CAN_CLOSE >/dev/null
+B config set AGENT_TOPICS off >/dev/null; n0=$(B list --all --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+out=$(CLAUDECODE=1 B add "Agent made" --json 2>/dev/null); rc=$?
+[ "$rc" = 0 ] && [ "$out" = null ] && [ "$(B list --all --json | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')" = "$n0" ] && ok "AGENT_TOPICS=off: an agent's add creates nothing (null, exit 0)" || bad "agent created a topic although not allowed: rc=$rc $out"
+B add "Mine anyway" >/dev/null && B show "Mine anyway" >/dev/null && ok "AGENT_TOPICS=off: you can still add topics" || bad "user could not add"
+B config unset AGENT_TOPICS >/dev/null
 n_plain=$(B dump | grep -c '^@@'); n_packed=$(B dump --packed | BHOTE_SOURCE_ONLY=1 bash -c '. ./bhote; dump_unpack' | grep -c '^@@')
 [ "$n_plain" = "$n_packed" ] && [ "$n_plain" -gt 1 ] && ok "dump --packed (for herdr) unpacks to the same topics" || bad "packed dump differs: $n_plain vs $n_packed"
 # the jump key: bhote writes its own block into herdr's config.toml; herdr checks it, a refused key leaves the file as it was

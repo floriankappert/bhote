@@ -104,7 +104,8 @@ gets a prompt: "The wait is over (<who>): <title>. Go on with: <description>". `
 Run by an agent (a Claude Code session: `CLAUDECODE=1`), `review` and `done` send a herdr notification and record which
 agent it was
 (`CLAUDE_CODE_SESSION_ID`, `HERDR_PANE_ID`). With `AGENT_CAN_CLOSE=off` an agent cannot close a topic: its `done` becomes
-`review` (with a note on stderr, exit `0`), and you check it off.
+`review` (with a note on stderr, exit `0`), and you check it off. With `AGENT_TOPICS=off` an agent's `bhote add` creates
+nothing (a note on stderr, `null` with `--json`, exit `0`).
 
 ### `bhote wait <ref> <Name> [--slack <pin>]`
 
