@@ -103,6 +103,12 @@ B config set THEME dracula >/dev/null && [ "$(B config get THEME)" = dracula ] &
 th=$(BHOTE_SOURCE_ONLY=1 BHOTE_FORCE_COLOR=1 bash -c '. ./bhote; theme_apply; printf "%s|%s|%s|%s" "$S" "$BLUE" "$L" "$CARDSEL"')
 case "$th" in *"139;233;253"*"|"*"189;147;249"*"|"*"248;248;242"*"|"*"48;2;68;71;90"*) ok "THEME=dracula: the Dracula colours (accent cyan, review purple, text, selection)" ;; *) bad "dracula colours: $(printf '%q' "$th")" ;; esac
 B config unset THEME >/dev/null
+for t in terminal catppuccin dracula; do                     # every theme: the summary's own ground and the brighter text on the selection
+    B config set THEME "$t" >/dev/null
+    th=$(BHOTE_SOURCE_ONLY=1 BHOTE_FORCE_COLOR=1 bash -c '. ./bhote; theme_apply; [ -n "$CARDSUB" ] && [ -n "$CARDBTN" ] && [ "$LSEL" != "$L" ] && [ "$DSEL" != "$D" ] && echo yes')
+    [ "$th" = yes ] && ok "THEME=$t: CARDSUB, CARDBTN and the selection colours set" || bad "THEME=$t: a card or selection colour missing"
+done
+B config unset THEME >/dev/null
 B config list --json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert any(x["key"]=="AGENT_CAN_CLOSE" and x["default"]=="on" for x in d)' && ok "config list --json" || bad "config list --json"
 # review, and what an agent may do
 B add "Agent task" >/dev/null; B review "Agent task" >/dev/null; [ "$(B show "Agent task" --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')" = review ] && ok "review: status review" || bad "review"

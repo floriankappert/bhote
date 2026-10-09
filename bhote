@@ -497,7 +497,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     elif [ "$th" = dracula ]; then                           # the Dracula palette, its roles as in Dracula's own terminal colours
         R=$(rgb "255;121;198"); NN=$(rgb "255;85;85"); S=$(rgb "139;233;253"); C=$(rgb "255;184;108"); PINK=$(rgb "255;146;223"); ORANGE=$(rgb "217;119;87")   # (magenta = pink, blue = purple; ORANGE: Claude's own)
         L="${esc}[1m$(rgb "248;248;242")"; D=$(rgb "98;114;164"); B=$D
-        Y=$(rgb "241;250;140"); GREEN=$(rgb "80;250;123"); BLUE=$(rgb "189;147;249"); SELBG="${esc}[48;2;68;71;90m"; CARDBG="${esc}[48;2;46;48;62m"; CARDSEL="${esc}[48;2;68;71;90m"; CARDHOV="${esc}[48;2;56;58;74m"; MUTED=$(rgb "68;71;90")
+        Y=$(rgb "241;250;140"); GREEN=$(rgb "80;250;123"); BLUE=$(rgb "189;147;249"); SELBG="${esc}[48;2;68;71;90m"; CARDBG="${esc}[48;2;46;48;62m"; CARDSEL="${esc}[48;2;68;71;90m"; CARDHOV="${esc}[48;2;56;58;74m"; CARDSUB="${esc}[48;2;33;34;44m"; CARDBTN="${esc}[48;2;98;114;164m${esc}[1;38;2;40;42;54m"; MUTED=$(rgb "68;71;90")
         LSEL="${esc}[1m$(rgb "255;255;255")"; DSEL=$(rgb "189;195;223")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "214;216;228")"; TITLESEL="${esc}[1m$(rgb "248;248;242")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "248;248;242")"; DESCSEL="${esc}[3m$(rgb "255;255;255")"     # the description italic in the full text colour
@@ -507,7 +507,8 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         PINK="${esc}[95m"; ORANGE="${esc}[38;5;173m"; Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
-        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;46;46;60m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits); CARDBTN="${esc}[48;5;244m${esc}[1;38;5;232m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
+        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;46;46;60m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits)
+        CARDBTN="${esc}[48;5;244m${esc}[1;38;5;232m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
         TITLE="${esc}[1;37m"; TITLESEL="${esc}[1;97m"                            # a topic: the title bold in the softer colour,
         DESC="${esc}[3;39m"; DESCSEL="${esc}[3;97m"                              # the description italic in the full text colour
     fi
