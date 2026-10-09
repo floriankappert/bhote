@@ -343,4 +343,18 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   find_filter ""; first=${FI_HIT[1]}; [ "${FI_NAME[$first]}" = "Done topic 30" ] || exit 5                # the newest done topic first
   COLS=80; ROWS=60; find_filter ""; out=$(find_draw "" 0 ""); case "$out" in *"+5 more done tasks"*) ;; *) exit 6 ;; esac
   exit 0 ) && ok "find popup: no free agents, the newest 25 done topics and +N more, the search finds all" || bad "find popup done/free: step $?"
+# the ssh masters herdr leaves behind: the one of a gone herdr is ended (ssh -O exit) and its folder removed; a running herdr's stays
+( H=$T/htmp; mkdir -p "$H/keep"; export BHOTE_HERDR_TMP=$H BHOTE_SSH=$T/muxssh
+  printf '#!/bin/sh\necho "$*" >> "%s"\n' "$T/mux.log" > "$BHOTE_SSH"; chmod +x "$BHOTE_SSH"
+  sh -c 'exit 0' & gone=$!; wait "$gone"; kill -0 "$gone" 2>/dev/null && exit 9   # a pid that is surely gone
+  sock() { perl -MIO::Socket::UNIX -e 'IO::Socket::UNIX->new(Type => SOCK_STREAM(), Local => $ARGV[0], Listen => 1) or exit 1' "$1"; }
+  mkdir "$H/herdr-ssh-$gone-0" "$H/herdr-ssh-$$-0" "$H/herdr-ssh-x-0"; : > "$H/herdr-ssh-$gone-0/config"
+  sock "$H/herdr-ssh-$gone-0/cm-abc" && sock "$H/herdr-ssh-$$-0/cm-def" || exit 1
+  ln -s "$H/keep" "$H/herdr-ssh-$gone-1"
+  herdr_mux_sweep
+  [ ! -e "$H/herdr-ssh-$gone-0" ] || exit 2
+  grep -q -- "-O exit -S $H/herdr-ssh-$gone-0/cm-abc" "$T/mux.log" || exit 3
+  [ -S "$H/herdr-ssh-$$-0/cm-def" ] && ! grep -q cm-def "$T/mux.log" || exit 4   # its herdr still runs: untouched
+  [ -d "$H/herdr-ssh-x-0" ] && [ -L "$H/herdr-ssh-$gone-1" ] && [ -d "$H/keep" ] || exit 5   # not herdr's, a link: untouched
+  exit 0 ) && ok "herdr's ssh masters: a gone herdr's is ended and removed, a running one's and anything else stays" || bad "mux sweep: step $?"
 rm -rf "$T"; exit $fail

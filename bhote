@@ -875,6 +875,23 @@ collect_remote() {  # only the saved machines that are switched on; with the set
     mv "$offl.tmp.$$" "$offl" 2>/dev/null; mv "$AGENT_META_R.tmp.$$" "$AGENT_META_R" 2>/dev/null
     agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
 }
+# herdr (0.9) gives every `herdr --machine` call an ssh master of its own (ControlPersist=yes, the socket in <tmp>/herdr-ssh-<pid>-<n>/)
+# and nothing ends it after the call: the collector's calls left one per round, thousands overnight, until fork failed. The masters
+# of herdr processes that are gone are ended here; a running herdr's (the server's, a call in progress) stay.
+herdr_mux_sweep() {
+    local t d o s seen=" " tmps=(/tmp "${TMPDIR:-/tmp}"); [ -n "${BHOTE_HERDR_TMP:-}" ] && tmps=("$BHOTE_HERDR_TMP")   # (herdr: $TMPDIR, else /tmp)
+    for t in "${tmps[@]}"; do
+        t=${t%/}; case "$seen" in *" $t "*) continue ;; esac; seen="$seen$t "
+        for d in "$t"/herdr-ssh-*-*; do
+            [ -d "$d" ] && [ ! -L "$d" ] && [ -O "$d" ] || continue
+            o=${d##*/herdr-ssh-}; o=${o%%-*}
+            case "$o" in ''|*[!0-9]*) continue ;; esac
+            kill -0 "$o" 2>/dev/null && continue                 # its herdr still runs
+            for s in "$d"/cm-*; do [ -S "$s" ] && "${BHOTE_SSH:-ssh}" -F /dev/null -o BatchMode=yes -O exit -S "$s" herdr >/dev/null 2>&1 </dev/null; done
+            rm -rf "$d"
+        done
+    done
+}
 remind_waiting() {  # once per waiting topic that waits longer than WAIT_REMIND hours: a notification (remembered locally)
     local h i f now id; cfg_var h WAIT_REMIND 24; num_set h "$h" 24; [ "$h" -gt 0 ] || return 0
     topics_load; now=$(date +%s)
@@ -945,11 +962,11 @@ auto_assign() {
 }
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
-    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999 last_h=-999999 key_pid=""
-    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
+    local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999 last_h=-999999 key_pid="" mux_pid="" last_x=-999999
+    trap 'kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
     while true; do
-        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
+        kill -0 "$1" 2>/dev/null || { kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         lead=0
@@ -989,6 +1006,9 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             if [ -n "$KEYS_CACHE" ] && ! { [ -n "$key_pid" ] && kill -0 "$key_pid" 2>/dev/null; } \
                && { [ $(( SECONDS - last_h )) -ge 300 ] || { [ ! -s "$KEYS_CACHE" ] && [ $(( SECONDS - last_h )) -ge 20 ]; }; }; then
                 last_h=$SECONDS; ( keys_fetch ) & key_pid=$!
+            fi
+            if [ $(( SECONDS - last_x )) -ge 60 ] && ! { [ -n "$mux_pid" ] && kill -0 "$mux_pid" 2>/dev/null; }; then
+                last_x=$SECONDS; ( herdr_mux_sweep ) & mux_pid=$!           # the ssh masters herdr leaves behind (at start, then every minute)
             fi
             remind_waiting
             auto_assign

@@ -11,7 +11,7 @@ The same script runs in four roles:
 | Role | Started by | Does |
 |---|---|---|
 | **Panel** | `bhote` in a pane (the herdr plugin types it into the pane it opens) | Reads keys and mouse reports, draws a frame whenever what is shown would change (`bhote_main`, `bhote_paint`). Starts the collector in the background. |
-| **Collector** | every panel, in the background; only the one holding `collector.lock` works | Asks herdr for the agents (this machine every `LOCAL_EVERY` s, the others every `REMOTE_EVERY` s), merges the topics with the data location, runs auto-assign, the branch sync, the monitors, the Slack watch and the update check. Each round re-reads the settings. Ends when its panel ends. |
+| **Collector** | every panel, in the background; only the one holding `collector.lock` works | Asks herdr for the agents (this machine every `LOCAL_EVERY` s, the others every `REMOTE_EVERY` s), merges the topics with the data location, runs auto-assign, the branch sync, the monitors, the Slack watch and the update check, and ends the ssh masters herdr leaves behind (`herdr_mux_sweep`). Each round re-reads the settings. Ends when its panel ends. |
 | **Plugin hooks** | herdr, through `herdr-plugin/*.sh` | `open_panel.sh` opens the panel next to the agent pane; `on_event.sh` runs `bhote event` when an agent changes state (review topics, notifications, a poke for the panels); `dump.sh` hands the topics to another machine; `changed.sh` takes a pushed agent state; `focus.sh` jumps between agent and panel; `search.sh` runs `bhote find` in the popup. |
 | **CLI** | you, scripts, agents (`bhote add …`) | Works on the same files with the same functions and merges with the data location right after a change. |
 
