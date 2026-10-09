@@ -1083,6 +1083,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac   # muted (done) titles: readable
         [ "$gap" = 1 ] && bg=$CARDSEL
     fi
+    [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
     [ "$gap" = 1 ] && bl="${bar}▌${X}${bg} "                 # the status colour as a bar on the left edge (review blue, now orange, waiting yellow)
     if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▄; fi
     printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
