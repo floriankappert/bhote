@@ -166,4 +166,16 @@ CLAUDECODE=1 B now "$pid" >/dev/null 2>&1 && bad "an agent revived a parked topi
 [ "$(B show "$pid" --json | jq -r .status)" = later ] && ok "agent: the topic stays parked" || bad "parked topic moved"
 CLAUDECODE=1 B review "$pid" >/dev/null 2>&1 && bad "an agent moved a parked topic to review" || ok "agent: bhote review refuses a parked topic"
 B now "$pid" >/dev/null 2>&1; [ "$(B show "$pid" --json | jq -r .status)" = now ] && ok "user: bhote now works on a parked topic" || bad "user could not move it"
+# the card under a review topic: summary and the button's action; it goes with the review
+B add "Review card" >/dev/null; rid=$(B list --all --json | jq -r '[.[] | select(.title=="Review card")][0].id')
+B review "$rid" --summary "Two fixes done, one open" --look >/dev/null
+[ "$(B show "$rid" --json | jq -c '.review')" = '{"summary":"Two fixes done, one open","actions":[{"label":"Review ansehen","reply":null,"jump":true}]}' ] && ok "review --summary --look: the card with the jump button" || bad "review card: $(B show "$rid" --json | jq -c .review)"
+B review "$rid" --summary "x" --ask "Commit?" --reply "commit" >/dev/null 2>&1
+[ "$(B show "$rid" --json | jq -c '.review.actions')" = '[{"label":"Review ansehen","reply":null,"jump":true}]' ] && ok "review: an --ask never makes an action button, only the jump button" || bad "review --ask: $(B show "$rid" --json | jq -c .review.actions)"
+B review "$rid" --ask "Ship?" --ask "Drop?" >/dev/null 2>&1
+[ "$(B show "$rid" --json | jq -c '.review.actions')" = '[{"label":"Review ansehen","reply":null,"jump":true}]' ] && ok "review: two --ask: the jump button" || bad "review two --ask: $(B show "$rid" --json | jq -c .review.actions)"
+B review "$rid" --ask a --ask b --ask c --ask d >/dev/null 2>&1 && bad "review accepted four --ask" || ok "review: at most three --ask"
+B review "$rid" --reply x >/dev/null 2>&1 && bad "review accepted --reply without --ask" || ok "review: --reply needs an --ask before it"
+B review "$rid" --nope >/dev/null 2>&1 && bad "review accepted an unknown option" || ok "review: an unknown option is exit 1"
+B now "$rid" >/dev/null; [ "$(B show "$rid" --json | jq -c .review)" = null ] && ok "the review card goes when the topic leaves review" || bad "review card stayed: $(B show "$rid" --json | jq -c .review)"
 rm -rf "$T"; exit $fail

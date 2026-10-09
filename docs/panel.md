@@ -20,6 +20,7 @@ is selected.
 | `x` | mark done |
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
 | `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one (asks first; warns when the target belongs to another project) |
+| `1` (`y`) | the button of a review topic's card, *Review ansehen* (`bhote review --look`): focuses the topic's agent; the topic stays in review. A click on the button does the same |
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
 | `w` | the setup wizard's new steps, when the head says *New Features Available* |
 | `,` | settings (the full key list is under *Hotkeys* there; *Connections* holds the data location, remote agents, the Slack monitor and the machine codes; *Setup wizard* runs the wizard again) · `S` welcome screen · `q` quit |

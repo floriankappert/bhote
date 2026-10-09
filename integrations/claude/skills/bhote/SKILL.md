@@ -1,6 +1,6 @@
 ---
 name: bhote
-description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
+description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when the user answers your question or otherwise lets you go on after you handed work back (your topic is in review and you continue: put it back on now), when you finish or hand over a topic you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
 ---
 
 # bhote: topics next to herdr
@@ -36,17 +36,74 @@ the work belongs under review, also when nobody gave you a topic. Before you wri
 ```sh
 bhote current --json                       # your topic, or null
 bhote add "<the work, short>" -d "<what the user has to check or decide, at most 140 characters>" --json   # only when null
-bhote review <id>
+bhote review <id> --summary "<result, what is open, what only the user can do>" --look
 ```
+
+### The card: summary and the jump button
+
+The card is what the user reads **without opening your session**: a short summary and one button, *Review ansehen*, that takes
+the user to your session. There are **no buttons that trigger an action**: an answer can be *and* as well as *or* (commit **and**
+push, this **or** that), and one press cannot say which. The user types the answer in your session. Always pass `--look`
+(`--ask` and `--reply` still exist, but bhote turns them into the same jump button).
+
+**`--summary`** (at most 240 characters), in this order:
+
+1. the result in one clause,
+2. what is open or unverified (not committed, not tested, not deployed),
+3. anything only the user can do (rotate a secret, approve, log in), and the question or proposal you want answered, in short:
+   `Vorschlag: Commit + Push?`, `2 offene Punkte`.
+
+Not the way you got there. A warning that only stands in your long message gets lost; put it in the summary. With several open
+points, say how many (`Zwei offene Punkte: …`) and what blocks. Write it in the user's language.
+
+Your final message in the session says the same in full, with the proposal or the questions as its last lines, so that card and
+message never disagree.
+
+**Examples** (the situation → the text in the card):
+
+| Situation | Text in the card |
+|---|---|
+| Fix done, you want to commit | Fix im Export fertig, Tests grün. Nichts committet, nichts deployt. Vorschlag: Commit. |
+| Feature done, the user usually merges | Neue Filter im Report fertig, Tests grün. Nichts committet. Vorschlag: Commit, PR, Merge. |
+| You proposed creating a repository | Skripte und Doku liegen vor, nichts committet. Vorschlag: neues privates Repo `export-tools`. |
+| You wait for a deploy only the user can start | Fix gebaut und getestet. Zum Prüfen muss er in Staging deployt werden, das kannst nur du. |
+| You wait for a login on a device | Installation fertig. Es fehlt eine Anmeldung am Gerät, die nur du machen kannst. |
+| Two ways, you recommend the second | Zwei Wege: A läuft sofort lokal, B dauerhaft im Container. Ich empfehle B. |
+| A choice with your proposal | Ansicht fertig. Offen: welche Bereiche einklappbar sind. Vorschlag: nur Archiv und Berichte. |
+| Migration written, never run | Migration und Test geschrieben, Tests grün. Die Migration lief noch nicht gegen eine Datenbank. Nichts committet. |
+| A secret showed up in the chat | Aufgabe erledigt. Ein Zugangstoken lag im Klartext im Chat: bitte rotieren, das kannst nur du. |
+| Release prepared, version unclear | Release vorbereitet. Vorschlag 0.6.0 statt 0.5.9, weil viele Änderungen enthalten sind. |
+| Two open points | Zwei offene Punkte: Freigabe der Schnittstelle und der Fix für den Import. Details in der Session. |
+| An open scope question | Eintrag hängt an drei Datensätzen, Löschen kaskadiert. Offen: ganz löschen oder nur ausblenden? |
+| You need a fact from the user | Ich brauche eine Information von dir: Läuft die Anwendung im Produktivmodus? Davon hängt der Test ab. |
 
 bhote also watches herdr: when you wait for an answer or end your turn with a question and have no topic, a review topic
 "Question from <you>" appears by itself and goes away when you work again. A topic you create yourself, with what the user has to check or decide in the description,
 is still better: it tells the user what the question is.
 
-When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
+When the work is accepted and nothing is left, `bhote done <id>`. Going on after an answer is the next section.
 A topic the user parked (`later`) or closed (`done`) stays that way: `bhote now` refuses it for you. Do not work on it or move it
 again unless the user asks you to; then `bhote take <ref>`.
 Do not use `-w` for the user: waiting is for other people and things.
+
+## When the user answers and you go on
+
+A topic under review stays there until someone moves it, and the user does not: they just answer in your session. So when
+you handed work back (your topic is in `review`, or you asked a question) and the user's next message lets you continue (an
+answer, a decision, a permission, "go on"), put the topic back on `now` **as the first thing you do in that turn**, before
+you start working:
+
+```sh
+bhote current --json        # your topic (null: there is none, nothing to move)
+bhote now <id>              # review → now: the panel shows you as working on it again
+```
+
+The card's button only takes the user to your session and leaves the topic in `review`: when the user then writes to you, it is this
+section that puts it back on `now`.
+
+This is not for a topic the user parked or closed (`bhote now` refuses those, leave them). When the answer shows that the
+topic is finished after all, use `bhote done <id>` instead. Without this step the panel keeps showing "ready for review"
+while you are working, and the user cannot tell what is waiting for them.
 
 ## When you commit
 
