@@ -249,7 +249,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 
 ### `bhote version` · `bhote help`
 
-`bhote version` prints `bhote 0.5.8` (`--json`: `{"version":"0.5.8"}`); also `--version`, `-V`. `bhote help` (`-h`,
+`bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`
