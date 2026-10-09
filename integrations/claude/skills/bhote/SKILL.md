@@ -1,6 +1,6 @@
 ---
 name: bhote
-description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when you finish or hand over a topic you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
+description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when the user answers your question or otherwise lets you go on after you handed work back (your topic is in review and you continue: put it back on now), when you finish or hand over a topic you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
 ---
 
 # bhote: topics next to herdr
@@ -43,10 +43,26 @@ bhote also watches herdr: when you wait for an answer or end your turn with a qu
 "Question from <you>" appears by itself and goes away when you work again. A topic you create yourself, with what the user has to check or decide in the description,
 is still better: it tells the user what the question is.
 
-When the user answers and you go on, run `bhote now <id>`; when the work is accepted and nothing is left, `bhote done <id>`.
+When the work is accepted and nothing is left, `bhote done <id>`. Going on after an answer is the next section.
 A topic the user parked (`later`) or closed (`done`) stays that way: `bhote now` refuses it for you. Do not work on it or move it
 again unless the user asks you to; then `bhote take <ref>`.
 Do not use `-w` for the user: waiting is for other people and things.
+
+## When the user answers and you go on
+
+A topic under review stays there until someone moves it, and the user does not: they just answer in your session. So when
+you handed work back (your topic is in `review`, or you asked a question) and the user's next message lets you continue (an
+answer, a decision, a permission, "go on"), put the topic back on `now` **as the first thing you do in that turn**, before
+you start working:
+
+```sh
+bhote current --json        # your topic (null: there is none, nothing to move)
+bhote now <id>              # review → now: the panel shows you as working on it again
+```
+
+This is not for a topic the user parked or closed (`bhote now` refuses those, leave them). When the answer shows that the
+topic is finished after all, use `bhote done <id>` instead. Without this step the panel keeps showing "ready for review"
+while you are working, and the user cannot tell what is waiting for them.
 
 ## When you commit
 
