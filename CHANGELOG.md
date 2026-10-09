@@ -10,6 +10,12 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   `bhote add`; the "Question from" topics stay with `AUTO_REVIEW`.
 - A Dracula theme: `THEME=dracula` (settings › *Colours*), with the exact colours of the Dracula palette.
 
+### Fixed
+- The ssh masters that herdr leaves behind for every `herdr --machine` call (one per call, in `/tmp/herdr-ssh-*`) no
+  longer pile up: with `REMOTE_AGENTS` on and herdr 0.9.1 (`ControlPersist=yes`) they reached the process limit within a
+  night and every fork failed; herdr 0.9.3 ends them after 10 minutes but keeps their folders. The collector ends the
+  ones whose herdr is gone and removes the folders, at start and then every minute.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added
