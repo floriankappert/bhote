@@ -125,6 +125,10 @@ bhote current --json        # your topic (null: there is none, nothing to move)
 bhote now <id>              # review → now: the panel shows you as working on it again
 ```
 
+When the message is the reply of a card button (you handed back with `--ask`), bhote has already set the topic to `now`: look
+at `bhote current --json` and run `bhote now` only if it still says `review`. After `--look` the topic stays in review until the
+user writes to you, then it is this section.
+
 This is not for a topic the user parked or closed (`bhote now` refuses those, leave them). When the answer shows that the
 topic is finished after all, use `bhote done <id>` instead. Without this step the panel keeps showing "ready for review"
 while you are working, and the user cannot tell what is waiting for them.
