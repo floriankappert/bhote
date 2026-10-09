@@ -185,7 +185,7 @@
         "null"
       ],
       "additionalProperties": false,
-      "description": "The card an agent put under a review topic: what it did, and the buttons (at most three) with what each one sends to the agent. Null when the topic is not in review or has no card (`bhote review <ref> --summary … --ask … --reply …`).",
+      "description": "The card an agent put under a review topic: what it did and what is open, and the jump button *Review ansehen* (`bhote review <ref> --summary … --look`). Null when the topic is not in review or has no card.",
       "properties": {
         "summary": {
           "type": [

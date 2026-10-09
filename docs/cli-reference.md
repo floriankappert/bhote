@@ -101,16 +101,14 @@ Set the status: start or resume (`now`, also clears a waiting name), up next (`n
 When a **waiting** topic belongs to an agent (the agent created it, see the bhote skill) and you set it to `now`, that agent
 gets a prompt: "The wait is over (<who>): <title>. Go on with: <description>". `bhote now <ref> --quiet` skips the prompt.
 
-`review` takes a **card** for the panel: `--summary <text>` (what was done, at most 240 characters; a small card under the topic)
-and up to three buttons, each an `--ask <label>` (at most 24 characters, e.g. `Commit?`) optionally followed by its
-`--reply <text>` (at most 400 characters). Pressing a button (a click, or the keys `1` `2` `3`; `y` is the first) sends its reply to the
-topic's agent as if you had typed it and sets the topic to `now`. Without `--reply` the reply is the label without the question mark,
-in lower case. The card goes when the topic leaves review. `--look` instead of buttons makes the one generic button *Review ansehen*: it focuses the topic's agent, sends nothing and the topic stays
-in review (for a hand-back with several open points). `--json` shows the card as `"review": {"summary", "actions": [{"label", "reply", "jump"}]}`
-(`null` without a card).
+`review` takes a **card** for the panel: `--summary <text>` (what was done, what is open, what only you can do; at most 240 characters; a
+small card under the topic) and `--look`, which adds the one button *Review ansehen*: it focuses the topic's agent, sends nothing and the
+topic stays in review. There are no buttons that trigger an action, because an answer can be several things at once: `--ask <label>` (with an
+optional `--reply <text>`) is still accepted, but the card shows the same jump button instead (a note on stderr). A card goes when the topic leaves review.
+`--json` shows it as `"review": {"summary", "actions": [{"label", "reply", "jump"}]}` (`null` without a card; `reply` is `null` and `jump` is `true`).
 
 ```sh
-bhote review <id> --summary "Fix ready, tests green" --ask "Commit?" --reply "Commit the change" --ask "Drop?" --reply "Revert the change"
+bhote review <id> --summary "Fix ready, tests green, nothing committed. Proposal: commit." --look
 ```
 
 Run by an agent (a Claude Code session: `CLAUDECODE=1`), `review` and `done` send a herdr notification and record which

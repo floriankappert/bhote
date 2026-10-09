@@ -5071,10 +5071,14 @@ bhote_cli() {
                            --summary) rnote=${2:-}; shift ;;
                            --look) rasks=("Review ansehen"); rreps=("@jump"); rn=1 ;;           # the one generic button: jump to the agent, the topic stays in review
                            --ask) [ "$rn" -lt 3 ] || { echo "bhote: at most three --ask" >&2; return 1; }
-                                  rasks[$rn]=${2:-}; rreps[$rn]=""; rn=$(( rn + 1 )); shift ;;
+                                  rasks[$rn]=${2:-}; rreps[$rn]=""; rn=$(( rn + 1 )); shift ;;                  # (two or more: see below, they become the jump button)
                            --reply) [ "$rn" -gt 0 ] || { echo "bhote: --reply belongs to an --ask before it" >&2; return 1; }
                                     rreps[$(( rn - 1 ))]=${2:-}; shift ;;
                            *) echo "bhote: unknown option '$1' for review" >&2; return 1 ;; esac; shift; done
+                       if [ "$rn" -gt 0 ] && [ "${rasks[0]}" != "Review ansehen" ] || [ "$rn" -gt 1 ]; then   # an answer can be "and" as well as "or": no button triggers an action
+                           echo "bhote: the card has no action buttons (an answer may be several things): it shows 'Review ansehen' (--look)" >&2
+                           rasks=("Review ansehen"); rreps=("@jump"); rn=1
+                       fi
                        topic_set "$f" status review; agent_note "$f"; is_agent && notify "Ready for review" "$(topic_get "$f" title)" request
                        local ri rl="" rr="" lab rep
                        for (( ri = 0; ri < rn; ri++ )); do
