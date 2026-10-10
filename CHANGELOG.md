@@ -5,6 +5,15 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- `STORE=kharka` (settings › *Data location*, setup wizard step *Topics*): the topics merge with the local
+  [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub, also after one was
+  offline. Each topic is an entry `bhote.topics/<id>` (records: `bhote.projects/`, `bhote.machines/`,
+  `bhote.agentnums/`); the merge, its checks and the tombstones are the ones of the replica machine. The collector
+  follows `kharka watch` and is woken at once by a change on another machine; the merge every minute is a safety net.
+  A push is conditional (`--if-hlc`), and when kharka changed in between, the merge runs again at once. The summary
+  shows the hub (`hub offline`, writes pending) and kharka's own complaint when a merge fails; `KHARKA` names the binary.
+
 ## [0.7.0] - 2026-10-09
 
 ### Added

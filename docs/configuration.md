@@ -5,13 +5,14 @@ Settings live in one file, `~/.config/bhote/config` (`$XDG_CONFIG_HOME/bhote/con
 settings screen (`,`) and `bhote config set` write it; both check every value against its type. Unknown keys are kept as they are.
 
 Nothing that reaches another machine is on by default: bhote opens no ssh connection until `STORE=remote` or
-`REMOTE_AGENTS=on` says so.
+`REMOTE_AGENTS=on` says so, and talks to kharka only with `STORE=kharka`.
 
 | Key | Default | Settings screen | |
 |---|---|---|---|
-| `STORE` | `local` | Data location | `remote` keeps a replica of the topics on `STORE_MACHINE` ([data and sync](data-and-sync.md)). |
+| `STORE` | `local` | Data location | `remote` keeps a replica of the topics on `STORE_MACHINE`; `kharka` merges them with the local [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub ([data and sync](data-and-sync.md)). |
 | `STORE_MACHINE` | | Data location | The label of a saved herdr machine (`herdr machine list`). |
-| `SYNC_VIA` | `herdr` | Sync through | How topics travel to `STORE_MACHINE`: `herdr` (through herdr's own connection; each side pulls from the other) or `ssh` (bhote's own ssh; push and pull). See [data and sync](data-and-sync.md). |
+| `KHARKA` | | kharka binary (with `STORE=kharka`) | The kharka binary; empty: `kharka` on the `PATH`. The environment variable `KHARKA` comes first. |
+| `SYNC_VIA` | `herdr` | Sync through (not with `STORE=kharka`) | How topics travel to `STORE_MACHINE`: `herdr` (through herdr's own connection; each side pulls from the other) or `ssh` (bhote's own ssh; push and pull). See [data and sync](data-and-sync.md). |
 | `PUSH_STATES` | `on` | Push agent states at once | With `REMOTE_AGENTS` on: when an agent here changes its state, the other machines are told at once through herdr (the plugin action `changed`), so their panels show it within about a second instead of after `REMOTE_EVERY`. |
 | `REMOTE_AGENTS` | `off` | Remote agents (via herdr) | List the agents of the saved herdr machines, too (herdr asks them over its ssh connection). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
