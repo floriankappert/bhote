@@ -5,6 +5,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-10
+
 ### Added
 - `STORE=kharka` (settings › *Data location*, setup wizard step *Topics*): the topics merge with the local
   [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub, also after one was
@@ -150,7 +152,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [0.1.0] - 2026-10-07
 - First release: topics and agents next to herdr.
 
-[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/floriankappert/bhote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/floriankappert/bhote/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/floriankappert/bhote/compare/v0.5.8...v0.6.0
 [0.5.8]: https://github.com/floriankappert/bhote/compare/v0.5.7...v0.5.8
