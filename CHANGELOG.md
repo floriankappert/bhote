@@ -5,6 +5,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Fixed
+- A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
+  answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent
+  worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
+
 ### Added
 - `STORE=kharka` (settings › *Data location*, setup wizard step *Topics*): the topics merge with the local
   [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub, also after one was
