@@ -232,6 +232,21 @@ rm -f "$TOPIC_DIR"/*.topic; ev w9:p1 working; ev w9:p1 blocked; [ "$(ls "$TOPIC_
 rm -f "$TOPIC_DIR"/*.topic; topic_new "Real work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w9:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
 ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$tf" status)" = review ] && ok "auto review: a topic in work goes to review" || bad "now->review: $(topic_get "$tf" status)"
 ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and back to now when the agent works again" || bad "review->now: $(topic_get "$tf" status)"
+# a working agent without a topic gets a card on now (after 15 s of work); gone when it stops or gets a topic of its own
+(
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$RUN_DIR/cards"; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Fix the export" > "$AGENT_LOCAL"
+agent_cards; [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: no card before 15 s of work" || bad "card too early"
+printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; agent_cards
+cf=$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | head -1)
+[ "$(ls "$TOPIC_DIR"/*.topic | wc -l | tr -d ' ')" = 1 ] && [ "$(topic_get "$cf" status)" = now ] && [ "$(topic_get "$cf" title)" = "Fix the export" ] && [ "$(topic_get "$cf" agent_pane)" = w9:p1 ] && ok "agent cards: a working agent without a topic gets one card on now" || bad "agent card: $cf"
+printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" title)" = "Next step" ] && ok "agent cards: the title follows what the agent works on" || bad "card title"
+topic_new "Own topic" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$of" agent_pane w9:p1; topic_set "$of" agent_machine "$HOST"
+agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: the card goes when the agent gets a topic of its own" || bad "card stayed with own topic"
+rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
+printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: the card goes when the agent stops" || bad "card stayed when idle"
+cfg_set AGENT_CARDS off; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}x" > "$AGENT_LOCAL"; rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
+[ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: AGENT_CARDS=off makes none" || bad "card with setting off"
+) && true
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (
 rm -f "$TOPIC_DIR"/*.topic; project_new "Shop"; shop=$PROJ_ID; project_new "Acme"; bil=$PROJ_ID; project_new "Acme Marketing"; mkt=$PROJ_ID

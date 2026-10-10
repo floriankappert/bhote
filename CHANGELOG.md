@@ -6,6 +6,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- `AGENT_CARDS` (settings: *Cards for agents without a topic*, default `on`): a working agent that has no topic gets a card
+  on *Now* by itself, titled with what it works on; it goes when the agent stops or gets a topic of its own.
+
+### Added
 - `STORE=kharka` (settings › *Data location*, setup wizard step *Topics*): the topics merge with the local
   [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub, also after one was
   offline. Each topic is an entry `bhote.topics/<id>` (records: `bhote.projects/`, `bhote.machines/`,

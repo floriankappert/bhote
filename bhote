@@ -90,6 +90,7 @@ AUTO_ASSIGN|off|bool|A running (now) topic with a project and without an agent g
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
+AGENT_CARDS|on|bool|A working agent without a topic gets a card on now by itself (title: what it works on), gone when it stops working or gets a topic; 15 s of work first
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
 SLACK_WATCH|off|bool|Watch the Slack channels pinned to waiting topics, from this machine (through Claude Code and its Slack connector; one machine is enough): a new message from someone else sets the topic to review
@@ -1080,6 +1081,47 @@ project_autoselect() {  # project_autoselect <text>: PROJ_ID of the project whos
     [ -n "$best" ] && [ "$tie" = 0 ] || return 1
     PROJ_ID=$best
 }
+agent_cards() {  # a working agent of this machine without a topic gets a card on now (auto_now=1); it goes when the agent stops or gets a topic
+    local on; cfg_var on AGENT_CARDS on; [ "$on" = on ] && [ -r "$AGENT_LOCAL" ] || return 0
+    local i m id st name task key f title now cd="$RUN_DIR/cards" work=$'\n' owned=$'\n' cards=$'\n'
+    mkdir -p "$cd"; now=$(date +%s)
+    while IFS=$US read -r m id st name task; do
+        [ "$m" = "$HOST" ] || continue
+        key=${id//[^A-Za-z0-9_-]/_}
+        case "$st" in
+            working|testing) work="$work$id"$'\n'; [ -e "$cd/$key" ] || printf '%s\n' "$now" > "$cd/$key" ;;   # (the file: since when it works)
+            *) rm -f "$cd/$key" ;;
+        esac
+    done < "$AGENT_LOCAL"
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
+        [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
+        case "${T_STATUS[$i]}" in now|review|waiting|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
+    done
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
+        f=${T_FILE[$i]}; [ "$(topic_get "$f" auto_now)" = 1 ] || continue
+        case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) ;; *) topic_set "$f" deleted 1; continue ;; esac       # the agent stopped
+        case "$owned" in *$'\n'"${T_AP[$i]}"$'\n'*) topic_set "$f" deleted 1; continue ;; esac            # it got a topic of its own
+        cards="$cards${T_AP[$i]}"$'\n'
+        while IFS=$US read -r m id st name task; do
+            [ "$m" = "$HOST" ] && [ "$id" = "${T_AP[$i]}" ] || continue
+            title=${task:-$name}; title=${title//[[:cntrl:]]/}; [ -n "$title" ] && [ "$title" != "${T_TITLE[$i]}" ] && topic_set "$f" title "${title:0:500}"
+        done < "$AGENT_LOCAL"
+    done
+    while IFS=$US read -r m id st name task; do
+        [ "$m" = "$HOST" ] || continue
+        case "$work" in *$'\n'"$id"$'\n'*) ;; *) continue ;; esac
+        case "$owned$cards" in *$'\n'"$id"$'\n'*) continue ;; esac
+        key=${id//[^A-Za-z0-9_-]/_}; [ $(( now - $(num_or "$(cat "$cd/$key" 2>/dev/null)" "$now") )) -ge 15 ] || continue   # short turns make no card
+        title=${task:-$name}
+        topic_new "$title" "" "" || continue
+        f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+        topic_set "$f" auto_now 1; topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$HOST"; topic_set "$f" agent_pane "$id"
+    done < "$AGENT_LOCAL"
+    return 0
+}
 auto_assign() {
     local on pref i k m id st name task f now used="" pass t pick sess tpj SEL_ID=""
     cfg_var on AUTO_ASSIGN off; [ "$on" = on ] || return 0
@@ -1173,6 +1215,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             fi
             remind_waiting
             auto_assign
+            agent_cards
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
@@ -1937,6 +1980,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     [ "$(cfg_get AUTO_ASSIGN off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|AUTO_ASSIGN_MACHINE|Prefer agents on"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CARDS|Cards for agents without a topic"
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
     SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
     SET_ROWS[${#SET_ROWS[@]}]="enum|THEME|Colours"
@@ -4686,6 +4730,7 @@ cli_event() {
         if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } \
            || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && { [ -z "$sess" ] || [ -z "${T_AS[$i]}" ]; }; }; then
             f=${T_FILE[$i]}
+            [ "$(topic_get "$f" auto_now)" = 1 ] && continue                              # (the card bhote made for an agent without a topic is no topic of its own)
             case "${T_STATUS[$i]}" in now|review|waiting|next) hit=1 ;; esac             # (it has a topic: no extra one)
             case "$st" in
                 working)                                           # the user answered: what bhote put under review for it goes away or back
