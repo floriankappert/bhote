@@ -7,10 +7,14 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [0.8.0] - 2026-10-10
 
+### Fixed
+- `bhote now <ref>` run by an agent no longer takes over a topic that belongs to another agent (that left two cards for one agent in
+  *Now*); `bhote take <ref>` does that on purpose.
+
 ### Added
-- A status of its own, `testing`: when an agent stops (or hands the topic back with `bhote review`) while a test suite runs, also one
-  in the background, its topic is a card in *Testing* instead of *Review*. When the tests are done it goes to review, when the agent
-  works again back to now. `bhote testing <ref>` sets it by hand. `TESTS_BUSY` is on by default now (a testing agent counts as busy).
+- A status of its own, `testing`: while a test suite runs in an agent's worktree (read from the live status files in
+  `TEST_STATUS_DIR`, also a run in the background) the agent's topic is a card in *Testing*, whether the agent works or not. When the
+  tests are done it goes to now (the agent works) or to review (the agent is idle). `bhote testing <ref>` sets it by hand. `TESTS_BUSY` is on by default now (a testing agent counts as busy).
 
 ### Changed
 - Only *Review*, *Now* and *Testing* topics are cards. *Next*, *Waiting* and parked (*Later*) topics are lines grouped by status, like

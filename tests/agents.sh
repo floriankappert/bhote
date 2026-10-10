@@ -277,17 +277,21 @@ SEL_ID=${l[1]}; sel_leave; [ "$SEL_ID" = "${l[2]}" ] && ok "x: the selection goe
 SEL_ID=${l[2]}; sel_leave; [ "$SEL_ID" = "${l[1]}" ] && ok "x: the last of a section: the one before it" || bad "sel_leave last: $SEL_ID"
 SEL_ID=${l[4]}; sel_leave; [ "$SEL_ID" = "${l[3]}" ] && ok "x: in Later it stays in Later" || bad "sel_leave later: $SEL_ID"
 ) && true
-# an agent that stops while tests run (also in the background): its topic is in the status testing, review follows when the tests are done
+# the status testing follows the live test status files of the agent's worktree (TEST_STATUS_DIR): running tests = testing, also with a working agent
 (
 rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; cfg_set TESTS_BUSY on; notify() { :; }
+wt="$T/trees/Shop"; mkdir -p "$wt" "$T/live"; cfg_set TEST_STATUS_DIR "$T/live"; printf '%s\n' "w1:p1${US}$wt" > "$AGENT_CWD"
+live() { printf '{"tree":"Shop","suite":"server","done":3,"total":10,"startedAt":1,"updatedAt":%s000,"ok":%s}\n' "$(date +%s)" "$1" > "$T/live/Shop.server.json"; }
 printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"
 topic_new "Test work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w1:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
-topic_set "$tf" delivered 1; ev w1:p1 working; topic_set "$tf" updated $(( $(date +%s) - 20 ))
-ev w1:p1 idle
-[ "$(topic_get "$tf" status)" = testing ] && ok "testing: an agent that stops while tests run: its topic is in testing" || bad "testing hold: $(topic_get "$tf" status)"
-printf '%s\n' "$HOST${US}w1:p1${US}testing${US}Shop${US}t" > "$AGENT_LOCAL"; tests_review; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: the tests still run: still testing" || bad "testing wait: $(topic_get "$tf" status)"
-printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; tests_review; [ "$(topic_get "$tf" status)" = review ] && ok "testing: the tests are done: the topic goes to review" || bad "testing done: $(topic_get "$tf" status)"
-topic_set "$tf" status testing; ev w1:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "testing: the agent works again: back to now" || bad "testing->now: $(topic_get "$tf" status)"
+pane_tests_running w1:p1 && bad "no live file: no tests" || ok "testing: no status file, no tests running"
+live null; pane_tests_running w1:p1 && ok "testing: a fresh unfinished status file means tests run" || bad "tests not seen"
+tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: tests run in its worktree: the topic is in testing (agent working too)" || bad "now->testing: $(topic_get "$tf" status)"
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: an idle agent, tests still run: still testing" || bad "testing hold: $(topic_get "$tf" status)"
+live true; tests_sync; [ "$(topic_get "$tf" status)" = review ] && ok "testing: tests done, the agent idle: review" || bad "testing->review: $(topic_get "$tf" status)"
+topic_set "$tf" status now; live null; tests_sync; printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"; live true; tests_sync
+[ "$(topic_get "$tf" status)" = now ] && ok "testing: tests done, the agent works: back to now" || bad "testing->now: $(topic_get "$tf" status)"
+printf '{"tree":"Shop","suite":"server","done":3,"total":10,"startedAt":1,"updatedAt":1000,"ok":null}\n' > "$T/live/Shop.server.json"; pane_tests_running w1:p1 && bad "a stale file counts" || ok "testing: a status file untouched for 30 s counts as gone"
 ) && true
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (

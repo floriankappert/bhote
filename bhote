@@ -1170,7 +1170,7 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         f=${T_FILE[$i]}; [ "$(topic_get "$f" auto_now)" = 1 ] || continue
-        case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) ;; *) topic_set "$f" deleted 1; continue ;; esac       # the agent stopped
+        case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) ;; *) [ "${T_STATUS[$i]}" = testing ] || { topic_set "$f" deleted 1; continue; } ;; esac       # the agent stopped (but not while its tests run)
         case "$owned" in *$'\n'"${T_AP[$i]}"$'\n'*) topic_set "$f" deleted 1; continue ;; esac            # it got a topic of its own
         cards="$cards${T_AP[$i]}"$'\n'
         while IFS=$US read -r m id st name task; do
@@ -1190,20 +1190,27 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     done < "$AGENT_LOCAL"
     return 0
 }
-tests_review() {  # a topic in testing (its agent stopped while tests ran): review once the tests are done; now when the agent works again
+tests_sync() {  # the status testing follows the test runs: a topic of a local agent goes to testing while tests run in its worktree (the agent
+    # works or not), and when they are done back to now (the agent works, or the topic is an agent's own card) or to review (the agent is idle)
     [ -r "$AGENT_LOCAL" ] || return 0
-    local i f st m id name task; topics_load
+    local i f st m id name task run; topics_load
     for (( i = 0; i < T_N; i++ )); do
-        [ "${T_STATUS[$i]}" = testing ] && [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
-        f=${T_FILE[$i]}
+        case "${T_STATUS[$i]}" in now|testing) ;; *) continue ;; esac
+        [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
+        f=${T_FILE[$i]}; pane_tests_running "${T_AP[$i]}" && run=1 || run=0
+        if [ "${T_STATUS[$i]}" = now ]; then
+            [ "$run" = 1 ] && [ -z "${T_TN[$i]}" ] && topic_set "$f" status testing
+            continue
+        fi
+        [ "$run" = 0 ] || continue
         st=gone; while IFS=$US read -r m id st name task; do [ "$m" = "$HOST" ] && [ "$id" = "${T_AP[$i]}" ] && break; st=gone; done < "$AGENT_LOCAL"
         case "$st" in
-            testing) ;;                                                                       # the tests still run
-            working) topic_set "$f" status now; topic_set "$f" auto_back "" ;;                # it works again
             off-*|unknown) ;;
-            *) topic_set "$f" status review                                                   # done (or the agent is gone): it is for you to check now
-               [ -n "$(topic_get "$f" review_note)$(topic_get "$f" review_ask)" ] || topic_set "$f" auto_back 1   # (a card the agent made meanwhile stays)
-               notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request ;;
+            working|testing) topic_set "$f" status now; topic_set "$f" auto_back "" ;;      # the tests are over, the agent goes on
+            *) if [ "$(topic_get "$f" auto_now)" = 1 ]; then topic_set "$f" status now        # its own card: the card goes with the idle agent
+               else topic_set "$f" status review                                              # the agent is idle: for you to check
+                   [ -n "$(topic_get "$f" review_note)$(topic_get "$f" review_ask)" ] || topic_set "$f" auto_back 1   # (a card the agent made meanwhile stays)
+                   notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request; fi ;;
         esac
     done
     return 0
@@ -1302,7 +1309,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             remind_waiting
             auto_assign
             agent_cards
-            tests_review
+            tests_sync
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
@@ -4825,9 +4832,18 @@ pane_question_text() {  # pane_question_text: stdin = the pane's text; prints th
                 exit
             } }'
 }
-pane_tests_running() {  # pane_tests_running <pane>: 0 while a test run goes in the pane's workspace (its tests token starts with ◌), also one in the background
+pane_tests_running() {  # pane_tests_running <pane>: 0 while a test run goes in the agent's worktree (a live status file, TEST_STATUS_DIR: not finished, touched in the last 30 s); also one in the background
     [ "$(cfg_get TESTS_BUSY on)" = on ] || return 1
-    herdr workspace list 2>/dev/null | jq -e --arg w "${1%%:*}" '[.result.workspaces[]? | select(.workspace_id == $w) | ((.tokens.tests // "") | tostring | startswith("◌"))] | any' >/dev/null 2>&1
+    local pane=$1 cwd="" p c dir top tree f
+    [ -r "$AGENT_CWD" ] && while IFS=$US read -r p c; do [ "$p" = "$pane" ] && { cwd=$c; break; }; done < "$AGENT_CWD"
+    [ -n "$cwd" ] || return 1
+    top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || top=$cwd; tree=${top##*/}      # (the reporter names the file after the worktree's directory)
+    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
+    for f in "$dir/$tree".*.json; do
+        [ -f "$f" ] || continue
+        jq -e '(.finished != true) and (.ok == null) and ((.total // 0) > 0) and (((.updatedAt // 0) / 1000) > (now - 30))' "$f" >/dev/null 2>&1 && return 0
+    done
+    return 1
 }
 cli_event() {
     local ev pane st sess i f now; ev=${HERDR_PLUGIN_EVENT_JSON:-}; [ -n "$ev" ] || ev=$(head -c 65536)
@@ -4855,7 +4871,6 @@ cli_event() {
             case "$st" in
                 working)                                           # the user answered: what bhote put under review for it goes away or back
                     if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
-                    elif [ "${T_STATUS[$i]}" = testing ]; then topic_set "$f" status now; topic_set "$f" auto_back ""      # (it works again: no review is due)
                     elif [ "${T_STATUS[$i]}" = review ] && { [ "$(topic_get "$f" auto_back)" = 1 ] || [ "$prev" != working ]; }; then
                         topic_set "$f" status now; topic_set "$f" auto_back ""     # (any review topic: the agent working again is the answer; no need for the agent to remember)
                     fi ;;
@@ -5496,7 +5511,10 @@ bhote_cli() {
                        if [ "$(topic_get "$f" status)" = waiting ] && [ -n "$(topic_get "$f" agent_pane)" ] && [ -z "${CLAUDECODE:-}" ] && [ "${1:-}" != --quiet ]; then
                            bhote_info; topic_resume "$f"            # the wait is over: its agent gets told and goes on
                        else topic_set "$f" status now; topic_set "$f" waiting_for ""
-                           [ -n "${CLAUDECODE:-}" ] && [ "$(topic_get "$f" agent_pane)" != "${HERDR_PANE_ID:-}" ] && agent_claim "$f"   # an agent starts it: it is its topic now
+                           if [ -n "${CLAUDECODE:-}" ] && [ "$(topic_get "$f" agent_pane)" != "${HERDR_PANE_ID:-}" ]; then
+                               if [ -z "$(topic_get "$f" agent_pane)" ]; then agent_claim "$f"
+                               else echo "bhote: this topic belongs to $(topic_get "$f" agent) already: not taken over (bhote take <ref> to take it over)" >&2; fi
+                           fi   # an agent starts it: it is its topic now
                        fi ;;
                   take) agent_claim "$f" || { echo "bhote: take is for an agent in herdr (HERDR_PANE_ID)" >&2; return 1; }
                         topic_set "$f" status now; topic_set "$f" waiting_for ""; poke ;;
