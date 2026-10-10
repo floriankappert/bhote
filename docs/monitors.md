@@ -1,7 +1,7 @@
 # Deployment and test monitor
 
 Two optional blocks between the done topics and the agents: the last **deployments** and the last **test runs** of your
-projects, seven each (`MONITOR_ROWS`, the rest is counted as “+3 more”; a running entry shows a progress bar). The setup wizard asks for both (step *Monitors*); settings › *Connections* switches
+projects, four each (`MONITOR_ROWS`, the rest is counted as “+3 more”; a running entry shows a progress bar). The setup wizard asks for both (step *Monitors*); settings › *Connections* switches
 them, their modules and their connections; settings › *Projects* › *name* › *CI* holds each project's CI.
 
 ```

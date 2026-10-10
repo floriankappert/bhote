@@ -16,7 +16,7 @@ wide, with a small sheepdog that guards the herd.
 ## Features
 
 - **Topics** move through `now`, `next`, `waiting` (for a name, with a date), `review`, `later` and `done`, each with an optional description.
-  The panel shows what is on (review, now, next, waiting); the last done topics sit in their own area, with the agent that did them.
+  The panel shows review and now as cards, next, waiting and parked ones as lines grouped by status; the last done topics sit in their own area, with the agent that did them.
 - **Agents of all machines** in one list, grouped by project: working ones in Claude orange, ones that need you in red, idle ones grey,
   with the topic each works on. Every agent has a fixed number on its machine (`MAC4`, `OMR1`), also a ref for the CLI.
 - **Start a topic on a free agent** (`s`): bhote sends title and description to its pane. With `AUTO_ASSIGN` a `now` topic is started by itself on the next free agent of its project.

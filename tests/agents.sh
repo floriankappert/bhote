@@ -19,8 +19,9 @@ chmod +x "$T/bin/herdr"; export PATH="$T/bin:$PATH"
 # shellcheck disable=SC1091
 . ./bhote
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
+cfg_set TESTS_BUSY off
 out=$(collect_one Mac)
-echo "$out" | grep -q "^Mac${US}w1:p1${US}idle" && ok "setting off (default): a running test does not change the state" || bad "default must ignore tests: $out"
+echo "$out" | grep -q "^Mac${US}w1:p1${US}idle" && ok "setting off: a running test does not change the state" || bad "default must ignore tests: $out"
 cfg_set TESTS_BUSY on
 out=$(collect_one Mac)
 echo "$out" | grep -q "^Mac${US}w1:p1${US}testing" && ok "a running test makes a free agent busy (testing)" || bad "testing state: $out"
@@ -232,6 +233,66 @@ rm -f "$TOPIC_DIR"/*.topic; ev w9:p1 working; ev w9:p1 blocked; [ "$(ls "$TOPIC_
 rm -f "$TOPIC_DIR"/*.topic; topic_new "Real work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w9:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
 ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$tf" status)" = review ] && ok "auto review: a topic in work goes to review" || bad "now->review: $(topic_get "$tf" status)"
 ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and back to now when the agent works again" || bad "review->now: $(topic_get "$tf" status)"
+# a topic the agent put under review itself (bhote review) goes back to now when it starts working again; a working event while it already works changes nothing
+topic_set "$tf" status review; topic_set "$tf" auto_back ""; rm -rf "$SHARED_DIR/evstate"; ev w9:p1 idle
+ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "review: a topic handed back with bhote review goes to now when the agent works again" || bad "review->now (manual): $(topic_get "$tf" status)"
+topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" = review ] && ok "review: a repeated working event while it works changes nothing" || bad "review kept: $(topic_get "$tf" status)"
+# a working agent without a topic gets a card on now (after 15 s of work); gone when it stops or gets a topic of its own
+(
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$RUN_DIR/cards"; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Fix the export" > "$AGENT_LOCAL"
+agent_cards; [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: no card before 15 s of work" || bad "card too early"
+printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; agent_cards
+cf=$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | head -1)
+[ "$(ls "$TOPIC_DIR"/*.topic | wc -l | tr -d ' ')" = 1 ] && [ "$(topic_get "$cf" status)" = now ] && [ "$(topic_get "$cf" title)" = "Fix the export" ] && [ "$(topic_get "$cf" agent_pane)" = w9:p1 ] && ok "agent cards: a working agent without a topic gets one card on now" || bad "agent card: $cf"
+printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" title)" = "Next step" ] && ok "agent cards: the title follows what the agent works on" || bad "card title"
+topic_new "Own topic" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$of" agent_pane w9:p1; topic_set "$of" agent_machine "$HOST"
+agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: the card goes when the agent gets a topic of its own" || bad "card stayed with own topic"
+rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
+printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: the card goes when the agent stops" || bad "card stayed when idle"
+cfg_set AGENT_CARDS off; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}x" > "$AGENT_LOCAL"; rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
+[ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: AGENT_CARDS=off makes none" || bad "card with setting off"
+) && true
+# groups show ten lines, then a selectable "+N more"; open it with Enter/click, close it again; the old ones (ARCHIVE_DAYS) are archived
+(
+rm -f "$TOPIC_DIR"/*.topic; EXPANDED=" "; SEL_ID=""; NOW=$(date +%s)
+for k in 1 2 3 4 5 6 7 8 9 10 11 12; do topic_new "Next $k" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status next; done
+topic_new "Old one" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$of" status later; topic_set "$of" updated $(( NOW - 8 * 86400 ))
+topics_load; topics_plan
+v=0; for (( i = 0; i < T_N; i++ )); do [ "${PLAN_VIS[$i]}" = 1 ] && v=$(( v + 1 )); done
+[ "$v" = 10 ] && [ "$PLAN_ARCH" = 1 ] && [ "$PLAN_N_next" = 12 ] && ok "lines: ten of a group, the one older than seven days is archived" || bad "plan: vis=$v arch=$PLAN_ARCH next=$PLAN_N_next"
+[ "${SEL_LIST[10]}" = more:next ] && [ "${#SEL_LIST[@]}" = 11 ] && ok "lines: the arrow keys reach '+N more'" || bad "sel list: ${SEL_LIST[*]}"
+SEL_ID=${SEL_LIST[9]}; sel_move +1; [ "$SEL_ID" = more:next ] && ok "sel_move: down from the tenth lands on '+2 more'" || bad "sel_move to more: $SEL_ID"
+[ -z "$(sel_file)" ] && ok "'+N more' is no topic: the actions find no file" || bad "sel_file on more"
+toggle_expand next; topics_plan; v=0; for (( i = 0; i < T_N; i++ )); do [ "${PLAN_VIS[$i]}" = 1 ] && v=$(( v + 1 )); done
+[ "$v" = 12 ] && [ "${SEL_LIST[${#SEL_LIST[@]}-1]}" = more:next ] && ok "'+N more' opened: all lines, and a 'show less' row to select" || bad "expanded: vis=$v last=${SEL_LIST[*]}"
+toggle_expand next; topics_plan; [ "${PLAN_BEFORE[$(( 0 ))]:-}" = "" ] && ok "toggle: closed again" || bad "toggle close"
+) && true
+# checking off a topic: the selection goes to the next one of its section (else the one before), not to the done list
+(
+rm -f "$TOPIC_DIR"/*.topic; EXPANDED=" "; SEL_ID=""
+for k in 1 2 3; do topic_new "Nx $k" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status next; eval "nx$k=$NEW_TOPIC_ID"; done
+for k in 1 2; do topic_new "Lt $k" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status later; eval "lt$k=$NEW_TOPIC_ID"; done
+topics_load; topics_plan; l=("${SEL_LIST[@]}")                                   # (same-second ids: the order is the file order)
+SEL_ID=${l[1]}; sel_leave; [ "$SEL_ID" = "${l[2]}" ] && ok "x: the selection goes to the next item of its section" || bad "sel_leave middle: $SEL_ID"
+SEL_ID=${l[2]}; sel_leave; [ "$SEL_ID" = "${l[1]}" ] && ok "x: the last of a section: the one before it" || bad "sel_leave last: $SEL_ID"
+SEL_ID=${l[4]}; sel_leave; [ "$SEL_ID" = "${l[3]}" ] && ok "x: in Later it stays in Later" || bad "sel_leave later: $SEL_ID"
+) && true
+# the status testing follows the live test status files of the agent's worktree (TEST_STATUS_DIR): running tests = testing, also with a working agent
+(
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; cfg_set TESTS_BUSY on; notify() { :; }
+wt="$T/trees/Shop"; mkdir -p "$wt" "$T/live"; cfg_set TEST_STATUS_DIR "$T/live"; printf '%s\n' "w1:p1${US}$wt" > "$AGENT_CWD"
+live() { printf '{"tree":"Shop","suite":"server","done":3,"total":10,"startedAt":1,"updatedAt":%s000,"ok":%s}\n' "$(date +%s)" "$1" > "$T/live/Shop.server.json"; }
+printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"
+topic_new "Test work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w1:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
+pane_tests_running w1:p1 && bad "no live file: no tests" || ok "testing: no status file, no tests running"
+live null; pane_tests_running w1:p1 && ok "testing: a fresh unfinished status file means tests run" || bad "tests not seen"
+tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: tests run in its worktree: the topic is in testing (agent working too)" || bad "now->testing: $(topic_get "$tf" status)"
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: an idle agent, tests still run: still testing" || bad "testing hold: $(topic_get "$tf" status)"
+live true; tests_sync; [ "$(topic_get "$tf" status)" = review ] && ok "testing: tests done, the agent idle: review" || bad "testing->review: $(topic_get "$tf" status)"
+topic_set "$tf" status now; live null; tests_sync; printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"; live true; tests_sync
+[ "$(topic_get "$tf" status)" = now ] && ok "testing: tests done, the agent works: back to now" || bad "testing->now: $(topic_get "$tf" status)"
+printf '{"tree":"Shop","suite":"server","done":3,"total":10,"startedAt":1,"updatedAt":1000,"ok":null}\n' > "$T/live/Shop.server.json"; pane_tests_running w1:p1 && bad "a stale file counts" || ok "testing: a status file untouched for 30 s counts as gone"
+) && true
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (
 rm -f "$TOPIC_DIR"/*.topic; project_new "Shop"; shop=$PROJ_ID; project_new "Acme"; bil=$PROJ_ID; project_new "Acme Marketing"; mkt=$PROJ_ID
