@@ -5,6 +5,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Changed
+- The bhote skill starts with the rule *topic back on `now` when the user answers after a review*, as the first step of a
+  turn instead of a section further down, where it was overlooked.
+
 ## [0.8.0] - 2026-10-10
 
 ### Fixed
