@@ -4682,9 +4682,10 @@ cli_event() {
     topics_load; now=$(date +%s)
     local hit=0 auto
     for (( i = 0; i < T_N; i++ )); do
-        # the session decides when both sides know it; a pane alone only on this machine, and only with no other session on record
+        # the session decides when both sides know it; a pane alone only on this machine, and only with no session on record (after /clear the
+        # pane runs a new session: an event without a session id must not hand the old session's topic over)
         if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } \
-           || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && { [ -z "$sess" ] || [ -z "${T_AS[$i]}" ]; }; }; then
+           || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && [ -z "${T_AS[$i]}" ]; }; then
             f=${T_FILE[$i]}
             case "${T_STATUS[$i]}" in now|review|waiting|next) hit=1 ;; esac             # (it has a topic: no extra one)
             case "$st" in
