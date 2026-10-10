@@ -109,7 +109,7 @@ TEST_STATUS_DIR|~/.cache/bhote/test-status|text|Folder with live test status fil
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends its turn with a question gets a review topic of its own (the question is its description); it goes when the agent works again
-MONITOR_ROWS|7|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
+MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
 THEME|terminal|enum:terminal:catppuccin:dracula|Colours: terminal (follows the terminal and system theme), catppuccin or dracula (exact colours)
@@ -1424,8 +1424,17 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
     TM_WHO=$who; TM_ST=$state; TM_SC=$sc; TM_TM=$tm; TM_BR=""
     [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && [ "${U_GITHUB:-on}" = on ] && TM_BR=${T_BR[$i]}   # the agent's branch
 }
+topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as one line like a done one (coloured dot, title, time on the right)
+    local i=$1 w=$(( ${COLS:-44} - 2 )) st=${T_STATUS[$1]} dc t tw tm
+    topic_meta "$i"; tm=$TM_TM
+    case "$st" in next) dc=$S ;; waiting) dc=$Y; tm="$(clip "${TM_WHO#for }" 10) $tm" ;; *) dc=$R ;; esac
+    clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 7 - ${#tm} )); dw_set tw "$t"
+    if [ "$i" = "${SEL_IDX:-}" ]; then
+        printf '\035%s\035\001%s  %s●%s %s%s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$SELBG" "$dc" "$X$SELBG" "$BOLD$LSEL" "$t" "$X$SELBG" "" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
+    else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
+}
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 open=0 TI_REF TI_BAR rn ra rline
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 nl_shown=0 open=0 TI_REF TI_BAR rn ra rline
     sel_index
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1437,6 +1446,15 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
+        case "$st" in next|waiting|later)                        # only review and now are cards; the others are lines, grouped by status
+            if [ "$st" = later ] && [ "$i" != "$SEL_IDX" ] && [ "$nl_shown" -ge 5 ]; then nlater=$(( nlater + 1 )); continue; fi
+            if [ "$st" != "$prev" ]; then
+                case "$st" in next) label=Next ;; waiting) label=Waiting ;; *) label=Later ;; esac
+                printf '\n'; dash_caption "$label"; prev=$st
+            fi
+            [ "$st" = later ] && nl_shown=$(( nl_shown + 1 ))
+            topic_line "$i"; continue ;;
+        esac
         if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected parked one stays: chosen in the search)
             nlater=$(( nlater + 1 )); continue
         fi
@@ -1459,7 +1477,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
     done
     if [ "$nlater" -gt 0 ]; then                                # where the others are
-        local rest="$nlater parked"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
+        local rest="+$nlater more parked"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
         printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
     fi
 }
@@ -3532,7 +3550,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     return 0
 }
 monitors_block() {  # both monitors (when on), above the agents
-    local r dm tm; cfg_var r MONITOR_ROWS 7; num_set r "$r" 7; cfg_var dm DEPLOY_MONITOR off; cfg_var tm TEST_MONITOR off
+    local r dm tm; cfg_var r MONITOR_ROWS 4; num_set r "$r" 4; cfg_var dm DEPLOY_MONITOR off; cfg_var tm TEST_MONITOR off
     [ "$dm" = on ] && monitor_block deploys "$r"
     [ "$tm" = on ] && monitor_block tests "$r"
     return 0

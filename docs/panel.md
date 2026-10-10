@@ -4,9 +4,10 @@
 60 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
-The list shows what is on: **review**, **now**, **next** and **waiting**. Parked (`later`) and done topics stay out; a line at
-the end counts them, and the search (find key) and the CLI reach them. A topic chosen in the search stays visible while it
-is selected.
+The list shows what is on. **Review** and **now** topics are cards (title, description, agent, branch; a review card has its
+summary and the button). **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
+dot, the title and the time (waiting: for whom). Of the parked ones the first five show, a line counts the rest (`+3 more
+parked`); the search (find key) and the CLI reach all of them. A topic chosen in the search stays visible while it is selected.
 
 ## Keys
 

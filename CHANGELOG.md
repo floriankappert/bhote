@@ -5,6 +5,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Changed
+- Only *Review* and *Now* topics are cards. *Next*, *Waiting* and parked (*Later*) topics are lines grouped by status, like
+  the done ones (the parked ones: the first five, then "+N more parked").
+- *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
+
 ### Fixed
 - A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
   answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent

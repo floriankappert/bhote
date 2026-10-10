@@ -40,7 +40,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TEST_STATUS_DIR` | `~/.cache/bhote/test-status` | Status files | Folder with live test status files (one JSON per suite, format in [Monitors](monitors.md)). |
 | `UPDATE_CHECK` | `on` | Check for updates | The collector asks GitHub for the newest `vX.Y.Z` tag every 6 hours. A newer version shows in Settings and in the head of the panel with the command that updates it (`brew update && brew upgrade bhote`, `git -C <checkout> pull`, …). `bhote update` asks right now. |
 | `AUTO_REVIEW` | `on` | Review topic for a question | An agent that has no topic and waits for an answer (herdr status *blocked*) or ends its turn with a question (its last line ends with “?”) gets a review topic “Question from <agent>” with the question as its description; it goes when the agent works again. A plain “done, okay” hand-back makes no topic. A topic in work goes to review when its agent hands back and returns to now when it works again; this also holds for a topic the agent put under review itself with `bhote review`. |
-| `MONITOR_ROWS` | `7` | Entries shown | Entries each monitor shows. |
+| `MONITOR_ROWS` | `4` | Entries shown | Entries each monitor shows. |
 | `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |
 | `THEME` | `terminal` | Colours | `terminal`: the terminal's own 16 colours, so bhote follows the terminal theme (and Omarchy's system theme) at once. `catppuccin` and `dracula`: exact truecolor values of that palette. |

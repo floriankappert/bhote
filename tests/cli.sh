@@ -142,9 +142,11 @@ B add "Up soon" -s next >/dev/null && B list -s next | grep -q "Up soon" && ok "
 B next "Toast redesign" >/dev/null && [ "$(B show "Toast redesign" --json | jq -r .status)" = next ] && ok "next: bhote next <ref>" || bad "bhote next"
 B add "Parked one" -s later >/dev/null; B add "Closed one" -s done >/dev/null
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
-case "$frame" in *NEXT*"Up soon"*) ok "panel: a NEXT group" ;; *) bad "panel: no NEXT group" ;; esac
-case "$frame" in *"Parked one"*|*LATER*) bad "panel shows parked topics" ;; *) ok "panel: parked topics stay out" ;; esac
-echo "$frame" | grep -q "1 parked" && ok "panel: says how many are parked" || bad "panel: no parked count"
+case "$frame" in *"Next"*"Up soon"*) ok "panel: a Next group (lines)" ;; *) bad "panel: no Next group" ;; esac
+case "$frame" in *"Later"*"Parked one"*) ok "panel: parked topics are lines under Later" ;; *) bad "panel shows no parked topics" ;; esac
+for k in 1 2 3 4 5; do B add "Parked extra $k" -s later >/dev/null; done
+frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
+echo "$frame" | grep -q "+1 more parked" && ok "panel: parked lines are capped, the rest counted" || bad "panel: no parked count"
 case "$frame" in *"Up soon"*Done*"Closed one"*"═══"*) ok "panel: done topics in their own area above the agents" ;; *) bad "panel: no done area" ;; esac
 for i in 1 2 3; do B add "Old done $i" -s done >/dev/null; done; sleep 1; B add "Old done 4" -s done >/dev/null; B config set DONE_MAX 3 >/dev/null
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
