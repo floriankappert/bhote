@@ -23,6 +23,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
 
 ### Fixed
+- `bhote now <ref>` run by an agent no longer takes over a topic that belongs to another agent (that left two cards for one
+  agent in *Now*); `bhote take <ref>` does that on purpose.
 - A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
   answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent
   worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
