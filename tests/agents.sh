@@ -232,6 +232,10 @@ rm -f "$TOPIC_DIR"/*.topic; ev w9:p1 working; ev w9:p1 blocked; [ "$(ls "$TOPIC_
 rm -f "$TOPIC_DIR"/*.topic; topic_new "Real work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w9:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
 ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$tf" status)" = review ] && ok "auto review: a topic in work goes to review" || bad "now->review: $(topic_get "$tf" status)"
 ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and back to now when the agent works again" || bad "review->now: $(topic_get "$tf" status)"
+# a topic the agent put under review itself (bhote review) goes back to now when it starts working again; a working event while it already works changes nothing
+topic_set "$tf" status review; topic_set "$tf" auto_back ""; rm -rf "$SHARED_DIR/evstate"; ev w9:p1 idle
+ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "review: a topic handed back with bhote review goes to now when the agent works again" || bad "review->now (manual): $(topic_get "$tf" status)"
+topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" = review ] && ok "review: a repeated working event while it works changes nothing" || bad "review kept: $(topic_get "$tf" status)"
 # a working agent without a topic gets a card on now (after 15 s of work); gone when it stops or gets a topic of its own
 (
 rm -f "$TOPIC_DIR"/*.topic; rm -rf "$RUN_DIR/cards"; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Fix the export" > "$AGENT_LOCAL"

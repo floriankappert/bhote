@@ -5,6 +5,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Fixed
+- A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
+  answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent
+  worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
+
 ### Added
 - `AGENT_CARDS` (settings: *Cards for agents without a topic*, default `on`): a working agent that has no topic gets a card
   on *Now* by itself, titled with what it works on; it goes when the agent stops or gets a topic of its own.
