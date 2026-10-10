@@ -4,8 +4,8 @@
 60 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
-The list shows what is on. **Review** and **now** topics are cards (title, description, agent, branch; a review card has its
-summary and the button). **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
+The list shows what is on. **Review**, **now** and **testing** topics are cards (title, description, agent, branch; a review card has its
+summary and the button). A topic is in **testing** when its agent stopped while a test suite runs (also one in the background); review follows when the tests are done, now when the agent works again. **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
 dot, the title and the time (waiting: for whom). A group shows ten lines; `+3 more next` below it is a row of its own: select it
 with the arrow keys and press `Enter` or `→` (or click it) to open the group, again to close it (`− show less`). Done, next,
 waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (a line counts

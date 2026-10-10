@@ -19,8 +19,9 @@ chmod +x "$T/bin/herdr"; export PATH="$T/bin:$PATH"
 # shellcheck disable=SC1091
 . ./bhote
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
+cfg_set TESTS_BUSY off
 out=$(collect_one Mac)
-echo "$out" | grep -q "^Mac${US}w1:p1${US}idle" && ok "setting off (default): a running test does not change the state" || bad "default must ignore tests: $out"
+echo "$out" | grep -q "^Mac${US}w1:p1${US}idle" && ok "setting off: a running test does not change the state" || bad "default must ignore tests: $out"
 cfg_set TESTS_BUSY on
 out=$(collect_one Mac)
 echo "$out" | grep -q "^Mac${US}w1:p1${US}testing" && ok "a running test makes a free agent busy (testing)" || bad "testing state: $out"
@@ -275,6 +276,18 @@ topics_load; topics_plan; l=("${SEL_LIST[@]}")                                  
 SEL_ID=${l[1]}; sel_leave; [ "$SEL_ID" = "${l[2]}" ] && ok "x: the selection goes to the next item of its section" || bad "sel_leave middle: $SEL_ID"
 SEL_ID=${l[2]}; sel_leave; [ "$SEL_ID" = "${l[1]}" ] && ok "x: the last of a section: the one before it" || bad "sel_leave last: $SEL_ID"
 SEL_ID=${l[4]}; sel_leave; [ "$SEL_ID" = "${l[3]}" ] && ok "x: in Later it stays in Later" || bad "sel_leave later: $SEL_ID"
+) && true
+# an agent that stops while tests run (also in the background): its topic is in the status testing, review follows when the tests are done
+(
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; cfg_set TESTS_BUSY on; notify() { :; }
+printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"
+topic_new "Test work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tf" agent_pane w1:p1; topic_set "$tf" agent_machine "$HOST"; topic_set "$tf" status now
+topic_set "$tf" delivered 1; ev w1:p1 working; topic_set "$tf" updated $(( $(date +%s) - 20 ))
+ev w1:p1 idle
+[ "$(topic_get "$tf" status)" = testing ] && ok "testing: an agent that stops while tests run: its topic is in testing" || bad "testing hold: $(topic_get "$tf" status)"
+printf '%s\n' "$HOST${US}w1:p1${US}testing${US}Shop${US}t" > "$AGENT_LOCAL"; tests_review; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: the tests still run: still testing" || bad "testing wait: $(topic_get "$tf" status)"
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; tests_review; [ "$(topic_get "$tf" status)" = review ] && ok "testing: the tests are done: the topic goes to review" || bad "testing done: $(topic_get "$tf" status)"
+topic_set "$tf" status testing; ev w1:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "testing: the agent works again: back to now" || bad "testing->now: $(topic_get "$tf" status)"
 ) && true
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (

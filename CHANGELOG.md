@@ -5,8 +5,13 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- A status of its own, `testing`: when an agent stops (or hands the topic back with `bhote review`) while a test suite runs, also one
+  in the background, its topic is a card in *Testing* instead of *Review*. When the tests are done it goes to review, when the agent
+  works again back to now. `bhote testing <ref>` sets it by hand. `TESTS_BUSY` is on by default now (a testing agent counts as busy).
+
 ### Changed
-- Only *Review* and *Now* topics are cards. *Next*, *Waiting* and parked (*Later*) topics are lines grouped by status, like
+- Only *Review*, *Now* and *Testing* topics are cards. *Next*, *Waiting* and parked (*Later*) topics are lines grouped by status, like
   the done ones. Every group shows ten lines, then a selectable `+N more …` row (arrow keys; Enter, `→` or a click opens it,
   the row then reads `− show less`). `DONE_MAX` is `10` by default.
 - *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
