@@ -120,7 +120,8 @@ FIND_KEY||text|The herdr key that opens the search popup: find a topic or an age
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
 TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of its project (the project of the agent in its herdr tab; topics without a project are always there)
-DONE_MAX|7|int:0:999|The last done topics shown above the agents (0: none)
+DONE_MAX|10|int:0:999|The last done topics shown above the agents (0: none)
+ARCHIVE_DAYS|7|int:0:3650|Done, next, waiting and parked topics untouched for this many days are archived: gone from the panel, still in the search (0: never)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
 NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve
 PROJECT_COLORS||text|Colour of the project captions in the agent list: part-of-name=colour (red teal peach mauve blue green yellow pink orange grey), first match wins; other projects are grey
@@ -378,20 +379,68 @@ topics_load() {
     T_N=$m
 }
 panel_shows() { case "$1" in now|next|review|waiting) return 0 ;; esac; return 1; }   # the panel lists these; later and done only in search and CLI
-sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the first shown one); needs topics_load first
+EXPANDED=" "     # the groups whose "+N more" was opened (next, waiting, later, done); the panel keeps it while it runs
+LINE_MAX=10      # lines a group shows before "+N more"
+topic_archived() {  # topic_archived <index>: untouched for ARCHIVE_DAYS (the chosen one never counts as archived)
+    local d=${U_ARCHIVE_DAYS:-7}; [ "$d" -gt 0 ] && [ "${T_UPD[$1]:-0}" -gt 0 ] && [ "${T_ID[$1]}" != "${SEL_ID:-}" ] || return 1
+    [ -n "${NOW:-}" ] || NOW=$(date +%s); [ $(( NOW - T_UPD[$1] )) -ge $(( d * 86400 )) ]
+}
+done_total() {  # how many done topics the done area could show (not archived, in scope)
+    local i n=0; for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && ! topic_archived "$i" && n=$(( n + 1 )); done; echo "$n"
+}
+toggle_expand() {  # toggle_expand <status>: open or close a group's "+N more"
+    case "$EXPANDED" in *" $1 "*) EXPANDED=${EXPANDED/ $1 / } ;; *) EXPANDED="$EXPANDED$1 " ;; esac
+}
+topics_plan() {  # what the panel lists, for the frame and the keys: PLAN_VIS[i] (1: drawn), PLAN_BEFORE[i] (the "+N more" row of a closed group goes
+    # before this one), PLAN_AFTER[i] (the "show less" row of an open group goes after this one), PLAN_N_<status>, PLAN_ARCH (archived ones), and
+    # SEL_LIST: what the arrow keys visit, in the order of the screen (topics and those rows, as more:<status>)
+    local i st g="" gl=-1 lim=${LINE_MAX:-10} dm c exp cn_next=0 cn_waiting=0 cn_later=0 cn_done=0
+    PLAN_VIS=(); PLAN_BEFORE=(); PLAN_AFTER=(); SEL_LIST=(); PLAN_ARCH=0
+    for (( i = 0; i < T_N; i++ )); do
+        st=${T_STATUS[$i]}; PLAN_VIS[$i]=0
+        in_scope "$i" || continue
+        case "$st" in
+            review|now) PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue ;;
+        esac
+        if topic_archived "$i"; then PLAN_ARCH=$(( PLAN_ARCH + 1 )); continue; fi
+        if [ "$st" != "$g" ]; then                                # a group ends: an open one gets its "show less"
+            case "$g" in next) c=$cn_next ;; waiting) c=$cn_waiting ;; later) c=$cn_later ;; *) c=0 ;; esac
+            [ "$c" -gt "$lim" ] && case "$EXPANDED" in *" $g "*) PLAN_AFTER[$gl]=$g; SEL_LIST[${#SEL_LIST[@]}]="more:$g" ;; esac
+            g=$st
+        fi
+        case "$st" in next) cn_next=$(( cn_next + 1 )); c=$cn_next ;; waiting) cn_waiting=$(( cn_waiting + 1 )); c=$cn_waiting ;;
+            later) cn_later=$(( cn_later + 1 )); c=$cn_later ;; done) cn_done=$(( cn_done + 1 )); continue ;; esac
+        exp=0; case "$EXPANDED" in *" $st "*) exp=1 ;; esac
+        if [ "$c" -le "$lim" ] || [ "$exp" = 1 ] || [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then
+            PLAN_VIS[$i]=1; gl=$i; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}
+        elif [ "$c" -eq $(( lim + 1 )) ]; then PLAN_BEFORE[$i]=$st; SEL_LIST[${#SEL_LIST[@]}]="more:$st"; fi
+    done
+    case "$g" in next) c=$cn_next ;; waiting) c=$cn_waiting ;; later) c=$cn_later ;; *) c=0 ;; esac
+    [ "$c" -gt "$lim" ] && case "$EXPANDED" in *" $g "*) PLAN_AFTER[$gl]=$g; SEL_LIST[${#SEL_LIST[@]}]="more:$g" ;; esac
+    PLAN_N_next=$cn_next; PLAN_N_waiting=$cn_waiting; PLAN_N_later=$cn_later
+    num_set dm "${U_DONE_MAX:-}" 10; PLAN_N_done=$(done_total)
+    [ "$dm" -gt 0 ] && [ "$PLAN_N_done" -gt "$dm" ] && SEL_LIST[${#SEL_LIST[@]}]="more:done"
+    return 0
+}
+sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the first shown one; -1: a "+N more" row); needs topics_load first
     local i; SEL_IDX=0
+    case "${SEL_ID:-}" in more:*) SEL_IDX=-1; return ;; esac
     for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && { SEL_IDX=$i; return; }; done
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; return; }; done
 }
 topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
-sel_file() { [ -n "${T_N:-}" ] || topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"; }   # (the arrays of the last frame; ui_load reloads after every change)
-sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game
+sel_file() {   # (the arrays of the last frame; ui_load reloads after every change); a "+N more" row is no topic
+    case "${SEL_ID:-}" in more:*) return 0 ;; esac
+    [ -n "${T_N:-}" ] || topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"
+}
+sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game; visits the topics and the "+N more" rows
     [ -n "${T_N:-}" ] || topics_load; [ "$T_N" -gt 0 ] || return 0   # the arrays of the last frame; ui_load reloads right after
-    sel_index; local i=$SEL_IDX k
-    for (( k = 0; k < T_N; k++ )); do                          # the next shown one (a parked/done one is skipped)
-        i=$(( (i + $1 + T_N) % T_N )); panel_shows "${T_STATUS[$i]}" && in_scope "$i" && break
-    done
-    panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; SEL_ID=${T_ID[$i]}; }
+    sel_index; topics_plan; local n=${#SEL_LIST[@]} cur=-1 k id=${SEL_ID:-}
+    [ "$n" -gt 0 ] || return 0
+    [ -n "$id" ] || { [ "$SEL_IDX" -ge 0 ] && id=${T_ID[$SEL_IDX]}; }
+    for (( k = 0; k < n; k++ )); do [ "${SEL_LIST[$k]}" = "$id" ] && { cur=$k; break; }; done
+    [ "$cur" -lt 0 ] && { [ "$1" -gt 0 ] && cur=-1 || cur=0; }       # not in the list (a parked one from the search): the first or the last
+    cur=$(( (cur + $1 + n) % n )); SEL_ID=${SEL_LIST[$cur]}
 }
 topic_files() { topics_ordered; }
 topics_count() { topics_load; echo "$T_N"; }
@@ -900,7 +949,7 @@ ui_load() {
     fi
     [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
     NOW=$(( NOW_BASE + SECONDS ))
-    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
+    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 10; cfg_var U_ARCHIVE_DAYS ARCHIVE_DAYS 7; num_set U_ARCHIVE_DAYS "$U_ARCHIVE_DAYS" 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
     U_STORE_HUB=""; U_STORE_HUB_ONLINE=""
     if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; hub=*) U_STORE_HUB=${line#hub=} ;; hub_online=*) U_STORE_HUB_ONLINE=${line#hub_online=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
@@ -1424,6 +1473,14 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
     TM_WHO=$who; TM_ST=$state; TM_SC=$sc; TM_TM=$tm; TM_BR=""
     [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && [ "${U_GITHUB:-on}" = on ] && TM_BR=${T_BR[$i]}   # the agent's branch
 }
+more_row() {  # more_row <status> <hidden>: the selectable line under a group: "+N more next", or "− show less" when the group is open
+    local st=$1 lbl w=$(( ${COLS:-44} - 2 )) text ref
+    case "$st" in later) lbl=parked ;; *) lbl=$st ;; esac
+    case "$EXPANDED" in *" $st "*) text="− show less" ;; *) text="+$2 more $lbl" ;; esac
+    ref=$'\035'"more:$st"$'\035'
+    if [ "${SEL_ID:-}" = "more:$st" ]; then printf '%s\001%s  %s%s%*s%s\n' "$ref" "$SELBG" "$DSEL" "$text" $(( w - 2 - ${#text} )) "" "$X"
+    else printf '%s  %s%s%s\n' "$ref" "$D" "$text" "$X"; fi
+}
 topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as one line like a done one (coloured dot, title, time on the right)
     local i=$1 w=$(( ${COLS:-44} - 2 )) st=${T_STATUS[$1]} dc t tw tm
     topic_meta "$i"; tm=$TM_TM
@@ -1434,8 +1491,8 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc nlater=0 nl_shown=0 open=0 TI_REF TI_BAR rn ra rline
-    sel_index
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline
+    sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
         printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
@@ -1446,18 +1503,17 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
+        [ -n "${PLAN_BEFORE[$i]:-}" ] && more_row "${PLAN_BEFORE[$i]}" $(( PLAN_N_${PLAN_BEFORE[$i]} - ${LINE_MAX:-10} ))   # a closed group: "+N more" after the last shown
+        [ "${PLAN_VIS[$i]}" = 1 ] || continue
         case "$st" in next|waiting|later)                        # only review and now are cards; the others are lines, grouped by status
-            if [ "$st" = later ] && [ "$i" != "$SEL_IDX" ] && [ "$nl_shown" -ge 5 ]; then nlater=$(( nlater + 1 )); continue; fi
             if [ "$st" != "$prev" ]; then
                 case "$st" in next) label=Next ;; waiting) label=Waiting ;; *) label=Later ;; esac
                 printf '\n'; dash_caption "$label"; prev=$st
             fi
-            [ "$st" = later ] && nl_shown=$(( nl_shown + 1 ))
-            topic_line "$i"; continue ;;
+            topic_line "$i"
+            [ -n "${PLAN_AFTER[$i]:-}" ] && more_row "${PLAN_AFTER[$i]}" 0                      # an open group: "show less" after the last
+            continue ;;
         esac
-        if ! panel_shows "$st" && [ "$i" != "$SEL_IDX" ]; then   # (a selected parked one stays: chosen in the search)
-            nlater=$(( nlater + 1 )); continue
-        fi
         if [ "$st" != "$prev" ]; then
             case "$st" in now) label=NOW; lc=$ORANGE ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             printf '\n'                                                  # (a card brings its own edges, the caption its blank row)
@@ -1476,8 +1532,8 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         fi
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
     done
-    if [ "$nlater" -gt 0 ]; then                                # where the others are
-        local rest="+$nlater more parked"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
+    if [ "${PLAN_ARCH:-0}" -gt 0 ]; then                        # where the old ones are
+        local rest="$PLAN_ARCH archived"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
         printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
     fi
 }
@@ -1490,7 +1546,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
     [ "$max" -gt 0 ] || return 0
     local dn=() used=" " best bu u j sel_in=0                 # newest first: by the last change (checking off is one); builtins only
-    for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
+    for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && ! topic_archived "$i" && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
     while [ "$n" -lt "$max" ] && [ "$n" -lt "$all" ]; do
         best=-1; bu=-1
         for j in "${dn[@]}"; do case "$used" in *" $j "*) continue ;; esac; u=${T_UPD[$j]:-0}; [ "$u" -ge "$bu" ] && { bu=$u; best=$j; }; done
@@ -1511,7 +1567,8 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
             printf '\035%s\035\001%s  %s✓%s %s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
         else printf '\035%s\035  %s✓%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
     done
-    [ "$all" -gt "$n" ] && printf '  %s+%d more done%s\n' "$D" $(( all - n )) "$X"
+    if [ "$all" -gt "$n" ]; then more_row done $(( all - n ))
+    else local cap; num_set cap "${U_DONE_MAX:-}" 10; [ "$all" -gt "$cap" ] && more_row done 0; fi
     return 0
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
@@ -1862,7 +1919,7 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() n=0 line
     head=$(view_head); topics=$(topics_block); bottom=$(view_bottom)
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
-    num_set dn "${U_DONE_MAX:-}" 7; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
+    num_set dn "${U_DONE_MAX:-}" 10; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
     while [ "$dh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
         dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
     done
@@ -1999,6 +2056,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CARDS|Cards for agents without a topic"
+    SET_ROWS[${#SET_ROWS[@]}]="num|ARCHIVE_DAYS|Archive after days"
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
     SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
     SET_ROWS[${#SET_ROWS[@]}]="enum|THEME|Colours"
@@ -4545,10 +4603,10 @@ bhote_main() {
                 "") ;;
                 DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; redraw=1; } ;;      # a click on a topic selects it, like the arrows
+                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; esac; redraw=1; } ;;      # a click on a topic selects it, like the arrows
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
-                OPEN) [ "$view" = main ] && { SEL_ID=$CLICK_T; view=menu; MENU_IDX=0; redraw=1; } ;;   # a double click: the topic's page
+                OPEN) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;
@@ -4565,8 +4623,9 @@ bhote_main() {
                 UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; fi ;;      # on the start screen the wheel does nothing
                 DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; fi ;;
                 ENTER) if [ "$view" = splash ]; then view=main
+                       elif case "${SEL_ID:-}" in more:*) true ;; *) false ;; esac; then toggle_expand "${SEL_ID#more:}"   # "+N more": open or close the group
                        elif [ -n "$(sel_file)" ]; then topic_jump || { view=menu; MENU_IDX=0; }; fi; redraw=1 ;;   # its agent, like a click; else its page
-                RIGHT) if [ "$view" = splash ]; then view=main; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
+                RIGHT) if [ "$view" = splash ]; then view=main; elif case "${SEL_ID:-}" in more:*) true ;; *) false ;; esac; then toggle_expand "${SEL_ID#more:}"; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
                 *) if [ "$view" = splash ]; then view=main; redraw=1; fi ;;
             esac
         fi

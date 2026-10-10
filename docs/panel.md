@@ -6,8 +6,11 @@ and the agents below.
 
 The list shows what is on. **Review** and **now** topics are cards (title, description, agent, branch; a review card has its
 summary and the button). **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
-dot, the title and the time (waiting: for whom). Of the parked ones the first five show, a line counts the rest (`+3 more
-parked`); the search (find key) and the CLI reach all of them. A topic chosen in the search stays visible while it is selected.
+dot, the title and the time (waiting: for whom). A group shows ten lines; `+3 more next` below it is a row of its own: select it
+with the arrow keys and press `Enter` or `→` (or click it) to open the group, again to close it (`− show less`). Done, next,
+waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (a line counts
+them), the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
+is selected.
 
 ## Keys
 

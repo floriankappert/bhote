@@ -7,7 +7,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ### Changed
 - Only *Review* and *Now* topics are cards. *Next*, *Waiting* and parked (*Later*) topics are lines grouped by status, like
-  the done ones (the parked ones: the first five, then "+N more parked").
+  the done ones. Every group shows ten lines, then a selectable `+N more …` row (arrow keys; Enter, `→` or a click opens it,
+  the row then reads `− show less`). `DONE_MAX` is `10` by default.
 - *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
 
 ### Fixed
@@ -16,6 +17,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
 
 ### Added
+- `ARCHIVE_DAYS` (default `7`): done, next, waiting and parked topics untouched for that long are archived by themselves: gone
+  from the panel (a line says how many), still found by the search; touching one brings it back. `0`: never.
 - `AGENT_CARDS` (settings: *Cards for agents without a topic*, default `on`): a working agent that has no topic gets a card
   on *Now* by itself, titled with what it works on; it goes when the agent stops or gets a topic of its own.
 

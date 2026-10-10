@@ -251,6 +251,21 @@ printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT
 cfg_set AGENT_CARDS off; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}x" > "$AGENT_LOCAL"; rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
 [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: AGENT_CARDS=off makes none" || bad "card with setting off"
 ) && true
+# groups show ten lines, then a selectable "+N more"; open it with Enter/click, close it again; the old ones (ARCHIVE_DAYS) are archived
+(
+rm -f "$TOPIC_DIR"/*.topic; EXPANDED=" "; SEL_ID=""; NOW=$(date +%s)
+for k in 1 2 3 4 5 6 7 8 9 10 11 12; do topic_new "Next $k" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status next; done
+topic_new "Old one" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$of" status later; topic_set "$of" updated $(( NOW - 8 * 86400 ))
+topics_load; topics_plan
+v=0; for (( i = 0; i < T_N; i++ )); do [ "${PLAN_VIS[$i]}" = 1 ] && v=$(( v + 1 )); done
+[ "$v" = 10 ] && [ "$PLAN_ARCH" = 1 ] && [ "$PLAN_N_next" = 12 ] && ok "lines: ten of a group, the one older than seven days is archived" || bad "plan: vis=$v arch=$PLAN_ARCH next=$PLAN_N_next"
+[ "${SEL_LIST[10]}" = more:next ] && [ "${#SEL_LIST[@]}" = 11 ] && ok "lines: the arrow keys reach '+N more'" || bad "sel list: ${SEL_LIST[*]}"
+SEL_ID=${SEL_LIST[9]}; sel_move +1; [ "$SEL_ID" = more:next ] && ok "sel_move: down from the tenth lands on '+2 more'" || bad "sel_move to more: $SEL_ID"
+[ -z "$(sel_file)" ] && ok "'+N more' is no topic: the actions find no file" || bad "sel_file on more"
+toggle_expand next; topics_plan; v=0; for (( i = 0; i < T_N; i++ )); do [ "${PLAN_VIS[$i]}" = 1 ] && v=$(( v + 1 )); done
+[ "$v" = 12 ] && [ "${SEL_LIST[${#SEL_LIST[@]}-1]}" = more:next ] && ok "'+N more' opened: all lines, and a 'show less' row to select" || bad "expanded: vis=$v last=${SEL_LIST[*]}"
+toggle_expand next; topics_plan; [ "${PLAN_BEFORE[$(( 0 ))]:-}" = "" ] && ok "toggle: closed again" || bad "toggle close"
+) && true
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (
 rm -f "$TOPIC_DIR"/*.topic; project_new "Shop"; shop=$PROJ_ID; project_new "Acme"; bil=$PROJ_ID; project_new "Acme Marketing"; mkt=$PROJ_ID

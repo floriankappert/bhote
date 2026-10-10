@@ -98,7 +98,7 @@ B config set DONE_MAX 3 >/dev/null && [ "$(B config get DONE_MAX)" = 3 ] && ok "
 B config set DONE_MAX lots >/dev/null 2>&1; [ $? = 1 ] && [ "$(B config get DONE_MAX)" = 3 ] && ok "config: a value of the wrong type is refused" || bad "config accepted a bad value"
 B config set NOPE 1 >/dev/null 2>&1; [ $? = 1 ] && ok "config: an unknown key is refused" || bad "unknown key accepted"
 B config set AGENT_CAN_CLOSE maybe >/dev/null 2>&1; [ $? = 1 ] && ok "config: bool settings take on/off only" || bad "bool accepted maybe"
-B config unset DONE_MAX >/dev/null; [ "$(B config get DONE_MAX)" = 7 ] && ok "config: unset goes back to the default" || bad "unset"
+B config unset DONE_MAX >/dev/null; [ "$(B config get DONE_MAX)" = 10 ] && ok "config: unset goes back to the default" || bad "unset"
 B config set THEME dracula >/dev/null && [ "$(B config get THEME)" = dracula ] && ok "config: THEME takes dracula" || bad "THEME dracula refused"
 th=$(BHOTE_SOURCE_ONLY=1 BHOTE_FORCE_COLOR=1 bash -c '. ./bhote; theme_apply; printf "%s|%s|%s|%s" "$S" "$BLUE" "$L" "$CARDSEL"')
 case "$th" in *"139;233;253"*"|"*"189;147;249"*"|"*"248;248;242"*"|"*"48;2;68;71;90"*) ok "THEME=dracula: the Dracula colours (accent cyan, review purple, text, selection)" ;; *) bad "dracula colours: $(printf '%q' "$th")" ;; esac
@@ -144,7 +144,7 @@ B add "Parked one" -s later >/dev/null; B add "Closed one" -s done >/dev/null
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
 case "$frame" in *"Next"*"Up soon"*) ok "panel: a Next group (lines)" ;; *) bad "panel: no Next group" ;; esac
 case "$frame" in *"Later"*"Parked one"*) ok "panel: parked topics are lines under Later" ;; *) bad "panel shows no parked topics" ;; esac
-for k in 1 2 3 4 5; do B add "Parked extra $k" -s later >/dev/null; done
+for k in 1 2 3 4 5 6 7 8 9 10; do B add "Parked extra $k" -s later >/dev/null; done
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
 echo "$frame" | grep -q "+1 more parked" && ok "panel: parked lines are capped, the rest counted" || bad "panel: no parked count"
 case "$frame" in *"Up soon"*Done*"Closed one"*"═══"*) ok "panel: done topics in their own area above the agents" ;; *) bad "panel: no done area" ;; esac
