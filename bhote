@@ -433,6 +433,25 @@ sel_file() {   # (the arrays of the last frame; ui_load reloads after every chan
     case "${SEL_ID:-}" in more:*) return 0 ;; esac
     [ -n "${T_N:-}" ] || topics_load; sel_index; [ "$T_N" -gt 0 ] && printf '%s' "${T_FILE[$SEL_IDX]}"
 }
+sel_leave() {  # sel_leave: the selected topic is about to leave its section (checked off): the selection goes to the next one of that section
+    # (else the one before it, else the next on the screen), not to wherever the topic lands. A "+N more" row is taken only when nothing else is left.
+    [ -n "${T_N:-}" ] || topics_load; sel_index; topics_plan
+    local n=${#SEL_LIST[@]} cur=-1 k id=${SEL_ID:-} g nx="" pv="" a b; [ "$SEL_IDX" -ge 0 ] && [ -z "$id" ] && id=${T_ID[$SEL_IDX]}
+    for (( k = 0; k < n; k++ )); do [ "${SEL_LIST[$k]}" = "$id" ] && { cur=$k; break; }; done
+    [ "$cur" -ge 0 ] || return 0
+    sel_group_set g "$id"
+    [ $(( cur + 1 )) -lt "$n" ] && { sel_group_set a "${SEL_LIST[$(( cur + 1 ))]}"; [ "$a" = "$g" ] && nx=${SEL_LIST[$(( cur + 1 ))]}; }
+    [ "$cur" -gt 0 ] && { sel_group_set b "${SEL_LIST[$(( cur - 1 ))]}"; [ "$b" = "$g" ] && pv=${SEL_LIST[$(( cur - 1 ))]}; }
+    case "$nx" in ''|more:*) [ -n "$pv" ] && case "$pv" in more:*) ;; *) nx=$pv ;; esac ;; esac
+    [ -n "$nx" ] || nx=$pv
+    if [ -z "$nx" ]; then [ $(( cur + 1 )) -lt "$n" ] && nx=${SEL_LIST[$(( cur + 1 ))]} || { [ "$cur" -gt 0 ] && nx=${SEL_LIST[$(( cur - 1 ))]}; }; fi
+    SEL_ID=$nx
+}
+sel_group_set() {  # sel_group_set <var> <id|more:status>: the section a list entry belongs to
+    local _i; case "$2" in more:*) printf -v "$1" '%s' "${2#more:}"; return ;; esac
+    for (( _i = 0; _i < T_N; _i++ )); do [ "${T_ID[$_i]}" = "$2" ] && { printf -v "$1" '%s' "${T_STATUS[$_i]}"; return; }; done
+    printf -v "$1" '%s' ""
+}
 sel_move() {  # sel_move <+1|-1>: wraps around, like a menu in an old game; visits the topics and the "+N more" rows
     [ -n "${T_N:-}" ] || topics_load; [ "$T_N" -gt 0 ] || return 0   # the arrays of the last frame; ui_load reloads right after
     sel_index; topics_plan; local n=${#SEL_LIST[@]} cur=-1 k id=${SEL_ID:-}
@@ -4613,7 +4632,7 @@ bhote_main() {
                 S) splash_fits && view=splash; redraw=1 ;;
                 w|W) if [ "$view" = main ]; then panel_setup "${NEWFEAT:-0}"; redraw=1; fi ;;   # the wizard (new features: only what is new)
                 a|A) if [ "$view" = main ]; then view=suggest; SUG_IDX=0; redraw=1; fi ;;
-                x|X) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && topic_set "$f" status done; redraw=1; fi ;;   # check it off
+                x|X) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && { sel_leave; topic_set "$f" status done; }; redraw=1; fi ;;   # check it off
                 e|E) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the title
                          if [ -n "$f" ] && ask "Title: " "$(topic_get "$f" title)" && [ -n "$ANSWER" ]; then topic_set "$f" title "$ANSWER"; fi; redraw=1; fi ;;
                 d|D) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the description

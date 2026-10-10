@@ -266,6 +266,16 @@ toggle_expand next; topics_plan; v=0; for (( i = 0; i < T_N; i++ )); do [ "${PLA
 [ "$v" = 12 ] && [ "${SEL_LIST[${#SEL_LIST[@]}-1]}" = more:next ] && ok "'+N more' opened: all lines, and a 'show less' row to select" || bad "expanded: vis=$v last=${SEL_LIST[*]}"
 toggle_expand next; topics_plan; [ "${PLAN_BEFORE[$(( 0 ))]:-}" = "" ] && ok "toggle: closed again" || bad "toggle close"
 ) && true
+# checking off a topic: the selection goes to the next one of its section (else the one before), not to the done list
+(
+rm -f "$TOPIC_DIR"/*.topic; EXPANDED=" "; SEL_ID=""
+for k in 1 2 3; do topic_new "Nx $k" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status next; eval "nx$k=$NEW_TOPIC_ID"; done
+for k in 1 2; do topic_new "Lt $k" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status later; eval "lt$k=$NEW_TOPIC_ID"; done
+topics_load; topics_plan; l=("${SEL_LIST[@]}")                                   # (same-second ids: the order is the file order)
+SEL_ID=${l[1]}; sel_leave; [ "$SEL_ID" = "${l[2]}" ] && ok "x: the selection goes to the next item of its section" || bad "sel_leave middle: $SEL_ID"
+SEL_ID=${l[2]}; sel_leave; [ "$SEL_ID" = "${l[1]}" ] && ok "x: the last of a section: the one before it" || bad "sel_leave last: $SEL_ID"
+SEL_ID=${l[4]}; sel_leave; [ "$SEL_ID" = "${l[3]}" ] && ok "x: in Later it stays in Later" || bad "sel_leave later: $SEL_ID"
+) && true
 # auto-assign: the project decides which agents come into question; a topic without a project gets it from its words
 (
 rm -f "$TOPIC_DIR"/*.topic; project_new "Shop"; shop=$PROJ_ID; project_new "Acme"; bil=$PROJ_ID; project_new "Acme Marketing"; mkt=$PROJ_ID
