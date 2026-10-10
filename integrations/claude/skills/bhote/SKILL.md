@@ -9,6 +9,23 @@ description: Keep the user's bhote topics in step with your work. Use it wheneve
 it through its CLI; every command takes `--json`. A topic you create from your session belongs to you: bhote records
 your session and pane by itself.
 
+## First step of every turn: your topic back on `now`
+
+A topic under review stays there until someone moves it, and the user does not: they just answer in your session. So when
+you handed work back (your topic is in `review`, or you asked a question) and the user's message lets you continue (an
+answer, a decision, a permission, "go on"), put the topic back on `now` **as the first thing you do in that turn**, before
+you read, think or work on anything:
+
+```sh
+bhote current --json        # your topic (null: there is none, nothing to move)
+bhote now <id>              # review → now: the panel shows you as working on it again
+```
+
+The card's button only takes the user to your session and leaves the topic in `review`: when the user then writes to you,
+this step puts it back on `now`. It is not for a topic the user parked or closed (`bhote now` refuses those, leave them).
+When the answer shows that the topic is finished after all, use `bhote done <id>` instead. Without this step the panel
+keeps showing "ready for review" while you are working, and the user cannot tell what is waiting for them.
+
 ## When you have to wait for someone or something
 
 When you cannot go on until someone else acts (a deployment has to finish, a reviewer has to approve, infrastructure has
@@ -88,25 +105,6 @@ When the work is accepted and nothing is left, `bhote done <id>`. Going on after
 A topic the user parked (`later`) or closed (`done`) stays that way: `bhote now` refuses it for you. Do not work on it or move it
 again unless the user asks you to; then `bhote take <ref>`.
 Do not use `-w` for the user: waiting is for other people and things.
-
-## When the user answers and you go on
-
-A topic under review stays there until someone moves it, and the user does not: they just answer in your session. So when
-you handed work back (your topic is in `review`, or you asked a question) and the user's next message lets you continue (an
-answer, a decision, a permission, "go on"), put the topic back on `now` **as the first thing you do in that turn**, before
-you start working:
-
-```sh
-bhote current --json        # your topic (null: there is none, nothing to move)
-bhote now <id>              # review → now: the panel shows you as working on it again
-```
-
-The card's button only takes the user to your session and leaves the topic in `review`: when the user then writes to you, it is this
-section that puts it back on `now`.
-
-This is not for a topic the user parked or closed (`bhote now` refuses those, leave them). When the answer shows that the
-topic is finished after all, use `bhote done <id>` instead. Without this step the panel keeps showing "ready for review"
-while you are working, and the user cannot tell what is waiting for them.
 
 ## When you commit
 
