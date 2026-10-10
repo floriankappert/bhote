@@ -4690,7 +4690,9 @@ cli_event() {
             case "$st" in
                 working)                                           # the user answered: what bhote put under review for it goes away or back
                     if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
-                    elif [ "$(topic_get "$f" auto_back)" = 1 ] && [ "${T_STATUS[$i]}" = review ]; then topic_set "$f" status now; topic_set "$f" auto_back "" ; fi ;;
+                    elif [ "${T_STATUS[$i]}" = review ] && { [ "$(topic_get "$f" auto_back)" = 1 ] || [ "$prev" != working ]; }; then
+                        topic_set "$f" status now; topic_set "$f" auto_back ""     # (any review topic: the agent working again is the answer; no need for the agent to remember)
+                    fi ;;
                 *)
                     [ "${T_STATUS[$i]}" = now ] || continue
                     [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 5 ] || continue      # the idle right after handing it over is not "finished"
