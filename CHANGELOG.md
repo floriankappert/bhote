@@ -5,15 +5,17 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
+  hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+
 ### Changed
-- The bhote skill starts with the rule *topic back on `now` when the user answers after a review*, as the first step of a
-  turn instead of a section further down, where it was overlooked.
+- A click on a topic selects it and shows its agent in herdr, like a click on the agent (double click, →: its page).
+- The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
+  *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
+  the topic can be shown (*Show <agent>*) and handed over, *Start with agent* only when there is none.
 
-## [0.8.0] - 2026-10-10
-
-### Fixed
-- `bhote now <ref>` run by an agent no longer takes over a topic that belongs to another agent (that left two cards for one agent in
-  *Now*); `bhote take <ref>` does that on purpose.
+## [0.8.0] - 2026-10-11
 
 ### Added
 - A status of its own, `testing`: while a test suite runs in an agent's worktree (read from the live status files in
@@ -25,6 +27,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the done ones. Every group shows ten lines, then a selectable `+N more …` row (arrow keys; Enter, `→` or a click opens it,
   the row then reads `− show less`). `DONE_MAX` is `10` by default.
 - *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
+- The bhote skill starts with the rule *topic back on `now` when the user answers after a review*, as the first step of a
+  turn instead of a section further down, where it was overlooked.
 
 ### Fixed
 - `bhote now <ref>` run by an agent no longer takes over a topic that belongs to another agent (that left two cards for one
@@ -32,6 +36,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
   answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent
   worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
+- After `/clear` the pane runs a new session; an event without a session id no longer hands the old session's topic over (it
+  went to *review* for a moment). A pane alone only matches a topic with no `agent_session` on record.
 
 ### Added
 - `ARCHIVE_DAYS` (default `7`): done, next, waiting and parked topics untouched for that long are archived by themselves: gone

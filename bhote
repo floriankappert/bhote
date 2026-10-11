@@ -1401,7 +1401,9 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
     local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n rm=""
     [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
-    local tw dw2; clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
+    local tw dw2 btn=0   # btn: the selected or hovered card has a ⋮ button on its title row (right edge): the topic's menu
+    [ "${TI_FRAME:-0}" = 1 ] && [ -n "${TI_REF:-}" ] && { [ "$1" = 1 ] || [ "$TI_REF" = "${HOVER_ID:-}" ]; } && btn=1
+    clip_set t "$5" $(( w - 3 - btn * 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
     local bl="  " gap=${TI_FRAME:-0} bar=""        # TI_FRAME (the panel's list): every entry is a card, the selected one a lighter card
     local hov=0
     if [ "$gap" = 1 ]; then bg=$CARDBG; bar=${TI_BAR:-${2:-$D}}; [ -n "${TI_REF:-}" ] && [ "$TI_REF" = "${HOVER_ID:-}" ] && { bg=$CARDHOV; hov=1; }; fi   # (hovered: a step lighter)
@@ -1414,7 +1416,8 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
     [ "$gap" = 1 ] && bl="${bar}▌${X}${bg} "                 # the status colour as a bar on the left edge (review blue, now orange, waiting yellow)
     if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▄; fi
-    printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+    if [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s⋮%s %s\n' $'\035'"$TI_REF!@$(( w - 2 ))!$w"$'\035' "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
+    else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi
     [ -n "$d" ] && printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
     [ -n "$who$st$tm" ] || { if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi; return 0; }
     room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
@@ -1537,7 +1540,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1549,7 +1552,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
-        [ -n "${PLAN_BEFORE[$i]:-}" ] && more_row "${PLAN_BEFORE[$i]}" $(( PLAN_N_${PLAN_BEFORE[$i]} - ${LINE_MAX:-10} ))   # a closed group: "+N more" after the last shown
+        if [ -n "${PLAN_BEFORE[$i]:-}" ]; then pn=PLAN_N_${PLAN_BEFORE[$i]}; more_row "${PLAN_BEFORE[$i]}" $(( ${!pn} - ${LINE_MAX:-10} )); fi   # a closed group: "+N more" after the last shown
         [ "${PLAN_VIS[$i]}" = 1 ] || continue
         case "$st" in next|waiting|later)                        # only review, now and testing are cards; the others are lines, grouped by status
             if [ "$st" != "$prev" ]; then
@@ -2204,7 +2207,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     printf '\n %sHotkeys%s\n' "$L" "$X"; rule
     hk_group "LIST"
     hk "↑↓ jk" "move"; hk "⏎" "jump to the topic's agent (none: its page)"; hk "→" "the topic's page"; hk "n" "new topic (Title; description @Name)"
-    hk "e" "edit the title"; hk "d" "edit the description"
+    hk "m" "the topic's menu (its actions)"; hk "e" "edit the title"; hk "d" "edit the description"
     hk "s" "start on a free agent"; hk "t" "Steal & Transfer to another agent"; hk "x" "mark done"; hk "a" "suggestions from agents"
     hk "," "settings"; hk "S" "welcome screen"; hk "w" "setup wizard (after an update: only the new steps)"; hk "q" "quit"
     hk_group "MENUS AND PICKERS"
@@ -2217,7 +2220,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     if [ -n "${FIND_KEY_SHOW:-}" ]; then hk "$FIND_KEY_SHOW" "find a topic or agent, jump to it"
     else hk "-" "find and jump: settings › Find key"; fi
     hk_group "MOUSE"
-    hk "drag ═══" "resize the agent area"; hk "click topic" "select it"; hk "2× click" "open its page"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
+    hk "drag ═══" "resize the agent area"; hk "click topic" "select it, show its agent"; hk "right click" "the topic's menu (also ⋮ on the card)"; hk "2× click" "open its page"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
     printf '\n'; rule
     printf ' %s← esc back%s\n' "$D" "$X"
 }
@@ -2446,6 +2449,11 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
         [ "$hid" = "$HOVER_ID" ] || { HOVER_ID=$hid; MOUSE_KEY=HOVER; }
         return
     fi
+    if [ "$2" = M ] && [ "$b" = 2 ]; then                      # the right button: the topic's menu (CLICK_T empty: not on a topic)
+        local r t; CLICK_T=""; MOUSE_KEY=CTX
+        while IFS=$'\036' read -r r t; do [ "$r" = "$y" ] && [ -n "$t" ] && { CLICK_T=${t%%!*}; break; }; done 2>/dev/null < "$RUN_DIR/tmap"
+        return
+    fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ]; then  # a row of this frame that bhote_paint noted (an action on the topic's page)?
         local r t; while IFS=$'\036' read -r r t; do [ "$r" = "$y" ] && { CLICK_I=$t; MOUSE_KEY=ITEM; return; }; done 2>/dev/null < "$RUN_DIR/pmap"
     fi
@@ -2461,7 +2469,9 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && { [ "$div" = 0 ] || [ "$y" -lt "$div" ]; }; then   # above it: a topic?
         local r t; while IFS=$'\036' read -r r t; do
             [ "$r" = "$y" ] && [ -n "$t" ] && {
-                case "$t" in *"!"*) local rng=${t#*!}; CLICK_T=${t%%!*}; t=$CLICK_T                      # the button of a review card: its columns are in the ref
+                case "$t" in *"!@"*) local c1=${t#*!@} c2; c2=${c1#*!}; c1=${c1%%!*}; CLICK_T=${t%%!*}; t=$CLICK_T      # the ⋮ button on the title row: "<id>!@<from>!<to>"
+                    [ "$x" -ge "$c1" ] && [ "$x" -le "$c2" ] && { MOUSE_KEY=CTX; return; } ;;
+                *"!"*) local rng=${t#*!}; CLICK_T=${t%%!*}; t=$CLICK_T                      # the button of a review card: its columns are in the ref
                     local bn=1 b1 b2; while [ -n "$rng" ]; do b1=${rng%%!*}; rng=${rng#*!}; b2=${rng%%!*}; case "$rng" in *!*) rng=${rng#*!} ;; *) rng="" ;; esac   # from, to, from, to ...
                         [ "$x" -ge "$b1" ] && [ "$x" -le "$b2" ] && { CLICK_N=$bn; MOUSE_KEY=ACT; return; }; bn=$(( bn + 1 )); done ;; *) CLICK_T=$t ;; esac
                 MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
@@ -2609,18 +2619,53 @@ menu_build() {  # menu_build <file>
         MENU_ITEMS=("${MENU_ITEMS[@]}" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
         return
     fi
-    MENU_ITEMS=("start|Start with agent ...")
-    [ -n "$(topic_get "$f" transfer_to)" ] && MENU_ITEMS=("cancelxfer|Cancel the hand-over to $(topic_get "$f" transfer_to_name)" "${MENU_ITEMS[@]}")
-    [ "$st" = waiting ] && [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="resume|The wait is over: $ag goes on"
-    [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
-    [ "$st" = next ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="next|Up next"
-    MENU_ITEMS[${#MENU_ITEMS[@]}]="wait|Waiting for ..."
+    # What can be done depends on the status: the first lines are the natural next step, the tail (project, Slack, rename, describe,
+    # delete) is the same everywhere. "pane" = an agent is on the topic (it can be shown, handed over, or told that the wait is over).
+    local pane; pane=$(topic_get "$f" agent_pane); MENU_ITEMS=()
+    add() { MENU_ITEMS[${#MENU_ITEMS[@]}]="$1"; }
+    [ -n "$(topic_get "$f" transfer_to)" ] && add "cancelxfer|Cancel the hand-over to $(topic_get "$f" transfer_to_name)"
+    [ -n "$ag" ] && [ -n "$pane" ] && add "jump|Show $ag"
+    case "$st" in
+        review) add "now|Back to now: work goes on"; add "done|Mark done" ;;
+        now|testing) add "review|Ready for review"; add "done|Mark done" ;;
+        waiting) if [ -n "$ag" ] && [ -n "$pane" ]; then add "resume|The wait is over: $ag goes on"; else add "now|The wait is over: back to now"; fi
+            add "done|Mark done" ;;
+        next|later) add "now|Work on it now"; add "done|Mark done" ;;
+    esac
+    [ -n "$pane" ] || add "start|Start with agent ..."
+    [ -n "$ag" ] && [ -n "$pane" ] && add "transfer|Transfer to another agent ..."
+    [ "$st" = waiting ] && add "wait|Change who or what is waited for ..." || add "wait|Waiting for ..."
+    [ "$st" = next ] || add "next|Up next"
+    [ "$st" = later ] || add "later|Park for later"
     [ "${P_N:-0}" -gt 0 ] || projects_load
-    [ "$P_N" -gt 0 ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
-    if [ -n "$(topic_get "$f" slack_channel)" ]; then MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: unpin $(topic_get "$f" slack_label)"
-    else MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: pin a channel ..."; fi
-    [ "$st" = later ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="later|Park for later"
-    MENU_ITEMS=("${MENU_ITEMS[@]}" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+    [ "$P_N" -gt 0 ] && add "project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
+    if [ -n "$(topic_get "$f" slack_channel)" ]; then add "slack|Slack: unpin $(topic_get "$f" slack_label)"
+    else add "slack|Slack: pin a channel ..."; fi
+    MENU_ITEMS=("${MENU_ITEMS[@]}" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+    unset -f add
+}
+# The topic's menu over the list (m, the right button, the ⋮ on its card): the list is drawn as it is, and the actions replace the
+# lines under the topic's title (up when they do not fit below). The same actions as on the topic's page (menu_build); a click on
+# one runs it (the \035 index marks the row for bhote_paint's click map).
+CTX_IDX=0
+bhote_ctx() {
+    local f frame l lines=() n=0 i s k r t first=0 tid sl title
+    f=$(sel_file); [ -n "$f" ] || { bhote_view; return; }
+    frame=$(bhote_view)
+    while IFS= read -r l; do lines[$n]=$l; n=$(( n + 1 )); done <<< "$frame"
+    menu_build "$f"; k=$(( ${#MENU_ITEMS[@]} + 2 )); tid=$(topic_id "$f")
+    while IFS=$'\036' read -r r t; do [ "${t%%!*}" = "$tid" ] && { first=$r; break; }; done 2>/dev/null < "$RUN_DIR/tmap"
+    s=$(( first + 1 )); [ "$first" = 0 ] && s=2
+    [ $(( s + k )) -gt "$n" ] && s=$(( n - k )); [ "$s" -lt 0 ] && s=0
+    title=$(topic_get "$f" title)
+    for (( i = 0; i < n; i++ )); do
+        if [ "$i" -lt "$s" ] || [ "$i" -ge $(( s + k )) ]; then printf '%s\n' "${lines[$i]}"; continue; fi
+        r=$(( i - s ))
+        if [ "$r" = 0 ]; then printf '  %sACTIONS · %s%s\n' "$D" "$(clip "$title" $(( ${COLS:-44} - 16 )))" "$X"
+        elif [ "$r" = $(( k - 1 )) ]; then printf '  %s%s%s\n' "$D" "$(clip "↑↓ 1-9 choose · ⏎ do it · esc close" $(( ${COLS:-44} - 4 )))" "$X"
+        else sl=""; [ $(( r - 1 )) = "$CTX_IDX" ] && sl=1
+            printf '\035%s\035' $(( r - 1 )); menu_num_line "$sl" "$r" "${MENU_ITEMS[$(( r - 1 ))]#*|}"; fi
+    done
 }
 bhote_menu() {  # the topic's page: title and description in full (wrapped), its status, then the numbered actions
     local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
@@ -3118,6 +3163,9 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         start) PICK_MODE=start; PICK_IDX=0; view=pick; return 0 ;;     # the picker of free agents (view is bhote_main's variable)
         transfer) PICK_MODE=transfer; PICK_IDX=1; view=pick; return 0 ;;
         resume) topic_resume "$f" ;;
+        jump) agent_jump "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)"; return 0 ;;
+        now) topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" auto_back ""; poke ;;
+        review) topic_set "$f" status review; topic_set "$f" auto_back ""; poke ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
            topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; slack_rewait "$f" ;;
         project) local cur nx="" i2; cur=$(topic_get "$f" project); projects_load   # none → the first → … → the last → none
@@ -4626,6 +4674,18 @@ bhote_main() {
                 ENTER|RIGHT) pick_do "$PICK_IDX"; view=main; redraw=1 ;;
                 ESC|q|Q|$'\177'|h|LEFT) view=main; redraw=1 ;;
             esac
+        elif [ "$view" = ctx ]; then        # the topic's menu over the list
+            f=$(sel_file); [ -n "$f" ] && menu_build "$f"
+            case "$key" in
+                UP|k) CTX_IDX=$(( CTX_IDX - 1 )); [ "$CTX_IDX" -lt 0 ] && CTX_IDX=$(( ${#MENU_ITEMS[@]} - 1 )); redraw=1 ;;
+                DOWN|j) CTX_IDX=$(( CTX_IDX + 1 )); [ "$CTX_IDX" -ge "${#MENU_ITEMS[@]}" ] && CTX_IDX=0; redraw=1 ;;
+                ENTER|RIGHT) view=main; menu_do "$CTX_IDX"; redraw=1 ;;       # (an action that needs a picker sets view itself)
+                ITEM) view=main; menu_do "$CLICK_I"; redraw=1 ;;
+                [1-9]) if [ "$key" -le "${#MENU_ITEMS[@]}" ]; then view=main; menu_do $(( key - 1 )); fi; redraw=1 ;;
+                TOPIC) SEL_ID=$CLICK_T; view=main; redraw=1 ;;
+                CTX) view=main; case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1 ;;
+                ESC|q|Q|$'\177'|h|LEFT|m|M|AGENT|OPEN|ACT) view=main; redraw=1 ;;
+            esac
         elif [ "$view" = menu ]; then       # the action menu of the selected topic
             case "$key" in
                 UP|k) f=$(sel_file); [ -n "$f" ] && menu_build "$f"                    # title (-2), description (-1), then the actions
@@ -4649,7 +4709,9 @@ bhote_main() {
                 "") ;;
                 DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; esac; redraw=1; } ;;      # a click on a topic selects it, like the arrows
+                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; *) topic_jump ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
+                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
+                m|M) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=ctx; CTX_IDX=0; redraw=1; fi ;;
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
                 OPEN) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
@@ -4702,11 +4764,11 @@ bhote_main() {
         if [ -z "$key" ] && [ "$SECONDS" -ge $(( ${chk:-0} + 2 )) ]; then
             chk=$SECONDS
             m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.at" "$SHARED_DIR/tests.at" 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; cat "$CONFIG_FILE" 2>/dev/null; } | cksum )   # also the settings: a new theme shows at once
-            if [ "$m1" != "$last_m" ]; then last_m=$m1; case "$view" in main|settings) redraw=1 ;; esac; fi
+            if [ "$m1" != "$last_m" ]; then last_m=$m1; case "$view" in main|settings|ctx) redraw=1 ;; esac; fi
         fi
     done
 }
-bhote_draw() { case "$1" in main) bhote_view ;; hotkeys) bhote_hotkeys ;; suggest) bhote_suggest ;; menu) bhote_menu ;; pick) bhote_pick ;; settings) bhote_settings ;; *) bhote_splash ;; esac; }
+bhote_draw() { case "$1" in main) bhote_view ;; ctx) bhote_ctx ;; hotkeys) bhote_hotkeys ;; suggest) bhote_suggest ;; menu) bhote_menu ;; pick) bhote_pick ;; settings) bhote_settings ;; *) bhote_splash ;; esac; }
 # One frame = ONE write: home, every line cleared to its end, then the rest of the screen cleared. No full clear first,
 # so nothing flashes; and it is only called when what is on screen would really look different.
 bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame itself is built in a subshell that only prints
@@ -4862,9 +4924,10 @@ cli_event() {
     topics_load; now=$(date +%s)
     local hit=0 auto
     for (( i = 0; i < T_N; i++ )); do
-        # the session decides when both sides know it; a pane alone only on this machine, and only with no other session on record
+        # the session decides when both sides know it; a pane alone only on this machine, and only with no session on record (after /clear the
+        # pane runs a new session: an event without a session id must not hand the old session's topic over)
         if { [ -n "$sess" ] && [ "${T_AS[$i]}" = "$sess" ]; } \
-           || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && { [ -z "$sess" ] || [ -z "${T_AS[$i]}" ]; }; }; then
+           || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && [ -z "${T_AS[$i]}" ]; }; then
             f=${T_FILE[$i]}
             [ "$(topic_get "$f" auto_now)" = 1 ] && continue                              # (the card bhote made for an agent without a topic is no topic of its own)
             case "${T_STATUS[$i]}" in now|testing|review|waiting|next) hit=1 ;; esac         # (it has a topic: no extra one)
