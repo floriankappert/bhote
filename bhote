@@ -769,7 +769,7 @@ blank() { row "" 0; }
 blanks() { local n; for (( n = 0; n < $1; n++ )); do blank; done; }
 
 top() {
-    local title=" Bhote v$VERSION " n
+    local title=" Bhote v${VERSION_LABEL:-$VERSION} " n
     n=$(( INNER - ${#title} - 1 ))
     printf '%s╭─%s%s%s%s%s╮%s\n' "$B" "$X$L" "$title" "$X$B" "$(hline "$n")" "" "$X"
 }
@@ -960,11 +960,25 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
 # Everything a screen needs, read ONCE per repaint and without starting a single process (except one `date`): the settings,
 # the sync state, both agent files and the topics. The screen functions then only print. (Every awk/cat/wc/cut that the
 # drawing used to start cost 5 to 15 ms; a key press took 300 ms.)
+# What the panel calls its version: from a git checkout that is past the tag of its VERSION (local work, a branch, a merge of
+# several) it is the next minor as a preview, "0.9.0 (preview)"; an install from a release (brew, pacman, a checkout on the tag) says VERSION.
+version_label_set() {
+    VERSION_LABEL=$VERSION; [ -n "${BHOTE_NO_PREVIEW:-}" ] && return 0     # (the smoke tests: their pictures must not depend on the checkout)
+    local p=${BASH_SOURCE[0]:-$0} l d maj min rest
+    while [ -L "$p" ]; do l=$(readlink "$p"); case "$l" in /*) p=$l ;; *) p=$(dirname "$p")/$l ;; esac; done
+    d=$(cd "$(dirname "$p")" 2>/dev/null && pwd) || return 0
+    git -C "$d" rev-parse --git-dir >/dev/null 2>&1 || return 0
+    [ "$(git -C "$d" rev-parse "v$VERSION^{commit}" 2>/dev/null)" = "$(git -C "$d" rev-parse HEAD 2>/dev/null)" ] && return 0   # on the release itself
+    maj=${VERSION%%.*}; rest=${VERSION#*.}; min=${rest%%.*}
+    case "$maj$min" in ''|*[!0-9]*) return 0 ;; esac
+    VERSION_LABEL="$maj.$(( min + 1 )).0 (preview)"
+}
 ui_load() {
     local line st="" f sig
+    [ -n "${VERSION_LABEL:-}" ] || version_label_set
     theme_sig sig; [ "$sig" = "$THEME_SIG" ] || { theme_apply; THEME_SIG=$sig; }   # THEME / COLOR_* changed: new colours now
     if [ -z "${HEAD_GRAD:-}" ]; then                         # once: one colour per character costs a process each
-        HEAD_GRAD=$(gradient "Bhote v$VERSION"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
+        HEAD_GRAD=$(gradient "Bhote v$VERSION_LABEL"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     fi
     [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
     NOW=$(( NOW_BASE + SECONDS ))
@@ -1799,9 +1813,18 @@ pad_set() {  # pad_set <var> <text> <columns>: the text, filled with spaces to t
     printf -v "$1" '%s%*s' "$2" "$_p" ""
 }
 clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
+pane_focused() {  # true / false: herdr's word on whether this panel's pane has the focus (one pane in all of herdr has); empty: unknown
+    herdr pane get "$HERDR_PANE_ID" 2>/dev/null | sed -n 's/.*"focused": *\(true\|false\).*/\1/p' | head -1
+}
 view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
-    local name="Bhote v$VERSION" t; clip_set t " - Herd Management" $(( ${COLS:-44} - 5 - ${#name} ))
-    printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X"
+    local name="Bhote v${VERSION_LABEL:-$VERSION}" t lt
+    clip_set t " - Herd Management" $(( ${COLS:-44} - 5 - ${#name} - 2 ))
+    # Whether this pane is the one you are in (PANE_FOCUS, from herdr): a green dot at the right edge; another pane has focus: the head is dimmed
+    case "${PANE_FOCUS:-}" in
+        true) dw_set lt "$t"; printf '\n  %s%s%s%s%*s%s●%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X" $(( ${COLS:-44} - 5 - ${#name} - lt )) "" "$GREEN" "$X" ;;
+        false) printf '\n  %s%s%s%s\n' "$D" "$name" "$t" "$X" ;;
+        *) printf '\n  %s%s%s%s\n' "${HEAD_GRAD:-$L$name$X}" "$D" "$t" "$X" ;;
+    esac
     [ -n "${HEAD_NOTE:-}" ] && { clip_set t "$HEAD_NOTE" $(( ${COLS:-44} - 4 )); printf '  %s%s%s\n' "$GREEN" "$t" "$X"; }
     [ "${NEWFEAT:-0}" = 1 ] && { clip_set t "✦ New Features Available · w Start Wizard" $(( ${COLS:-44} - 4 )); printf '  %s%s%s\n' "$ORANGE" "$t" "$X"; }
     rule
@@ -2133,7 +2156,7 @@ bhote_settings() {
     rule; printf '\n'
     if [ "${SET_PAGE:-main}" = main ]; then
         if [ -n "${UPD_LATEST:-}" ]; then wrap_print 1 "$GREEN" "Update available: v$UPD_LATEST (this is v$VERSION). Run: ${UPD_CMD:-$(update_command)}"; printf '\n'
-        else printf ' %sbhote v%s%s\n\n' "$D" "$VERSION" "$X"; fi
+        else printf ' %sbhote v%s%s\n\n' "$D" "${VERSION_LABEL:-$VERSION}" "$X"; fi
     fi
     for (( i = 0; i < ${#SET_ROWS[@]}; i++ )); do
         row=${SET_ROWS[$i]}; kind=${row%%|*}; row=${row#*|}; key=${row%%|*}; label=${row#*|}; ind=0; sel=0
@@ -4631,6 +4654,10 @@ bhote_main() {
             else key=""; fi                                    # Alt+key: nothing
         fi
         if [ "$key" = HOVER ]; then key=""; [ "$view" = main ] && redraw=1; fi   # the pointer moved onto another card (or off the cards)
+        if [ -z "$key" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ "$SECONDS" != "${FOCUS_AT:-}" ]; then      # is this the pane you are in? Asked once a second when idle
+            FOCUS_AT=$SECONDS; _pf=$(pane_focused)
+            if [ "$_pf" != "${PANE_FOCUS:-}" ]; then PANE_FOCUS=$_pf; [ "$view" = main ] && redraw=1; fi
+        fi
         if [ "${SETUP_PENDING:-}" = 1 ]; then
             if [ "$view" != splash ]; then                     # the pane got too small for the welcome screen: next start
                 SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; lock_drop "$SHARED_DIR/setup.lock" "$$"
@@ -4922,6 +4949,14 @@ cli_event() {
     store_synced && store_sync >/dev/null 2>&1   # the topic may have been handed out on the other machine
     [ "$pane" = - ] && pane=""; [ "$sess" = - ] && sess=""
     topics_load; now=$(date +%s)
+    # After /clear (or a restart) the agent in this pane has a new session: when it starts working, the topic of the pane follows it
+    # (the old session's last event came before this one). Only an event that names the session can do that.
+    if [ "$st" = working ] && [ -n "$pane" ] && [ -n "$sess" ]; then
+        for (( i = 0; i < T_N; i++ )); do
+            [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AS[$i]}" ] && [ "${T_AS[$i]}" != "$sess" ] || continue
+            case "${T_STATUS[$i]}" in now|testing|review|waiting) topic_set "${T_FILE[$i]}" agent_session "${sess//[^A-Za-z0-9-]/}"; T_AS[$i]=${sess//[^A-Za-z0-9-]/} ;; esac
+        done
+    fi
     local hit=0 auto
     for (( i = 0; i < T_N; i++ )); do
         # the session decides when both sides know it; a pane alone only on this machine, and only with no session on record (after /clear the
