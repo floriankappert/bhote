@@ -11,6 +11,8 @@ cat > "$T/bin/herdr" <<'SH'
 case "$*" in
  *"pane run"*|*"agent prompt"*|*"notification show"*|*"plugin action invoke"*|*"report-metadata"*|*"agent focus"*) echo "$*" >> "$FAKE_LOG" ;;
  *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
+ *"pane get w1:p1"*) printf '%s\n' '{"id":"x","result":{"pane":{"agent":"claude","focused":true,"pane_id":"w1:p1"}}}' ;;
+ *"pane get w2:p1"*) printf '%s\n' '{"id":"x","result":{"pane":{"agent":"claude","focused":false,"pane_id":"w2:p1"}}}' ;;
  *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
 esac
@@ -237,6 +239,20 @@ ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "auto review: and 
 topic_set "$tf" status review; topic_set "$tf" auto_back ""; rm -rf "$SHARED_DIR/evstate"; ev w9:p1 idle
 ev w9:p1 working; [ "$(topic_get "$tf" status)" = now ] && ok "review: a topic handed back with bhote review goes to now when the agent works again" || bad "review->now (manual): $(topic_get "$tf" status)"
 topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" = review ] && ok "review: a repeated working event while it works changes nothing" || bad "review kept: $(topic_get "$tf" status)"
+# which pane you are in: herdr's word for this panel's pane; the head shows it (a dot when it is, dimmed when another pane is)
+( HERDR_PANE_ID=w1:p1; [ "$(pane_focused)" = true ] || exit 1; HERDR_PANE_ID=w2:p1; [ "$(pane_focused)" = false ] || exit 2; HERDR_PANE_ID=w7:p9; [ -z "$(pane_focused)" ] || exit 3
+  COLS=44; ROWS=30; ui_load; PANE_FOCUS=true; a=$(view_head); PANE_FOCUS=false; b=$(view_head); PANE_FOCUS=""; c=$(view_head)
+  case "$a" in *●*) ;; *) exit 4 ;; esac; case "$b$c" in *●*) exit 5 ;; esac
+  [ "$(printf '%s\n' "$a" | head -2 | tail -1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | wc -m)" -le $(( COLS - 1 )) ] || exit 6   # (the dot takes the room of the padding: the line stays inside the pane)
+  exit 0 ) && ok "focus: the head shows whether this pane is the one you are in" || bad "pane focus: step $?"
+# /clear: the pane runs a new session. An event without a session id (or one of another session) does not hand the old session's topic over;
+# when the new session starts working, the topic follows it, and its idle then hands the topic back for review
+evs() { HERDR_PLUGIN_EVENT_JSON=$(printf '{"data":{"pane_id":"%s","agent_status":"%s","agent_session":{"value":"%s"}}}' "$1" "$2" "$3") BHOTE_NO_SYNC=1 cli_event; }
+rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; topic_new "Cleared" "" "x"; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+topic_set "$cf" agent_pane w9:p1; topic_set "$cf" agent_machine "$HOST"; topic_set "$cf" agent_session s-old; topic_set "$cf" status now; topic_set "$cf" delegated 1
+ev w9:p1 working; ev w9:p1 idle; [ "$(topic_get "$cf" status)" = now ] && ok "clear: an idle event without a session id leaves the old session's topic alone" || bad "clear idle: $(topic_get "$cf" status)"
+evs w9:p1 working s-new; [ "$(topic_get "$cf" agent_session)" = s-new ] && [ "$(topic_get "$cf" status)" = now ] && ok "clear: the new session that starts working takes the pane's topic over" || bad "clear adopt: $(topic_get "$cf" agent_session) $(topic_get "$cf" status)"
+evs w9:p1 idle s-new; [ "$(topic_get "$cf" status)" = review ] && ok "clear: and its idle puts the topic under review" || bad "clear review: $(topic_get "$cf" status)"
 # a working agent without a topic gets a card on now (after 15 s of work); gone when it stops or gets a topic of its own
 (
 rm -f "$TOPIC_DIR"/*.topic; rm -rf "$RUN_DIR/cards"; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Fix the export" > "$AGENT_LOCAL"

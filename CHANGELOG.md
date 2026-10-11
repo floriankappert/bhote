@@ -6,10 +6,16 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
+  the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
 
 ### Changed
+- Run from a git checkout that is past the tag of its version (local work), the panel calls itself the next one, `0.9.0 (preview)`;
+  a release install says its version.
+- After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
+  session id no longer hands the old session's topic over.
 - A click on a topic selects it and shows its agent in herdr, like a click on the agent (double click, →: its page).
 - The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
   *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
