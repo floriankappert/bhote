@@ -5,7 +5,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
-## [0.8.0] - 2026-10-10
+## [0.8.0] - 2026-10-11
 
 ### Added
 - A status of its own, `testing`: while a test suite runs in an agent's worktree (read from the live status files in
@@ -26,6 +26,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
   answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent
   worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
+- After `/clear` the pane runs a new session; an event without a session id no longer hands the old session's topic over (it
+  went to *review* for a moment). A pane alone only matches a topic with no `agent_session` on record.
 
 ### Added
 - `ARCHIVE_DAYS` (default `7`): done, next, waiting and parked topics untouched for that long are archived by themselves: gone
