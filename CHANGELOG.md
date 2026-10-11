@@ -5,7 +5,12 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
+  hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+
 ### Changed
+- A click on a topic selects it and shows its agent in herdr, like a click on the agent (double click, →: its page).
 - The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
   *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
   the topic can be shown (*Show <agent>*) and handed over, *Start with agent* only when there is none.
