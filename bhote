@@ -2609,18 +2609,30 @@ menu_build() {  # menu_build <file>
         MENU_ITEMS=("${MENU_ITEMS[@]}" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
         return
     fi
-    MENU_ITEMS=("start|Start with agent ...")
-    [ -n "$(topic_get "$f" transfer_to)" ] && MENU_ITEMS=("cancelxfer|Cancel the hand-over to $(topic_get "$f" transfer_to_name)" "${MENU_ITEMS[@]}")
-    [ "$st" = waiting ] && [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="resume|The wait is over: $ag goes on"
-    [ -n "$ag" ] && [ -n "$(topic_get "$f" agent_pane)" ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="transfer|Transfer to another agent ..."
-    [ "$st" = next ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="next|Up next"
-    MENU_ITEMS[${#MENU_ITEMS[@]}]="wait|Waiting for ..."
+    # What can be done depends on the status: the first lines are the natural next step, the tail (project, Slack, rename, describe,
+    # delete) is the same everywhere. "pane" = an agent is on the topic (it can be shown, handed over, or told that the wait is over).
+    local pane; pane=$(topic_get "$f" agent_pane); MENU_ITEMS=()
+    add() { MENU_ITEMS[${#MENU_ITEMS[@]}]="$1"; }
+    [ -n "$(topic_get "$f" transfer_to)" ] && add "cancelxfer|Cancel the hand-over to $(topic_get "$f" transfer_to_name)"
+    [ -n "$ag" ] && [ -n "$pane" ] && add "jump|Show $ag"
+    case "$st" in
+        review) add "now|Back to now: work goes on"; add "done|Mark done" ;;
+        now|testing) add "review|Ready for review"; add "done|Mark done" ;;
+        waiting) if [ -n "$ag" ] && [ -n "$pane" ]; then add "resume|The wait is over: $ag goes on"; else add "now|The wait is over: back to now"; fi
+            add "done|Mark done" ;;
+        next|later) add "now|Work on it now"; add "done|Mark done" ;;
+    esac
+    [ -n "$pane" ] || add "start|Start with agent ..."
+    [ -n "$ag" ] && [ -n "$pane" ] && add "transfer|Transfer to another agent ..."
+    [ "$st" = waiting ] && add "wait|Change who or what is waited for ..." || add "wait|Waiting for ..."
+    [ "$st" = next ] || add "next|Up next"
+    [ "$st" = later ] || add "later|Park for later"
     [ "${P_N:-0}" -gt 0 ] || projects_load
-    [ "$P_N" -gt 0 ] && MENU_ITEMS[${#MENU_ITEMS[@]}]="project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
-    if [ -n "$(topic_get "$f" slack_channel)" ]; then MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: unpin $(topic_get "$f" slack_label)"
-    else MENU_ITEMS[${#MENU_ITEMS[@]}]="slack|Slack: pin a channel ..."; fi
-    [ "$st" = later ] || MENU_ITEMS[${#MENU_ITEMS[@]}]="later|Park for later"
-    MENU_ITEMS=("${MENU_ITEMS[@]}" "done|Mark done" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+    [ "$P_N" -gt 0 ] && add "project|Project: $(project_name "$(topic_get "$f" project)" || echo none) (⏎ next)"
+    if [ -n "$(topic_get "$f" slack_channel)" ]; then add "slack|Slack: unpin $(topic_get "$f" slack_label)"
+    else add "slack|Slack: pin a channel ..."; fi
+    MENU_ITEMS=("${MENU_ITEMS[@]}" "rename|Rename" "describe|Describe ..." "delete|Delete" "back|Back")
+    unset -f add
 }
 bhote_menu() {  # the topic's page: title and description in full (wrapped), its status, then the numbered actions
     local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
@@ -3118,6 +3130,9 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         start) PICK_MODE=start; PICK_IDX=0; view=pick; return 0 ;;     # the picker of free agents (view is bhote_main's variable)
         transfer) PICK_MODE=transfer; PICK_IDX=1; view=pick; return 0 ;;
         resume) topic_resume "$f" ;;
+        jump) agent_jump "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)"; return 0 ;;
+        now) topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" auto_back ""; poke ;;
+        review) topic_set "$f" status review; topic_set "$f" auto_back ""; poke ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
            topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; slack_rewait "$f" ;;
         project) local cur nx="" i2; cur=$(topic_get "$f" project); projects_load   # none → the first → … → the last → none

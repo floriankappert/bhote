@@ -5,6 +5,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Changed
+- The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
+  *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
+  the topic can be shown (*Show <agent>*) and handed over, *Start with agent* only when there is none.
+
 ## [0.8.0] - 2026-10-11
 
 ### Added
