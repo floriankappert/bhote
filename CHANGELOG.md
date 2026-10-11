@@ -13,13 +13,15 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ### Changed
 - A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
-  `machine · agent`, and under it `∟` the topic, then the description and the branch. The card keeps its coloured bar and block edges.
+  `machine · agent`, and under it `∟` what the agent works on, as herdr shows it (the topic's title when it has no task), then the
+  description and the branch. The card keeps its coloured bar and block edges.
   What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
 - Run from a git checkout that is past the tag of its version (local work), the panel calls itself the next one, `0.9.0 (preview)`;
   a release install says its version.
 - After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
   session id no longer hands the old session's topic over.
-- A click on a topic selects it and shows its agent in herdr, like a click on the agent (double click, →: its page).
+- A click on a topic selects it and shows its agent in herdr, like a click on the agent, and leaves the focus on the agent (its grey
+  bar stays in herdr's list; `CLICK_FOCUS_AGENT=off` gives the focus back to the panel). Double click, →: its page.
 - The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
   *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
   the topic can be shown (*Show <agent>*) and handed over, *Start with agent* only when there is none.

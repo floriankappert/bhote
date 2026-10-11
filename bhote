@@ -90,6 +90,7 @@ AUTO_ASSIGN|off|bool|A running (now) topic with a project and without an agent g
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
+CLICK_FOCUS_AGENT|on|bool|A click on a topic shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in the herdr agent list; off: the focus goes back to the bhote panel of that tab
 AGENT_CARDS|on|bool|A working agent without a topic gets a card on now by itself (title: what it works on), gone when it stops working or gets a topic; 15 s of work first
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
@@ -1439,7 +1440,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         [ -n "$am" ] && am="$mcol$BOLD$am$X$bg$gc · " || aw=$(( aw - 3 ))
         printf '%s%s%s%s%s %s%s%s%s%*s' "$trm" "$mk" "$bg" "$bl" "${TI_AGIC:-$gc○}" "$am" "$BOLD$tc" "$an" "$X$bg" $(( w - 2 - 2 - aw - btn * 3 )) ""
         if [ "$btn" = 1 ]; then printf ' %s⋮%s %s\n' "$gc" "$X$bg" "$X"; else printf '%s\n' "$X"; fi
-        clip_set t "$5" $(( w - 5 )); dw_set tw "$t"
+        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
         printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
     elif [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s⋮%s %s\n' "$trm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
     else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi
@@ -1519,6 +1520,14 @@ ti_subcard() {  # ti_subcard <ref marker> <card bg> <note> <ask: labels joined b
         printf '%s%s%s%s%s%s%s  %s\n' "$rm" "$bg" "$bl" "$sfg" "${edge//▄/▀}" "$X" "$bg" "$X"
     fi
 }
+agent_task_set() {  # agent_task_set <var> <machine> <pane>: what the agent works on, as herdr shows it (its task token), from the last agent lists
+    local _i _m _id _st _nm _tk=""
+    for (( _i = 0; _i < AG_N; _i++ )); do
+        IFS=$US read -r _m _id _st _nm _tk <<< "${AG_LINES[$_i]}"
+        [ "$_m" = "$2" ] && [ "$_id" = "$3" ] && break; _tk=""
+    done
+    printf -v "$1" '%s' "$_tk"
+}
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
     local _i _m _id _st _r _x gone=gone
     for (( _i = 0; _i < AG_N; _i++ )); do
@@ -1567,7 +1576,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMC TI_AGMETA
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMC TI_AGMETA TI_AGTASK
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1606,10 +1615,10 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             while IFS= read -r rline; do case "$rline" in review_note=*) rn=${rline#*=} ;; review_ask=*) ra=${rline#*=} ;; esac; done < "${T_FILE[$i]}"
             rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
         fi
-        TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMC=""; TI_AGMETA=""
+        TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMC=""; TI_AGMETA=""; TI_AGTASK=""
         case "$st" in now|testing)                               # a card of an agent at work: like herdr's agent card (icon, machine · agent, ∟ the topic)
             if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ]; then
-                TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"
+                TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
                 case "$ast" in working|testing) TI_AGIC="${ORANGE}${SPIN_CH:-✶}" ;; blocked) TI_AGIC="${NN}◉" ;; done) TI_AGIC="${GREEN}✓" ;; gone|off-*) TI_AGIC="${D}◌" ;; *) TI_AGIC="${D}○" ;; esac
                 project_color_set TI_AGMC "$TI_AGM"
                 case "$state" in working) ;; handing\ over) TI_AGMETA=1 ;; "finished · x = done") TI_AGMETA=1; who="" ;; *) TI_AGMETA=1; who="" ;; esac   # (the icon says working; the rest the line adds)
@@ -1969,8 +1978,10 @@ panel_width_clamp() {
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot): the key line says so for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
-topic_jump() {  # the selected topic's agent, shown in herdr; in another tab of this machine the focus goes to the panel there, the topic selected. 1 when it has no agent that herdr knows now
-    local f m p ast; f=$(sel_file); [ -n "$f" ] || return 1
+topic_jump() {  # topic_jump [click]: the selected topic's agent, shown in herdr; in another tab of this machine the focus goes to the panel there (a click
+    # with CLICK_FOCUS_AGENT on: it stays on the agent, whose bar then stays in herdr's list), the topic selected. 1 when it has no agent that herdr knows now
+    local f m p ast keep=""; [ "${1:-}" = click ] && [ "$(cfg_get CLICK_FOCUS_AGENT on)" = on ] && keep=1
+    f=$(sel_file); [ -n "$f" ] || return 1
     m=$(topic_get "$f" agent_machine); p=$(topic_get "$f" agent_pane); [ -n "$p" ] || return 1
     [ -n "$m" ] || m=$HOST
     agent_state_set ast "$m" "$p"; case "$ast" in gone|off-*) return 1 ;; esac   # not there (any more), or its machine does not answer
@@ -1978,7 +1989,9 @@ topic_jump() {  # the selected topic's agent, shown in herdr; in another tab of 
     case "$p" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
     # another tab: herdr shows it, the focus goes to the bhote panel there, and that panel has the topic selected (all do)
     printf '%s %s list\n' "$(topic_id "$f")" "$$$RANDOM" > "$SHARED_DIR/select" 2>/dev/null
-    ( herdr agent focus "$p" >/dev/null 2>&1; panel_focus_of "$p" "${HERDR_PANE_ID:-}" ) >/dev/null 2>&1 </dev/null &
+    if [ -n "$keep" ]; then ( herdr agent focus "$p" >/dev/null 2>&1 ) >/dev/null 2>&1 </dev/null &
+    else ( herdr agent focus "$p" >/dev/null 2>&1; panel_focus_of "$p" "${HERDR_PANE_ID:-}" ) >/dev/null 2>&1 </dev/null &
+    fi
 }
 agent_jump() {  # agent_jump <machine> <pane>
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
@@ -2151,6 +2164,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CARDS|Cards for agents without a topic"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|CLICK_FOCUS_AGENT|A click on a topic focuses its agent"
     SET_ROWS[${#SET_ROWS[@]}]="num|ARCHIVE_DAYS|Archive after days"
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
     SET_ROWS[${#SET_ROWS[@]}]="num|WAIT_REMIND|Remind waiting after (h)"
@@ -4759,7 +4773,7 @@ bhote_main() {
                 "") ;;
                 DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; *) topic_jump ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
+                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; *) topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
                 CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
                 m|M) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=ctx; CTX_IDX=0; redraw=1; fi ;;
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card

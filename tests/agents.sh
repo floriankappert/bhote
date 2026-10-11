@@ -250,7 +250,10 @@ topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" =
   topic_new "Card topic" "" "a description"; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
   AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=44; topics_load; out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "Omarchy · bhote" || exit 1
-  printf '%s\n' "$out" | grep -q "∟ Card topic" || exit 2
+  printf '%s\n' "$out" | grep -q "∟ x" || exit 2                                                                                  # (the agent's task, as herdr shows it)
+  printf '%s\n' "$out" | grep -q "∟ Card topic" && exit 6
+  AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "∟ Card topic" || exit 7   # (no task: the topic's title)
+  AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x")
   printf '%s\n' "$out" | grep -q "▄▄▄" && printf '%s\n' "$out" | grep -q "▀▀▀" && printf '%s\n' "$out" | grep -q "▌" || exit 3   # (the card's frame stays)
   printf '%s\n' "$out" | grep -q "working" && exit 4                                                                         # (the icon says it)
   AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || exit 5   # what the icon does not say stays
