@@ -8,6 +8,30 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [0.8.0] - 2026-10-10
 
 ### Added
+- A status of its own, `testing`: while a test suite runs in an agent's worktree (read from the live status files in
+  `TEST_STATUS_DIR`, also a run in the background) the agent's topic is a card in *Testing*, whether the agent works or not. When the
+  tests are done it goes to now (the agent works) or to review (the agent is idle). `bhote testing <ref>` sets it by hand. `TESTS_BUSY` is on by default now (a testing agent counts as busy).
+
+### Changed
+- Only *Review*, *Now* and *Testing* topics are cards. *Next*, *Waiting* and parked (*Later*) topics are lines grouped by status, like
+  the done ones. Every group shows ten lines, then a selectable `+N more …` row (arrow keys; Enter, `→` or a click opens it,
+  the row then reads `− show less`). `DONE_MAX` is `10` by default.
+- *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
+
+### Fixed
+- `bhote now <ref>` run by an agent no longer takes over a topic that belongs to another agent (that left two cards for one
+  agent in *Now*); `bhote take <ref>` does that on purpose.
+- A topic that an agent handed back with `bhote review` returns to *now* by itself when the agent works again (the user
+  answered). Until now only topics that bhote had put under review did; the others stayed in *review* while the agent
+  worked, unless the agent remembered to run `bhote now`, so *Now* showed fewer agents than were running.
+
+### Added
+- `ARCHIVE_DAYS` (default `7`): done, next, waiting and parked topics untouched for that long are archived by themselves: gone
+  from the panel (a line says how many), still found by the search; touching one brings it back. `0`: never.
+- `AGENT_CARDS` (settings: *Cards for agents without a topic*, default `on`): a working agent that has no topic gets a card
+  on *Now* by itself, titled with what it works on; it goes when the agent stops or gets a topic of its own.
+
+### Added
 - `STORE=kharka` (settings › *Data location*, setup wizard step *Topics*): the topics merge with the local
   [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub, also after one was
   offline. Each topic is an entry `bhote.topics/<id>` (records: `bhote.projects/`, `bhote.machines/`,
