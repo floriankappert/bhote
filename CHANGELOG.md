@@ -17,6 +17,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the done ones. Every group shows ten lines, then a selectable `+N more …` row (arrow keys; Enter, `→` or a click opens it,
   the row then reads `− show less`). `DONE_MAX` is `10` by default.
 - *Deployments* and *Tests* show the last four entries by default (`MONITOR_ROWS`, was 7).
+- The bhote skill starts with the rule *topic back on `now` when the user answers after a review*, as the first step of a
+  turn instead of a section further down, where it was overlooked.
 
 ### Fixed
 - `bhote now <ref>` run by an agent no longer takes over a topic that belongs to another agent (that left two cards for one
