@@ -1537,7 +1537,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline
+    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1549,7 +1549,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
-        [ -n "${PLAN_BEFORE[$i]:-}" ] && more_row "${PLAN_BEFORE[$i]}" $(( PLAN_N_${PLAN_BEFORE[$i]} - ${LINE_MAX:-10} ))   # a closed group: "+N more" after the last shown
+        if [ -n "${PLAN_BEFORE[$i]:-}" ]; then pn=PLAN_N_${PLAN_BEFORE[$i]}; more_row "${PLAN_BEFORE[$i]}" $(( ${!pn} - ${LINE_MAX:-10} )); fi   # a closed group: "+N more" after the last shown
         [ "${PLAN_VIS[$i]}" = 1 ] || continue
         case "$st" in next|waiting|later)                        # only review, now and testing are cards; the others are lines, grouped by status
             if [ "$st" != "$prev" ]; then
