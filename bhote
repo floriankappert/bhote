@@ -2684,7 +2684,7 @@ menu_build() {  # menu_build <file>
     local pane; pane=$(topic_get "$f" agent_pane); MENU_ITEMS=()
     add() { MENU_ITEMS[${#MENU_ITEMS[@]}]="$1"; }
     [ -n "$(topic_get "$f" transfer_to)" ] && add "cancelxfer|Cancel the hand-over to $(topic_get "$f" transfer_to_name)"
-    [ -n "$ag" ] && [ -n "$pane" ] && add "jump|Show $ag"
+    [ -n "$ag" ] && [ -n "$pane" ] && add "jump|Show topic"
     case "$st" in
         review) add "now|Back to now: work goes on"; add "done|Mark done" ;;
         now|testing) add "review|Ready for review"; add "done|Mark done" ;;

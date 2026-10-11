@@ -187,7 +187,7 @@ case "${MENU_ITEMS[*]}" in *"|Back to now"*|*"now|"*) bad "now menu offers now: 
 mt next; case "${MENU_ITEMS[*]}" in *"next|"*) bad "next menu offers Up next" ;; "now|"*) ok "menu: an up-next topic can be worked on now" ;; *) bad "next menu: ${MENU_ITEMS[*]}" ;; esac
 mt waiting 'waiting_for=Alex\n'; case "${MENU_ITEMS[0]}" in "now|The wait is over"*) ok "menu: a waiting topic without an agent: the wait is over → now" ;; *) bad "waiting menu: ${MENU_ITEMS[*]}" ;; esac
 mt review 'agent=bhote\nagent_machine=Omarchy\nagent_pane=w1:p1\n'
-case "${MENU_ITEMS[0]}" in "jump|Show bhote") ok "menu: an agent on the topic can be shown" ;; *) bad "jump item: ${MENU_ITEMS[*]}" ;; esac
+case "${MENU_ITEMS[0]}" in "jump|Show topic") ok "menu: an agent on the topic can be shown" ;; *) bad "jump item: ${MENU_ITEMS[*]}" ;; esac
 case "${MENU_ITEMS[*]}" in *"start|"*) bad "start offered with an agent on the topic" ;; *"transfer|"*) ok "menu: with an agent: transfer, no second start" ;; *) bad "agent menu: ${MENU_ITEMS[*]}" ;; esac
 mt review; case "${MENU_ITEMS[*]}" in *"jump|"*|*"transfer|"*) bad "agentless menu: ${MENU_ITEMS[*]}" ;; *"start|"*) ok "menu: without an agent: start, no show or transfer" ;; *) bad "agentless: ${MENU_ITEMS[*]}" ;; esac
 rm -f "$mf"
