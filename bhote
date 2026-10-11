@@ -4747,7 +4747,7 @@ bhote_main() {
                 ITEM) view=main; menu_do "$CLICK_I"; redraw=1 ;;
                 [1-9]) if [ "$key" -le "${#MENU_ITEMS[@]}" ]; then view=main; menu_do $(( key - 1 )); fi; redraw=1 ;;
                 TOPIC) SEL_ID=$CLICK_T; view=main; redraw=1 ;;
-                CTX) view=main; case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1 ;;
+                CTX) if [ "$view" = ctx ] && [ "$CLICK_T" = "${SEL_ID:-}" ]; then view=main; else view=main; case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; fi; redraw=1 ;;   # the ⋮ again (or the right button on the same topic) closes the menu
                 ESC|q|Q|$'\177'|h|LEFT|m|M|AGENT|OPEN|ACT) view=main; redraw=1 ;;
             esac
         elif [ "$view" = menu ]; then       # the action menu of the selected topic
