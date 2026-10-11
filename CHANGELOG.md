@@ -12,6 +12,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
 
 ### Changed
+- A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
+  `machine · agent`, and under it `∟` the topic, then the description and the branch. The card keeps its coloured bar and block edges.
+  What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
 - Run from a git checkout that is past the tag of its version (local work), the panel calls itself the next one, `0.9.0 (preview)`;
   a release install says its version.
 - After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a

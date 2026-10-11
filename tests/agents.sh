@@ -245,6 +245,16 @@ topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" =
   case "$a" in *●*) ;; *) exit 4 ;; esac; case "$b$c" in *●*) exit 5 ;; esac
   [ "$(printf '%s\n' "$a" | head -2 | tail -1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | wc -m)" -le $(( COLS - 1 )) ] || exit 6   # (the dot takes the room of the padding: the line stays inside the pane)
   exit 0 ) && ok "focus: the head shows whether this pane is the one you are in" || bad "pane focus: step $?"
+# a card on now with an agent: like herdr's agent card (icon, "machine · agent", "∟ the topic"), with the card's bar and block edges; no meta line while it works
+( rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"; AG_N=0; AG_LINES=(); ui_load
+  topic_new "Card topic" "" "a description"; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
+  AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=44; topics_load; out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  printf '%s\n' "$out" | grep -q "Omarchy · bhote" || exit 1
+  printf '%s\n' "$out" | grep -q "∟ Card topic" || exit 2
+  printf '%s\n' "$out" | grep -q "▄▄▄" && printf '%s\n' "$out" | grep -q "▀▀▀" && printf '%s\n' "$out" | grep -q "▌" || exit 3   # (the card's frame stays)
+  printf '%s\n' "$out" | grep -q "working" && exit 4                                                                         # (the icon says it)
+  AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || exit 5   # what the icon does not say stays
+  exit 0 ) && ok "now card: like herdr's agent card, with the card frame, the meta line only for what the icon does not say" || bad "agent card: step $?"
 # /clear: the pane runs a new session. An event without a session id (or one of another session) does not hand the old session's topic over;
 # when the new session starts working, the topic follows it, and its idle then hands the topic back for review
 evs() { HERDR_PLUGIN_EVENT_JSON=$(printf '{"data":{"pane_id":"%s","agent_status":"%s","agent_session":{"value":"%s"}}}' "$1" "$2" "$3") BHOTE_NO_SYNC=1 cli_event; }
