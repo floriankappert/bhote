@@ -546,6 +546,22 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   setagent idle; review_follow; setagent working; review_follow; [ "$(topic_get "$sf" status)" = now ] || exit 5            # (idle seen, then working: reopened)
   topic_set "$sf" delegated "$(date +%s)"; setagent idle; now_idle_follow; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 6   # just handed to the agent: it has not started yet
   exit 0 ) && ok "now with an idle agent: recently finished after a while (a missed event); a stale working does not reopen it" || bad "now idle follow: step $?"
+# the agent of a card is gone (session ended): the review card closes, a card bhote made is deleted, a topic on now becomes recently finished; not when herdr is silent
+( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/agentgone"; HOST=Omarchy
+  printf '%s\n' "Omarchy${US}w1:p1${US}idle${US}a${US}x" > "$AGENT_LOCAL"; printf '%s\n' "Box${US}w2:p1${US}idle${US}b${US}y" > "$AGENT_REMOTE"
+  mk() { topic_new "$1" "" ""; mkf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mkf" agent_machine "$2"; topic_set "$mkf" agent_pane "$3"; topic_set "$mkf" status "$4"; }
+  mk "Gone review" Box w9:p1 review; g1=$mkf; mk "Gone question" Box w9:p2 review; g2=$mkf; topic_set "$g2" auto 1; mk "Gone now" Omarchy w9:p3 now; g3=$mkf
+  mk "Present" Box w2:p1 review; g4=$mkf; mk "Unknown machine" Nowhere w1:p1 review; g5=$mkf
+  past() { for f in "$SHARED_DIR"/agentgone/*; do echo $(( $(date +%s) - 40 )) > "$f"; done; }
+  herdr() { return 1; }; agent_gone_follow; past; agent_gone_follow
+  [ "$(topic_get "$g1" status)" = review ] || exit 1                                                                       # herdr silent: nobody is gone
+  herdr() { return 0; }; agent_gone_follow; past; agent_gone_follow
+  [ "$(topic_get "$g1" status)" = later ] && [ "$(topic_get "$g1" dismissed)" = 1 ] || exit 2                              # its session ended: the review card closes
+  [ "$(topic_get "$g2" deleted)" = 1 ] || exit 3                                                                            # a card bhote made itself: gone
+  [ "$(topic_get "$g3" status)" = finished ] || exit 4                                                                      # a topic on now: recently finished
+  [ "$(topic_get "$g4" status)" = review ] && [ "$(topic_get "$g5" status)" = review ] || exit 5                           # (the agent is there; a machine that is not in the lists)
+  : > "$AGENT_REMOTE"; mk "Machine without agents" Box w3:p1 review; g6=$mkf; agent_gone_follow; past; agent_gone_follow; [ "$(topic_get "$g6" status)" = review ] || exit 6   # (a machine with no agents listed: left alone)
+  exit 0 ) && ok "gone agent: its review card closes (a made card goes, now becomes recently finished), only when herdr answers" || bad "gone agent: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"

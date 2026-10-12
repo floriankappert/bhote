@@ -94,6 +94,7 @@ AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: i
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
 CLICK_FOCUS_AGENT|on|bool|A click on a topic shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in the herdr agent list; off: the focus goes back to the bhote panel of that tab
 FINISHED_MINUTES|30|int:0:1440|A recently finished card (an agent that stopped without a question: nothing to check) is dismissed by itself after this many minutes; it comes back when the agent works again (0 = never)
+AGENTS_COMPACT|off|bool|Agent overview: only how many agents are active and how many inactive (the ⋮ button on the divider above the agents switches it)
 AGENT_CARDS|on|bool|A working agent without a topic gets a card on now by itself (title: what it works on), gone when it stops working or gets a topic; 15 s of work first
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
@@ -124,7 +125,7 @@ FIND_KEY||text|The herdr key that opens the search popup: find a topic or an age
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
 TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of its project (the project of the agent in its herdr tab; topics without a project are always there)
-DONE_MAX|10|int:0:999|The last done topics shown above the agents (0: none)
+DONE_MAX|4|int:0:999|The last done topics shown above the agents (0: none)
 ARCHIVE_DAYS|7|int:0:3650|Done, next, waiting and parked topics untouched for this many days are archived: gone from the panel, still in the search (0: never)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
 NAME_COLORS||text|Colour agents by part of their name: api=teal,web=mauve
@@ -443,7 +444,7 @@ topics_plan() {  # what the panel lists, for the frame and the keys: PLAN_VIS[i]
     case "$g" in next) c=$cn_next ;; waiting) c=$cn_waiting ;; later) c=$cn_later ;; *) c=0 ;; esac
     [ "$c" -gt "$lim" ] && case "$EXPANDED" in *" $g "*) PLAN_AFTER[$gl]=$g; SEL_LIST[${#SEL_LIST[@]}]="more:$g" ;; esac
     PLAN_N_next=$cn_next; PLAN_N_waiting=$cn_waiting; PLAN_N_later=$cn_later
-    num_set dm "${U_DONE_MAX:-}" 10; PLAN_N_done=$(done_total)
+    num_set dm "${U_DONE_MAX:-}" 4; PLAN_N_done=$(done_total)
     [ "$dm" -gt 0 ] && [ "$PLAN_N_done" -gt "$dm" ] && SEL_LIST[${#SEL_LIST[@]}]="more:done"
     return 0
 }
@@ -998,8 +999,9 @@ version_label_set() {
     case "$maj$min" in ''|*[!0-9]*) return 0 ;; esac
     VERSION_LABEL="$maj.$(( min + 1 )).0 (preview)"
 }
+UI_GEN=0
 ui_load() {
-    local line st="" f sig
+    local line st="" f sig; UI_GEN=$(( UI_GEN + 1 )); UI_LOAD_AT=$SECONDS
     [ -n "${VERSION_LABEL:-}" ] || version_label_set
     theme_sig sig; [ "$sig" = "$THEME_SIG" ] || { theme_apply; THEME_SIG=$sig; }   # THEME / COLOR_* changed: new colours now
     if [ -z "${HEAD_GRAD:-}" ]; then                         # once: one colour per character costs a process each
@@ -1007,7 +1009,7 @@ ui_load() {
     fi
     [ -n "${NOW_BASE:-}" ] || NOW_BASE=$(( $(date +%s) - SECONDS ))   # one date for the whole run, then SECONDS counts on
     NOW=$(( NOW_BASE + SECONDS ))
-    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 10; cfg_var U_ARCHIVE_DAYS ARCHIVE_DAYS 7; num_set U_ARCHIVE_DAYS "$U_ARCHIVE_DAYS" 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
+    cfg_var U_NAME_COLORS NAME_COLORS ""; cfg_var U_GITHUB GITHUB_BRANCHES on; cfg_var U_DONE_MAX DONE_MAX 4; cfg_var U_ARCHIVE_DAYS ARCHIVE_DAYS 7; num_set U_ARCHIVE_DAYS "$U_ARCHIVE_DAYS" 7; cfg_var U_AGENT_ROWS AGENT_ROWS ""; num_set U_AGENT_ROWS "$U_AGENT_ROWS" ""; cfg_var U_STORE STORE local; cfg_var U_STORE_MACHINE STORE_MACHINE ""; cfg_var U_REMOTE REMOTE_AGENTS off
     U_STORE_HUB=""; U_STORE_HUB_ONLINE=""
     if [ -r "$STORE_STATUS" ]; then while IFS= read -r line; do case "$line" in state=*) st=${line#state=} ;; hub=*) U_STORE_HUB=${line#hub=} ;; hub_online=*) U_STORE_HUB_ONLINE=${line#hub_online=} ;; esac; done < "$STORE_STATUS"; fi
     U_STORE_STATE=$st
@@ -1078,7 +1080,8 @@ AGENT_META_L="$SHARED_DIR/agents.meta.local"; AGENT_META_R="$SHARED_DIR/agents.m
 AGENT_NOW_L="$SHARED_DIR/agents.now.local"; AGENT_NOW_R="$SHARED_DIR/agents.now.remote"       # machine US pane US what the agent does right now (herdr's third line)
 agent_now_set() {  # agent_now_set <var> <machine> <pane>: what the agent does right now, without herdr's star (empty: nothing, or not working)
     local _m _p _t _n=""
-    while IFS=$US read -r _m _p _t; do [ "$_m" = "$2" ] && [ "$_p" = "$3" ] && { _n=$_t; break; }; done < <(cat "$AGENT_NOW_L" "$AGENT_NOW_R" 2>/dev/null)
+    [ -r "$AGENT_NOW_L" ] && while IFS=$US read -r _m _p _t; do [ "$_m" = "$2" ] && [ "$_p" = "$3" ] && { _n=$_t; break; }; done < "$AGENT_NOW_L"
+    [ -z "$_n" ] && [ -r "$AGENT_NOW_R" ] && while IFS=$US read -r _m _p _t; do [ "$_m" = "$2" ] && [ "$_p" = "$3" ] && { _n=$_t; break; }; done < "$AGENT_NOW_R"
     case "${_n%% *}" in ''|[[:alnum:]]*) ;; *) _n=${_n#* } ;; esac       # (the star in front: ours dances)
     printf -v "$1" '%s' "$_n"
 }
@@ -1451,6 +1454,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             deploy_sync
             review_follow
             now_idle_follow
+            agent_gone_follow
             finished_expire
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
@@ -1809,7 +1813,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
         else printf '\035%s\035  %s✓%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
     done
     if [ "$all" -gt "$n" ]; then more_row done $(( all - n ))
-    else local cap; num_set cap "${U_DONE_MAX:-}" 10; [ "$all" -gt "$cap" ] && more_row done 0; fi
+    else local cap; num_set cap "${U_DONE_MAX:-}" 4; [ "$all" -gt "$cap" ] && more_row done 0; fi
     return 0
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
@@ -1852,10 +1856,18 @@ project_color_set() {  # project_color_set <var> <project name>: its colour from
     done <<< "${_rules//,/$'\n'}"
     printf -v "$1" '%s' "$_col"
 }
-agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse)
-    local w=$(( ${COLS:-44} - 5 )) l r
-    l=$(( (w - 5) / 2 )); r=$(( w - 5 - l ))
-    printf '  %s%s%s ═══ %s%s%s\n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X"
+agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse), and at its right end a ⋮ button
+    # (a click: the agent overview as counts only, and back; mouse_event takes the three columns COLS-4 .. COLS-2 for it)
+    local w=$(( ${COLS:-44} - 12 )) l r
+    l=$(( (w - 5) / 2 )); r=$(( w - l ))
+    printf '  %s%s%s ═══ %s%s%s %s⋮%s \n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X" "$D" "$X"
+}
+agents_counts() {  # agents_counts: this and the other machines' agents as numbers: AC_ACTIVE (working, testing), AC_NEEDS (waiting for an answer), AC_INACTIVE
+    local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
+    for (( i = 0; i < AG_N; i++ )); do
+        IFS=$US read -r m id st _ <<< "${AG_LINES[$i]}"
+        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac
+    done
 }
 agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), two columns;
     # with more than one machine each name has its machine's code in front (MAC|name). The icon says the state (as in the herdr
@@ -1865,6 +1877,14 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
     cw=$(( (${COLS:-44} - 4) / 2 ))
     agent_divider
+    local compact; cfg_var compact AGENTS_COMPACT off
+    if [ "$compact" = on ] && [ "$AG_N" -gt 0 ]; then              # counts only: no rows to click, no star to dance
+        agents_counts
+        printf '  %s✶%s %s%d active%s' "$ORANGE" "$X" "$BOLD$ORANGE" "$AC_ACTIVE" "$X"
+        [ "$AC_NEEDS" -gt 0 ] && printf ' %s·%s %s◉ %d need you%s' "$D" "$X" "$NN" "$AC_NEEDS" "$X"
+        printf ' %s·%s %s○ %d inactive%s\n' "$D" "$X" "$D" "$AC_INACTIVE" "$X"
+        echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
+    fi
     if [ "$AG_N" = 0 ]; then                                     # no agents: no clickable row and no star to dance (no old map stays)
         echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
     fi
@@ -2278,9 +2298,13 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
 }
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
     local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() tz=() n=0 line
-    head=$(view_head); topics=$(topics_block); bottom=$(view_bottom)
+    head=$(view_head); topics=$(topics_block)
+    local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${DRAG_ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}" ck=""   # (the agents' area and the keys do not depend on the selection)
+    { IFS= read -r ck < "$RUN_DIR/bottom.key"; } 2>/dev/null
+    if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
+    else bottom=$(view_bottom); printf '%s\n' "$bkey" > "$RUN_DIR/bottom.key" 2>/dev/null; printf '%s' "$bottom" > "$RUN_DIR/bottom.out" 2>/dev/null; fi
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
-    num_set dn "${U_DONE_MAX:-}" 10; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
+    num_set dn "${U_DONE_MAX:-}" 4; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
     while [ "$dh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
         dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
     done
@@ -2429,6 +2453,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CARDS|Cards for agents without a topic"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|AGENTS_COMPACT|Agent overview: counts only"
     SET_ROWS[${#SET_ROWS[@]}]="num|FINISHED_MINUTES|Recently finished: dismiss after (min)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|CLICK_FOCUS_AGENT|A click on a topic focuses its agent"
     SET_ROWS[${#SET_ROWS[@]}]="num|ARCHIVE_DAYS|Archive after days"
@@ -2809,6 +2834,9 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
                         [ "$x" -ge "$b1" ] && [ "$x" -le "$b2" ] && { CLICK_N=$bn; MOUSE_KEY=ACT; return; }; bn=$(( bn + 1 )); done ;; *) CLICK_T=$t ;; esac
                 MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
         done 2>/dev/null < "$RUN_DIR/tmap"
+    fi
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ] && [ "$x" -ge $(( ${COLS:-44} - 4 )) ] && [ "$x" -le $(( ${COLS:-44} - 2 )) ]; then   # the ⋮ button on the divider
+        MOUSE_KEY=AGMENU; return
     fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
         DRAG=1; DRAG_Y0=$y; DRAG_R0=$(num_or "$(cat "$RUN_DIR/agrows" 2>/dev/null)" 1); return
@@ -4097,6 +4125,31 @@ now_idle_follow() {  # a topic on now whose agent has stopped (seen idle in two 
     done
     return 0
 }
+agent_gone_follow() {  # the agent of a card is gone (its session ended, its pane closed): the card closes. A review or finished card is put away like a
+    # dismissed one (a card bhote made itself is deleted), a topic on now moves to recently finished. The agent must be missing from its machine's list for 30 s
+    # and herdr must answer (a herdr that is down shows no agents at all); a machine that does not answer or has no agents in the list is left alone.
+    [ -r "$AGENT_LOCAL" ] || return 0
+    local i f id m p st d="$SHARED_DIR/agentgone" now t0 any=0; mkdir -p "$d" 2>/dev/null; now=$(date +%s); topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        id=${T_ID[$i]}; f=${T_FILE[$i]}
+        case "${T_STATUS[$i]}" in review|finished|now) ;; *) rm -f "$d/$id"; continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || { rm -f "$d/$id"; continue; }                                    # (handing over: the agent is still needed)
+        m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
+        if [ "$m" = "$HOST" ]; then [ -s "$AGENT_LOCAL" ] || { rm -f "$d/$id"; continue; }
+        else awk -F"$US" -v m="$m" '$1 == m && $3 !~ /^off-/ { f = 1 } END { exit !f }' "$AGENT_REMOTE" 2>/dev/null || { rm -f "$d/$id"; continue; }; fi   # (the machine answers, with agents)
+        st=$(awk -F"$US" -v m="$m" -v p="$p" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
+        [ -z "$st" ] || { rm -f "$d/$id"; continue; }                                                                    # (it is there)
+        t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
+        if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"; continue; fi
+        [ $(( now - $(num_or "$t0" "$now") )) -ge 30 ] || continue
+        herdr pane list >/dev/null 2>&1 || { rm -f "$d"/*; return 0; }                                                   # (herdr does not answer: nobody is gone)
+        rm -f "$d/$id"
+        if [ "$(topic_get "$f" auto)" = 1 ] || [ "$(topic_get "$f" auto_now)" = 1 ]; then topic_set "$f" deleted 1
+        elif [ "${T_STATUS[$i]}" = now ]; then topic_set "$f" status finished
+        else topic_set "$f" status later; topic_set "$f" dismissed 1; topic_set "$f" auto_back ""; fi
+    done
+    return 0
+}
 finished_expire() {  # a recently finished card is dismissed by itself after FINISHED_MINUTES (0: never): put away like a dismissed review card
     # (comes back when its agent works again); the card bhote made for an agent without a topic simply goes
     local m i f now; cfg_var m FINISHED_MINUTES 30; num_set m "$m" 30; [ "$m" -gt 0 ] || return 0
@@ -5166,7 +5219,7 @@ bhote_main() {
             elif [ -z "$k2" ]; then key=ESC
             else key=""; fi                                    # Alt+key: nothing
         fi
-        if [ "$key" = HOVER ]; then key=""; [ "$view" = main ] && redraw=1; fi   # the pointer moved onto another card (or off the cards)
+        if [ "$key" = HOVER ]; then key=""; [ "$view" = main ] && { redraw=1; NAV_ONLY=1; }; fi   # the pointer moved onto another card (or off the cards)
         if [ -z "$key" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ "$SECONDS" != "${FOCUS_AT:-}" ]; then      # is this the pane you are in? Asked once a second when idle
             FOCUS_AT=$SECONDS; _pf=$(pane_focused)
             if [ "$_pf" != "${PANE_FOCUS:-}" ]; then PANE_FOCUS=$_pf; [ "$view" = main ] && redraw=1; fi
@@ -5251,6 +5304,7 @@ bhote_main() {
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
                 TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; *) topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
                 CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
+                AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ⋮ on the divider: counts only, and back
                 m|M) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=ctx; CTX_IDX=0; redraw=1; fi ;;
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
@@ -5269,8 +5323,8 @@ bhote_main() {
                          if [ -n "$f" ] && ask "Description: " "$(topic_get "$f" description)" "$DESC_MAX"; then topic_set "$f" description "$ANSWER"; fi; redraw=1; fi ;;
                 n|N) if [ "$view" = main ]; then prompt_new_topic; redraw=1; else view=main; redraw=1; fi ;;
                 ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_PAGE=main; SET_IDX=0; redraw=1 ;;
-                UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; fi ;;      # on the start screen the wheel does nothing
-                DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; fi ;;
+                UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; NAV_ONLY=1; fi ;;      # on the start screen the wheel does nothing
+                DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; NAV_ONLY=1; fi ;;
                 ENTER) if [ "$view" = splash ]; then view=main
                        elif case "${SEL_ID:-}" in more:*) true ;; *) false ;; esac; then toggle_expand "${SEL_ID#more:}"   # "+N more": open or close the group
                        elif [ -n "$(sel_file)" ]; then topic_jump || { view=menu; MENU_IDX=0; }; fi; redraw=1 ;;   # its agent, like a click; else its page
@@ -5317,7 +5371,8 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
     if [ "$TOO_SMALL" = 1 ]; then     # too small for any picture: one line that cannot wrap
         printf '\033[H\033[J%s' "$(clip "Too small (min ${MIN_COLS}x${MIN_ROWS})" "$(( ${REAL_COLS:-30} - 1 ))")"; return 0
     fi
-    ui_load
+    # a key that only moves the selection (NAV_ONLY) draws from what is loaded (not older than 2 s: the idle check reloads), the agents' area is kept
+    if [ "${NAV_ONLY:-}" = 1 ] && [ $(( SECONDS - ${UI_LOAD_AT:-0} )) -lt 2 ]; then :; else ui_load; fi; NAV_ONLY=""
     frame=$(bhote_draw "$1")
     local fl=() fr=() n=0 sel=-1 off=0 rows=${ROWS:-40} i map=""
     while IFS= read -r line; do
