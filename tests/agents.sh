@@ -249,6 +249,15 @@ topic_new "Own topic" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$of
 agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: the card goes when the agent gets a topic of its own" || bad "card stayed with own topic"
 rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
 printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: the card goes when the agent stops" || bad "card stayed when idle"
+# a card an agent works with (bhote current gives it, the agent hands it over with bhote review) is a topic of its own: it stays when the agent stops
+rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
+( BHOTE_NO_SYNC=1 bhote_cli review "$(topic_get "$cf" id)" --summary "Done, please check" >/dev/null 2>&1 )
+printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards
+[ "$(topic_get "$cf" deleted)" != 1 ] && [ "$(topic_get "$cf" status)" = review ] && [ -z "$(topic_get "$cf" auto_now)" ] \
+    && ok "agent cards: a card handed over with bhote review stays when the agent stops (a topic of its own)" || bad "used card: deleted=$(topic_get "$cf" deleted) status=$(topic_get "$cf" status) auto_now=$(topic_get "$cf" auto_now)"
+rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
+topic_set "$cf" status later; printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards
+[ "$(topic_get "$cf" deleted)" != 1 ] && [ -z "$(topic_get "$cf" auto_now)" ] && ok "agent cards: a card moved off now (in the panel) stays" || bad "moved card: deleted=$(topic_get "$cf" deleted)"
 cfg_set AGENT_CARDS off; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}x" > "$AGENT_LOCAL"; rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
 [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: AGENT_CARDS=off makes none" || bad "card with setting off"
 ) && true
