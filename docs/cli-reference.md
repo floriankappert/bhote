@@ -194,7 +194,8 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 
 ### `bhote agents`
 
-The agents herdr knows (this machine, and the saved machines when `REMOTE_AGENTS=on`), numbered. Every agent also has a
+The agents herdr knows (this machine, and the other machines when `REMOTE_AGENTS=on`: herdr's saved ones, or the ones in
+kharka with `AGENTS_VIA=kharka`), numbered. Every agent also has a
 code of its own: its machine's code and a number (`MAC4`, `OMR1`), handed out by the agent's machine and kept for good (it is
 shown in the agent list and behind done topics). The numbers and the codes are agent refs for `transfer`. `--json`: an array
 of `{"n", "code", "machine", "pane", "status", "name", "task", "free", "topic"}`.
@@ -283,7 +284,9 @@ panels it restarted and how many it left alone.
 ### `bhote setup [--json]`
 
 The [setup wizard](setup.md) in this terminal. With `--json` it only reports what is in place:
-`{"machine", "jq", "herdr", "plugin", "claude_hook", "machines": [{"label", "reachable", "knows_this_machine"}], "setup_done"}`.
+`{"machine", "jq", "herdr", "plugin", "claude_hook", "machines": [...], "setup_done"}`. A machine is
+`{"label", "via": "herdr", "reachable", "knows_this_machine"}` (herdr's saved machines) or, with `AGENTS_VIA=kharka`,
+`{"label", "via": "kharka", "node", "reachable", "prompts"}` (`prompts`: its herdr-kharka runs `agent.prompt`).
 
 ### `bhote` (no arguments)
 

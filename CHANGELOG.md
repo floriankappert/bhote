@@ -5,6 +5,14 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- `AGENTS_VIA=kharka`: the agents of the other machines come from kharka instead of herdr's saved machines, so no machine
+  needs ssh to another. [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes each machine's agents as
+  `herdr/<node>` (listed under its `--label`); the collector watches them and looks at once when one changes. The live state of
+  an agent there, a prompt and the focus are `herdr.commands` that herdr-kharka runs; prompts need its
+  `--allow-method agent.prompt`. Settings › *Agents through*, the wizard's *Remote agents* step (it checks this machine's
+  label and which machines take prompts), `bhote setup --json` (`via`, `prompts`).
+
 ### Fixed
 - The setup wizard's topics step and its summary work under bash 3.2 again (macOS `/bin/bash`): both stopped with
   `syntax error near unexpected token 'newline'`, because bash 3.2 ends a `$( … )` at the `)` of a `case` pattern. The

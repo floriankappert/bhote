@@ -26,15 +26,16 @@ WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.8.0}
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
-FEATURE_LEVEL=3
+FEATURE_LEVEL=4
 NEWS="Steal & Transfer · see GitHub"   # one line for the welcome screen, e.g. "Steal & Transfer · read more on GitHub" (empty: none)
 NEWS_LINK="see GitHub"                 # the part of NEWS that links to NEWS_URL (dotted underline, a terminal hyperlink: OSC 8)
 NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-transfer.md"
 
 # ── settings: ~/.config/bhote/config, plain KEY=value lines (never sourced). Everything that reaches beyond this machine
 # is OFF until the user switches it on in the settings screen (","): bhote must not open SSH connections unasked.
-#   REMOTE_AGENTS=on|off   ask the saved herdr machines for their agents, in the background (default off)
-#   MACHINES_OFF=a,b       saved machines that stay out even when REMOTE_AGENTS is on
+#   REMOTE_AGENTS=on|off   list the agents of the other machines too, in the background (default off)
+#   AGENTS_VIA=herdr|kharka   where they come from: herdr's saved machines (ssh) or kharka (herdr-kharka on every machine)
+#   MACHINES_OFF=a,b       machines that stay out even when REMOTE_AGENTS is on
 #   REMOTE_EVERY=10        seconds between two remote queries      LOCAL_EVERY=3   seconds between two local ones
 #   TESTS_BUSY=on|off      an agent whose workspace is running tests counts as busy, not free (default on)
 #   HOST_LABEL=Name        how this machine is called in the agent lists (default: Mac on macOS, else the host name)
@@ -76,11 +77,12 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
 SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it opens at the next start)
 STORE|local|enum:local:remote:kharka|Where the topics are kept: local, a replica on STORE_MACHINE, or kharka (a local-first store on every machine)
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
-KHARKA||text|The kharka binary for STORE=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
+KHARKA||text|The kharka binary for STORE=kharka and AGENTS_VIA=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
-PUSH_STATES|on|bool|When an agent here changes its state, tell the other machines at once (through herdr), so that their panels show it within a second (only with REMOTE_AGENTS on)
-REMOTE_AGENTS|off|bool|Also list the agents of the saved herdr machines (opens ssh connections)
-MACHINES_OFF||list|Saved machines that stay out even with REMOTE_AGENTS=on
+PUSH_STATES|on|bool|When an agent here changes its state, tell the other machines at once (through herdr), so that their panels show it within a second (only with REMOTE_AGENTS on and AGENTS_VIA=herdr)
+REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
+AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
+MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
 PANEL_MIN_WIDTH|36|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
 PANEL_MAX_WIDTH|60|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
@@ -248,22 +250,35 @@ kharka_err_set() {  # kharka_err_set <var> <file>: kharka's complaint in one cle
     local _ke=""; { IFS= read -r _ke < "$2"; } 2>/dev/null
     _ke=${_ke//[[:cntrl:]]/}; _ke=${_ke#kharka: }; printf -v "$1" '%s' "${_ke:0:200}"
 }
-# The collector follows `kharka watch bhote.`: every change there (another machine's, or our own push) asks for a merge and
-# wakes the collector at once. The watch and the loop that reads it are two processes joined by a fifo, so that both have a
+# The collector follows `kharka watch`: every change under bhote. (another machine's, or our own push) asks for a merge, every
+# change under herdr/ (AGENTS_VIA=kharka: a machine's agents) for a look at the other machines; both wake the collector at once.
+# The watch and the loop that reads it are two processes joined by a fifo, so that both have a
 # pid of their own and both are stopped (a pipeline in the background leaves its first command running). They are started
 # from a subshell: no jobs of the collector, whose shell would print "Terminated" into the panel when they are stopped.
-kharka_follow_start() {  # kharka_follow_start <collector pid>: sets KW_WATCH and KW_READ
-    local fifo="$RUN_DIR/kharka.watch"
+kharka_follow_want() {  # kharka_follow_want <var>: what to watch: bhote. (STORE=kharka), herdr/ (agents through kharka), all (both), none
+    local _fs _fa=""; cfg_var _fs STORE local
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && [ "$(cfg_get AGENTS_VIA herdr)" = kharka ] && _fa=1
+    if [ "$_fs" = kharka ]; then if [ -n "$_fa" ]; then printf -v "$1" all; else printf -v "$1" bhote.; fi
+    elif [ -n "$_fa" ]; then printf -v "$1" herdr/; else printf -v "$1" none; fi
+}
+kharka_follow_start() {  # kharka_follow_start <collector pid> [what: bhote. herdr/ all]: sets KW_WATCH, KW_READ and KW_WHAT
+    local fifo="$RUN_DIR/kharka.watch" what=${2:-bhote.} pre
+    pre=$what; [ "$what" = all ] && pre=""
     rm -f "$fifo" "$fifo.pids"; mkfifo "$fifo" 2>/dev/null || return 1
-    ( kharka_run watch bhote. > "$fifo" 2>/dev/null & w=$!; kharka_follow_read "$fifo" "$w" "$1" & echo "$w $!" > "$fifo.pids" )
+    ( kharka_run watch ${pre:+"$pre"} > "$fifo" 2>/dev/null & w=$!; kharka_follow_read "$fifo" "$w" "$1" & echo "$w $!" > "$fifo.pids" )
     read -r KW_WATCH KW_READ < "$fifo.pids" 2>/dev/null; rm -f "$fifo.pids"
+    KW_WHAT=$what
     [ -n "$KW_READ" ]
 }
 kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid>: until the watch ends or the collector is gone
     local line s
     while true; do
         s=$SECONDS
-        if IFS= read -r -t 5 line; then [ -n "$line" ] && { : > "$STORE_DIRTY"; poke; }
+        if IFS= read -r -t 5 line; then
+            case "$line" in                                    # (a line starts with the key: {"entry":{"key":"…)
+                *'{"key":"bhote.'*) : > "$STORE_DIRTY"; poke ;;
+                *'{"key":"herdr/'*) : > "$SHARED_DIR/remote.due"; poke ;;
+            esac
         elif [ $(( SECONDS - s )) -lt 4 ]; then break          # the watch ended (bash 3.2 tells a timeout from the end only by the time)
         else kill -0 "$3" 2>/dev/null || break; fi             # quiet for 5 s: is the collector still there? (after a kill -9 nobody stops us)
     done < "$1"
@@ -271,8 +286,9 @@ kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid>:
 }
 kharka_follow_stop() { [ -n "${KW_READ:-}" ] && kill "$KW_READ" 2>/dev/null; [ -n "${KW_WATCH:-}" ] && kill "$KW_WATCH" 2>/dev/null; KW_READ=""; KW_WATCH=""; }
 kharka_follow_keep() {  # kharka_follow_keep <collector pid>: every round of the lead collector: the follower runs while
-    # STORE=kharka. One that ended soon (no daemon) starts again after 5, 10, 20 … at most 60 s, not on every round.
-    local _ks; cfg_var _ks STORE local; [ "$_ks" = kharka ] || { kharka_follow_stop; return 0; }
+    # STORE=kharka or AGENTS_VIA=kharka. One that ended soon (no daemon) starts again after 5, 10, 20 … at most 60 s, not on every round.
+    local _kw; kharka_follow_want _kw; [ "$_kw" = none ] && { kharka_follow_stop; return 0; }
+    [ -n "${KW_READ:-}" ] && [ "${KW_WHAT:-}" != "$_kw" ] && { kharka_follow_stop; KW_NEXT=0; }   # the settings changed what to watch
     [ -n "${KW_READ:-}" ] && kill -0 "$KW_READ" 2>/dev/null && return 0
     if [ -n "${KW_READ:-}" ]; then
         kharka_follow_stop
@@ -281,8 +297,8 @@ kharka_follow_keep() {  # kharka_follow_keep <collector pid>: every round of the
         KW_NEXT=$(( SECONDS + KW_WAIT ))
     fi
     [ "$SECONDS" -ge "${KW_NEXT:-0}" ] || return 0
-    kharka_follow_start "$1" || return 0
-    KW_AT=$SECONDS; : > "$STORE_DIRTY"                         # a merge: what changed while nobody followed
+    kharka_follow_start "$1" "$_kw" || return 0
+    KW_AT=$SECONDS; : > "$STORE_DIRTY"; : > "$SHARED_DIR/remote.due"   # a merge and a look: what changed while nobody followed
 }
 store_note() {  # store_note ok|offline|again [KEY=value lines]: the state, when it was last in step, and what the transport adds
     # (kharka: its hub, the writes the hub does not have yet, the last complaint). again: kharka changed during the merge.
@@ -1082,6 +1098,7 @@ branch_sync() {  # the topics of this machine's agents carry their branch (agent
 }
 collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied. A machine that does not
     # answer (herdr reconnecting) keeps the agents seen last, marked "off-<state>": the panel shows them muted, nobody gets work
+    agents_kharka && { collect_remote_kharka; return; }
     local id label host prof enabled out rc line m aid st name task offl="$SHARED_DIR/machines.offline"
     : > "$offl.tmp.$$"; : > "$AGENT_META_R.tmp.$$"
     { herdr machine list 2>/dev/null | tr '\t' '\037' | while IFS=$US read -r id label host prof enabled; do
@@ -1099,6 +1116,90 @@ collect_remote() {  # only the saved machines that are switched on; with the set
       done; } > "$AGENT_REMOTE.tmp.$$"
     mv "$offl.tmp.$$" "$offl" 2>/dev/null; mv "$AGENT_META_R.tmp.$$" "$AGENT_META_R" 2>/dev/null
     agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
+}
+# AGENTS_VIA=kharka: the other machines' agents come from kharka, not from herdr's saved machines. herdr-kharka on every
+# machine writes what its herdr runs as herdr/<node>; its label (herdr-kharka --label) is the machine's name in the lists, so
+# it should be the name bhote has there (HOST_LABEL, else Mac / the host name). The daemon here holds every machine's entry:
+# a look never leaves this machine, and no machine needs ssh to another. Actions (the live state, a prompt, the focus) are
+# commands in herdr.commands/<node>/<id>, which herdr-kharka there runs and answers in the same record (kharka_call).
+agents_kharka() { [ "$(cfg_get REMOTE_AGENTS off)" = on ] && [ "$(cfg_get AGENTS_VIA herdr)" = kharka ]; }
+AGENT_NODES="$SHARED_DIR/agents.nodes"                         # label US node US down (1/0) US the methods its herdr-kharka runs (a,b,…)
+kharka_self_set() {  # kharka_self_set <var>: this machine's kharka node (kharka whoami, kept for the session of the daemon)
+    local _kn=""; { IFS= read -r _kn < "$SHARED_DIR/kharka.self"; } 2>/dev/null
+    if [ -z "$_kn" ] || [ -n "$(find "$SHARED_DIR/kharka.self" -mmin +10 2>/dev/null)" ]; then
+        _kn=$(kharka_run whoami 2>/dev/null) && _kn=${_kn//[!A-Za-z0-9._-]/} && [ -n "$_kn" ] && printf '%s\n' "$_kn" > "$SHARED_DIR/kharka.self" 2>/dev/null
+    fi
+    printf -v "$1" '%s' "$_kn"; [ -n "$_kn" ]
+}
+kharka_node_of() {  # kharka_node_of <label>: KN_NODE, KN_DOWN (1/0), KN_CMDS (",a,b,") of that machine, from the last look
+    local l n d c; KN_NODE=""; KN_DOWN=1; KN_CMDS=","
+    [ -r "$AGENT_NODES" ] || return 1
+    while IFS=$US read -r l n d c; do [ "$l" = "$1" ] && { KN_NODE=$n; KN_DOWN=$d; KN_CMDS=",$c,"; return 0; }; done < "$AGENT_NODES"
+    return 1
+}
+collect_remote_kharka() {  # the herdr/<node> entries of the other machines (not this one's, not one called like this one), switched-on ones only.
+    # A machine whose herdr is offline, whose node the hub reports offline, or whose entry is older than 60 s (herdr-kharka writes
+    # at least every 30 s) shows its last agents as off-<state>. Without an answer from the daemon every machine keeps what it had, muted.
+    local t="$SHARED_DIR/kharka.agents.$$" me tb line m aid st name task offl="$SHARED_DIR/machines.offline"
+    kharka_self_set me || me=""
+    cfg_var tb TESTS_BUSY on
+    if ! kharka_run ls herdr/ --entries > "$t.h" 2>/dev/null || ! kharka_run ls _nodes/ --entries > "$t.n" 2>/dev/null; then
+        rm -f "$t.h" "$t.n"
+        [ -r "$AGENT_NODES" ] && awk -F"$US" '{ print $1 }' "$AGENT_NODES" > "$offl.tmp.$$" && mv "$offl.tmp.$$" "$offl"
+        [ -r "$AGENT_REMOTE" ] && while IFS= read -r line; do
+            IFS=$US read -r m aid st name task <<< "$line"; case "$st" in off-*) ;; *) st="off-$st" ;; esac
+            printf '%s\n' "$m$US$aid$US$st$US$name$US$task"
+        done < "$AGENT_REMOTE" > "$AGENT_REMOTE.tmp.$$"
+        [ -e "$AGENT_REMOTE.tmp.$$" ] && agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
+        return 1
+    fi
+    # control characters out of every text, only plain pane ids; a label keeps letters, digits, space . _ - (it stands in m/pane refs)
+    jq -rn --slurpfile h "$t.h" --slurpfile n "$t.n" --arg me "$me" --arg host "$HOST" --arg tb "$tb" \
+        --arg off ",$(cfg_get MACHINES_OFF ''),"  --argjson now "$(date +%s)" '
+        def clean: gsub("[\u0001-\u001f\u007f-\u009f]"; "");
+        ($n | map({(.key | sub("^_nodes/"; "")): (.value.online != false)}) | add // {}) as $on
+        | $h[] | select(.value | type == "object") | select(.key | test("^herdr/[A-Za-z0-9._-]+$"))
+        | (.key | sub("^herdr/"; "")) as $node | .value as $v
+        | ((($v.label // "") | tostring | gsub("[^A-Za-z0-9 ._-]"; "") | .[0:40]) | if . == "" then $node else . end) as $m
+        | select($node != $me and $m != $host and ($off | contains("," + $m + ",") | not))
+        | ((($v.herdr // "") != "online") or ($on[$node] == false)
+           or ($now - (((.hlc // "0") | split("-")[0] | tonumber? // 0) / 1000) > 60)) as $down
+        | (($v.workspaces // []) | map(select(type == "object")) | map({(.id | tostring): .}) | add // {}) as $ws
+        | "N\u001f\($m)\u001f\($node)\u001f\(if $down then 1 else 0 end)\u001f\(($v.commands // []) | map(tostring | gsub("[^a-z._]"; "")) | join(","))",
+          ($v.agents // [] | .[] | select(type == "object") | select((.pane // "") | tostring | test("^[A-Za-z0-9:_-]+$"))
+           | ($ws[.workspace // ""] // {}) as $w
+           | ((.status // "") | tostring | clean) as $st
+           | (if ($tb == "on") and (($w.tokens.tests // "") | tostring | startswith("◌")) and ($st != "working") then "testing" else $st end) as $st
+           | ("A\u001f" + ([$m, .pane, (if $down then "off-" + $st else $st end), (($w.label // .workspace // "") | tostring | clean),
+                ((.tokens.task // "") | tostring | clean | ltrimstr("∟ "))] | join("\u001f"))),
+             ("M\u001f" + ([$m, .pane, ((.tab // "") | tostring | clean), "a", ((.tokens.repo // "") | tostring | clean),
+                ((.tokens.project // "") | tostring | clean), ((.cwd // "") | tostring | clean)] | join("\u001f"))))' > "$t.out" 2>/dev/null
+    awk -F"$US" -v OFS="$US" '$1 == "N" { print $2, $3, $4, $5 }' "$t.out" > "$AGENT_NODES.tmp.$$"; mv "$AGENT_NODES.tmp.$$" "$AGENT_NODES"
+    awk -F"$US" '$1 == "N" && $4 == 1 { print $2 }' "$t.out" > "$offl.tmp.$$"; mv "$offl.tmp.$$" "$offl"
+    sed -n "s/^M$US//p" "$t.out" > "$AGENT_META_R.tmp.$$"; mv "$AGENT_META_R.tmp.$$" "$AGENT_META_R"
+    sed -n "s/^A$US//p" "$t.out" > "$AGENT_REMOTE.tmp.$$"; rm -f "$t.h" "$t.n" "$t.out"
+    agents_put "$AGENT_REMOTE.tmp.$$" "$AGENT_REMOTE"
+}
+kharka_call() {  # kharka_call <machine label> <method> <params as JSON> [seconds, 10]: runs an agent.* method on that machine's herdr
+    # through its herdr-kharka (the record herdr.commands/<node>/<id>, answered in place, then deleted here). 0: KC_RESULT is the
+    # result (JSON); 1: KC_ERR says why not (herdr's or herdr-kharka's answer, or no such machine); 2: no answer in time.
+    local secs=${4:-10} me key now out i val; KC_RESULT=""; KC_ERR=""
+    kharka_node_of "$1" || { KC_ERR="$1 is not a machine in kharka"; return 1; }
+    [ "$KN_DOWN" = 1 ] && { KC_ERR="$1 is offline"; return 2; }
+    case "$KN_CMDS" in *",$2,"*) ;; *) KC_ERR="herdr-kharka on $1 does not run $2"; return 1 ;; esac
+    kharka_self_set me || { KC_ERR="no kharka daemon"; return 1; }
+    now=$(( $(date +%s) * 1000 )); key="herdr.commands/$KN_NODE/$me-$now-$$$RANDOM"
+    val=$(jq -cn --arg f "$me" --argjson at "$now" --argjson ex $(( now + secs * 1000 )) --arg m "$2" --argjson p "$3" \
+        '{from: $f, at: $at, expires: $ex, method: $m, params: $p}' 2>/dev/null) || { KC_ERR="bad params"; return 1; }
+    printf '%s' "$val" | kharka_run put "$key" - >/dev/null 2>&1 || { KC_ERR="kharka refused the command"; return 1; }
+    for (( i = 0; i < secs * 5; i++ )); do                    # (the daemon is local: a get is cheap)
+        out=$(kharka_run get "$key" 2>/dev/null | jq -c 'select(.done | type == "object") | .done' 2>/dev/null)
+        [ -n "$out" ] && break; sleep 0.2
+    done
+    kharka_run del "$key" >/dev/null 2>&1
+    [ -n "$out" ] || { KC_ERR="$1 did not answer in time"; return 2; }
+    if [ "$(printf '%s' "$out" | jq -r '.ok')" = true ]; then KC_RESULT=$(printf '%s' "$out" | jq -c '.result // null'); return 0; fi
+    KC_ERR=$(printf '%s' "$out" | jq -r '.error // "failed"' | tr -d '\000-\037' | cut -c1-200); return 1
 }
 # herdr (0.9) gives every `herdr --machine` call an ssh master of its own (ControlPersist=yes, the socket in <tmp>/herdr-ssh-<pid>-<n>/)
 # and nothing ends it after the call: the collector's calls left one per round, thousands overnight, until fork failed. The masters
@@ -1254,7 +1355,7 @@ auto_assign() {
 collector() {  # collector <main pid>; runs in the background: local often, remote less often, both read the settings anew each round
     local every_l every_r last_r=-999999 last_s=-999999 sync_pid="" last_k=-999999 slack_pid="" every_k w
     local last_d=-999999 dep_pid="" every_d last_t=-999999 tst_pid="" every_t rem_pid="" lead upd_pid="" last_u=-999999 last_h=-999999 key_pid="" mux_pid="" last_x=-999999
-    local KW_READ="" KW_WATCH="" KW_AT=0 KW_WAIT=0 KW_NEXT=0 me every_s   # the kharka follower (kharka_follow_keep)
+    local KW_READ="" KW_WATCH="" KW_WHAT="" KW_AT=0 KW_WAIT=0 KW_NEXT=0 me every_s   # the kharka follower (kharka_follow_keep)
     self_pid_set me 2>/dev/null; [ -n "$me" ] || me=$1                 # (the follower ends when this pid is gone; else the panel's)
     trap 'kharka_follow_stop; kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0' TERM   # its background rounds do not outlive it
     find "$SHARED_DIR" -maxdepth 1 -name 'agents.*.tmp.*' -mmin +1 -exec rm -f {} + 2>/dev/null   # left by a killed collector
@@ -1936,7 +2037,8 @@ agent_jump() {  # agent_jump <machine> <pane>
     if [ "$1" = "$HOST" ]; then ( herdr agent focus "$2" >/dev/null 2>&1 & )
     else
         machine_known "$1" || return 1
-        ( herdr --machine "$1" agent focus "$2" >/dev/null 2>&1 & )
+        if agents_kharka; then ( kharka_call "$1" agent.focus "$(jq -cn --arg t "$2" '{target: $t}')" >/dev/null 2>&1 & )
+        else ( herdr --machine "$1" agent focus "$2" >/dev/null 2>&1 & ); fi
         # herdr has no call that switches its window to another machine: the agent is focused over there, the switch is yours
         local _kw; key_pretty _kw "prefix+w"
         FLASH_MSG="focused on $1 · to go there: $_kw, pick it, ⏎"; FLASH_UNTIL=$(( SECONDS + 10 ))
@@ -2049,14 +2151,23 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         SET_ROWS=("choice|STORE|Data location")
         if [ "$(cfg_get STORE local)" = kharka ]; then SET_ROWS[${#SET_ROWS[@]}]="text|KHARKA|kharka binary"   # (kharka is its own way)
         else SET_ROWS[${#SET_ROWS[@]}]="enum|SYNC_VIA|Sync through"; fi
-        SET_ROWS[${#SET_ROWS[@]}]="bool|REMOTE_AGENTS|Remote agents (via herdr)"
+        SET_ROWS[${#SET_ROWS[@]}]="bool|REMOTE_AGENTS|Remote agents"
         if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
-            SET_ROWS[${#SET_ROWS[@]}]="bool|PUSH_STATES|Push agent states at once"
-            local id label host prof enabled
-            while IFS=$US read -r id label host prof enabled; do
-                label=${label//[[:cntrl:]|]/}; host=${host//[[:cntrl:]]/}
-                [ -n "$label" ] && SET_ROWS[${#SET_ROWS[@]}]="machine|$label|$label ($host)"
-            done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
+            SET_ROWS[${#SET_ROWS[@]}]="enum|AGENTS_VIA|Agents through"
+            local id label host prof enabled node down cmds
+            if [ "$(cfg_get AGENTS_VIA herdr)" = kharka ]; then    # the machines in kharka (the last look), each can be switched off
+                [ "$(cfg_get STORE local)" = kharka ] || SET_ROWS[${#SET_ROWS[@]}]="text|KHARKA|kharka binary"
+                [ -r "$AGENT_NODES" ] && while IFS=$US read -r label node down cmds; do
+                    label=${label//[[:cntrl:]|]/}; node=${node//[[:cntrl:]|]/}
+                    [ -n "$label" ] && SET_ROWS[${#SET_ROWS[@]}]="machine|$label|$label (kharka $node)"
+                done < "$AGENT_NODES"
+            else
+                SET_ROWS[${#SET_ROWS[@]}]="bool|PUSH_STATES|Push agent states at once"
+                while IFS=$US read -r id label host prof enabled; do
+                    label=${label//[[:cntrl:]|]/}; host=${host//[[:cntrl:]]/}
+                    [ -n "$label" ] && SET_ROWS[${#SET_ROWS[@]}]="machine|$label|$label ($host)"
+                done <<< "$(herdr machine list 2>/dev/null | tr '\t' '\037')"
+            fi
             SET_ROWS[${#SET_ROWS[@]}]="num|REMOTE_EVERY|Remote interval (s)"
         fi
         SET_ROWS[${#SET_ROWS[@]}]="bool|GITHUB_BRANCHES|GitHub: agent branches"
@@ -2183,7 +2294,8 @@ bhote_settings() {
             TEST_MONITOR) wrap_print 5 "$D" "The last test runs above the agents: CI test jobs, live status files, and local runs (bhote test run -- <command>)." ;;
             ci) [ -n "${MON_MSG:-}" ] && wrap_print 5 "$D" "$MON_MSG" || wrap_print 5 "$D" "$(monitor_describe "$TOPIC_DIR/$SET_PROJ.topic"). ⏎ find it again from the repository." ;;
             SLACK_WATCH) wrap_print 5 "$D" "Pinned Slack channels of waiting topics, read through Claude Code. One machine is enough." ;;
-            REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Asks herdr for the agents of its saved machines." ;;
+            REMOTE_AGENTS) wrap_print 5 "$D" "Off by default. Lists the agents of the other machines too (Agents through)." ;;
+            AGENTS_VIA) wrap_print 5 "$D" "herdr: its saved machines, over ssh. kharka: what herdr-kharka writes on every machine, no ssh; prompts need its --allow-method agent.prompt there." ;;
             JUMP_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = JUMP_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Jumps from the agent to this panel and back.')" ;;
             FIND_KEY) wrap_print 5 "$D" "$([ "$KEY_MSG_FOR" = FIND_KEY ] && [ -n "$KEY_MSG" ] && printf '%s' "$KEY_MSG" || printf '⏎ change. Find a topic or an agent and jump to it.')" ;;
         esac
@@ -2995,15 +3107,27 @@ git_repo_key_set() {  # git_repo_key_set <var> <folder>: the key of the reposito
     else printf -v "$1" 'dir:%s' "${_main##*/}"; fi
 }
 # ── talking to agents: the live state of one agent pane, and a prompt to it (both through herdr, --machine for other machines)
-machine_known() {  # machine_known <label>: this machine, or a machine saved in herdr (a label from another machine's view is not)
+machine_known() {  # machine_known <label>: this machine, or a machine saved in herdr (a label from another machine's view is not);
+    # with AGENTS_VIA=kharka a machine with an entry in kharka
     [ -n "$1" ] || return 1; [ "$1" = "$HOST" ] && return 0
+    agents_kharka && { kharka_node_of "$1"; return; }
     herdr machine list 2>/dev/null | awk -F'\t' -v l="$1" '$2 == l { f = 1 } END { exit !f }'
 }
 agent_live() {  # agent_live <machine> <pane>: LIVE_ST (idle|done|working|blocked|gone|noagent|unknown), LIVE_SESS, LIVE_CWD
     local opt=() out raw; LIVE_SESS=""; LIVE_CWD=""
     machine_known "$1" || { LIVE_ST=unknown; return 0; }
-    [ "$1" = "$HOST" ] || opt=(--machine "$1")
-    raw=$(herdr_m ${opt[@]+"${opt[@]}"} pane list) || { LIVE_ST=unknown; return 0; }       # herdr did not answer (or not in time): not "gone"
+    if [ "$1" != "$HOST" ] && agents_kharka; then               # herdr there, through kharka (agent.get: one agent; a pane without one is "not found")
+        case "$2" in ''|*[!A-Za-z0-9:_-]*) LIVE_ST=gone; return 0 ;; esac
+        kharka_call "$1" agent.get "$(jq -cn --arg t "$2" '{target: $t}')" 8
+        case $? in
+            0) raw="{\"result\":{\"panes\":[$(printf '%s' "$KC_RESULT" | jq -c '.agent // empty | select(type == "object")' 2>/dev/null)]}}" ;;
+            1) case "$KC_ERR" in *"not found"*) LIVE_ST=gone ;; *) LIVE_ST=unknown ;; esac; return 0 ;;
+            *) LIVE_ST=unknown; return 0 ;;
+        esac
+    else
+        [ "$1" = "$HOST" ] || opt=(--machine "$1")
+        raw=$(herdr_m ${opt[@]+"${opt[@]}"} pane list) || { LIVE_ST=unknown; return 0; }       # herdr did not answer (or not in time): not "gone"
+    fi
     [ -n "$raw" ] || { LIVE_ST=unknown; return 0; }
     out=$(printf '%s' "$raw" | jq -r --arg p "$2" '[.result.panes[] | select(.pane_id == $p)][0]
         | if . == null then "gone" elif (.agent // "") == "" then "noagent" else
@@ -3016,6 +3140,15 @@ AGENT_SEND_SYNC=""                                              # the CLI waits 
 agent_send() {  # agent_send <machine> <pane> <text>: a prompt to that agent
     local opt=(); machine_known "$1" || return 1; [ "$1" = "$HOST" ] || opt=(--machine "$1")
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
+    if [ "$1" != "$HOST" ] && agents_kharka; then              # through kharka: herdr-kharka there must allow agent.prompt
+        case "$KN_CMDS" in *,agent.prompt,*) ;; *)
+            echo "bhote: $1 takes no prompts through kharka: start herdr-kharka there with --allow-method agent.prompt" >&2; return 1 ;; esac
+        local p; p=$(jq -cn --arg t "$2" --arg x "${3//[[:cntrl:]]/ }" '{target: $t, text: $x}')
+        if [ -n "$AGENT_SEND_SYNC" ]; then
+            kharka_call "$1" agent.prompt "$p" || { echo "bhote: the prompt to $1/$2 failed: $KC_ERR" >&2; return 1; }
+        else ( kharka_call "$1" agent.prompt "$p" >/dev/null 2>&1 ) & fi
+        return 0
+    fi
     if [ -n "$AGENT_SEND_SYNC" ]; then
         herdr_m ${opt[@]+"${opt[@]}"} agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 || { echo "bhote: herdr could not send the prompt to $1/$2" >&2; return 1; }
     else ( herdr_m ${opt[@]+"${opt[@]}"} agent prompt "$2" "${3//[[:cntrl:]]/ }" >/dev/null 2>&1 ) & fi
@@ -3076,7 +3209,7 @@ delegation_text() {  # delegation_text <file>: the prompt an agent gets: the top
     printf '%s%s (bhote topic %s: %s.)' "$title" "${desc:+. $desc}" "$id" "$(how_to_finish "$id")"
 }
 pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt through herdr) and mark it started; or transfer it
-    local f m id st name task opt=() title desc live sess; f=$(sel_file); [ -n "$f" ] || return 0
+    local f m id st name task title desc sess; f=$(sel_file); [ -n "$f" ] || return 0
     if [ "$PICK_MODE" = transfer ]; then
         [ "$1" -ge 1 ] || return 0                                  # (index -1 would be the LAST agent in bash 4)
         pick_build; [ -n "${PICK_MAP[$(( $1 - 1 ))]:-}" ] || return 0
@@ -3094,11 +3227,9 @@ pick_do() {  # pick_do <index>: hand the topic to that agent (as a prompt throug
         [ -n "${PICK_MAP[$(( $1 - 1 ))]:-}" ] || return 0
         IFS=$US read -r m id st name task <<< "${AG_LINES[${PICK_MAP[$(( $1 - 1 ))]}]}"
         agent_state_set st "$m" "$id"; case "$st" in idle|done) ;; *) return 0 ;; esac     # taken in the meantime: change nothing
-        [ "$m" = "$HOST" ] || opt=(--machine "$m")
         # the lists are a few seconds old: right before typing, ask herdr itself that this pane still runs a FREE agent
         # (a pane that is now a plain shell would execute the text)
-        live=$(herdr_m ${opt[@]+"${opt[@]}"} pane list | jq -r --arg p "$id" '[.result.panes[] | select(.pane_id == $p)][0] | if . == null then "gone" elif (.agent // "") == "" then "noagent" else ((.agent_status // "") + "\u001f" + ((.agent_session.value // "") | tostring | gsub("[^A-Za-z0-9-]"; ""))) end' 2>/dev/null)
-        st=${live%%$US*}; sess=""; case "$live" in *"$US"*) sess=${live#*$US} ;; esac
+        agent_live "$m" "$id"; st=$LIVE_ST; sess=$LIVE_SESS
         case "$st" in idle|done) ;; *) return 0 ;; esac
     fi
     topic_set "$f" status now; topic_set "$f" waiting_for ""
@@ -4284,10 +4415,31 @@ setup_step_topics() {
 }
 setup_step_agents() {
     w_screen 6 "REMOTE AGENTS" || return
-    w_say "Also list the agents of the other machines (asked through herdr)."
-    local r; w_yn "Show the agents of the other machines here?" "$([ "$(cfg_get REMOTE_AGENTS off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
+    w_say "Also list the agents of the other machines: through herdr (its saved machines, over ssh) or through kharka (herdr-kharka on every machine writes its agents there; no ssh between the machines)."
+    local r c; w_yn "Show the agents of the other machines here?" "$([ "$(cfg_get REMOTE_AGENTS off)" = on ] && echo Y || echo N)"; r=$?; [ $r = 3 ] && return
     case $r in 0) cfg_set REMOTE_AGENTS on; w_ok "remote agents" "on" ;; 1) cfg_set REMOTE_AGENTS off; w_ok "remote agents" "off" ;; esac
+    if [ "$(cfg_get REMOTE_AGENTS off)" = on ] && kharka_found; then
+        w_line; w_opt 1 "through herdr (its saved machines, over ssh)"; w_opt 2 "through kharka (herdr-kharka on every machine)"
+        w_choose c "Choose:" 12 "$([ "$(cfg_get AGENTS_VIA herdr)" = kharka ] && echo 2 || echo 1)" || return
+        if [ "$c" = 2 ]; then cfg_set AGENTS_VIA kharka; w_ok "agents" "through kharka"; w_agents_kharka
+        else cfg_set AGENTS_VIA herdr; w_ok "agents" "through herdr"; fi
+    fi
     w_continue
+}
+w_agents_kharka() {  # what kharka has: this machine's herdr-kharka and its name, the other machines, whether they take prompts
+    local me lab l n d c k=0
+    if ! kharka_self_set me; then w_bad "kharka" "no daemon answers here: start one (kharka daemon --hub …)"; return; fi
+    lab=$(kharka_run get "herdr/$me" 2>/dev/null | jq -r '.label // empty' 2>/dev/null)
+    if [ -z "$lab" ]; then w_warn "$HOST" "no herdr-kharka here: the other machines do not see its agents"
+    elif [ "$lab" != "$HOST" ]; then w_warn "$HOST" "herdr-kharka calls it $lab: start it with --label $(printf '%q' "$HOST"), else topics name two machines"
+    else w_ok "$HOST" "herdr-kharka writes its agents"; fi
+    collect_remote_kharka >/dev/null 2>&1
+    [ -r "$AGENT_NODES" ] && while IFS=$US read -r l n d c; do
+        k=$(( k + 1 ))
+        if [ "$d" = 1 ]; then w_warn "$l" "offline (kharka $n)"; else w_ok "$l" "$(awk -F"$US" -v l="$l" '$1 == l' "$AGENT_REMOTE" 2>/dev/null | wc -l | tr -d ' ') agents (kharka $n)"; fi
+        case ",$c," in *,agent.prompt,*) ;; *) w_warn "$l" "takes no prompts (herdr-kharka there: --allow-method agent.prompt)" ;; esac
+    done < "$AGENT_NODES"
+    [ "$k" -gt 0 ] || w_warn "kharka" "no other machine writes its agents (herdr-kharka there)"
 }
 setup_step_projects() {  # projects: create them, and give each agent here without one its project (by its repository)
     w_screen 7 "PROJECTS" || return
@@ -4437,10 +4589,12 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
     w_screen 11 "DONE" || return
     w_ok "machine" "$HOST"
     w_ok "topics" "$(case "$(cfg_get STORE local)" in (remote) printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" ;; (kharka) echo 'through kharka' ;; (*) echo 'only here' ;; esac)"
-    w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
+    w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)$(agents_kharka && printf ' (through kharka)')"
     w_ok "autostart" "$(cfg_get AUTOSTART on)"
     local label host en n known
-    while IFS=$US read -r label host en <&3; do
+    if agents_kharka; then printf '\n  %sthrough kharka%s\n' "$R" "$X"; w_agents_kharka; fi
+    # herdr's saved machines: for the agents through herdr, and for the topics through a replica
+    { agents_kharka && [ "$(cfg_get STORE local)" != remote ]; } || while IFS=$US read -r label host en <&3; do
         [ -n "$label" ] || continue
         printf '\n  %s%s%s\n' "$R" "$label" "$X"
         n=$(herdr --machine "$label" pane list 2>/dev/null | jq '[.result.panes[] | select(.agent)] | length' 2>/dev/null)
@@ -4457,7 +4611,7 @@ setup_step_done() {  # the end: what is set up, and a live check of every machin
     w_line; w_say "Change anything later in the settings (,), or run the setup again: settings › Setup wizard, or bhote setup. A log of this setup: ${W_LOG/#$HOME/~}"
     w_continue
 }
-step_level() { case "$1" in topics) echo 3 ;; monitors) echo 2 ;; *) echo 1 ;; esac; }   # the feature level that brought the step
+step_level() { case "$1" in agents) echo 4 ;; topics) echo 3 ;; monitors) echo 2 ;; *) echo 1 ;; esac; }   # the feature level that brought the step
 bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
     local st old_int; W_QUIT=0; ask_drain                      # keys typed before it opened must not answer its first questions
     old_int=$(trap -p INT); trap 'W_QUIT=1' INT                 # Ctrl-C ends the wizard (and only the wizard)
@@ -4488,13 +4642,21 @@ setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
     printf '{"machine":%s,"jq":%s,"herdr":%s,"plugin":%s,"claude_hook":%s,"machines":[' "$(json_str "$HOST")" \
         "$(command -v jq >/dev/null 2>&1 && echo true || echo false)" "$(command -v herdr >/dev/null 2>&1 && echo true || echo false)" \
         "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo true || echo false)" "$(grep -q 'bhote current' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" 2>/dev/null && echo true || echo false)"
-    local label host en first=1 known
-    while IFS=$US read -r label host en <&3; do
+    local label host en first=1 known node down cmds
+    if agents_kharka; then                                     # the machines in kharka: reachable = writes its agents, prompts = takes them
+        collect_remote_kharka >/dev/null 2>&1
+        [ -r "$AGENT_NODES" ] && while IFS=$US read -r label node down cmds; do
+            [ "$first" = 1 ] || printf ','; first=0
+            printf '{"label":%s,"via":"kharka","node":%s,"reachable":%s,"prompts":%s}' "$(json_str "$label")" "$(json_str "$node")" \
+                "$([ "$down" = 1 ] && echo false || echo true)" "$(case ",$cmds," in (*,agent.prompt,*) echo true ;; (*) echo false ;; esac)"
+        done < "$AGENT_NODES"
+    fi
+    { agents_kharka && [ "$(cfg_get STORE local)" != remote ]; } || while IFS=$US read -r label host en <&3; do
         [ -n "$label" ] || continue
         local reach=false; herdr --machine "$label" pane list >/dev/null 2>&1 && reach=true
         known=null; [ "$reach" = true ] && { w_remote_knows "$label"; case $? in 0) known=true ;; 1) known=false ;; esac; }
         [ "$first" = 1 ] || printf ','; first=0
-        printf '{"label":%s,"reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$reach" "$known"
+        printf '{"label":%s,"via":"herdr","reachable":%s,"knows_this_machine":%s}' "$(json_str "$label")" "$reach" "$known"
     done 3<<< "$(w_machines)"
     printf '],"setup_done":%s}\n' "$(json_opt "$(cfg_get SETUP_DONE '')")"
 }
@@ -4803,8 +4965,8 @@ agent_claim() {  # agent_claim <file>: the agent that runs the command takes the
 # notification. Either way the collector is poked, so every panel shows the new state at once.
 # Push: an agent here changed its state; the other machines ask this one again at once (the plugin action "changed" there),
 # like herdr's own client does with its live connection. One push at a time: an event during a push makes it run once more.
-push_peers() {
-    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && [ "$(cfg_get PUSH_STATES on)" = on ] || return 0
+push_peers() {  # (AGENTS_VIA=kharka: not needed, the other machines follow herdr/ in kharka)
+    [ "$(cfg_get REMOTE_AGENTS off)" = on ] && [ "$(cfg_get PUSH_STATES on)" = on ] && [ "$(cfg_get AGENTS_VIA herdr)" = herdr ] || return 0
     local lock=$SHARED_DIR/push.lock id label host prof en p k
     if ! lock_take "$lock" "$$"; then : > "$SHARED_DIR/push.pending"; return 0; fi
     while true; do
@@ -5272,7 +5434,7 @@ find_act() {  # find_act <item>: 0 = done (close), 1 = stay (FIND_NOTE says why)
         return 0
     fi
     [ -n "$m" ] || m=$HOST
-    agent_jump "$m" "$p" || { FIND_NOTE="$m is not a machine herdr knows here"; return 1; }
+    agent_jump "$m" "$p" || { FIND_NOTE="$m is not a machine known here"; return 1; }
     if [ "$m" != "$HOST" ]; then FIND_NOTE="selected on $m: switch to $m in herdr"; return 2; fi
     return 0
 }

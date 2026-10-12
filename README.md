@@ -142,7 +142,7 @@ they become files; control characters are stripped from everything shown or sent
 - **No panel opens:** `herdr plugin list` must show `bhote.panel`; `AUTOSTART=off` keeps it closed; a tab narrower than
   the panel plus 64 columns for the agent gets none (open it by hand with the action "Bhote: open panel").
 - **No agents are listed:** `bhote agents` shows what herdr reports; agents of other machines need `REMOTE_AGENTS=on`
-  and a saved herdr machine.
+  and a saved herdr machine, or `AGENTS_VIA=kharka` and herdr-kharka on that machine.
 - **The panel shows an old version after an update:** `bhote reload`.
 - **`bhote: ... jq`:** install `jq` (`brew install jq`, `pacman -S jq`, `apt install jq`).
 
