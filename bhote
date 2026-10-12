@@ -93,6 +93,7 @@ AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (thi
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
 CLICK_FOCUS_AGENT|on|bool|A click on a topic shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in the herdr agent list; off: the focus goes back to the bhote panel of that tab
+FINISHED_MINUTES|30|int:0:1440|A recently finished card (an agent that stopped without a question: nothing to check) is dismissed by itself after this many minutes; it comes back when the agent works again (0 = never)
 AGENT_CARDS|on|bool|A working agent without a topic gets a card on now by itself (title: what it works on), gone when it stops working or gets a topic; 15 s of work first
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
@@ -383,13 +384,13 @@ topics_load() {
         [ "$del" = 1 ] && continue
         [ -n "$kd" ] && continue                                   # a project record (kind=project), not a topic
         case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
-        case "$st" in now|testing|next|waiting|review|later|done) ;; *) st=now ;; esac
+        case "$st" in now|testing|finished|next|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
         a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; a_pj[$n]=${pj//[!A-Za-z0-9_-]/}; a_dp[$n]=${dp//[!0-9]/}; a_dm[$n]=${dm//[!0-9]/}; n=$(( n + 1 ))
     done
     T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=(); T_PJ=(); T_DEP=(); T_DM=()
-    for s in review now testing deploying next waiting later done; do     # review first: it waits for you; deploying = waiting for a deployment (status waiting, deploy_wait=1)
+    for s in review now testing deploying finished next waiting later done; do     # review first: it waits for you; deploying = waiting for a deployment (status waiting, deploy_wait=1)
         for (( i = 0; i < n; i++ )); do
             case "$s" in deploying) [ "${a_st[$i]}" = waiting ] && [ "${a_dp[$i]}" = 1 ] || continue ;;
                 waiting) [ "${a_st[$i]}" = waiting ] && [ "${a_dp[$i]}" != 1 ] || continue ;;
@@ -400,7 +401,7 @@ topics_load() {
     done
     T_N=$m
 }
-panel_shows() { case "$1" in now|testing|next|review|waiting) return 0 ;; esac; return 1; }   # the panel lists these; later and done only in search and CLI
+panel_shows() { case "$1" in now|testing|finished|next|review|waiting) return 0 ;; esac; return 1; }   # the panel lists these; later and done only in search and CLI
 EXPANDED=" "     # the groups whose "+N more" was opened (next, waiting, later, done); the panel keeps it while it runs
 LINE_MAX=10      # lines a group shows before "+N more"
 topic_archived() {  # topic_archived <index>: untouched for ARCHIVE_DAYS (the chosen one never counts as archived)
@@ -423,7 +424,7 @@ topics_plan() {  # what the panel lists, for the frame and the keys: PLAN_VIS[i]
         [ "$st" = later ] && [ "${T_DM[$i]:-}" = 1 ] && continue      # a dismissed review card: gone from the list (the search and the CLI still find it)
         in_scope "$i" || continue
         case "$st" in
-            review|now|testing) PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue ;;
+            review|now|testing|finished) PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue ;;
             waiting) [ "${T_DEP[$i]:-}" = 1 ] && { PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue; } ;;   # waiting for a deployment: a card of its own group
         esac
         if topic_archived "$i"; then PLAN_ARCH=$(( PLAN_ARCH + 1 )); continue; fi
@@ -1301,12 +1302,13 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
-        case "${T_STATUS[$i]}" in now|testing|review|waiting|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
+        case "${T_STATUS[$i]}" in now|testing|finished|review|waiting|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
     done
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         f=${T_FILE[$i]}; [ "$(topic_get "$f" auto_now)" = 1 ] || continue
-        case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) ;; *) [ "${T_STATUS[$i]}" = testing ] || { topic_set "$f" deleted 1; continue; } ;; esac       # the agent stopped (but not while its tests run)
+        case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) [ "${T_STATUS[$i]}" = finished ] && topic_set "$f" status now ;;       # (it works again: the card is open again)
+            *) [ "${T_STATUS[$i]}" = now ] && topic_set "$f" status finished ;; esac                                  # the agent stopped (but not while its tests run): recently finished
         case "$owned" in *$'\n'"${T_AP[$i]}"$'\n'*) topic_set "$f" deleted 1; continue ;; esac            # it got a topic of its own
         cards="$cards${T_AP[$i]}"$'\n'
         while IFS=$US read -r m id st name task; do
@@ -1448,6 +1450,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             tests_sync
             deploy_sync
             review_follow
+            finished_expire
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
@@ -1572,7 +1575,9 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         fi
     elif [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s⋮%s %s\n' "$trm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
     else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi
-    [ -n "$d" ] && printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
+    if [ "$ag" = 1 ]; then                                      # an agent's card: everything under the task starts under its text (column 5)
+        [ -n "$d" ] && { clip_set d "$6" $(( w - 5 )); dw_set dw2 "$d"; printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 4 - dw2 )) "" "$X"; }
+    else [ -n "$d" ] && printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"; fi
     if [ "$ag" != 1 ] || [ "${TI_AGMETA:-}" = 1 ]; then       # (an agent's card says its state with the icon; the meta line only for what the icon does not say)
     [ -n "$who$st$tm" ] || { if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi; return 0; }
     room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
@@ -1583,7 +1588,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         if [ -n "$who" ]; then clip_set st "$st" $(( room - ww - 3 )); else clip_set st "$st" "$room"; fi
         dw_set sw "$st"; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) ))
     fi
-    printf '%s%s%s%s∟ ' "$rm" "$bg" "$bl" "$gc"
+    if [ "$ag" = 1 ]; then printf '%s%s%s%s  ' "$rm" "$bg" "$bl" "$gc"; else printf '%s%s%s%s∟ ' "$rm" "$bg" "$bl" "$gc"; fi   # (an agent's card: no marker, the text under the task's)
     [ -n "$who" ] && printf '%s%s' "$wc" "$who"
     [ -n "$who" ] && [ -n "$st" ] && printf '%s · ' "$gc"
     [ -n "$st" ] && printf '%s%s' "$mc" "$st"
@@ -1591,8 +1596,9 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
     fi
     if [ -n "${10:-}" ]; then                                  # the agent's git branch, a line of its own
-        local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
-        printf '%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
+        local bt bw bi=""; [ "$ag" = 1 ] && bi="  "
+        clip_set bt "${10}" $(( w - 6 - ${#bi} )); dw_set bw "$bt"
+        printf '%s%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$bi" "$gc" "$bt" "$X$bg" $(( w - 4 - ${#bi} - bw )) "" "$X"
     fi
     if [ "$gap" = 1 ] && [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
         local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 8 )) pf pi bf="" be=""
@@ -1682,6 +1688,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
                  case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
                      idle|done) state=finished; sc=$GREEN ;; off-*) state="offline (${T_AM[$i]} reconnecting)"; sc=$D ;; *) state=gone; sc=$D ;; esac
              fi ;;
+        finished) who=${T_AG[$i]}; state=finished; sc=$GREEN; ago_set tm "${T_UPD[$i]:-$NOW}" ;;      # its agent stopped without a question: nothing to check, the card goes by itself
         testing) who=${T_AG[$i]}; state="tests running"; sc=$C; ago_set tm "${T_UPD[$i]:-$NOW}" ;;   # the agent stopped, a test suite runs (also in the background)
         waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
                  [ -n "${T_SL[$i]}" ] && { state="Slack monitor (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
@@ -1737,7 +1744,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             continue ;;
         esac
         if [ "$gk" != "$prev" ]; then
-            case "$gk" in deploying) label="WAITING FOR DEPLOYMENT"; lc=$Y ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
+            case "$gk" in deploying) label="WAITING FOR DEPLOYMENT"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             printf '\n'                                                  # (a card brings its own edges, the caption its blank row)
             printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
         fi
@@ -1754,11 +1761,12 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
         fi
         TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMETA=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
-        case "$st" in now|testing)                               # a card of an agent at work: like herdr's agent card (icon, machine · agent, ∟ the topic)
+        case "$st" in now|testing|finished)                      # a card of an agent at work (finished: its agent has stopped): like herdr's agent card (icon, machine · agent, ∟ the topic)
             if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ]; then
                 TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
-                case "$ast" in working|testing) TI_AGIC="${ORANGE}${SPIN_CH:-✶}"; TI_SPIN=1; agent_now_set TI_NOW "$TI_AGM" "${T_AP[$i]}" ;; blocked) TI_AGIC="${NN}◉" ;; done) TI_AGIC="${GREEN}✓" ;; gone|off-*) TI_AGIC="${D}◌" ;; *) TI_AGIC="${D}○" ;; esac
-                case "$state" in working) ;; handing\ over) TI_AGMETA=1 ;; "finished · x = done") TI_AGMETA=1; who="" ;; *) TI_AGMETA=1; who="" ;; esac   # (the icon says working; the rest the line adds)
+                [ "$st" = finished ] && ast=finished
+                case "$ast" in finished) TI_AGIC="${GREEN}✓" ;; working|testing) TI_AGIC="${ORANGE}${SPIN_CH:-✶}"; TI_SPIN=1; agent_now_set TI_NOW "$TI_AGM" "${T_AP[$i]}" ;; blocked) TI_AGIC="${NN}◉" ;; done) TI_AGIC="${GREEN}✓" ;; gone|off-*) TI_AGIC="${D}◌" ;; *) TI_AGIC="${D}○" ;; esac
+                case "$state" in working) ;; finished) TI_AGMETA=1; who="" ;; handing\ over) TI_AGMETA=1 ;; "finished · x = done") TI_AGMETA=1; who="" ;; *) TI_AGMETA=1; who="" ;; esac   # (the icon says working; the rest the line adds)
             fi ;;
         esac
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
@@ -2420,6 +2428,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CAN_CLOSE|Agents may close topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CARDS|Cards for agents without a topic"
+    SET_ROWS[${#SET_ROWS[@]}]="num|FINISHED_MINUTES|Recently finished: dismiss after (min)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|CLICK_FOCUS_AGENT|A click on a topic focuses its agent"
     SET_ROWS[${#SET_ROWS[@]}]="num|ARCHIVE_DAYS|Archive after days"
     SET_ROWS[${#SET_ROWS[@]}]="bool|NOTIFY|herdr notifications"
@@ -2950,6 +2959,7 @@ menu_build() {  # menu_build <file>
     [ -n "$ag" ] && [ -n "$pane" ] && add "jump|Show topic"
     case "$st" in
         review) add "now|Back to now: work goes on"; add "dismiss|Dismiss: close the card"; add "done|Mark done" ;;
+        finished) add "dismiss|Dismiss: close the card"; add "done|Mark done"; add "now|Back to now: work goes on" ;;
         now|testing) add "review|Ready for review"; add "done|Mark done" ;;
         waiting) if [ -n "$ag" ] && [ -n "$pane" ]; then add "resume|The wait is over: $ag goes on"; else add "now|The wait is over: back to now"; fi
             add "done|Mark done" ;;
@@ -2995,7 +3005,7 @@ bhote_menu() {  # the topic's page: title and description in full (wrapped), its
     local f i st sc wf ws ag am age line sl; f=$(sel_file); [ -n "$f" ] || { printf '\n  %sno topic selected%s\n' "$D" "$X"; return; }
     menu_build "$f"
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ws=$(topic_get "$f" waiting_since); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine)
-    case "$st" in now) sc=$ORANGE ;; testing) sc=$C ;; next) sc=$S ;; waiting) sc=$Y ;; review) sc=$BLUE ;; later) sc=$R ;; done) sc=$GREEN ;; *) sc=$D ;; esac
+    case "$st" in now) sc=$ORANGE ;; testing) sc=$C ;; finished) sc=$GREEN ;; next) sc=$S ;; waiting) sc=$Y ;; review) sc=$BLUE ;; later) sc=$R ;; done) sc=$GREEN ;; *) sc=$D ;; esac
     printf '\n  %sTITLE%s\n' "$D" "$X"
     field_block title "$TITLE" "$(topic_get "$f" title '(untitled)')"
     printf '\n  %sDESCRIPTION%s\n' "$D" "$X"
@@ -3562,12 +3572,14 @@ review_act() {  # review_act <file> [button 1-3, default 1]: a button of a revie
 review_dismiss() {  # review_dismiss <file>: the review card is closed (read, nothing to do). The topic is put away (parked, dismissed=1) and comes
     # back on now when its agent works again (an event, or the agent working right now: then it goes straight back to now). 1: not in review
     local f=$1 am ap ast
-    [ -f "$f" ] && [ "$(topic_get "$f" status)" = review ] || return 1
+    [ -f "$f" ] && case "$(topic_get "$f" status)" in review|finished) true ;; *) false ;; esac || return 1
     am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane)
     if [ -n "$ap" ]; then agent_state_set ast "${am:-$HOST}" "$ap"
         case "$ast" in working|testing) topic_set "$f" status now; topic_set "$f" auto_back ""; poke; return 0 ;; esac   # it goes on already: the card is its work card again
     fi
-    topic_set "$f" status later; topic_set "$f" dismissed 1; topic_set "$f" auto_back ""; poke
+    if [ "$(topic_get "$f" auto_now)" = 1 ]; then topic_set "$f" deleted 1   # a card bhote made itself: just gone
+    else topic_set "$f" status later; topic_set "$f" dismissed 1; topic_set "$f" auto_back ""; fi
+    poke
 }
 topic_file_of() { printf '%s/%s.topic' "$TOPIC_DIR" "${1//[!A-Za-z0-9_-]/}"; }
 topic_resume() {  # topic_resume <file>: a waiting topic of an agent: the wait is over, the agent goes on (a prompt through herdr)
@@ -4042,18 +4054,29 @@ review_follow() {  # a review card goes by itself when the agent that asked work
     for (( i = 0; i < T_N; i++ )); do
         [ -n "${T_AP[$i]}" ] || continue
         id=${T_ID[$i]}; f=${T_FILE[$i]}
-        case "${T_STATUS[$i]}" in review|later) ;; *) continue ;; esac
+        case "${T_STATUS[$i]}" in review|later|finished) ;; *) continue ;; esac
         [ "${T_STATUS[$i]}" = later ] && [ "${T_DM[$i]:-}" != 1 ] && continue
         [ "${T_STATUS[$i]}" = review ] && { [ -z "${T_SM[$i]}" ] && [ "$(topic_get "$f" review_src)" != deploy ] || continue; }   # (an answer in Slack, a finished deployment: not the agent's)
         m=${T_AM[$i]:-$HOST}
         st=$(awk -F"$US" -v m="$m" -v p="${T_AP[$i]}" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
         case "$st" in
             idle|done|blocked) : > "$d/$id" ;;
-            working) if [ "${T_STATUS[$i]}" = later ] || [ -e "$d/$id" ]; then
+            working) if [ "${T_STATUS[$i]}" != review ] || [ -e "$d/$id" ]; then
                          rm -f "$d/$id"
                          if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1; else topic_set "$f" status now; topic_set "$f" auto_back ""; fi
                      fi ;;
         esac
+    done
+    return 0
+}
+finished_expire() {  # a recently finished card is dismissed by itself after FINISHED_MINUTES (0: never): put away like a dismissed review card
+    # (comes back when its agent works again); the card bhote made for an agent without a topic simply goes
+    local m i f now; cfg_var m FINISHED_MINUTES 30; num_set m "$m" 30; [ "$m" -gt 0 ] || return 0
+    now=$(date +%s); topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = finished ] && [ $(( now - ${T_UPD[$i]:-$now} )) -ge $(( m * 60 )) ] || continue
+        f=${T_FILE[$i]}
+        if [ "$(topic_get "$f" auto_now)" = 1 ]; then topic_set "$f" deleted 1; else topic_set "$f" status later; topic_set "$f" dismissed 1; fi
     done
     return 0
 }
@@ -5211,7 +5234,7 @@ bhote_main() {
                 w|W) if [ "$view" = main ]; then panel_setup "${NEWFEAT:-0}"; redraw=1; fi ;;   # the wizard (new features: only what is new)
                 a|A) if [ "$view" = main ]; then view=suggest; SUG_IDX=0; redraw=1; fi ;;
                 x|X) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && { sel_leave; topic_set "$f" status done; }; redraw=1; fi ;;   # check it off
-                c|C) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && [ "$(topic_get "$f" status)" = review ] && { sel_leave; review_dismiss "$f"; }; redraw=1; fi ;;   # dismiss a review card
+                c|C) if [ "$view" = main ]; then f=$(sel_file); [ -n "$f" ] && case "$(topic_get "$f" status)" in review|finished) true ;; *) false ;; esac && { sel_leave; review_dismiss "$f"; }; redraw=1; fi ;;   # dismiss a review or finished card
                 e|E) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the title
                          if [ -n "$f" ] && ask "Title: " "$(topic_get "$f" title)" && [ -n "$ANSWER" ]; then topic_set "$f" title "$ANSWER"; fi; redraw=1; fi ;;
                 d|D) if [ "$view" = main ]; then f=$(sel_file)                                              # edit the description
@@ -5417,7 +5440,7 @@ cli_event() {
     if [ "$st" = working ] && [ -n "$pane" ] && [ -n "$sess" ]; then
         for (( i = 0; i < T_N; i++ )); do
             [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AS[$i]}" ] && [ "${T_AS[$i]}" != "$sess" ] || continue
-            case "${T_STATUS[$i]}" in now|testing|review|waiting) topic_set "${T_FILE[$i]}" agent_session "${sess//[^A-Za-z0-9-]/}"; T_AS[$i]=${sess//[^A-Za-z0-9-]/} ;; esac
+            case "${T_STATUS[$i]}" in now|testing|finished|review|waiting) topic_set "${T_FILE[$i]}" agent_session "${sess//[^A-Za-z0-9-]/}"; T_AS[$i]=${sess//[^A-Za-z0-9-]/} ;; esac
         done
     fi
     local hit=0 auto
@@ -5428,12 +5451,12 @@ cli_event() {
            || { [ -n "$pane" ] && [ "${T_AP[$i]}" = "$pane" ] && [ "${T_AM[$i]}" = "$HOST" ] && [ -z "${T_AS[$i]}" ]; }; then
             f=${T_FILE[$i]}
             [ "$(topic_get "$f" auto_now)" = 1 ] && continue                              # (the card bhote made for an agent without a topic is no topic of its own)
-            case "${T_STATUS[$i]}" in now|testing|review|waiting|next) hit=1 ;; later) [ "$(topic_get "$f" dismissed)" = 1 ] && hit=1 ;; esac   # (it has a topic: no extra one; a dismissed card too)
+            case "${T_STATUS[$i]}" in now|testing|finished|review|waiting|next) hit=1 ;; later) [ "$(topic_get "$f" dismissed)" = 1 ] && hit=1 ;; esac   # (it has a topic: no extra one; a dismissed card too)
             case "$st" in
                 working)                                           # the user answered: what bhote put under review for it goes away or back
                     if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
-                    elif [ "${T_STATUS[$i]}" = later ] && [ "$(topic_get "$f" dismissed)" = 1 ]; then
-                        topic_set "$f" status now; topic_set "$f" auto_back ""     # a dismissed review card: its agent works again, the card is open again (as its work card)
+                    elif [ "${T_STATUS[$i]}" = finished ] || { [ "${T_STATUS[$i]}" = later ] && [ "$(topic_get "$f" dismissed)" = 1 ]; }; then
+                        topic_set "$f" status now; topic_set "$f" auto_back ""     # a finished or dismissed card: its agent works again, the card is open again (as its work card)
                     elif [ "${T_STATUS[$i]}" = review ] && { [ "$(topic_get "$f" auto_back)" = 1 ] || [ "$prev" != working ]; }; then
                         topic_set "$f" status now; topic_set "$f" auto_back ""     # (any review topic: the agent working again is the answer; no need for the agent to remember)
                     fi ;;
@@ -5441,8 +5464,16 @@ cli_event() {
                     [ "${T_STATUS[$i]}" = now ] || continue
                     [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 5 ] || continue      # the idle right after handing it over is not "finished"
                     if [ -n "$pane" ] && pane_tests_running "$pane"; then topic_set "$f" status testing; topic_set "$f" auto_back 1; continue; fi   # tests still run (also in the background): testing first, review when they are done
-                    topic_set "$f" status review; topic_set "$f" auto_back 1
-                    notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request ;;
+                    # the agent stopped: with a question (or waiting for an answer) the user has to look: review; otherwise nothing to check: recently finished
+                    local fq=""; [ "$st" = blocked ] && fq="needs your answer"
+                    if [ -z "$fq" ]; then
+                        if [ "${BHOTE_FAKE_QUESTION+x}" = x ]; then fq=$BHOTE_FAKE_QUESTION
+                        elif [ -n "$pane" ]; then fq=$(herdr pane read "$pane" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text); fi
+                    fi
+                    if [ -n "$fq" ]; then
+                        topic_set "$f" status review; topic_set "$f" auto_back 1
+                        notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request
+                    else topic_set "$f" status finished; fi ;;
             esac
         fi
     done
@@ -5472,12 +5503,12 @@ cli_event() {
 # agent learns what it works on and how to report back. Prints nothing (exit 0) when there is none.
 cli_bar() {  # bhote bar: one line for a status bar (Waybar-style JSON: text, tooltip, class), from the topic files and the
     # panels' agent lists (no herdr call): the number of things for you (topics in review, agents that wait for an answer)
-    local i n=0 rv=0 wt=0 nw=0 busy=0 blk=0 m id st name task tip="" line
+    local i n=0 rv=0 wt=0 nw=0 fin=0 busy=0 blk=0 m id st name task tip="" line
     topics_load
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in
             review) rv=$(( rv + 1 )); [ "$rv" -le 6 ] && tip="$tip"$'\n'"  ● ${T_TITLE[$i]}" ;;
-            waiting) wt=$(( wt + 1 )) ;; now) nw=$(( nw + 1 )) ;;
+            waiting) wt=$(( wt + 1 )) ;; now) nw=$(( nw + 1 )) ;; finished) fin=$(( fin + 1 )) ;;
         esac
     done
     while IFS=$US read -r m id st name task; do
@@ -5488,13 +5519,13 @@ cli_bar() {  # bhote bar: one line for a status bar (Waybar-style JSON: text, to
     [ "$n" -gt 0 ] && { text="$n"; cls=attention; }
     [ "$n" = 0 ] && [ "$busy" -gt 0 ] && cls=busy
     head="bhote: $rv in review · $blk need an answer · $busy busy · $nw now · $wt waiting"
-    printf '{"text":%s,"tooltip":%s,"class":%s,"review":%d,"blocked":%d,"busy":%d,"now":%d,"waiting":%d}\n' \
-        "$(json_str "$text")" "$(json_str "$head$tip")" "$(json_str "$cls")" "$rv" "$blk" "$busy" "$nw" "$wt"
+    printf '{"text":%s,"tooltip":%s,"class":%s,"review":%d,"blocked":%d,"busy":%d,"now":%d,"waiting":%d,"finished":%d}\n' \
+        "$(json_str "$text")" "$(json_str "$head$tip")" "$(json_str "$cls")" "$rv" "$blk" "$busy" "$nw" "$wt" "$fin"
 }
 cli_current() {
     local i f hit=""; topics_load
     for (( i = 0; i < T_N; i++ )); do
-        case "${T_STATUS[$i]}" in now|testing|review|waiting) ;; *) continue ;; esac
+        case "${T_STATUS[$i]}" in now|testing|finished|review|waiting) ;; *) continue ;; esac
         if { [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ "${T_AS[$i]}" = "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}" ]; } \
            || { [ -n "${HERDR_PANE_ID:-}" ] && [ "${T_AP[$i]}" = "$HERDR_PANE_ID" ] && [ "${T_AM[$i]}" = "$HOST" ] \
                 && { [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -z "${T_AS[$i]}" ]; }; }; then hit=${T_FILE[$i]}; break; fi
@@ -5681,7 +5712,7 @@ topic_n() {  # topic_n <file>: its number in `bhote list --all` (1-based); needs
 topic_json() {  # topic_json <file>
     local f=$1 st wf ag am ap as agent=null
     st=$(topic_get "$f" status now); wf=$(topic_get "$f" waiting_for); ag=$(topic_get "$f" agent); am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane)
-    case "$st" in now|testing|next|waiting|review|later|done) ;; *) st=now ;; esac
+    case "$st" in now|testing|finished|next|waiting|review|later|done) ;; *) st=now ;; esac
     as=$(topic_get "$f" agent_session)
     [ "$st" = waiting ] || wf=""
     [ -n "$ag$ap$as" ] && agent=$(printf '{"name":%s,"machine":%s,"pane":%s,"session":%s,"branch":%s}' "$(json_opt "$ag")" "$(json_opt "$am")" "$(json_opt "$ap")" "$(json_opt "$as")" "$(json_opt "$(topic_get "$f" agent_branch)")")
@@ -5766,14 +5797,14 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
         if [ "${FI_GRP[$i]}" != "$prev" ]; then
             [ "$prev" = done ] && [ "$FI_MORE" -gt 0 ] && { printf -v line '   %s+%d more done tasks%s' "$D" "$FI_MORE" "$X"; rl[${#rl[@]}]=$line; rh[${#rh[@]}]=-1; }
             prev=${FI_GRP[$i]}
-            case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; testing) cap=TESTING; cc=$C ;; next) cap=NEXT; cc=$S ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
+            case "$prev" in review) cap=REVIEW; cc=$BLUE ;; now) cap=NOW; cc=$ORANGE ;; testing) cap=TESTING; cc=$C ;; finished) cap="RECENTLY FINISHED"; cc=$GREEN ;; next) cap=NEXT; cc=$S ;; waiting) cap=WAITING; cc=$Y ;; later) cap=LATER; cc=$R ;;
                 done) cap=DONE; cc=$GREEN ;; busy) cap="AGENTS · BUSY"; cc=$ORANGE ;; free) cap="AGENTS · FREE"; cc=$GREEN ;; *) cap=$prev; cc=$D ;; esac
             printf -v line ' %s%s%s' "$cc" "$cap" "$X"; rl[${#rl[@]}]=$line; rh[${#rh[@]}]=-1
         fi
         if [ "${FI_KIND[$i]}" = agent ]; then
             case "${FI_ST[$i]}" in off-*) ic="${MUTED}○" ;; working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; done) ic="${GREEN}✓" ;; idle) ic="${GREEN}○" ;; *) ic="${D}○" ;; esac
         else
-            case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; testing) ic="${C}●" ;; next) ic="${S}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
+            case "${FI_ST[$i]}" in now) ic="${ORANGE}●" ;; testing) ic="${C}●" ;; finished) ic="${GREEN}●" ;; next) ic="${S}●" ;; waiting) ic="${Y}●" ;; review) ic="${BLUE}●" ;; later) ic="${R}●" ;; done) ic="${GREEN}✓" ;; *) ic="${D}●" ;; esac
         fi
         local sb=${FI_SUB[$i]:-} sbw=0 sep="" tm=${FI_TM[$i]:-} tw2=0 lbc=$D
         [ -n "$tm" ] && tw2=$(( ${#tm} + 2 ))                     # the time on the right edge, as in the panel
@@ -5909,7 +5940,7 @@ bhote — topics and agents next to herdr.
                                      · --slack <pin> a Slack channel to watch while it waits
   bhote list [--all] [-s <status>]   the open topics (--all: also done ones), numbered
   bhote show <ref>                   one topic
-  bhote dismiss <ref>                a topic in review: close its card (back on now when its agent works again; otherwise parked)
+  bhote dismiss <ref>                a topic in review or recently finished: close its card (back on now when its agent works again; otherwise parked)
   bhote now|testing|next|review|later|done <ref>   start or resume · tests running · up next · ready for review · park · mark done
   bhote take <ref>                   an agent takes a topic over: it becomes its agent (now also does that, run by an agent)
   bhote wait <ref> <Name> [--slack <pin>]   waiting for Name (from now)
@@ -6019,7 +6050,7 @@ bhote_cli() {
               cli_done; topics_load; cli_show "$f" $json ;;
         list|ls) local all="" only="" i first=1
               while [ $# -gt 0 ]; do case "$1" in --all|-a) all=1 ;; --status|-s) only=${2:-}; shift ;; *) echo "bhote: unknown option '$1' for list" >&2; return 1 ;; esac; shift; done
-              case "$only" in ''|now|testing|next|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, testing, next, waiting, review, later, done" >&2; return 1 ;; esac
+              case "$only" in ''|now|testing|finished|next|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, testing, finished, next, waiting, review, later, done" >&2; return 1 ;; esac
               NOW=$(date +%s); topics_load
               [ -n "$json" ] && printf '['
               for (( i = 0; i < T_N; i++ )); do
@@ -6088,7 +6119,7 @@ bhote_cli() {
                   take) agent_claim "$f" || { echo "bhote: take is for an agent in herdr (HERDR_PANE_ID)" >&2; return 1; }
                         topic_set "$f" status now; topic_set "$f" waiting_for ""; poke ;;
                   testing) topic_set "$f" status testing; poke ;;
-                  dismiss) review_dismiss "$f" || { echo "bhote: only a topic in review can be dismissed (it is $(topic_get "$f" status))" >&2; return 1; } ;;
+                  dismiss) review_dismiss "$f" || { echo "bhote: only a topic in review or recently finished can be dismissed (it is $(topic_get "$f" status))" >&2; return 1; } ;;
                   later) topic_set "$f" status later ;;
                   next) topic_set "$f" status next ;;
                   wait) local wpin="" wargs=() wdep="" wdl=""

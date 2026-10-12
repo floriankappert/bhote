@@ -119,7 +119,8 @@ nothing (a note on stderr, `null` with `--json`, exit `0`).
 
 ### `bhote dismiss <ref>`
 
-Closes the review card of a topic in review (read, nothing to do): the topic is parked (`status: later`, `dismissed: 1`) and no longer in the
+Closes the card of a topic in review or recently finished (`status: finished`: its agent stopped without a question; `bhote list -s finished`)
+(read, nothing to do): the topic is parked (`status: later`, `dismissed: 1`) and no longer in the
 panel's list; search and CLI still find it. When its agent works again it is back on `now` by itself (the agent's event, or the collector when
 it saw the agent idle and then working), and with the agent already working it goes straight to `now`. Exit `1` for a topic that is not in
 review. Also key `c` and the topic menu.
@@ -266,7 +267,7 @@ their branches) and writes it into the project. `check` fetches both monitors no
 ### `bhote bar`
 
 One line for a status bar, Waybar-style JSON: `text` (the number of things for you; empty when nothing waits), `tooltip`, `class`
-(attention, busy, idle) and the counts. The Omarchy bar widget `bhote.bar` shows it.
+(attention, busy, idle) and the counts (`review`, `blocked`, `busy`, `now`, `waiting`, `finished`: topics recently finished). The Omarchy bar widget `bhote.bar` shows it.
 
 ### `bhote find`
 
@@ -321,7 +322,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `n` | integer | Position in `bhote list --all` at the time of the call; a valid ref until topics change. |
 | `title` | string | Never empty. |
 | `description` | string \| null | At most 140 characters. |
-| `status` | `"now"` \| `"testing"` \| `"next"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
+| `status` | `"now"` \| `"testing"` \| `"finished"` \| `"next"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session", "branch"}` (each may be null; `branch`: the git branch it works on, `@1234abc` when detached). |

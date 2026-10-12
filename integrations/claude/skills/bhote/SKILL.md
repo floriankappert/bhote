@@ -26,6 +26,9 @@ this step puts it back on `now`. It is not for a topic the user parked or closed
 When the answer shows that the topic is finished after all, use `bhote done <id>` instead. Without this step the panel
 keeps showing "ready for review" while you are working, and the user cannot tell what is waiting for them.
 
+Without `bhote review`, an agent that stops without a question shows as *Recently finished* (a green card, gone by itself after a while): fine for
+work that needs no look. Use `bhote review` whenever the user has to check, decide or answer.
+
 ## When you have to wait for someone or something
 
 When you cannot go on until someone else acts (a deployment has to finish, a reviewer has to approve, infrastructure has

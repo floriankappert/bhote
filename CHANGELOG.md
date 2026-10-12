@@ -10,6 +10,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- **Recently finished**: a topic on *Now* whose agent stops without a question (nothing to check) moves to its own group *Recently finished*
+  (status `finished`) instead of review. With a question, or an agent waiting for an answer, it still goes to review. When the agent works
+  again the card is back on *Now*; after `FINISHED_MINUTES` (30, 0 = never) it is dismissed by itself (the card bhote makes for an agent
+  without a topic is simply gone); key `c` (dismiss) or `x` (done), or the topic menu, ends it by hand. The card of an agent without a
+  topic follows the same way (it used to vanish when the agent stopped).
 - Dismiss a review card: key `c`, topic menu › *Dismiss: close the card*, `bhote dismiss <ref>`. The card leaves the list (search and CLI still
   find the topic); when its agent works again the topic is back on *Now* as the agent's work card, with the agent already working it goes
   straight there.
@@ -35,7 +40,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ### Changed
 - The machine name in an agent card has the colour herdr gives it in its agent rows (the row token `machine`, its `fg` from herdr's config.toml;
-  pink `#ff3ea5` without one), no longer grey or a project colour. The orange third line is indented like the rows above it.
+  pink `#ff3ea5` without one), no longer grey or a project colour. The orange third line, the description and the branch are indented like the rows above them
+  (under the text of the task).
 - *Review ansehen* (the button, or key `1`/`y`) shows the agent and the button goes: you see that you have used it (the note stays).
 - A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
   `machine · agent`, and under it `∟` what the agent works on, as herdr shows it (the topic's title when it has no task), then the
