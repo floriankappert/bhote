@@ -1566,9 +1566,9 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         if [ "$btn" = 1 ]; then printf ' %s⋮%s %s\n' "$gc" "$X$bg" "$X"; else printf '%s\n' "$X"; fi
         clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
         printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
-        if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange, with the dancing star
-            clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"
-            printf '\034%s\034%s%s%s%s%s%s %s%s%*s%s\n' "$spk" "$rm" "$bg" "$bl" "$ORANGE" "${SPIN_CH:-✶}" "$X$bg" "$ORANGE" "$t" $(( w - 4 - tw )) "" "$X"
+        if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
+            clip_set t "$TI_NOW" $(( w - 3 )); dw_set tw "$t"
+            printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
         fi
     elif [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s⋮%s %s\n' "$trm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
     else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi

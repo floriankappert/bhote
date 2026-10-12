@@ -470,12 +470,12 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"
   topic_new "Card topic" ""  ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
   AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
-  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ Building the warm-up clock" || exit 5
+  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌ Building the warm-up clock" || exit 5
   printf '%s\n' "$out" | tr -d '\034\035' | grep -c "Building the warm-up" | grep -q '^1$' || exit 6
   AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Building the warm-up"*) exit 7 ;; esac   # (only while it works)
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); SPIN_CELLS=""; RUN_DIR=$T/run; mkdir -p "$RUN_DIR"
-  HEAD=$(view_head >/dev/null 2>&1); bhote_view >/dev/null 2>&1 || true; sr=$(cat "$RUN_DIR/spinrows" 2>/dev/null); case "$sr" in *:3:*:3:*|*" "*:3:[nsh]*) ;; *) exit 8 ;; esac   # (the star's cells: two rows of the card)
-  exit 0 ) && ok "agent card: what the agent does right now, orange with the dancing star, only while it works" || bad "agent now line: step $?"
+  HEAD=$(view_head >/dev/null 2>&1); bhote_view >/dev/null 2>&1 || true; sr=$(cat "$RUN_DIR/spinrows" 2>/dev/null); case "$sr" in *:3:*:3:*) exit 8 ;; *:3:[nsh]*) ;; *) exit 9 ;; esac   # (one star in the card: the first row; the now line has none)
+  exit 0 ) && ok "agent card: what the agent does right now, orange without a star, only while it works" || bad "agent now line: step $?"
 # dismissing a review card: the topic is put away; its agent working again opens the card again (as its work card), the agent working now does it at once
 ( rm -f "$TOPIC_DIR"/*.topic; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); : > "$SHARED_DIR/evstate/w9_p1" 2>/dev/null
   topic_new "Result to read" "" ""; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" agent bhote; topic_set "$df" agent_machine "$HOST"; topic_set "$df" agent_pane w9:p1; topic_set "$df" status review

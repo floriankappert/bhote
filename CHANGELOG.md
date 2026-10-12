@@ -13,9 +13,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - Dismiss a review card: key `c`, topic menu › *Dismiss: close the card*, `bhote dismiss <ref>`. The card leaves the list (search and CLI still
   find the topic); when its agent works again the topic is back on *Now* as the agent's work card, with the agent already working it goes
   straight there.
-- A card of an agent at work shows what the agent does right now, like herdr's agent item: its third line, in orange, with the star that
-  dances in front of it (the star is bhote's own, so it dances with the one in the head of the card). It is read from herdr's `now` token of
-  every machine (also over kharka) and shows only while the agent works.
+- A card of an agent at work shows what the agent does right now, like herdr's agent item: its third line, in orange (the star dances only
+  in the first row). It is read from herdr's `now` token of every machine (also over kharka) and shows only while the agent works.
 - Waiting for a deployment: `bhote wait <ref> --deploy[=Label]` / `bhote add <title> --deploy` (topic menu › *Waiting for the deployment*) puts a
   waiting topic into its own group *Waiting for deployment*, a card with the progress bar and percentage of the deployment it waits for (from
   the deployment monitor). It goes to review by itself when the deployment is over (ok: check production; failed or canceled: look at it), with a
