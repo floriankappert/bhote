@@ -4255,7 +4255,7 @@ setup_step_topics() {
     w_opt 1 "only on this machine"; w_opt 2 "in step with a machine, through herdr (recommended)"; w_opt 3 "in step with a machine, through ssh"
     w_opt 4 "in step through kharka (its daemon on every machine; each machine needs STORE=kharka too)"
     local c m labels="" label host en r cur; cfg_var cur STORE local
-    w_choose c "Choose:" 1234 "$(case "$cur" in remote) [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3 ;; kharka) echo 4 ;; *) echo 1 ;; esac)" || return
+    w_choose c "Choose:" 1234 "$(case "$cur" in (remote) [ "$(cfg_get SYNC_VIA herdr)" = herdr ] && echo 2 || echo 3 ;; (kharka) echo 4 ;; (*) echo 1 ;; esac)" || return
     case "$c" in
         1) cfg_set STORE local; w_ok "topics" "only here" ;;
         4) if ! kharka_found; then w_bad "kharka" "not installed (cargo install --git https://github.com/jakobbeyer/kharka), or set KHARKA"; w_continue; return; fi
@@ -4436,7 +4436,7 @@ setup_step_panel() {
 setup_step_done() {  # the end: what is set up, and a live check of every machine in both directions
     w_screen 11 "DONE" || return
     w_ok "machine" "$HOST"
-    w_ok "topics" "$(case "$(cfg_get STORE local)" in remote) printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" ;; kharka) echo 'through kharka' ;; *) echo 'only here' ;; esac)"
+    w_ok "topics" "$(case "$(cfg_get STORE local)" in (remote) printf 'with %s through %s' "$(cfg_get STORE_MACHINE ?)" "$(cfg_get SYNC_VIA herdr)" ;; (kharka) echo 'through kharka' ;; (*) echo 'only here' ;; esac)"
     w_ok "remote agents" "$(cfg_get REMOTE_AGENTS off)"
     w_ok "autostart" "$(cfg_get AUTOSTART on)"
     local label host en n known
