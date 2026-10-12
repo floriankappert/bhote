@@ -1721,6 +1721,8 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     clip_set t "${T_TITLE[$i]:-(untitled)}" $(( w - 7 - ${#tm} )); dw_set tw "$t"
     if [ "$i" = "${SEL_IDX:-}" ]; then
         printf '\035%s\035\001%s  %s●%s %s%s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$SELBG" "$dc" "$X$SELBG" "$BOLD$LSEL" "$t" "$X$SELBG" "" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
+    elif [ "${T_ID[$i]}" = "${HOVER_ID:-}" ]; then          # under the pointer: a step lighter
+        printf '\035%s\035%s  %s●%s%s %s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$CARDHOV" "$dc" "$X" "$CARDHOV" "$BOLD$LSEL" "$t" "$X$CARDHOV" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$CARDHOV" "$X"
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
@@ -1810,6 +1812,9 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
         if [ "${T_ID[$i]}" = "${SEL_ID:-}" ]; then              # chosen (just checked off, or in the search): the bar
             tc="$BOLD$DSEL"
             printf '\035%s\035\001%s  %s✓%s %s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$SELBG" "$GREEN" "$X$SELBG" "$tc" "$t" "$X$SELBG" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$SELBG" "$X"
+        elif [ "${T_ID[$i]}" = "${HOVER_ID:-}" ]; then          # under the pointer: a step lighter, its small text readable
+            tc="$BOLD$DSEL"
+            printf '\035%s\035%s  %s✓%s%s %s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$CARDHOV" "$GREEN" "$X" "$CARDHOV" "$tc" "$t" "$X$CARDHOV" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$CARDHOV" "$X"
         else printf '\035%s\035  %s✓%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$GREEN" "$X" "$tc" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
     done
     if [ "$all" -gt "$n" ]; then more_row done $(( all - n ))

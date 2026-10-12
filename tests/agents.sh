@@ -589,6 +589,15 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   p1=$(NAV_ONLY=1; bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p1" in *"Added later"*) exit 6 ;; esac
   p2=$(bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p2" in *"Added later"*) ;; *) exit 7 ;; esac
   exit 0 ) && ok "agent overview: counts only (↕ on the divider); a key that only moves the selection does not reload" || bad "compact/nav: step $?"
+# done topics and the lines of next, waiting and parked topics have a hover like the cards: a step lighter under the pointer
+( rm -f "$TOPIC_DIR"/*.topic; COLS=50; ROWS=40; NOW=$(date +%s); AG_N=0; AG_LINES=(); ui_load; CARDHOV=HOVBG; DSEL=DS; LSEL=LS; SELBG=SELX
+  topic_new "Finished one" "" ""; d1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$d1" status done; did=$(topic_id "$d1")
+  topic_new "Up next one" "" ""; n1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$n1" status next; nid=$(topic_id "$n1")
+  topics_load; HOVER_ID=""; out=$(done_block 4); case "$out" in *HOVBG*) exit 1 ;; esac                                      # (nobody hovered: plain)
+  HOVER_ID=$did; out=$(done_block 4); case "$out" in *HOVBG*"Finished one"*) ;; *) exit 2 ;; esac                           # (the done one under the pointer)
+  case "$out" in *"$(printf '\035%s\035' "$did")"*) ;; *) exit 3 ;; esac                                                       # (and it stays clickable: its ref is still there)
+  HOVER_ID=$nid; SEL_IDX=-99; out=$(topic_line "$(for ((k=0;k<T_N;k++)); do [ "${T_ID[$k]}" = "$nid" ] && echo $k; done)"); case "$out" in *HOVBG*"Up next one"*) ;; *) exit 4 ;; esac   # (a line of the list)
+  exit 0 ) && ok "hover: done topics and the lines of the list are a step lighter under the pointer" || bad "hover lines: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"

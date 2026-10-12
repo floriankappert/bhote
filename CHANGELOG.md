@@ -10,6 +10,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- Done topics, and the lines of next, waiting and parked topics, are a step lighter under the pointer, like the cards.
 - The last done topics above the agents are four by default, no longer ten (`DONE_MAX`).
 - The agent overview can show counts only: the `↕` button at the right end of the divider above the agents switches between the list and
   `✶ 3 active · ○ 4 inactive` (`AGENTS_COMPACT`; `◉ n need you` appears when an agent waits for an answer). The `↕` lights up (orange, bold) under the pointer.
