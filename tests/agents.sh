@@ -517,7 +517,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_new "Card" ""  "Beschr"; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now; topic_set "$cf" agent_branch fix/x
   cfg_set GITHUB_BRANCHES on; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
   out=$(topics_block); printf '%s' "$out" | grep -q $'\033\[38;2;255;62;165m\033\[1mOmarchy' || exit 3                  # (pink, bold)
-  plain=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
+  plain=$(printf '%s\n' "$out" | perl -pe 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
   [ "${r1%%Omarchy*}" = "▌ ✶ " ] && [ "${r3%%Doing*}" = "▌   " ] || { printf 'r1=[%s] r3=[%s]\n' "$r1" "$r3" | cat -v >&2; exit 4; }
   r4=$(printf '%s\n' "$plain" | grep "Beschr"); r5=$(printf '%s\n' "$plain" | grep "⎇ fix/x"); [ "${r4%%Beschr*}" = "▌   " ] && [ "${r5%%⎇*}" = "▌   " ] || exit 5   # (the description and the branch too)                                           # (text under text: column 5)
   echo "r1=[${r1%%Omarchy*}] r3=[${r3%%Doing*}]" | cat -v >&2; exit 0 ) && ok "agent card: machine name in herdr's colour (pink), the now line indented like the rows above" || bad "card colour/indent: step $?"
@@ -610,7 +610,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  printf '%s\n' "$out" | grep -q "■ *78%" || { printf '%s\n' "$out" | grep -E 'deploying|%' | cat -v >&2; exit 5; }                                                              # 44 of 56 steps
+  printf '%s\n' "$out" | grep -q "■ *78%" || { deploy_card_set 0; printf 'prog=[%s] d=[%s] t=[%s] st=[%s] cols=%s lang=[%s]\n' "$TI_PROG" "$DL_D" "$DL_T" "${TM_ST:-}" "$COLS" "${LANG:-}" >&2; exit 5; }                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "WAITING FOR DEPLOYMENT" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
