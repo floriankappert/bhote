@@ -1456,6 +1456,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             now_idle_follow
             agent_gone_follow
             finished_expire
+            auto_question_follow
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
@@ -4165,6 +4166,33 @@ finished_expire() {  # a recently finished card is dismissed by itself after FIN
         [ "${T_STATUS[$i]}" = finished ] && [ $(( now - ${T_UPD[$i]:-$now} )) -ge $(( m * 60 )) ] || continue
         f=${T_FILE[$i]}
         if [ "$(topic_get "$f" auto_now)" = 1 ]; then topic_set "$f" deleted 1; else topic_set "$f" status later; topic_set "$f" dismissed 1; fi
+    done
+    return 0
+}
+auto_question_follow() {  # a "Question from" card of bhote (auto) goes when its question is settled although the agent never worked again (answered
+    # and cleared with /clear, a new prompt in another place, an empty prompt): the agent is idle and its pane no longer ends with a question (seen in two
+    # looks 8 s apart). A pane on another machine cannot be read: there the card goes after FINISHED_MINUTES (0: never). A blocked agent still waits: stays.
+    [ -r "$AGENT_LOCAL" ] || return 0
+    local i f id m p st d="$SHARED_DIR/qidle" t0 now fq mins; mkdir -p "$d" 2>/dev/null; now=$(date +%s); topics_load
+    cfg_var mins FINISHED_MINUTES 30; num_set mins "$mins" 30
+    for (( i = 0; i < T_N; i++ )); do
+        id=${T_ID[$i]}; f=${T_FILE[$i]}
+        [ "${T_STATUS[$i]}" = review ] && [ -n "${T_AP[$i]}" ] && [ "$(topic_get "$f" auto)" = 1 ] || { rm -f "$d/$id"; continue; }
+        m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
+        st=$(awk -F"$US" -v m="$m" -v p="$p" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
+        case "$st" in
+            idle|done)
+                if [ "$m" != "$HOST" ]; then
+                    [ "$mins" -gt 0 ] && [ $(( now - ${T_UPD[$i]:-$now} )) -ge $(( mins * 60 )) ] && topic_set "$f" deleted 1
+                    continue
+                fi
+                fq=$(herdr pane read "$p" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text)
+                if [ -n "$fq" ]; then rm -f "$d/$id"; continue; fi
+                t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
+                if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"
+                elif [ $(( now - $(num_or "$t0" "$now") )) -ge 8 ]; then rm -f "$d/$id"; topic_set "$f" deleted 1; fi ;;
+            *) rm -f "$d/$id" ;;
+        esac
     done
     return 0
 }

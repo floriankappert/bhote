@@ -5,6 +5,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Fixed
+- A "Question from …" review card now goes by itself when the question is settled without the agent working again (e.g. `/clear`, an empty prompt): the agent is idle and its pane no longer ends with a question. A pane on another machine: after `FINISHED_MINUTES`.
+
 ### Added
 - The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
   the focus (read from herdr once a second when idle).

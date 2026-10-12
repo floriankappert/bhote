@@ -508,6 +508,15 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$sl" status)" = review ] && [ "$(topic_get "$dp" status)" = review ] || exit 3                          # (an answer in Slack, a finished deployment: stay)
   mk "Question from bhote" w5:p1; q=$mkf; topic_set "$q" auto 1; setst idle; review_follow; setst working; review_follow; [ "$(topic_get "$q" deleted)" = 1 ] || exit 4
   exit 0 ) && ok "review: it goes by itself when the agent works again after it was idle" || bad "review follow: step $?"
+# an auto question card goes when its agent is idle and the pane shows no question any more (two looks 8 s apart); a blocked agent keeps it; another machine: after FINISHED_MINUTES
+( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/qidle"; herdr() { return 0; }
+  mk() { topic_new "Question from bhote" "" ""; mkf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mkf" auto 1; topic_set "$mkf" status review; topic_set "$mkf" agent_machine "$1"; topic_set "$mkf" agent_pane "$2"; }
+  mk "$HOST" w5:p1; q=$mkf; mk "$HOST" w6:p1; b=$mkf
+  printf '%s\n%s\n' "$HOST${US}w5:p1${US}idle${US}b${US}x" "$HOST${US}w6:p1${US}blocked${US}b${US}x" > "$AGENT_LOCAL"
+  auto_question_follow; [ "$(topic_get "$q" deleted)" != 1 ] || exit 1                                                    # (first look only notes it)
+  printf '%s\n' "$(( $(date +%s) - 20 ))" > "$SHARED_DIR/qidle/$(basename "$q" .topic)"
+  auto_question_follow; [ "$(topic_get "$q" deleted)" = 1 ] && [ "$(topic_get "$b" deleted)" != 1 ] || exit 2
+  exit 0 ) && ok "auto question: it goes when the agent is idle and nothing is asked any more" || bad "auto question follow: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
 ( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"
