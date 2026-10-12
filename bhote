@@ -1609,7 +1609,6 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 8 )) pf pi bf="" be=""
         [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
             pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
-            [ -n "${BHOTE_DBG_BAR:-}" ] && printf "DBG w=%s pw=%s pf=%s pd=%s pt=%s\n" "$w" "$pw" "$pf" "$pd" "$pt" >&2
             for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="$bf■"; else be="$be■"; fi; done
             printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
