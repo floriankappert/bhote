@@ -571,12 +571,12 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$g4" status)" = review ] && [ "$(topic_get "$g5" status)" = review ] || exit 5                           # (the agent is there; a machine that is not in the lists)
   : > "$AGENT_REMOTE"; mk "Machine without agents" Box w3:p1 review; g6=$mkf; agent_gone_follow; past; agent_gone_follow; [ "$(topic_get "$g6" status)" = review ] || exit 6   # (a machine with no agents listed: left alone)
   exit 0 ) && ok "gone agent: its review card closes (a made card goes, now becomes recently finished), only when herdr answers" || bad "gone agent: step $?"
-# the agent overview as counts (the ⋮ on the divider), and keys that only move the selection draw from what is loaded
+# the agent overview as counts (the <> on the divider), and keys that only move the selection draw from what is loaded
 ( rm -f "$TOPIC_DIR"/*.topic; RUN_DIR=$T/run2; mkdir -p "$RUN_DIR"; COLS=50; ROWS=40; TOO_SMALL=0; view=main
   printf '%s\n' "Omarchy${US}w1:p1${US}working${US}a${US}x" "Omarchy${US}w2:p1${US}testing${US}b${US}x" "Omarchy${US}w3:p1${US}idle${US}c${US}x" "Omarchy${US}w4:p1${US}done${US}d${US}x" "Omarchy${US}w5:p1${US}blocked${US}e${US}x" > "$AGENT_LOCAL"
   cfg_set AGENTS_COMPACT on; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
   out=$(bhote_draw main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 2 inactive" || exit 1            # working + testing, blocked, idle + done
-  printf '%s\n' "$out" | grep -q "⋮" || exit 2                                                                                                     # the button on the divider
+  printf '%s\n' "$out" | grep -q " <> " || exit 2                                                                                                  # the button on the divider
   cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; DRAG=0; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button
   MOUSE_KEY=""; DRAG=0; mouse_event "0;10;30" M; [ "$MOUSE_KEY" != AGMENU ] && [ "$DRAG" = 1 ] || exit 5                                          # elsewhere on the divider: the drag starts
@@ -584,7 +584,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_new "First" "" ""; ui_load; topic_new "Added later" "" ""
   p1=$(NAV_ONLY=1; bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p1" in *"Added later"*) exit 6 ;; esac
   p2=$(bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p2" in *"Added later"*) ;; *) exit 7 ;; esac
-  exit 0 ) && ok "agent overview: counts only (⋮ on the divider); a key that only moves the selection does not reload" || bad "compact/nav: step $?"
+  exit 0 ) && ok "agent overview: counts only (<> on the divider); a key that only moves the selection does not reload" || bad "compact/nav: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"
