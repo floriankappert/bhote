@@ -117,6 +117,13 @@ agent it was
 `review` (with a note on stderr, exit `0`), and you check it off. With `AGENT_TOPICS=off` an agent's `bhote add` creates
 nothing (a note on stderr, `null` with `--json`, exit `0`).
 
+### `bhote dismiss <ref>`
+
+Closes the review card of a topic in review (read, nothing to do): the topic is parked (`status: later`, `dismissed: 1`) and no longer in the
+panel's list; search and CLI still find it. When its agent works again it is back on `now` by itself (the agent's event, or the collector when
+it saw the agent idle and then working), and with the agent already working it goes straight to `now`. Exit `1` for a topic that is not in
+review. Also key `c` and the topic menu.
+
 ### `bhote wait <ref> <Name> [--slack <pin>]`
 
 The topic waits for Name from now on (`status: waiting`, `waiting_since` = now). Exit `1` without a name. With `--slack`

@@ -13,7 +13,7 @@ case "$*" in
  *"machine list"*) printf 'id1\tLaptop\tflo@laptop\tdefault\tenabled\n' ;;
  *"pane get w1:p1"*) printf '%s\n' '{"id":"x","result":{"pane":{"agent":"claude","focused":true,"pane_id":"w1:p1"}}}' ;;
  *"pane get w2:p1"*) printf '%s\n' '{"id":"x","result":{"pane":{"agent":"claude","focused":false,"pane_id":"w2:p1"}}}' ;;
- *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a"},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
+ *"pane list"*) printf '%s\n' '{"result":{"panes":[{"agent":"claude","agent_status":"idle","pane_id":"w1:p1","workspace_id":"w1","tokens":{"task":"∟ a\u001b[2Jb"}},{"agent":"claude","agent_status":"idle","pane_id":"w2:p1","workspace_id":"w2","cwd":"/repo/b"},{"agent":"claude","agent_status":"working","pane_id":"w3:p1","workspace_id":"w3","cwd":"/repo/a","tokens":{"now":"✻ Warm-up clock \u001b[2J"}},{"agent":"claude","agent_status":"idle","pane_id":"w4:p1;x","workspace_id":"w4"},{"agent":"claude","agent_status":"done","pane_id":"w9:p2","workspace_id":"w9"}]}}' ;;
  *"workspace list"*) printf '%s\n' '{"result":{"workspaces":[{"workspace_id":"w1","label":"Project A","tokens":{"tests":"◌ Test (C 30%)"}},{"workspace_id":"w2","label":"bil\u001b[31mendo"},{"workspace_id":"w3","label":"x","tokens":{"tests":"◌ Test (queued)"}}]}}' ;;
 esac
 SH
@@ -461,6 +461,44 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ -S "$H/herdr-ssh-$$-0/cm-def" ] && ! grep -q cm-def "$T/mux.log" || exit 4   # its herdr still runs: untouched
   [ -d "$H/herdr-ssh-x-0" ] && [ -L "$H/herdr-ssh-$gone-1" ] && [ -d "$H/keep" ] || exit 5   # not herdr's, a link: untouched
   exit 0 ) && ok "herdr's ssh masters: a gone herdr's is ended and removed, a running one's and anything else stays" || bad "mux sweep: step $?"
+# what the agent does right now (herdr's third line): collected per pane, shown orange under the agent card with the dancing star in front of it
+( : > "$T/now.out"; COLLECT_NOW="$T/now.out" collect_one Mac >/dev/null; [ "$(cat "$T/now.out")" = "Mac${US}w3:p1${US}✻ Warm-up clock [2J" ] || exit 1                  # (one line, for the working agent that has a now token)
+  ! grep -q $'\033' "$T/now.out" || exit 2                                                       # (no escape code survives)
+  AGENT_NOW_L=$T/now.l; AGENT_NOW_R=$T/now.r; printf 'Omarchy%sw9:p1%s✻ Building the warm-up clock\n' "$US" "$US" > "$AGENT_NOW_L"; : > "$AGENT_NOW_R"
+  agent_now_set v Omarchy w9:p1; [ "$v" = "Building the warm-up clock" ] || exit 3                  # (herdr's star is cut off: bhote's own dances)
+  agent_now_set v Omarchy w1:p1; [ -z "$v" ] || exit 4
+  rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"
+  topic_new "Card topic" ""  ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
+  AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
+  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ Building the warm-up clock" || exit 5
+  printf '%s\n' "$out" | tr -d '\034\035' | grep -c "Building the warm-up" | grep -q '^1$' || exit 6
+  AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Building the warm-up"*) exit 7 ;; esac   # (only while it works)
+  AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); SPIN_CELLS=""; RUN_DIR=$T/run; mkdir -p "$RUN_DIR"
+  HEAD=$(view_head >/dev/null 2>&1); bhote_view >/dev/null 2>&1 || true; sr=$(cat "$RUN_DIR/spinrows" 2>/dev/null); case "$sr" in *:3:*:3:*|*" "*:3:[nsh]*) ;; *) exit 8 ;; esac   # (the star's cells: two rows of the card)
+  exit 0 ) && ok "agent card: what the agent does right now, orange with the dancing star, only while it works" || bad "agent now line: step $?"
+# dismissing a review card: the topic is put away; its agent working again opens the card again (as its work card), the agent working now does it at once
+( rm -f "$TOPIC_DIR"/*.topic; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); : > "$SHARED_DIR/evstate/w9_p1" 2>/dev/null
+  topic_new "Result to read" "" ""; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" agent bhote; topic_set "$df" agent_machine "$HOST"; topic_set "$df" agent_pane w9:p1; topic_set "$df" status review
+  review_dismiss "$df" && [ "$(topic_get "$df" status)" = later ] && [ "$(topic_get "$df" dismissed)" = 1 ] || exit 1               # idle agent: put away
+  topics_load; blk=$(COLS=50; ROWS=40; NOW=$(date +%s); topics_block); case "$blk" in *"Result to read"*) exit 2 ;; esac            # (gone from the list)
+  host_save=$HOST; HOST=Omarchy; topic_set "$df" agent_machine Omarchy; ev w9:p1 working; HOST=$host_save
+  [ "$(topic_get "$df" status)" = now ] && [ -z "$(topic_get "$df" dismissed)" ] || exit 3                                         # the agent works again: the card is back
+  topic_set "$df" status review; AG_LINES=("$HOST${US}w9:p1${US}working${US}bhote${US}x"); topic_set "$df" agent_machine "$HOST"
+  review_dismiss "$df" && [ "$(topic_get "$df" status)" = now ] || exit 4                                                           # the agent works right now: straight back to now
+  topic_set "$df" status next; review_dismiss "$df" && exit 5                                                                       # only review can be dismissed
+  topic_new "No agent" "" ""; nf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$nf" status review; review_dismiss "$nf" && [ "$(topic_get "$nf" status)" = later ] || exit 6
+  exit 0 ) && ok "dismiss: the review card closes; the agent working again opens it again" || bad "dismiss: step $?"
+# a review card goes by itself when its agent works again after it was idle (decided in the session); not before it was idle, not Slack's, not a deployment's
+( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/revidle"
+  mk() { topic_new "$1" "" ""; mkf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mkf" agent bhote; topic_set "$mkf" agent_machine "$HOST"; topic_set "$mkf" agent_pane "$2"; topic_set "$mkf" status review; }
+  setst() { printf '%s\n%s\n%s\n' "$HOST${US}w5:p1${US}$1${US}b${US}x" "$HOST${US}w6:p1${US}$1${US}b${US}x" "$HOST${US}w7:p1${US}$1${US}b${US}x" > "$AGENT_LOCAL"; }
+  mk "Asked" w5:p1; a=$mkf; mk "From Slack" w6:p1; sl=$mkf; topic_set "$sl" slack_msg "hello"; mk "Deployed" w7:p1; dp=$mkf; topic_set "$dp" review_src deploy
+  setst working; review_follow; [ "$(topic_get "$a" status)" = review ] || exit 1          # still writing its hand-over: stays
+  setst idle; review_follow; setst working; review_follow
+  [ "$(topic_get "$a" status)" = now ] || exit 2                                                                             # idle first, then working: the decision was made
+  [ "$(topic_get "$sl" status)" = review ] && [ "$(topic_get "$dp" status)" = review ] || exit 3                          # (an answer in Slack, a finished deployment: stay)
+  mk "Question from bhote" w5:p1; q=$mkf; topic_set "$q" auto 1; setst idle; review_follow; setst working; review_follow; [ "$(topic_get "$q" deleted)" = 1 ] || exit 4
+  exit 0 ) && ok "review: it goes by itself when the agent works again after it was idle" || bad "review follow: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"

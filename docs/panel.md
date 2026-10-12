@@ -26,6 +26,7 @@ progress as a bar with a percentage, taken from the deployment monitor. When the
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |
+| `c` | dismiss a review card: it closes, and opens again as the work card when its agent works again |
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
 | `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one (asks first; warns when the target belongs to another project) |
 | `1` (`y`) | the button of a review topic's card, *Review ansehen* (`bhote review --look`): focuses the topic's agent; the topic stays in review. A click on the button does the same |

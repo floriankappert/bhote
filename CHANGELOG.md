@@ -10,6 +10,12 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- Dismiss a review card: key `c`, topic menu › *Dismiss: close the card*, `bhote dismiss <ref>`. The card leaves the list (search and CLI still
+  find the topic); when its agent works again the topic is back on *Now* as the agent's work card, with the agent already working it goes
+  straight there.
+- A card of an agent at work shows what the agent does right now, like herdr's agent item: its third line, in orange, with the star that
+  dances in front of it (the star is bhote's own, so it dances with the one in the head of the card). It is read from herdr's `now` token of
+  every machine (also over kharka) and shows only while the agent works.
 - Waiting for a deployment: `bhote wait <ref> --deploy[=Label]` / `bhote add <title> --deploy` (topic menu › *Waiting for the deployment*) puts a
   waiting topic into its own group *Waiting for deployment*, a card with the progress bar and percentage of the deployment it waits for (from
   the deployment monitor). It goes to review by itself when the deployment is over (ok: check production; failed or canceled: look at it), with a
@@ -45,6 +51,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the topic can be shown (*Show topic*) and handed over, *Start with agent* only when there is none.
 
 ### Fixed
+- A review card goes by itself when the agent that asked works again after it was idle (a decision was made in its session). Until now only the
+  agent's event did that, so a missed event (another machine, a restart) left the card open. A finished deployment's card and an answer in Slack
+  stay.
 - The setup wizard's topics step and its summary work under bash 3.2 again (macOS `/bin/bash`): both stopped with
   `syntax error near unexpected token 'newline'`, because bash 3.2 ends a `$( … )` at the `)` of a `case` pattern. The
   patterns there are written `(pattern)` now.
