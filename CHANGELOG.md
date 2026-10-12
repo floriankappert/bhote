@@ -34,6 +34,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   without it, past row 9, or elsewhere the key line still says how to get there.
 
 ### Changed
+- The machine name in an agent card has the colour herdr gives it in its agent rows (the row token `machine`, its `fg` from herdr's config.toml;
+  pink `#ff3ea5` without one), no longer grey or a project colour. The orange third line is indented like the rows above it.
 - *Review ansehen* (the button, or key `1`/`y`) shows the agent and the button goes: you see that you have used it (the note stays).
 - A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
   `machine · agent`, and under it `∟` what the agent works on, as herdr shows it (the topic's title when it has no task), then the

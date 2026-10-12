@@ -1018,7 +1018,7 @@ ui_load() {
     [ -n "$UPD_LATEST" ] && { [ -n "${UPD_CMD:-}" ] || UPD_CMD=$(update_command); HEAD_NOTE="⬆ Update available v$UPD_LATEST · , settings"; HEAD_ROWS=1; }
     [ "$NEWFEAT" = 1 ] && HEAD_ROWS=$(( HEAD_ROWS + 1 ))
     store_tag > /dev/null; STORE_TAG=$STORE_TAG_OUT
-    AG_N=0; AG_LINES=()
+    AG_N=0; AG_LINES=(); MACH_FG_CACHE=""                      # (herdr's colour for the machine name is read again with every load)
     for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do
         [ -r "$f" ] && while IFS= read -r line; do [ -n "$line" ] && { AG_LINES[$AG_N]=$line; AG_N=$(( AG_N + 1 )); }; done < "$f"
     done
@@ -1559,7 +1559,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     local spk=n; [ "$bg" = "$CARDSEL" ] || [ "$bg" = "$SELBG" ] && spk=s; [ "$bg" = "$CARDHOV" ] && spk=h   # (the ground under a dancing star)
     if [ "$ag" = 1 ]; then
         # herdr's agent card: the state's icon, "machine · agent", and under it "∟ what it works on" (here: the topic). The state is the icon, so no meta line.
-        local am an aw mcol=${TI_AGMC:-$BLUE}
+        local am an aw mcol; machine_fg_set mcol
         clip_set am "${TI_AGM:-}" 12; clip_set an "$TI_AGN" $(( w - 2 - btn * 3 - 2 - ${#am} - 3 - 1 )); dw_set aw "$am · $an"
         [ -n "$am" ] && am="$mcol$BOLD$am$X$bg$gc · " || aw=$(( aw - 3 ))
         printf '%s%s%s%s%s%s %s%s%s%s%*s' "${TI_SPIN:+$'\034'$spk$'\034'}" "$trm" "$mk" "$bg" "$bl" "${TI_AGIC:-$gc○}" "$am" "$BOLD$tc" "$an" "$X$bg" $(( w - 2 - 2 - aw - btn * 3 )) ""
@@ -1567,8 +1567,8 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
         printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
         if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
-            clip_set t "$TI_NOW" $(( w - 3 )); dw_set tw "$t"
-            printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+            clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"                  # (indented like the rows above: under the icon's text)
+            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
         fi
     elif [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s⋮%s %s\n' "$trm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
     else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi
@@ -1712,7 +1712,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
+    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1753,12 +1753,11 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             while IFS= read -r rline; do case "$rline" in review_note=*) rn=${rline#*=} ;; review_ask=*) ra=${rline#*=} ;; esac; done < "${T_FILE[$i]}"
             rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
         fi
-        TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMC=""; TI_AGMETA=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
+        TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMETA=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
         case "$st" in now|testing)                               # a card of an agent at work: like herdr's agent card (icon, machine · agent, ∟ the topic)
             if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ]; then
                 TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
                 case "$ast" in working|testing) TI_AGIC="${ORANGE}${SPIN_CH:-✶}"; TI_SPIN=1; agent_now_set TI_NOW "$TI_AGM" "${T_AP[$i]}" ;; blocked) TI_AGIC="${NN}◉" ;; done) TI_AGIC="${GREEN}✓" ;; gone|off-*) TI_AGIC="${D}◌" ;; *) TI_AGIC="${D}○" ;; esac
-                project_color_set TI_AGMC "$TI_AGM"
                 case "$state" in working) ;; handing\ over) TI_AGMETA=1 ;; "finished · x = done") TI_AGMETA=1; who="" ;; *) TI_AGMETA=1; who="" ;; esac   # (the icon says working; the rest the line adds)
             fi ;;
         esac
@@ -1822,6 +1821,16 @@ name_color_set() {  # name_color_set <var> <agent name>: the first NAME_COLORS r
         done <<< "${U_NAME_COLORS//,/$'\n'}"
     fi
     printf -v "$1" '%s' "$_col"
+}
+MACH_FG_CACHE=""
+machine_fg_set() {  # machine_fg_set <var>: the colour of a machine's name as herdr's agent rows give it (the row token "machine", its fg), else pink #ff3ea5
+    local _hx=ff3ea5 _l _c
+    if [ -z "$MACH_FG_CACHE" ]; then
+        _l=$(grep -m1 'token = "machine"' "${HERDR_CONFIG:-/dev/null}" 2>/dev/null)
+        case "$_l" in *'token = "machine"'*'fg = "#'*) _hx=${_l#*'token = "machine"'}; _hx=${_hx#*'fg = "#'}; _hx=${_hx:0:6} ;; esac
+        _c=$(hex_rgb "$_hx") || _c=$(hex_rgb ff3ea5); MACH_FG_CACHE=$(rgb "$_c"); [ -n "$MACH_FG_CACHE" ] || MACH_FG_CACHE=none
+    fi
+    if [ "$MACH_FG_CACHE" = none ]; then printf -v "$1" '%s' "${PINK:-}"; else printf -v "$1" '%s' "$MACH_FG_CACHE"; fi
 }
 project_color_set() {  # project_color_set <var> <project name>: its colour from PROJECT_COLORS (part-of-name=colour, first match), else grey
     local _r _p _c _col="$D" _rules

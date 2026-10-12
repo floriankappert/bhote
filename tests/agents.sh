@@ -470,7 +470,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"
   topic_new "Card topic" ""  ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
   AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
-  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌ Building the warm-up clock" || exit 5
+  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌   Building the warm-up clock" || exit 5
   printf '%s\n' "$out" | tr -d '\034\035' | grep -c "Building the warm-up" | grep -q '^1$' || exit 6
   AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Building the warm-up"*) exit 7 ;; esac   # (only while it works)
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); SPIN_CELLS=""; RUN_DIR=$T/run; mkdir -p "$RUN_DIR"
@@ -499,6 +499,18 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$sl" status)" = review ] && [ "$(topic_get "$dp" status)" = review ] || exit 3                          # (an answer in Slack, a finished deployment: stay)
   mk "Question from bhote" w5:p1; q=$mkf; topic_set "$q" auto 1; setst idle; review_follow; setst working; review_follow; [ "$(topic_get "$q" deleted)" = 1 ] || exit 4
   exit 0 ) && ok "review: it goes by itself when the agent works again after it was idle" || bad "review follow: step $?"
+# the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
+( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
+  HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"
+  MACH_FG_CACHE=""; machine_fg_set v; [ "$v" = $'\033[38;2;17;34;51m' ] || exit 1                                   # (herdr's own colour)
+  : > "$HERDR_CONFIG"; MACH_FG_CACHE=""; machine_fg_set v; [ "$v" = $'\033[38;2;255;62;165m' ] || exit 2             # (none there: herdr's default pink)
+  rm -f "$TOPIC_DIR"/*.topic; printf 'Omarchy%sw9:p1%s✻ Doing it\n' "$US" "$US" > "$AGENT_NOW_L"; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"
+  topic_new "Card" ""  ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
+  AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
+  out=$(topics_block); printf '%s' "$out" | grep -q $'\033\[38;2;255;62;165m\033\[1mOmarchy' || exit 3                  # (pink, bold)
+  plain=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
+  [ "${r1%%Omarchy*}" = "▌ ✶ " ] && [ "${r3%%Doing*}" = "▌   " ] || exit 4                                           # (text under text: column 5)
+  echo "r1=[${r1%%Omarchy*}] r3=[${r3%%Doing*}]" | cat -v >&2; exit 0 ) && ok "agent card: machine name in herdr's colour (pink), the now line indented like the rows above" || bad "card colour/indent: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"
