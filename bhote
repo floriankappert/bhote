@@ -2028,7 +2028,7 @@ pad_set() {  # pad_set <var> <text> <columns>: the text, filled with spaces to t
 }
 clip() { clip_set _CLIP "$1" "$2"; printf '%s' "$_CLIP"; }
 pane_focused() {  # true / false: herdr's word on whether this panel's pane has the focus (one pane in all of herdr has); empty: unknown
-    herdr pane get "$HERDR_PANE_ID" 2>/dev/null | sed -n 's/.*"focused": *\(true\|false\).*/\1/p' | head -1
+    herdr pane get "$HERDR_PANE_ID" 2>/dev/null | grep -o "\"focused\": *[a-z]*" | head -1 | sed "s/.*: *//"
 }
 view_head() {  # one line: name and version in colour, the tagline; then a rule (the dog lives on the welcome screen only)
     local name="Bhote v${VERSION_LABEL:-$VERSION}" t lt

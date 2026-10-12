@@ -184,14 +184,14 @@ printf 'Mac%sw1:p1%st1%sa%s%sproj-shop%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%
 collect_local >/dev/null 2>&1; printf 'Mac%sw1:p1%st1%sa%s%sproj-shop%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
   "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
 grp=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"
-  projects_load; CUR_PROJ=proj-zeta; agents_block | sed 's/\x1b\[[0-9;]*m//g' )
+  projects_load; CUR_PROJ=proj-zeta; agents_block | LC_ALL=C sed 's/\x1b\[[0-9;]*m//g' )
 caps=$(echo "$grp" | grep '┈┈' | sed 's/ *┈*$//; s/^ *┈┈ //' | tr '\n' '|')
 [ "$caps" = "Zeta|Shop|no project|" ] && ok "agents by project: the panel's own first, no project last" || bad "project captions: $caps"
 echo "$grp" | grep -A1 '┈┈ Shop' | tail -1 | grep -q 'Project A' && ok "agents by project: the agent under its project" || bad "agent under project: $grp"
 ( HERDR_PANE_ID=w9:p9; current_project; [ "$CUR_PROJ" = proj-zeta ] ) && ok "the panel's project: of the agent in its tab" || bad "current project"
 t1=$(BHOTE_NO_SYNC=1 bhote_cli add "Zeta work" -p Zeta --json | jq -r .id); BHOTE_NO_SYNC=1 bhote_cli add "Shop work" -p Shop >/dev/null; BHOTE_NO_SYNC=1 bhote_cli add "Loose work" >/dev/null
 [ "$(BHOTE_NO_SYNC=1 bhote_cli show "$t1" --json | jq -r .project)" = Zeta ] && ok "add -p: the topic's project" || bad "topic project"
-blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=project; AG_N=0; topics_block | sed 's/\x1b\[[0-9;]*m//g' )
+blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=project; AG_N=0; topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*m//g' )
 echo "$blk" | grep -q "Zeta work" && echo "$blk" | grep -q "Loose work" && ! echo "$blk" | grep -q "Shop work" && ok "scope project: its topics and those without one" || bad "scope: $blk"
 blk=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); NOW=$(date +%s); topics_load; projects_load; CUR_PROJ=proj-zeta; topics_projects; U_SCOPE=all; AG_N=0; topics_block )
 echo "$blk" | grep -q "Shop work" && ok "scope all: every topic" || bad "scope all"
@@ -243,20 +243,20 @@ topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" =
 ( HERDR_PANE_ID=w1:p1; [ "$(pane_focused)" = true ] || exit 1; HERDR_PANE_ID=w2:p1; [ "$(pane_focused)" = false ] || exit 2; HERDR_PANE_ID=w7:p9; [ -z "$(pane_focused)" ] || exit 3
   COLS=44; ROWS=30; ui_load; PANE_FOCUS=true; a=$(view_head); PANE_FOCUS=false; b=$(view_head); PANE_FOCUS=""; c=$(view_head)
   case "$a" in *●*) ;; *) exit 4 ;; esac; case "$b$c" in *●*) exit 5 ;; esac
-  [ "$(printf '%s\n' "$a" | head -2 | tail -1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | wc -m)" -le $(( COLS - 1 )) ] || exit 6   # (the dot takes the room of the padding: the line stays inside the pane)
+  [ "$(printf '%s\n' "$a" | head -2 | tail -1 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | wc -m)" -le $(( COLS - 1 )) ] || exit 6   # (the dot takes the room of the padding: the line stays inside the pane)
   exit 0 ) && ok "focus: the head shows whether this pane is the one you are in" || bad "pane focus: step $?"
 # a card on now with an agent: like herdr's agent card (icon, "machine · agent", "∟ the topic"), with the card's bar and block edges; no meta line while it works
 ( rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"; AG_N=0; AG_LINES=(); ui_load
   topic_new "Card topic" "" "a description"; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
-  AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=44; topics_load; out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=44; topics_load; out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "Omarchy · bhote" || exit 1
   printf '%s\n' "$out" | grep -q "∟ x" || exit 2                                                                                  # (the agent's task, as herdr shows it)
   printf '%s\n' "$out" | grep -q "∟ Card topic" && exit 6
-  AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "∟ Card topic" || exit 7   # (no task: the topic's title)
+  AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "∟ Card topic" || exit 7   # (no task: the topic's title)
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x")
   printf '%s\n' "$out" | grep -q "▄▄▄" && printf '%s\n' "$out" | grep -q "▀▀▀" && printf '%s\n' "$out" | grep -q "▌" || exit 3   # (the card's frame stays)
   printf '%s\n' "$out" | grep -q "working" && exit 4                                                                         # (the icon says it)
-  AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || exit 5   # what the icon does not say stays
+  AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || exit 5   # what the icon does not say stays
   exit 0 ) && ok "now card: like herdr's agent card, with the card frame, the meta line only for what the icon does not say" || bad "agent card: step $?"
 # /clear: the pane runs a new session. An event without a session id (or one of another session) does not hand the old session's topic over;
 # when the new session starts working, the topic follows it, and its idle then hands the topic back for review
@@ -412,7 +412,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   exit 0 ) && ok "click: two quick presses on a topic are a double click (OPEN), slow ones are not" || bad "double click: step $?"
 ( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; topic_new "Page topic" "" "" >/dev/null; SEL_ID=$NEW_TOPIC_ID
   COLS=44; ROWS=60; out=$(bhote_paint menu); [ -s "$RUN_DIR/pmap" ] || exit 1
-  r=$(awk -F'\036' '$2 == 1 { print $1 }' "$RUN_DIR/pmap"); ln=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "${r}p")
+  r=$(awk -F'\036' '$2 == 1 { print $1 }' "$RUN_DIR/pmap"); ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "${r}p")
   menu_build "$TOPIC_DIR/$SEL_ID.topic"; case "$ln" in *"2 "*"${MENU_ITEMS[1]#*|}"*) ;; *) exit 2 ;; esac
   mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = 1 ] || exit 3
   mouse_event "0;8;2" M; [ "$MOUSE_KEY" != ITEM ] || exit 4
@@ -426,12 +426,12 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   for i in 1 2 3; do topic_new "Ctx topic $i" "" "" >/dev/null; done
   SEL_ID=$NEW_TOPIC_ID; COLS=44; ROWS=40; out=$(bhote_paint main); [ -s "$RUN_DIR/tmap" ] || exit 1
   r=$(awk -F'\036' -v id="$SEL_ID" '{ t = $2; sub(/!.*/, "", t) } t == id { print $1; exit }' "$RUN_DIR/tmap")
-  ln=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "$(( r + 1 ))p"); case "$ln" in *"Ctx topic 3"*"⋮ ") ;; *) exit 2 ;; esac   # (the title row of the selected card)
+  ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "$(( r + 1 ))p"); case "$ln" in *"Ctx topic 3"*"⋮ ") ;; *) exit 2 ;; esac   # (the title row of the selected card)
   mouse_event "0;$(( COLS - 3 ));$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 3                     # the ⋮ button
   mouse_event "0;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = TOPIC ] || exit 4                                                              # the title itself selects
   mouse_event "2;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 5                                  # the right button
   mouse_event "2;5;1" M; [ "$MOUSE_KEY" = CTX ] && [ -z "$CLICK_T" ] || exit 6                                                      # (not on a topic: no topic)
-  projects_load; out=$(bhote_paint ctx); printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -q "ACTIONS · Ctx topic 3" || exit 7
+  projects_load; out=$(bhote_paint ctx); printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -q "ACTIONS · Ctx topic 3" || exit 7
   menu_build "$TOPIC_DIR/$SEL_ID.topic"; n=${#MENU_ITEMS[@]}; [ "$(wc -l < "$RUN_DIR/pmap")" = "$n" ] || exit 8                   # one clickable row per action
   r=$(awk -F'\036' '$2 == 1 { print $1 }' "$RUN_DIR/pmap"); mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = 1 ] || exit 9
   exit 0 ) && ok "menu over the list: ⋮ and the right button open it, its rows are clickable actions" || bad "context menu: step $?"
@@ -479,9 +479,9 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"
   topic_new "Card topic" ""  ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
   AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
-  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌   Building the warm-up clock" || exit 5
+  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌   Building the warm-up clock" || exit 5
   printf '%s\n' "$out" | tr -d '\034\035' | grep -c "Building the warm-up" | grep -q '^1$' || exit 6
-  AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Building the warm-up"*) exit 7 ;; esac   # (only while it works)
+  AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Building the warm-up"*) exit 7 ;; esac   # (only while it works)
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); SPIN_CELLS=""; RUN_DIR=$T/run; mkdir -p "$RUN_DIR"
   HEAD=$(view_head >/dev/null 2>&1); bhote_view >/dev/null 2>&1 || true; sr=$(cat "$RUN_DIR/spinrows" 2>/dev/null); case "$sr" in *:3:*:3:*) exit 8 ;; *:3:[nsh]*) ;; *) exit 9 ;; esac   # (one star in the card: the first row; the now line has none)
   exit 0 ) && ok "agent card: what the agent does right now, orange without a star, only while it works" || bad "agent now line: step $?"
@@ -517,7 +517,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_new "Card" ""  "Beschr"; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now; topic_set "$cf" agent_branch fix/x
   cfg_set GITHUB_BRANCHES on; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
   out=$(topics_block); printf '%s' "$out" | grep -q $'\033\[38;2;255;62;165m\033\[1mOmarchy' || exit 3                  # (pink, bold)
-  plain=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
+  plain=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
   [ "${r1%%Omarchy*}" = "▌ ✶ " ] && [ "${r3%%Doing*}" = "▌   " ] || exit 4
   r4=$(printf '%s\n' "$plain" | grep "Beschr"); r5=$(printf '%s\n' "$plain" | grep "⎇ fix/x"); [ "${r4%%Beschr*}" = "▌   " ] && [ "${r5%%⎇*}" = "▌   " ] || exit 5   # (the description and the branch too)                                           # (text under text: column 5)
   echo "r1=[${r1%%Omarchy*}] r3=[${r3%%Doing*}]" | cat -v >&2; exit 0 ) && ok "agent card: machine name in herdr's colour (pink), the now line indented like the rows above" || bad "card colour/indent: step $?"
@@ -530,22 +530,22 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   ev w9:p1 working; [ "$(topic_get "$wf" status)" = now ] || exit 2                                # the agent works again: back on now
   BHOTE_FAKE_QUESTION="Soll ich pushen?" ev w9:p1 idle; [ "$(topic_get "$wf" status)" = review ] || exit 3   # a question: the user has to look
   topic_set "$wf" status finished; topics_load; COLS=50; ROWS=40; NOW=$(date +%s); AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); ui_load
-  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "RECENTLY FINISHED" && printf '%s\n' "$out" | grep -q "✓ Omarchy · bhote" && printf '%s\n' "$out" | grep -q "  finished" || exit 4
-  cfg_set FINISHED_MINUTES 1; touch -d "2 minutes ago" "$wf" 2>/dev/null; sed -i 's/^updated=.*/updated=1000/' "$wf"; finished_expire
+  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "RECENTLY FINISHED" && printf '%s\n' "$out" | grep -q "✓ Omarchy · bhote" && printf '%s\n' "$out" | grep -q "  finished" || exit 4
+  cfg_set FINISHED_MINUTES 1; touch -d "2 minutes ago" "$wf" 2>/dev/null; sed -i.bak 's/^updated=.*/updated=1000/' "$wf"; finished_expire
   [ "$(topic_get "$wf" status)" = later ] && [ "$(topic_get "$wf" dismissed)" = 1 ] || exit 5       # after the time: put away (like a dismissed review card)
   ev w9:p1 working; [ "$(topic_get "$wf" status)" = now ] || exit 6                                # ... and it comes back when the agent works
   topic_set "$wf" status finished; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); review_dismiss "$wf"; [ "$(topic_get "$wf" status)" = later ] || exit 7   # c on the card (its agent is idle)
-  cfg_set FINISHED_MINUTES 0; topic_set "$wf" status finished; sed -i 's/^updated=.*/updated=1000/' "$wf"; finished_expire; [ "$(topic_get "$wf" status)" = finished ] || exit 8   # 0: never
+  cfg_set FINISHED_MINUTES 0; topic_set "$wf" status finished; sed -i.bak 's/^updated=.*/updated=1000/' "$wf"; finished_expire; [ "$(topic_get "$wf" status)" = finished ] || exit 8   # 0: never
   # the card of an agent without a topic
   rm -f "$TOPIC_DIR"/*.topic; cfg_set FINISHED_MINUTES 1; cfg_set AGENT_CARDS on; RUN_DIR=$T/run; mkdir -p "$RUN_DIR/cards"; : > "$RUN_DIR/cards/w8_p1"; echo 1 > "$RUN_DIR/cards/w8_p1"
   printf '%s\n' "Omarchy${US}w8:p1${US}working${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1); [ "$(topic_get "$cf" auto_now)" = 1 ] && [ "$(topic_get "$cf" status)" = now ] || exit 9
   printf '%s\n' "Omarchy${US}w8:p1${US}idle${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" status)" = finished ] && [ "$(topic_get "$cf" deleted)" != 1 ] || exit 10   # stopped: recently finished
   printf '%s\n' "Omarchy${US}w8:p1${US}working${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" status)" = now ] || exit 11                  # works again: the same card is back on now
-  printf '%s\n' "Omarchy${US}w8:p1${US}idle${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; sed -i 's/^updated=.*/updated=1000/' "$cf"; finished_expire; [ "$(topic_get "$cf" deleted)" = 1 ] || exit 12   # after the time: gone
+  printf '%s\n' "Omarchy${US}w8:p1${US}idle${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; sed -i.bak 's/^updated=.*/updated=1000/' "$cf"; finished_expire; [ "$(topic_get "$cf" deleted)" = 1 ] || exit 12   # after the time: gone
   exit 0 ) && ok "recently finished: a stopped agent without a question, back on now when it works, dismissed by itself, c ends it" || bad "recently finished: step $?"
 # a topic on now whose agent stopped and no event moved it: recently finished after two looks; a stale "working" right after the stop does not reopen a finished card
 ( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/nowidle" "$SHARED_DIR/revidle"; HOST=Omarchy
-  topic_new "Stuck" "" ""; sf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$sf" agent bhote; topic_set "$sf" agent_machine Omarchy; topic_set "$sf" agent_pane w9:p1; topic_set "$sf" status now; sed -i 's/^updated=.*/updated=1000/' "$sf"
+  topic_new "Stuck" "" ""; sf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$sf" agent bhote; topic_set "$sf" agent_machine Omarchy; topic_set "$sf" agent_pane w9:p1; topic_set "$sf" status now; sed -i.bak 's/^updated=.*/updated=1000/' "$sf"
   setagent() { printf '%s\n' "Omarchy${US}w9:p1${US}$1${US}bhote${US}x" > "$AGENT_LOCAL"; }
   setagent working; now_idle_follow; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 1                      # it works: stays on now
   setagent idle; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 2                                          # seen idle once: not yet
@@ -575,9 +575,9 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
 ( rm -f "$TOPIC_DIR"/*.topic; RUN_DIR=$T/run2; mkdir -p "$RUN_DIR"; COLS=50; ROWS=40; TOO_SMALL=0; view=main
   printf '%s\n' "Omarchy${US}w1:p1${US}working${US}a${US}x" "Omarchy${US}w2:p1${US}testing${US}b${US}x" "Omarchy${US}w3:p1${US}idle${US}c${US}x" "Omarchy${US}w4:p1${US}done${US}d${US}x" "Omarchy${US}w5:p1${US}blocked${US}e${US}x" > "$AGENT_LOCAL"
   cfg_set AGENTS_COMPACT on; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
-  out=$(bhote_draw main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 2 inactive" || exit 1            # working + testing, blocked, idle + done
+  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 2 inactive" || exit 1            # working + testing, blocked, idle + done
   printf '%s\n' "$out" | grep -q " ↕ " || exit 2                                                                                                  # the button on the divider
-  cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
+  cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; DRAG=0; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button
   MOUSE_KEY=""; DRAG=0; mouse_event "0;10;30" M; [ "$MOUSE_KEY" != AGMENU ] && [ "$DRAG" = 1 ] || exit 5                                          # elsewhere on the divider: the drag starts
   # the ↕ is lit while the pointer is on it
@@ -586,8 +586,8 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   mouse_event "35;5;30" M; [ "$MOUSE_KEY" = HOVER ] && [ "$HOVER_BTN" = 0 ] || exit 12                                                                              # (off it: a redraw again)
   # nav-only: what changed on disk is not read again, the next full paint reads it
   topic_new "First" "" ""; ui_load; topic_new "Added later" "" ""
-  p1=$(NAV_ONLY=1; bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p1" in *"Added later"*) exit 6 ;; esac
-  p2=$(bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p2" in *"Added later"*) ;; *) exit 7 ;; esac
+  p1=$(NAV_ONLY=1; bhote_paint main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p1" in *"Added later"*) exit 6 ;; esac
+  p2=$(bhote_paint main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p2" in *"Added later"*) ;; *) exit 7 ;; esac
   exit 0 ) && ok "agent overview: counts only (↕ on the divider); a key that only moves the selection does not reload" || bad "compact/nav: step $?"
 # done topics and the lines of next, waiting and parked topics have a hover like the cards: a step lighter under the pointer
 ( rm -f "$TOPIC_DIR"/*.topic; COLS=50; ROWS=40; NOW=$(date +%s); AG_N=0; AG_LINES=(); ui_load; CARDHOV=HOVBG; DSEL=DS; LSEL=LS; SELBG=SELX
@@ -607,7 +607,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   now=$(date +%s); printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}44${US}56${US}fix/x${US}https://ci/1" "$now${US}IMS${US}Frontend${US}running${US}1${US}4${US}fix/y${US}https://ci/2" > "$SHARED_DIR/deploys.list"
   deploy_lookup "$df" && [ "$DL_URL" = https://ci/1 ] && [ "$DL_STATE" = running ] || exit 2                   # (the label narrows it: Backend, not Frontend)
   COLS=50; ROWS=60; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$now; AG_N=0; AG_LINES=(); ui_load; projects_load; topics_load
-  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
   printf '%s\n' "$out" | grep -q "■ *78%" || exit 5                                                              # 44 of 56 steps
