@@ -10,6 +10,12 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- `AGENTS_VIA=kharka`: the agents of the other machines come from kharka instead of herdr's saved machines, so no machine
+  needs ssh to another. [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes each machine's agents as
+  `herdr/<node>` (listed under its `--label`); the collector watches them and looks at once when one changes. The live state of
+  an agent there, a prompt and the focus are `herdr.commands` that herdr-kharka runs; prompts need its
+  `--allow-method agent.prompt`. Settings › *Agents through*, the wizard's *Remote agents* step (it checks this machine's
+  label and which machines take prompts), `bhote setup --json` (`via`, `prompts`).
 
 ### Changed
 - A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
@@ -24,7 +30,12 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   bar stays in herdr's list; `CLICK_FOCUS_AGENT=off` gives the focus back to the panel). Double click, →: its page.
 - The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
   *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
-  the topic can be shown (*Show <agent>*) and handed over, *Start with agent* only when there is none.
+  the topic can be shown (*Show topic*) and handed over, *Start with agent* only when there is none.
+
+### Fixed
+- The setup wizard's topics step and its summary work under bash 3.2 again (macOS `/bin/bash`): both stopped with
+  `syntax error near unexpected token 'newline'`, because bash 3.2 ends a `$( … )` at the `)` of a `case` pattern. The
+  patterns there are written `(pattern)` now.
 
 ## [0.8.0] - 2026-10-11
 

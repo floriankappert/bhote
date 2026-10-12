@@ -37,7 +37,7 @@ settle() {  # until both daemons are online, have nothing pending and the same l
 }
 # shellcheck disable=SC1091
 . ./bhote
-trap 'kharka_follow_stop; daemon_stop a; daemon_stop b; hub_stop; rm -rf "$RUN_DIR" "$T"' EXIT   # (after sourcing: bhote sets its own EXIT trap)
+trap 'kharka_follow_stop; [ -n "${RESP:-}" ] && kill "$RESP" 2>/dev/null; daemon_stop a; daemon_stop b; hub_stop; rm -rf "$RUN_DIR" "$T"' EXIT   # (after sourcing: bhote sets its own EXIT trap)
 cfg_set STORE kharka
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
 A=$TOPIC_DIR; B=$T/b/topics; mkdir -p "$A" "$B"
@@ -234,5 +234,98 @@ on "$A" a; mk "$A" d "Made while kharka was down" 9900
 store_sync && bad "sync should fail without the daemon" || ok "offline again: saved locally"
 daemon_start a; store_sync; settle; on "$B" b; store_sync
 [ "$(title "$B/d.topic")" = "Made while kharka was down" ] && ok "back: the change made meanwhile arrives" || bad "d missing on B"
+
+# 16) agents through kharka (AGENTS_VIA=kharka): the other machines from their herdr/<node> entries, actions through herdr.commands
+on "$A" a; cfg_set REMOTE_AGENTS on; cfg_set AGENTS_VIA kharka; rm -f "$SHARED_DIR/kharka.self"
+put_on() { "$REAL_KHARKA" --socket "$T/$1.sock" put "$2" - >/dev/null; }   # put_on a|b <key>: the value (stdin) written on that machine
+herdr_b() {  # herdr_b <commands>: what herdr-kharka on b writes (label Box)
+    put_on b herdr/b <<EOF
+{"host":"b","label":"Box","herdr":"online","focused":null,"commands":[$1],
+ "workspaces":[{"id":"w1","number":1,"label":"Work"},{"id":"w2","number":2,"label":"Tests","tokens":{"tests":"◌ 3/10"}}],
+ "agents":[{"pane":"w1:p1","workspace":"w1","tab":"w1:t1","status":"idle","since":0,"cwd":"/src/shop","tokens":{"task":"∟ Fix it","repo":"github.com/x/shop","project":"proj-shop"}},
+           {"pane":"w2:p1","workspace":"w2","status":"idle","since":0},{"pane":"w2:p2","workspace":"w2","status":"working","since":0},
+           {"pane":"bad pane","workspace":"w1","status":"idle","since":0}]}
+EOF
+}
+herdr_b '"agent.get","agent.focus","agent.prompt"'
+put_on a herdr/a <<< '{"host":"a","label":"Self","herdr":"online","agents":[{"pane":"w1:p1","workspace":"w1","status":"idle","since":0}]}'
+put_on b herdr/c <<< "{\"host\":\"c\",\"label\":\"$HOST\",\"herdr\":\"online\",\"agents\":[{\"pane\":\"w1:p1\",\"workspace\":\"w1\",\"status\":\"idle\",\"since\":0}]}"
+put_on b herdr/d <<< '{"host":"d","label":"Down","herdr":"offline","agents":[{"pane":"w1:p1","workspace":"w1","status":"idle","since":0}]}'
+put_on b herdr/e <<< '{"host":"e","label":"Ev\u001b[31mil/x","herdr":"online","agents":[{"pane":"w1:p1","workspace":"w1","status":"idle","since":0}]}'
+settle; on "$A" a; collect_remote
+has() { grep -qxF "$(printf '%s' "$2" | tr '|' '\037')" "$1"; }   # has <file> <line with | for the separator>
+has "$AGENT_REMOTE" "Box|w1:p1|idle|Work|Fix it" && ok "agents: another machine's agent, by its label, with workspace and task" || bad "remote: $(tr '\037' '|' < "$AGENT_REMOTE")"
+has "$AGENT_REMOTE" "Box|w2:p1|testing|Tests|" && has "$AGENT_REMOTE" "Box|w2:p2|working|Tests|" \
+    && ok "agents: tests running in its workspace: testing, a working agent stays working" || bad "remote: $(tr '\037' '|' < "$AGENT_REMOTE")"
+has "$AGENT_META_R" "Box|w1:p1|w1:t1|a|github.com/x/shop|proj-shop|/src/shop" && ok "agents: tab, repository, project and folder for the projects" || bad "meta: $(tr '\037' '|' < "$AGENT_META_R")"
+grep -q "bad pane\|^Self$(printf '\037')\|^$HOST$(printf '\037')" "$AGENT_REMOTE" && bad "remote: $(tr '\037' '|' < "$AGENT_REMOTE")" \
+    || ok "agents: not this machine (its node or its name), no odd pane ids"
+has "$AGENT_REMOTE" "Down|w1:p1|off-idle|w1|" && grep -qx Down "$SHARED_DIR/machines.offline" \
+    && ok "agents: a machine whose herdr is offline: its agents muted, the machine offline" || bad "down: $(tr '\037' '|' < "$AGENT_REMOTE")"
+grep -q "$(printf '\033')\|/x" "$AGENT_REMOTE" "$AGENT_NODES" && bad "label not cleaned: $(cat -v "$AGENT_NODES")" || ok "agents: a label keeps no escape codes and no slash"
+cfg_set MACHINES_OFF Down; collect_remote; grep -q "^Down" "$AGENT_REMOTE" && bad "MACHINES_OFF ignored" || ok "agents: MACHINES_OFF keeps a machine out"; cfg_set MACHINES_OFF ""
+machine_known Box && ! machine_known Nope && ok "agents: the machines known are the ones in kharka" || bad "machine_known"
+printf '#!/bin/sh\nexit 1\n' > "$T/no-kharka"; chmod +x "$T/no-kharka"
+KHARKA=$T/no-kharka collect_remote
+has "$AGENT_REMOTE" "Box|w1:p1|off-idle|Work|Fix it" && grep -qx Box "$SHARED_DIR/machines.offline" \
+    && ok "agents: no answer from the daemon: the last agents stay, muted" || bad "no daemon: $(tr '\037' '|' < "$AGENT_REMOTE")"
+collect_remote
+# herdr-kharka on b, as far as needed here: answers each command for b (agent.get knows w1:p1 only) and logs it
+responder() {
+    local e k m tg d
+    while :; do
+        "$REAL_KHARKA" --socket "$T/b.sock" ls herdr.commands/b/ --entries 2>/dev/null | jq -c 'select(.value.done == null)' | while IFS= read -r e; do
+            k=$(jq -r .key <<< "$e"); m=$(jq -r .value.method <<< "$e"); tg=$(jq -r '.value.params.target // ""' <<< "$e")
+            printf '%s %s %s %s\n' "$m" "$tg" "$(jq -r '.value.params.text // ""' <<< "$e")" "$(jq -r .value.from <<< "$e")" >> "$T/calls"
+            case "$m:$tg" in
+                agent.get:w1:p1) d='{"ok":true,"result":{"type":"agent","agent":{"pane_id":"w1:p1","agent":"claude","agent_status":"idle","agent_session":{"value":"sess-1"},"foreground_cwd":"/src/shop"}}}' ;;
+                agent.get:*) d="{\"ok\":false,\"error\":\"agent.get: agent target $tg not found\"}" ;;
+                *) d='{"ok":true,"result":{}}' ;;
+            esac
+            jq -c --argjson d "$d" '.value + {done: ($d + {at: 1})}' <<< "$e" | "$REAL_KHARKA" --socket "$T/b.sock" put "$k" - >/dev/null
+        done
+        sleep 0.1
+    done
+}
+: > "$T/calls"; responder & RESP=$!
+agent_live Box w1:p1
+[ "$LIVE_ST" = idle ] && [ "$LIVE_SESS" = sess-1 ] && [ "$LIVE_CWD" = /src/shop ] && ok "commands: the live state of an agent there (agent.get)" || bad "live: $LIVE_ST $LIVE_SESS $LIVE_CWD"
+agent_live Box w9:p9; [ "$LIVE_ST" = gone ] && ok "commands: a pane without an agent there is gone" || bad "live w9:p9: $LIVE_ST"
+grep -q "^agent.get w1:p1  a$" "$T/calls" && ok "commands: sent from this machine's node" || bad "calls: $(cat "$T/calls")"
+AGENT_SEND_SYNC=1 agent_send Box w1:p1 "Hello there" && grep -q "^agent.prompt w1:p1 Hello there a$" "$T/calls" \
+    && ok "commands: a prompt to an agent there (agent.prompt)" || bad "prompt: $(cat "$T/calls")"
+agent_jump Box w1:p1; for (( i = 0; i < 50; i++ )); do grep -q "^agent.focus w1:p1" "$T/calls" && break; sleep 0.1; done
+grep -q "^agent.focus w1:p1" "$T/calls" && ok "commands: the focus on an agent there (agent.focus)" || bad "focus: $(cat "$T/calls")"
+sleep 0.3; settle; [ -z "$("$REAL_KHARKA" --socket "$T/a.sock" ls herdr.commands/)" ] && ok "commands: answered ones are deleted" || bad "left: $("$REAL_KHARKA" --socket "$T/a.sock" ls herdr.commands/)"
+s1=$(wc -l < "$T/calls"); t0=$SECONDS; kharka_call Down agent.get '{"target":"w1:p1"}'; rc=$?
+[ "$rc" = 2 ] && [ $(( SECONDS - t0 )) -lt 2 ] && ok "commands: an offline machine is not asked (no wait)" || bad "Down: rc=$rc $KC_ERR"
+herdr_b '"agent.get","agent.focus"'; settle; on "$A" a; collect_remote
+msg=$(AGENT_SEND_SYNC=1 agent_send Box w1:p1 "Not allowed" 2>&1) && bad "prompt without agent.prompt allowed" || {
+    case "$msg" in *"--allow-method agent.prompt"*) ok "commands: without agent.prompt there, no prompt, and the way to allow it" ;; *) bad "msg: $msg" ;; esac; }
+sleep 0.3; grep -q "Not allowed" "$T/calls" && bad "the refused prompt was sent" || ok "commands: nothing is written for a method it does not run"
+kill "$RESP" 2>/dev/null; wait "$RESP" 2>/dev/null; RESP=""
+# the follower watches herdr/ too: another machine's agents wake the collector for a look
+w=""; kharka_follow_want w; [ "$w" = all ] && ok "follower: STORE=kharka and agents through kharka: it watches both" || bad "want: $w"
+KW_READ=""; KW_WATCH=""; kharka_follow_start $$ all; sleep 0.5; rm -f "$SHARED_DIR/remote.due" "$SHARED_DIR/poke" "$STORE_DIRTY"
+herdr_b '"agent.get"'
+for (( i = 0; i < 40; i++ )); do [ -e "$SHARED_DIR/remote.due" ] && break; sleep 0.05; done
+[ -e "$SHARED_DIR/remote.due" ] && [ -e "$SHARED_DIR/poke" ] && [ ! -e "$STORE_DIRTY" ] \
+    && ok "follower: another machine's agents ask for a look (not for a merge)" || bad "no remote.due/poke after herdr/b"
+"$REAL_KHARKA" --socket "$T/b.sock" put bhote.topics/g '{"id":"g","title":"G","updated":"9950","deleted":"0"}' >/dev/null
+for (( i = 0; i < 40; i++ )); do [ -e "$STORE_DIRTY" ] && break; sleep 0.05; done
+[ -e "$STORE_DIRTY" ] && ok "follower: watching everything, a topic still asks for a merge" || bad "no dirty after bhote.topics/g"
+cfg_set AGENTS_VIA herdr; w=$KW_WATCH; r=$KW_READ; kharka_follow_keep $$
+[ "$KW_WHAT" = bhote. ] && gone "$w" "$r" && ok "follower: agents back through herdr: it watches bhote. only (started again)" || bad "what=$KW_WHAT"
+kharka_follow_stop; cfg_set AGENTS_VIA kharka
+# settings, and no push through herdr
+SET_PAGE=connections settings_rows
+case " ${SET_ROWS[*]} " in *"enum|AGENTS_VIA|"*"machine|Box|"*) ok "settings: Agents through, and the machines in kharka" ;; *) bad "rows: ${SET_ROWS[*]}" ;; esac
+case " ${SET_ROWS[*]} " in *PUSH_STATES*) bad "settings: Push agent states shown with kharka" ;; *) ok "settings: no Push agent states with kharka" ;; esac
+mkdir -p "$T/bin"; printf '#!/bin/sh\ntouch "%s/herdr-called"\n' "$T" > "$T/bin/herdr"; chmod +x "$T/bin/herdr"
+PATH=$T/bin:$PATH push_peers; [ -e "$T/herdr-called" ] && bad "push_peers asked herdr" || ok "agents through kharka: no push through herdr"
+j=$(PATH=$T/bin:$PATH setup_status_json 2>&1)
+printf '%s' "$j" | jq -e '.machines | any(.label == "Box" and .via == "kharka" and .reachable == true and .prompts == false)' >/dev/null \
+    && ok "setup --json: the machines in kharka, whether they take prompts" || bad "setup --json: $j"
+cfg_set REMOTE_AGENTS off; cfg_set AGENTS_VIA herdr
 
 exit $fail
