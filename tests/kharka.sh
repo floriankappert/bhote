@@ -317,6 +317,44 @@ for (( i = 0; i < 40; i++ )); do [ -e "$STORE_DIRTY" ] && break; sleep 0.05; don
 cfg_set AGENTS_VIA herdr; w=$KW_WATCH; r=$KW_READ; kharka_follow_keep $$
 [ "$KW_WHAT" = bhote. ] && gone "$w" "$r" && ok "follower: agents back through herdr: it watches bhote. only (started again)" || bad "what=$KW_WHAT"
 kharka_follow_stop; cfg_set AGENTS_VIA kharka
+# a click on an agent there, on a Mac: herdr's key for its row typed into the herdr window (herdr's API cannot switch machines)
+mkdir -p "$T/hb"; printf '#!/bin/sh\ncat "%s/machines.json"\n' "$T" > "$T/hb/herdr"; chmod +x "$T/hb/herdr"
+echo '[{"label":"Down","target":"u@down","enabled":true},{"label":"Other","target":"u@box","enabled":true}]' > "$T/machines.json"
+r=""; PATH=$T/hb:$PATH agent_row_set r Box w2:p2
+[ "$r" = 6 ] && ok "jump: the row in herdr's list: this machine, then the saved ones in their order (by ssh host), by workspace" || bad "row: $r"
+echo '[{"label":"Down","target":"u@down","enabled":false},{"label":"Box","target":"u@x","enabled":true}]' > "$T/machines.json"
+r=""; PATH=$T/hb:$PATH agent_row_set r Box w2:p2; [ "$r" = 5 ] && ok "jump: a disabled machine has no rows" || bad "row disabled: $r"
+r=""; PATH=$T/hb:$PATH agent_row_set r Box w9:p9 && bad "row for an unknown pane: $r" || ok "jump: no row for a pane it does not list"
+printf '#!/bin/sh\nprintf "%%s\\n" "$2" > "%s/osa.out"\n' "$T" > "$T/osa"; chmod +x "$T/osa"
+printf '[keys]\nprefix = "ctrl+a"\nfocus_agent = ["prefix+ctrl+1..9"]\n' > "$T/herdr.toml"
+rm -f "$T/osa.out"; KEYS_OS_LOCAL=Darwin HERDR_CONFIG_OWN=$T/herdr.toml BHOTE_OSASCRIPT=$T/osa agent_row_type 2
+grep -q 'keystroke "a" using {control down}' "$T/osa.out" 2>/dev/null && grep -q "key code 19 using {control down}" "$T/osa.out" \
+    && ok "jump: focus_agent with the prefix: the prefix, then ctrl and the digit" || bad "osa: $(cat "$T/osa.out" 2>&1)"
+printf '[keys.indexed]\nagents = "cmd"\n' > "$T/herdr.toml"; rm -f "$T/osa.out"
+KEYS_OS_LOCAL=Darwin HERDR_CONFIG_OWN=$T/herdr.toml BHOTE_OSASCRIPT=$T/osa agent_row_type 9
+! grep -q keystroke "$T/osa.out" && grep -q "key code 25 using {command down}" "$T/osa.out" && ok "jump: [keys.indexed] agents: one chord" || bad "osa: $(cat "$T/osa.out" 2>&1)"
+printf '[keys]\nprefix = "ctrl+a"\n' > "$T/herdr.toml"; rm -f "$T/osa.out"
+KEYS_OS_LOCAL=Darwin HERDR_CONFIG_OWN=$T/herdr.toml BHOTE_OSASCRIPT=$T/osa agent_row_type 2 || [ -e "$T/osa.out" ] || ok "jump: no such key in herdr: nothing typed"
+printf '[keys]\nfocus_agent = "prefix+ctrl+1..9"\n' > "$T/herdr.toml"
+FLASH_MSG=""; PATH=$T/hb:$PATH KEYS_OS_LOCAL=Darwin HERDR_CONFIG_OWN=$T/herdr.toml BHOTE_OSASCRIPT=$T/osa agent_jump Box w2:p2
+[ -z "$FLASH_MSG" ] && grep -q "key code 23 using {control down}" "$T/osa.out" && ok "jump: a click on a Mac types the key, no note" || bad "jump: '$FLASH_MSG' $(cat "$T/osa.out" 2>&1)"
+rm -f "$T/osa.out"; FLASH_MSG=""; PATH=$T/hb:$PATH KEYS_OS_LOCAL=Linux HERDR_CONFIG_OWN=$T/herdr.toml BHOTE_OSASCRIPT=$T/osa agent_jump Box w2:p2
+[ -n "$FLASH_MSG" ] && [ ! -e "$T/osa.out" ] && ok "jump: elsewhere nothing typed, the note says how to get there" || bad "linux jump: '$FLASH_MSG'"
+# the panel clicked in runs on another machine than the window (a Mac attached to this herdr): it asks through bhote.jump/<node>
+for (( i = 0; i < 50; i++ )); do v=$("$REAL_KHARKA" --socket "$T/b.sock" get bhote.jump/a 2>/dev/null); [ -n "$v" ] && break; sleep 0.1; done
+printf '%s' "$v" | jq -e '.machine == "Box" and .pane == "w2:p2" and .host == "a" and (.at | type == "number")' >/dev/null \
+    && ok "jump: elsewhere the click asks the other machines (bhote.jump/<node>: the agent, this herdr's host)" || bad "bhote.jump/a: $v"
+printf '#!/bin/sh\ncase "$2" in *"front window"*) cat "%s/title" ;; *) printf "%%s\\n" "$2" > "%s/osa.out" ;; esac\n' "$T" "$T" > "$T/osa"
+ask_b() { rm -f "$T/osa.out"; jq -cn --argjson at "$1" '{machine: "Box", pane: "w2:p2", host: "b", at: $at}' | put_on b bhote.jump/b; sleep 1; }
+rm -f "$STORE_DIRTY"; ( PATH=$T/hb:$PATH; KEYS_OS_LOCAL=Darwin; HERDR_CONFIG_OWN=$T/herdr.toml; BHOTE_OSASCRIPT=$T/osa; kharka_follow_start $$ herdr/; echo "$KW_WATCH $KW_READ" > "$T/fw" )
+echo "b: Work · tests" > "$T/title"; ask_b "$(( $(date +%s) * 1000 ))"
+grep -q "key code 23 using {control down}" "$T/osa.out" 2>/dev/null && ok "jump: asked from another machine, its herdr in front here: the key for the agent's row" || bad "asked: $(cat "$T/osa.out" 2>&1)"
+[ ! -e "$STORE_DIRTY" ] && ok "jump: a jump is no change of the topics" || bad "bhote.jump made the store dirty"
+echo "a: Self · x" > "$T/title"; ask_b "$(( $(date +%s) * 1000 ))"; [ ! -e "$T/osa.out" ] && ok "jump: another window in front: nothing typed" || bad "typed for another window"
+echo "b: Work · tests" > "$T/title"; ask_b "$(( $(date +%s) * 1000 - 60000 ))"; [ ! -e "$T/osa.out" ] && ok "jump: an old request: nothing typed" || bad "typed an old one"
+"$REAL_KHARKA" --socket "$T/b.sock" put bhote.topics/h '{"id":"h","title":"H","updated":"9960","deleted":"0"}' >/dev/null; sleep 1
+[ ! -e "$STORE_DIRTY" ] && ok "follower: agents through kharka only: topics stay out" || bad "herdr/ follower made the store dirty"
+read -r w r < "$T/fw"; kill "$w" "$r" 2>/dev/null
 # settings, and no push through herdr
 SET_PAGE=connections settings_rows
 case " ${SET_ROWS[*]} " in *"enum|AGENTS_VIA|"*"machine|Box|"*) ok "settings: Agents through, and the machines in kharka" ;; *) bad "rows: ${SET_ROWS[*]}" ;; esac

@@ -16,6 +16,13 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   an agent there, a prompt and the focus are `herdr.commands` that herdr-kharka runs; prompts need its
   `--allow-method agent.prompt`. Settings › *Agents through*, the wizard's *Remote agents* step (it checks this machine's
   label and which machines take prompts), `bhote setup --json` (`via`, `prompts`).
+- A click on an agent of another machine takes you there on a Mac (with `AGENTS_VIA=kharka`): herdr's API cannot switch its
+  window to another machine, so bhote types herdr's own key for that agent's row (`focus_agent`, e.g. `prefix+ctrl+1..9`, or
+  `[keys.indexed] agents`) into the herdr window, and herdr switches. The row follows herdr's agent list: this machine's
+  agents, then each saved machine's, by workspace number. A panel that runs on the other machine (the Mac's window shows the
+  Linux herdr) cannot type there: it asks through kharka (`bhote.jump/<node>`), and the Mac whose frontmost window shows that
+  herdr (its `window_title` starting with `{hostname}: `) types the key. Needs the Accessibility permission for the terminal;
+  without it, past row 9, or elsewhere the key line still says how to get there.
 
 ### Changed
 - A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),

@@ -264,21 +264,22 @@ kharka_follow_want() {  # kharka_follow_want <var>: what to watch: bhote. (STORE
 }
 kharka_follow_start() {  # kharka_follow_start <collector pid> [what: bhote. herdr/ all]: sets KW_WATCH, KW_READ and KW_WHAT
     local fifo="$RUN_DIR/kharka.watch" what=${2:-bhote.} pre
-    pre=$what; [ "$what" = all ] && pre=""
+    pre=$what; case "$what" in all|herdr/) pre="" ;; esac       # (herdr/: also the jumps another machine asks for, bhote.jump/)
     rm -f "$fifo" "$fifo.pids"; mkfifo "$fifo" 2>/dev/null || return 1
-    ( kharka_run watch ${pre:+"$pre"} > "$fifo" 2>/dev/null & w=$!; kharka_follow_read "$fifo" "$w" "$1" & echo "$w $!" > "$fifo.pids" )
+    ( kharka_run watch ${pre:+"$pre"} > "$fifo" 2>/dev/null & w=$!; kharka_follow_read "$fifo" "$w" "$1" "$what" & echo "$w $!" > "$fifo.pids" )
     read -r KW_WATCH KW_READ < "$fifo.pids" 2>/dev/null; rm -f "$fifo.pids"
     KW_WHAT=$what
     [ -n "$KW_READ" ]
 }
-kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid>: until the watch ends or the collector is gone
+kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid> <what>: until the watch ends or the collector is gone
     local line s
     while true; do
         s=$SECONDS
         if IFS= read -r -t 5 line; then
             case "$line" in                                    # (a line starts with the key: {"entry":{"key":"…)
-                *'{"key":"bhote.'*) : > "$STORE_DIRTY"; poke ;;
-                *'{"key":"herdr/'*) : > "$SHARED_DIR/remote.due"; poke ;;
+                *'{"key":"bhote.jump/'*) jump_request "$line" & ;;
+                *'{"key":"bhote.'*) [ "${4:-bhote.}" = herdr/ ] || { : > "$STORE_DIRTY"; poke; } ;;
+                *'{"key":"herdr/'*) [ "${4:-bhote.}" = bhote. ] || { : > "$SHARED_DIR/remote.due"; poke; } ;;
             esac
         elif [ $(( SECONDS - s )) -lt 4 ]; then break          # the watch ended (bash 3.2 tells a timeout from the end only by the time)
         else kill -0 "$3" 2>/dev/null || break; fi             # quiet for 5 s: is the collector still there? (after a kill -9 nobody stops us)
@@ -2077,7 +2078,9 @@ panel_width_clamp() {
     herdr pane resize --pane "$p" --direction "$dir" --amount "$amt" >/dev/null 2>&1
 }
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
-# machines (the API cannot): the key line says so for a few seconds.
+# machines (the API cannot). So on a Mac, with the agents from kharka, bhote types herdr's own key for that agent's row into the
+# herdr window you clicked in (focus_agent "prefix+ctrl+1..9", or [keys.indexed] agents): herdr then
+# switches the machine itself. Otherwise, or when that fails, the key line says how to get there for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
 topic_jump() {  # topic_jump [click]: the selected topic's agent, shown in herdr; in another tab of this machine the focus goes to the panel there (a click
     # with CLICK_FOCUS_AGENT on: it stays on the agent, whose bar then stays in herdr's list), the topic selected. 1 when it has no agent that herdr knows now
@@ -2094,17 +2097,111 @@ topic_jump() {  # topic_jump [click]: the selected topic's agent, shown in herdr
     else ( herdr agent focus "$p" >/dev/null 2>&1; panel_focus_of "$p" "${HERDR_PANE_ID:-}" ) >/dev/null 2>&1 </dev/null &
     fi
 }
+agent_row_set() {  # agent_row_set <var> <machine> <pane>: the agent's row in herdr's agent list (1…), empty when unknown.
+    # herdr lists this machine's agents first, then each saved machine's in the order of `herdr machine list`, each machine's
+    # sorted by workspace number; the agents and workspaces come from the herdr/<node> entries in kharka.
+    local _me _r="" _t="$SHARED_DIR/kharka.rows.$$"; printf -v "$1" '%s' ""
+    kharka_self_set _me || return 1
+    if [ "$2" = "$HOST" ]; then KN_NODE=$_me; else kharka_node_of "$2" || return 1; fi
+    kharka_run ls herdr/ --entries > "$_t" 2>/dev/null || { rm -f "$_t"; return 1; }
+    _r=$(herdr machine list --json 2>/dev/null | jq -rn --slurpfile h "$_t" --arg me "$_me" --arg node "$KN_NODE" --arg p "$3" '
+        def low: tostring | ascii_downcase;
+        def thost: tostring | sub("^ssh://"; "") | sub("^[^@]*@"; "") | sub(":[0-9]+$"; "") | low;
+        ((try input catch []) | if type == "array" then . else [] end) as $ms
+        | [$h[] | select(.value | type == "object") | select(.key | test("^herdr/[A-Za-z0-9._-]+$"))
+           | {node: (.key | sub("^herdr/"; "")), v: .value}] as $e
+        | ($e | map(select(.node != $me)) | length) as $nr
+        | def saved($x): ([$x.node, ($x.v.label // ""), ($x.v.host // "")] | map(select(. != "") | low)) as $n
+            | ([$ms | to_entries[] | select(.value.label // "" | low | IN($n[])) | .key]
+               + [$ms | to_entries[] | select(.value.target // "" | thost | IN($n[])) | .key])[0]
+              // (if ($ms | length) == 1 and $nr == 1 then 0 else null end);
+        ($e | map(select(.node == $me))) + ($e | map(select(.node != $me) | . + {pos: saved(.)})
+            | map(select(.pos == null or $ms[.pos].enabled != false))
+            | sort_by([(.pos // 1e9), (.v.label // .node | tostring)]))
+        | [.[] | .node as $nd | ((.v.workspaces // []) | map(select(type == "object") | {(.id | tostring): (.number // 1e9)}) | add // {}) as $w
+           | (.v.agents // []) | map(select(type == "object")) | to_entries
+           | sort_by([($w[.value.workspace // "" | tostring] // 1e9), .key])[] | "\($nd) \(.value.pane)"]
+        | (index("\($node) \($p)") // empty) + 1' 2>/dev/null)
+    rm -f "$_t"
+    case "$_r" in [1-9]|[1-9][0-9]) printf -v "$1" '%s' "$_r" ;; *) return 1 ;; esac
+}
+herdr_row_key_set() {  # herdr_row_key_set: ROW_PREFIX (the prefix chord, or empty) and ROW_MODS (the modifiers of the digit) for
+    # herdr's "agent in row N" key from this machine's config.toml: focus_agent "[prefix+]<mods>+1..9", else [keys.indexed] agents
+    local _cfg=$HERDR_CONFIG_OWN _f _i; ROW_PREFIX=""; ROW_MODS=""
+    [ -r "$_cfg" ] || return 1
+    _f=$(awk '/^[ \t]*\[/ { inkeys = ($0 ~ /^[ \t]*\[keys\][ \t]*$/); next }
+        inkeys && /^[ \t]*focus_agent *=/ { s = $0; while (match(s, /"[^"]*"/)) { v = substr(s, RSTART + 1, RLENGTH - 2); s = substr(s, RSTART + RLENGTH); if (v ~ /\+1\.\.9$/) { print v; exit } } }' "$_cfg" 2>/dev/null)
+    _i=$(awk '/^[ \t]*\[/ { inidx = ($0 ~ /^[ \t]*\[keys\.indexed\][ \t]*$/); next }
+        inidx && /^[ \t]*agents *= *"/ { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit }' "$_cfg" 2>/dev/null)
+    if [ -n "$_f" ]; then
+        _f=${_f%+1..9}
+        case "$_f" in prefix|prefix+*) ROW_PREFIX=$(awk '/^[ \t]*\[/ { inkeys = ($0 ~ /^[ \t]*\[keys\][ \t]*$/); next } inkeys && /^[ \t]*prefix *= *"/ { s = $0; sub(/^[^"]*"/, "", s); sub(/".*/, "", s); print s; exit }' "$_cfg" 2>/dev/null)
+            ROW_PREFIX=${ROW_PREFIX:-ctrl+b}; _f=${_f#prefix}; _f=${_f#+} ;; esac
+        ROW_MODS=$_f
+    elif [ -n "$_i" ]; then ROW_MODS=$_i
+    else return 1; fi
+    case "$ROW_PREFIX$ROW_MODS" in *[!a-z+]*) return 1 ;; esac
+}
+osa_using() {  # osa_using <var> <modifiers "ctrl+shift">: ' using {control down, shift down}', empty without any
+    local _m _o="" _p; IFS=+ read -ra _p <<< "$2"
+    for _m in "${_p[@]}"; do
+        case "$_m" in ctrl|control) _m="control down" ;; shift) _m="shift down" ;; alt|option|opt) _m="option down" ;;
+            cmd|command|super|meta) _m="command down" ;; "") continue ;; *) return 1 ;; esac
+        _o="$_o${_o:+, }$_m"
+    done
+    [ -n "$_o" ] && _o=" using {$_o}"; printf -v "$1" '%s' "$_o"
+}
+agent_row_type() {  # agent_row_type <row 1-9>: types herdr's key for that row into the frontmost window (macOS, the window you clicked in)
+    local _s _u _key="" _code; [ "$KEYS_OS_LOCAL" = Darwin ] || return 1
+    keys_cache_set; [ -z "$KEYS_CACHE" ] || return 1            # you type into another machine's herdr: not this Mac's window
+    herdr_row_key_set || return 1
+    case "$1" in 1) _code=18 ;; 2) _code=19 ;; 3) _code=20 ;; 4) _code=21 ;; 5) _code=23 ;; 6) _code=22 ;; 7) _code=26 ;; 8) _code=28 ;; 9) _code=25 ;; *) return 1 ;; esac
+    _s='tell application "System Events"'$'\n'
+    if [ -n "$ROW_PREFIX" ]; then                                 # the prefix: modifiers and one letter (ctrl+b)
+        _key=${ROW_PREFIX##*+}; case "$_key" in [a-z]) ;; *) return 1 ;; esac
+        osa_using _u "${ROW_PREFIX%"$_key"}" || return 1
+        _s="$_s    keystroke \"$_key\"$_u"$'\n''    delay 0.05'$'\n'
+    fi
+    osa_using _u "$ROW_MODS" || return 1                          # (the digit by key code: the same on every layout)
+    _s="$_s    key code $_code$_u"$'\n''end tell'
+    "${BHOTE_OSASCRIPT:-osascript}" -e "$_s" >/dev/null 2>&1 </dev/null
+}
 agent_jump() {  # agent_jump <machine> <pane>
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
     if [ "$1" = "$HOST" ]; then ( herdr agent focus "$2" >/dev/null 2>&1 & )
     else
         machine_known "$1" || return 1
-        if agents_kharka; then ( kharka_call "$1" agent.focus "$(jq -cn --arg t "$2" '{target: $t}')" >/dev/null 2>&1 & )
+        if agents_kharka; then
+            ( kharka_call "$1" agent.focus "$(jq -cn --arg t "$2" '{target: $t}')" >/dev/null 2>&1 & )
+            local _row; agent_row_set _row "$1" "$2" && agent_row_type "$_row" && return 0
+            ( jump_ask "$1" "$2" >/dev/null 2>&1 & )              # the herdr window you clicked in may be on another machine
         else ( herdr --machine "$1" agent focus "$2" >/dev/null 2>&1 & ); fi
-        # herdr has no call that switches its window to another machine: the agent is focused over there, the switch is yours
+        # no key for it here: the agent is focused over there, the switch is yours
         local _kw; key_pretty _kw "prefix+w"
         FLASH_MSG="focused on $1 · to go there: $_kw, pick it, ⏎"; FLASH_UNTIL=$(( SECONDS + 10 ))
     fi
+}
+# The panel you click in runs on the machine whose herdr the window shows, and that may be another one than the window's
+# (a Mac attached to this Linux herdr): there nobody can type. So a click asks every machine, through kharka (bhote.jump/<node>),
+# and a Mac whose frontmost window shows this machine's herdr ("<host>: …", herdr's window_title "{hostname}: …") types the key.
+jump_ask() {  # jump_ask <machine> <pane>: bhote.jump/<this node> = the agent, this herdr's host name, when
+    local me h; kharka_self_set me || return 0
+    h=$(kharka_run get "herdr/$me" 2>/dev/null | jq -r '.host // empty | tostring' 2>/dev/null); [ -n "$h" ] || h=$(hostname 2>/dev/null)
+    jq -cn --arg m "$1" --arg p "$2" --arg h "$h" --argjson at "$(( $(date +%s) * 1000 ))" '{machine: $m, pane: $p, host: $h, at: $at}' \
+        | kharka_run put "bhote.jump/$me" - >/dev/null 2>&1
+}
+jump_request() {  # jump_request <watch line>: another machine's panel asks (jump_ask); on a Mac whose herdr window shows it, the key
+    [ "$KEYS_OS_LOCAL" = Darwin ] || return 0
+    local me from m p h at title row
+    kharka_self_set me || return 0
+    IFS=$'\t' read -r from m p h at < <(printf '%s' "$1" | jq -r '.entry // . | select(.deleted != true) | [(.key | sub("^bhote.jump/"; "")),
+        (.value.machine // ""), (.value.pane // ""), (.value.host // ""), (.value.at // 0)] | map(tostring | gsub("[\t\n]"; "")) | @tsv' 2>/dev/null)
+    [ -n "$from" ] && [ "$from" != "$me" ] && [ -n "$h" ] || return 0
+    case "$at" in ''|*[!0-9]*) return 0 ;; esac
+    [ $(( $(date +%s) * 1000 - at )) -lt 10000 ] || return 0    # (fresh only: a watch that starts again replays the old ones)
+    title=$("${BHOTE_OSASCRIPT:-osascript}" -e 'tell application "System Events" to tell (first process whose frontmost is true) to return name of front window' 2>/dev/null </dev/null)
+    case "$title" in "$h: "*) ;; *) return 0 ;; esac          # not this Mac's window that was clicked in
+    agent_row_set row "$m" "$p" && agent_row_type "$row"
 }
 view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
     agents_block
