@@ -42,6 +42,15 @@ bhote add "Deploy of billing-export to staging" -w "DevOps" -d "then run the exp
 bhote add "Review of PR #1412" -w "Alex" -d "then merge and test the release notes page" --json
 ```
 
+**A deployment of your own change** (you merged, CI deploys, the user has to check it live): do not write "DevOps" as the name, say
+`--deploy`. The topic goes to its own group *Waiting for deployment*, shows the progress of that deployment, and goes to
+review by itself when it is over (done: check production, failed: look at it):
+
+```sh
+bhote add "Payments Module live prüfen" --deploy -d "check the payment flow in production" --json     # --deploy=Backend: only that deployment
+bhote wait <id> --deploy                                                                              # on a topic you have already
+```
+
 Keep the returned `id`. Tell the user in one sentence what you wait for, then stop or do other work. When the user marks
 the topic as `now` in bhote, you get a prompt "The wait is over …" with the description: continue from there.
 

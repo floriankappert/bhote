@@ -190,6 +190,11 @@ mt review 'agent=bhote\nagent_machine=Omarchy\nagent_pane=w1:p1\n'
 case "${MENU_ITEMS[0]}" in "jump|Show topic") ok "menu: an agent on the topic can be shown" ;; *) bad "jump item: ${MENU_ITEMS[*]}" ;; esac
 case "${MENU_ITEMS[*]}" in *"start|"*) bad "start offered with an agent on the topic" ;; *"transfer|"*) ok "menu: with an agent: transfer, no second start" ;; *) bad "agent menu: ${MENU_ITEMS[*]}" ;; esac
 mt review; case "${MENU_ITEMS[*]}" in *"jump|"*|*"transfer|"*) bad "agentless menu: ${MENU_ITEMS[*]}" ;; *"start|"*) ok "menu: without an agent: start, no show or transfer" ;; *) bad "agentless: ${MENU_ITEMS[*]}" ;; esac
+# "Review ansehen" (hotkey 1 or its button): the agent is shown and the button goes, the note stays, the topic stays in review
+mt review 'review_note=Result is there\nreview_ask=Review ansehen\nreview_reply=@jump\nagent_machine=Omarchy\nagent_pane=w1:p1\n'
+jr=$(agent_jump() { echo "jumped $1 $2"; }; review_act "$mf" 1)   # (a subshell: the stub stays out of the tests below)
+[ "$jr" = "jumped Omarchy w1:p1" ] && [ -z "$(topic_get "$mf" review_ask)" ] && [ "$(topic_get "$mf" review_note)" = "Result is there" ] \
+    && [ "$(topic_get "$mf" status)" = review ] && ok "review: 'Review ansehen' jumps to the agent and the button goes" || bad "review look: '$jr' ask='$(topic_get "$mf" review_ask)'"
 rm -f "$mf"
 a1=$(COLS=40 menu_num_line "" 9 "Describe"); a2=$(COLS=40 menu_num_line "" 10 "Delete"); [ "${a1#*Describe}" != "$a1" ] && [ "$(printf '%s' "$a1" | sed 's/Describe.*//' | wc -c)" = "$(printf '%s' "$a2" | sed 's/Delete.*//' | wc -c)" ] && ok "menu: the text of 9 and 10 starts in the same column" || bad "menu numbers: [$a1] [$a2]"
 

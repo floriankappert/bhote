@@ -12,6 +12,10 @@ waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are ar
 them), the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
 is selected.
 
+**Waiting for deployment** is a group of cards between testing and next: a waiting topic with `bhote wait <ref> --deploy` (topic menu ›
+*Waiting for the deployment*). The card shows project and deployment (`IMS · Backend`), its state (deploying, queued, needs approval) and the
+progress as a bar with a percentage, taken from the deployment monitor. When the deployment is over the topic goes to review.
+
 ## Keys
 
 | Key | List |

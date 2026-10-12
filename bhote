@@ -342,6 +342,7 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     if [ -n "$tmp" ]; then
         local x='^updated='; [ "$2" = status ] && [ "$v" != now ] && x='^updated=|^transfer_to=|^transfer_to_name=|^transfer_from='
         [ "$2" = status ] && [ "$v" != review ] && x="$x|^review_note=|^review_ask=|^review_reply="   # (the card under a review topic goes with the review)
+        [ "$2" = status ] && [ "$v" != waiting ] && x="$x|^deploy_wait=|^deploy_match=|^deploy_url=|^deploy_since="   # (waiting for a deployment ends with the wait)
         { grep -v -E -e "^$2=" -e "$x" "$f"; printf '%s=%s\nupdated=%s\n' "$2" "$v" "$now"; } > "$tmp" && mv "$tmp" "$f" && rc=0
     fi
     [ "$locked" = 1 ] && topic_unlock "$f"
@@ -369,14 +370,14 @@ store_tag() {  # the note after the topic count: offline, or (kharka) a hub that
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, testing, next, waiting, later, done; inside a group by file name = by creation.
 topics_load() {
-    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br pj kd seen n=0 a_as a_dl a_tn a_sl a_sm a_br a_pj s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br pj kd dp seen n=0 a_dp a_as a_dl a_tn a_sl a_sm a_br a_pj s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
         [ -f "$f" ] || continue
-        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; br=""; pj=""; kd=""; seen=" "
+        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; br=""; pj=""; kd=""; dp=""; seen=" "
         while IFS= read -r line; do
             k=${line%%=*}; v=${line#*=}
             case "$seen" in *" $k "*) continue ;; esac; seen="$seen$k "     # the FIRST value counts, everywhere (topic_get does the same)
-            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; agent_branch) br=$v ;; project) pj=$v ;; kind) kd=$v ;; esac
+            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; agent_branch) br=$v ;; project) pj=$v ;; kind) kd=$v ;; deploy_wait) dp=$v ;; esac
         done < "$f"
         [ "$del" = 1 ] && continue
         [ -n "$kd" ] && continue                                   # a project record (kind=project), not a topic
@@ -384,14 +385,16 @@ topics_load() {
         case "$st" in now|testing|next|waiting|review|later|done) ;; *) st=now ;; esac
         case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
         id=${f##*/}; id=${id%.topic}
-        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; a_pj[$n]=${pj//[!A-Za-z0-9_-]/}; n=$(( n + 1 ))
+        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; a_pj[$n]=${pj//[!A-Za-z0-9_-]/}; a_dp[$n]=${dp//[!0-9]/}; n=$(( n + 1 ))
     done
-    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=(); T_PJ=()
-    for s in review now testing next waiting later done; do     # review first: it waits for you
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=(); T_PJ=(); T_DEP=()
+    for s in review now testing deploying next waiting later done; do     # review first: it waits for you; deploying = waiting for a deployment (status waiting, deploy_wait=1)
         for (( i = 0; i < n; i++ )); do
-            [ "${a_st[$i]}" = "$s" ] || continue
-            T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=$s
-            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; T_PJ[$m]=${a_pj[$i]}; m=$(( m + 1 ))
+            case "$s" in deploying) [ "${a_st[$i]}" = waiting ] && [ "${a_dp[$i]}" = 1 ] || continue ;;
+                waiting) [ "${a_st[$i]}" = waiting ] && [ "${a_dp[$i]}" != 1 ] || continue ;;
+                *) [ "${a_st[$i]}" = "$s" ] || continue ;; esac
+            T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=${s/deploying/waiting}
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; T_PJ[$m]=${a_pj[$i]}; T_DEP[$m]=${a_dp[$i]}; m=$(( m + 1 ))
         done
     done
     T_N=$m
@@ -419,6 +422,7 @@ topics_plan() {  # what the panel lists, for the frame and the keys: PLAN_VIS[i]
         in_scope "$i" || continue
         case "$st" in
             review|now|testing) PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue ;;
+            waiting) [ "${T_DEP[$i]:-}" = 1 ] && { PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue; } ;;   # waiting for a deployment: a card of its own group
         esac
         if topic_archived "$i"; then PLAN_ARCH=$(( PLAN_ARCH + 1 )); continue; fi
         if [ "$st" != "$g" ]; then                                # a group ends: an open one gets its "show less"
@@ -1427,6 +1431,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             auto_assign
             agent_cards
             tests_sync
+            deploy_sync
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
@@ -1568,6 +1573,14 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
         printf '%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
     fi
+    if [ "$gap" = 1 ] && [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
+        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 8 )) pf pi bf="" be=""
+        [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
+            pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
+            for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="$bf■"; else be="$be■"; fi; done
+            printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
+        }
+    fi
     if [ "$gap" = 1 ] && [ -n "${11:-}${12:-}" ]; then ti_subcard "$rm" "$bg" "${11:-}" "${12:-}" "${TI_REF:-}" "$w" "$bl"; fi
     if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi
 }
@@ -1678,7 +1691,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMC TI_AGMETA TI_AGTASK
+    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMC TI_AGMETA TI_AGTASK TI_PROG
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1687,26 +1700,28 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
     [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     local TI_FRAME=1 TI_OPEN=0
     for (( i = 0; i < T_N; i++ )); do
-        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0
+        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""
+        gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
         if [ -n "${PLAN_BEFORE[$i]:-}" ]; then pn=PLAN_N_${PLAN_BEFORE[$i]}; more_row "${PLAN_BEFORE[$i]}" $(( ${!pn} - ${LINE_MAX:-10} )); fi   # a closed group: "+N more" after the last shown
         [ "${PLAN_VIS[$i]}" = 1 ] || continue
-        case "$st" in next|waiting|later)                        # only review, now and testing are cards; the others are lines, grouped by status
-            if [ "$st" != "$prev" ]; then
+        case "$gk" in next|waiting|later)                        # only review, now, testing and deploying are cards; the others are lines, grouped by status
+            if [ "$gk" != "$prev" ]; then
                 case "$st" in next) label=Next ;; waiting) label=Waiting ;; *) label=Later ;; esac
-                printf '\n'; dash_caption "$label"; prev=$st
+                printf '\n'; dash_caption "$label"; prev=$gk
             fi
             topic_line "$i"
             [ -n "${PLAN_AFTER[$i]:-}" ] && more_row "${PLAN_AFTER[$i]}" 0                      # an open group: "show less" after the last
             continue ;;
         esac
-        if [ "$st" != "$prev" ]; then
-            case "$st" in now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
+        if [ "$gk" != "$prev" ]; then
+            case "$gk" in deploying) label="WAITING FOR DEPLOYMENT"; lc=$Y ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             printf '\n'                                                  # (a card brings its own edges, the caption its blank row)
-            printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$st
+            printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
         fi
-        topic_meta "$i"; who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
+        topic_meta "$i"; [ "$gk" = deploying ] && deploy_card_set "$i"
+        who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
             now) [ "$state" = finished ] && [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;;
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
@@ -2904,6 +2919,7 @@ menu_build() {  # menu_build <file>
     [ -n "$pane" ] || add "start|Start with agent ..."
     [ -n "$ag" ] && [ -n "$pane" ] && add "transfer|Transfer to another agent ..."
     [ "$st" = waiting ] && add "wait|Change who or what is waited for ..." || add "wait|Waiting for ..."
+    [ "$st" = waiting ] && [ "$(topic_get "$f" deploy_wait)" = 1 ] || add "deploy|Waiting for the deployment"
     [ "$st" = next ] || add "next|Up next"
     [ "$st" = later ] || add "later|Park for later"
     [ "${P_N:-0}" -gt 0 ] || projects_load
@@ -3455,7 +3471,8 @@ menu_do() {  # menu_do <index>: run the chosen action on the selected topic; 0 =
         now) topic_set "$f" status now; topic_set "$f" waiting_for ""; topic_set "$f" auto_back ""; poke ;;
         review) topic_set "$f" status review; topic_set "$f" auto_back ""; poke ;;
         wait) ask "Waiting for: " "$(topic_get "$f" waiting_for)"; [ -n "$ANSWER" ] || return 0
-           topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; slack_rewait "$f" ;;
+           topic_set "$f" status waiting; topic_set "$f" waiting_for "$ANSWER"; topic_set "$f" waiting_since "$(date +%s)"; topic_set "$f" deploy_wait ""; slack_rewait "$f" ;;
+        deploy) deploy_wait_set "$f" ;;
         project) local cur nx="" i2; cur=$(topic_get "$f" project); projects_load   # none → the first → … → the last → none
            if [ -z "$cur" ]; then nx=${P_ID[0]:-}; else for (( i2 = 0; i2 < P_N; i2++ )); do [ "${P_ID[$i2]}" = "$cur" ] && { nx=${P_ID[$(( i2 + 1 ))]:-}; break; }; done; fi
            topic_set "$f" project "$nx"; return 0 ;;
@@ -3489,7 +3506,10 @@ review_act() {  # review_act <file> [button 1-3, default 1]: a button of a revie
     while [ "$n" -gt 1 ]; do case "$ask" in *¦*) ask=${ask#*¦}; rep=${rep#*¦} ;; *) return 1 ;; esac; n=$(( n - 1 )); done
     rep=${rep%%¦*}
     if [ "$rep" = @jump ]; then                                  # "Review ansehen": show the agent, the topic stays where it is
-        [ -n "$(topic_get "$f" agent_pane)" ] && agent_jump "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)"; return 0
+        [ -n "$(topic_get "$f" agent_pane)" ] || return 0
+        agent_jump "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)"
+        topic_set "$f" review_ask ""; topic_set "$f" review_reply ""   # the button goes: you see it was used (the note stays)
+        return 0
     fi
     am=$(topic_get "$f" agent_machine); ap=$(topic_get "$f" agent_pane); ag=$(topic_get "$f" agent)
     if [ -n "$ap" ] && [ -n "$rep" ]; then
@@ -3960,6 +3980,79 @@ mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as 
 mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a subshell
     local a; num_set a "$2" "$NOW"; a=$(( NOW - a )); [ "$a" -lt 0 ] && a=0
     if [ "$a" -lt 60 ]; then printf -v "$1" '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf -v "$1" '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf -v "$1" '%dh' $(( a / 3600 )); else printf -v "$1" '%dd' $(( a / 86400 )); fi
+}
+# A topic that waits for a deployment (status waiting, deploy_wait=1; own group WAITING FOR DEPLOYMENT) follows one entry of deploys.list:
+# deploy_url is the entry it is bound to, deploy_match (optional) the label it may bind to (Backend, Production), deploy_since when the
+# wait began. Unbound it looks for the newest entry of its project (and label) that is under way, or that began after deploy_since.
+deploy_wait_set() {  # deploy_wait_set <topic file> [label]: the topic waits for a deployment of its project (the label narrows it: Backend, Production)
+    local f=$1 now; now=$(date +%s)
+    topic_set "$f" status waiting; topic_set "$f" waiting_for "Deployment${2:+ $2}"; topic_set "$f" waiting_since "$now"
+    topic_set "$f" deploy_wait 1; topic_set "$f" deploy_match "${2:-}"; topic_set "$f" deploy_url ""; topic_set "$f" deploy_since "$now"
+    poke
+}
+deploy_lookup() {  # deploy_lookup <topic file>: 0 and DL_* (state, done, total, note, url, project, label, time) of its deployment; 1: none (yet)
+    local f=$1 url match pn since pj t p lb st d tot note u
+    DL_STATE=""; DL_D=""; DL_T=""; DL_NOTE=""; DL_URL=""; DL_PJ=""; DL_LB=""; DL_TIME=""
+    [ -s "$SHARED_DIR/deploys.list" ] || return 1
+    url=$(topic_get "$f" deploy_url); match=$(topic_get "$f" deploy_match); since=$(num_or "$(topic_get "$f" deploy_since)" 0)
+    pj=$(topic_get "$f" project); pn=""; [ -n "$pj" ] && { projects_load; pn=$(project_name "$pj"); }
+    while IFS=$US read -r t p lb st d tot note u; do
+        if [ -n "$url" ]; then [ "$u" = "$url" ] || continue
+        else
+            [ -z "$pn" ] || [ "$p" = "$pn" ] || continue
+            [ -z "$match" ] || [ "$lb" = "$match" ] || continue
+            case "$st" in running|queued|approval) ;; *) [ "${t:-0}" -ge "$since" ] 2>/dev/null || continue ;; esac
+        fi
+        DL_STATE=$st; DL_D=$d; DL_T=$tot; DL_NOTE=$note; DL_URL=$u; DL_PJ=$p; DL_LB=$lb; DL_TIME=$t; return 0
+    done < "$SHARED_DIR/deploys.list"
+    return 1
+}
+deploy_card_set() {  # deploy_card_set <topic index>: the card of a topic waiting for a deployment: TM_WHO, TM_ST, TM_SC, TI_PROG ("done total": a running one)
+    TI_PROG=""
+    if deploy_lookup "${T_FILE[$1]}"; then
+        TM_WHO="$DL_PJ · $DL_LB"
+        case "$DL_STATE" in
+            running) TM_ST=deploying; TM_SC=$ORANGE; case "$DL_D:$DL_T" in *[!0-9:]*|:*|*:) ;; *) [ "$DL_T" -gt 0 ] && TI_PROG="$DL_D $DL_T" ;; esac ;;
+            queued) TM_ST=queued; TM_SC=$D ;; approval) TM_ST="needs approval"; TM_SC=$Y ;;
+            ok) TM_ST=deployed; TM_SC=$GREEN ;; failed) TM_ST="deployment failed"; TM_SC=$NN ;; *) TM_ST="deployment canceled"; TM_SC=$NN ;;
+        esac
+    else TM_ST="no deployment seen yet"; TM_SC=$D; fi
+}
+deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, and when that is over it goes to review (ok: check production; failed:
+    # what went wrong). Runs in the collector of a machine with the deployment monitor.
+    [ -s "$SHARED_DIR/deploys.list" ] || return 0
+    local i f note ic t p lb st d tot nt u pn now; now=$(date +%s)
+    topics_load
+    while IFS=$US read -r t p lb st d tot nt u; do        # a deployment under way of the branch an agent's topic is on: that topic waits for it
+        case "$st" in running|queued|approval) ;; *) continue ;; esac
+        case "$nt" in ''|main|master|develop|@*) continue ;; esac
+        for (( i = 0; i < T_N; i++ )); do
+            case "${T_STATUS[$i]}" in now|review|testing) ;; *) continue ;; esac
+            [ -n "${T_AP[$i]}" ] && [ "${T_BR[$i]}" = "$nt" ] || continue
+            pn=""; [ -n "${T_PJ[$i]}" ] && { projects_load; pn=$(project_name "${T_PJ[$i]}"); }
+            [ -z "$pn" ] || [ "$pn" = "$p" ] || continue
+            f=${T_FILE[$i]}
+            topic_set "$f" status waiting; topic_set "$f" waiting_for "Deployment $lb"; topic_set "$f" waiting_since "$now"
+            topic_set "$f" deploy_wait 1; topic_set "$f" deploy_url "$u"; topic_set "$f" deploy_since "$now"
+        done
+    done < "$SHARED_DIR/deploys.list"
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] || continue
+        f=${T_FILE[$i]}
+        deploy_lookup "$f" || continue
+        [ -n "$(topic_get "$f" deploy_url)" ] || topic_set "$f" deploy_url "$DL_URL"        # bound: this one, from now on
+        case "$DL_STATE" in
+            ok) note="Deployed: $DL_PJ · $DL_LB went through. Check it in production."; ic=ok ;;
+            failed) note="The deployment of $DL_PJ · $DL_LB failed. Look at it before you go on."; ic=bad ;;
+            canceled) note="The deployment of $DL_PJ · $DL_LB was canceled. Look at it before you go on."; ic=bad ;;
+            *) continue ;;
+        esac
+        topic_set "$f" status review
+        topic_set "$f" review_note "${note:0:$REVIEW_NOTE_MAX}"; topic_set "$f" review_ask "Review ansehen"; topic_set "$f" review_reply "@jump"
+        notify "$( [ "$ic" = ok ] && echo "Deployed" || echo "Deployment failed")" "${T_TITLE[$i]} ($DL_PJ · $DL_LB)" request
+    done
+    return 0
 }
 monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last entries (nothing when the monitor is off or has none)
     local kind=$1 max=$2 cap t pj lb st d tot note url n=0 more=0 ic tx right rightc bar barc pct lw rw left lbl pad age w=$(( ${COLS:-44} - 4 ))
@@ -5743,6 +5836,8 @@ bhote — topics and agents next to herdr.
   bhote now|testing|next|review|later|done <ref>   start or resume · tests running · up next · ready for review · park · mark done
   bhote take <ref>                   an agent takes a topic over: it becomes its agent (now also does that, run by an agent)
   bhote wait <ref> <Name> [--slack <pin>]   waiting for Name (from now)
+  bhote wait <ref> --deploy[=Label]  waiting for the deployment of its project (own group, with the progress; review when it is over);
+                                     the same for a new topic: bhote add <title> --deploy[=Label]
   bhote slack <ref> <pin|off>        pin a Slack channel, DM or thread: a message from someone else sets the waiting topic
                                      to review (<pin>: a Slack link, #channel or @person; needs SLACK_WATCH on one machine)
   bhote rename <ref> <title>         new title
@@ -5801,7 +5896,7 @@ bhote_cli() {
         monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
         version|--version|-V) if [ -n "$json" ]; then printf '{"version":%s}\n' "$(json_str "$VERSION")"; else echo "bhote $VERSION"; fi ;;
-        add)  local title="" who="" st="" desc="" arg pin="" proj=""
+        add)  local title="" who="" st="" desc="" arg pin="" proj="" dep="" depl=""
               while [ $# -gt 0 ]; do
                   case "$1" in
                       --waiting|-w) who=${2:-}; shift ;;
@@ -5809,6 +5904,8 @@ bhote_cli() {
                       --desc|-d) desc=${2:-}; shift ;;
                       --slack) pin=${2:-}; shift ;;
                       --project|-p) proj=${2:-}; shift ;;
+                      --deploy) dep=1 ;;
+                      --deploy=*) dep=1; depl=${1#--deploy=} ;;
                       @?*) who=${1#@} ;;
                       --) shift; title="${title:+$title }$*"; break ;;
                       -?*) echo "bhote: unknown option '$1' for add (a title starting with - goes after --)" >&2; return 1 ;;
@@ -5816,7 +5913,7 @@ bhote_cli() {
                   esac; shift
               done
               case "$st" in ''|now|testing|next|waiting|review|later|done) ;; *) echo "bhote: --status is one of now, testing, next, review, later, done" >&2; return 1 ;; esac
-              [ "$st" = waiting ] && [ -z "$who" ] && { echo "bhote: waiting needs a name (@Name or -w Name)" >&2; return 1; }
+              [ "$st" = waiting ] && [ -z "$who" ] && [ -z "$dep" ] && { echo "bhote: waiting needs a name (@Name or -w Name)" >&2; return 1; }
               [ "${#desc}" -gt "$DESC_MAX" ] && echo "bhote: the description is cut to $DESC_MAX characters" >&2
               local pf=""; if [ -n "$proj" ]; then pf=$(project_ref "$proj") || return $?; fi   # before the topic exists: an error changes nothing
               if [ "$(cfg_get AGENT_TOPICS on)" != on ] && is_agent; then   # agents make no topics here: not an error (the agent goes on without one)
@@ -5834,6 +5931,7 @@ bhote_cli() {
               elif is_agent; then local rk; git_repo_key_set rk "$PWD"; projects_load            # an agent's topic: the project of its repository
                   project_for "$rk" "$(topic_get "$f" agent)" && topic_set "$f" project "$PROJ_ID"; fi
               [ -n "$pin" ] && { slack_pin "$f" "$pin" || echo "bhote: the topic is there, without the Slack pin" >&2; }
+              [ -n "$dep" ] && deploy_wait_set "$f" "$depl"                    # waits for a deployment of its project
               cli_done; topics_load; cli_show "$f" $json ;;
         project|projects) cli_project "$@" ;;
         slack) local f; [ $# -ge 2 ] || { echo "bhote: slack <ref> <Slack link | #channel | @person | off>" >&2; return 1; }
@@ -5915,10 +6013,11 @@ bhote_cli() {
                   testing) topic_set "$f" status testing; poke ;;
                   later) topic_set "$f" status later ;;
                   next) topic_set "$f" status next ;;
-                  wait) local wpin="" wargs=()
-                        while [ $# -gt 0 ]; do case "$1" in --slack) wpin=${2:-}; shift ;; *) wargs[${#wargs[@]}]=$1 ;; esac; shift; done
-                        [ ${#wargs[@]} -gt 0 ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name> [--slack <link>])" >&2; return 1; }
-                        topic_set "$f" status waiting; topic_set "$f" waiting_for "${wargs[*]}"; topic_set "$f" waiting_since "$(date +%s)"
+                  wait) local wpin="" wargs=() wdep="" wdl=""
+                        while [ $# -gt 0 ]; do case "$1" in --slack) wpin=${2:-}; shift ;; --deploy) wdep=1 ;; --deploy=*) wdep=1; wdl=${1#--deploy=} ;; *) wargs[${#wargs[@]}]=$1 ;; esac; shift; done
+                        if [ -n "$wdep" ]; then deploy_wait_set "$f" "$wdl"; cli_done; topics_load; cli_show "$f" $json; return 0; fi
+                        [ ${#wargs[@]} -gt 0 ] || { echo "bhote: wait needs a name (bhote wait <ref> <Name> [--slack <link>]) or --deploy[=Label]" >&2; return 1; }
+                        topic_set "$f" status waiting; topic_set "$f" waiting_for "${wargs[*]}"; topic_set "$f" waiting_since "$(date +%s)"; topic_set "$f" deploy_wait ""
                         if [ -n "$wpin" ]; then slack_pin "$f" "$wpin" || echo "bhote: waiting, without the Slack pin" >&2; else slack_rewait "$f"; fi ;;
                   rename) [ -n "${1:-}" ] || { echo "bhote: rename needs a title" >&2; return 1; }; topic_set "$f" title "$*" ;;
                   rm) local rid; rid=$(topic_id "$f"); topic_set "$f" deleted 1 ;;

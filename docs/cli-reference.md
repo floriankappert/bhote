@@ -122,6 +122,16 @@ nothing (a note on stderr, `null` with `--json`, exit `0`).
 The topic waits for Name from now on (`status: waiting`, `waiting_since` = now). Exit `1` without a name. With `--slack`
 it also pins Slack (see below); a topic that is pinned already waits again from now on (older messages do not count).
 
+### `bhote wait <ref> --deploy[=Label]` and `bhote add <title> --deploy[=Label]`
+
+The topic waits for a deployment of its project (`status: waiting`, `deploy_wait: 1`, `waiting_for: Deployment`). The panel lists it
+in its own group *Waiting for deployment*, as a card with the progress of that deployment (a bar, `44 of 56` jobs or steps as a
+percentage). It binds to the newest deployment under way (or begun after the wait) of its project; `=Label` narrows it to one
+(`Backend`, `Production`, the labels of the deployment monitor). When that deployment is over the topic goes to `review` by itself:
+done says *check it in production*, failed or canceled says so, and a notification comes. Needs the deployment monitor
+(`DEPLOY_MONITOR=on`) on one machine. A topic of an agent whose branch is the one a running deployment comes from joins the group
+without a command. Any other status or `bhote wait <ref> <Name>` ends it.
+
 ### `bhote slack <ref> <pin | off>`
 
 Pins a Slack channel, DM or thread on the topic. `<pin>` is a Slack link (copy link of a channel, a DM or a message; a

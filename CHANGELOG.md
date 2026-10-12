@@ -10,6 +10,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- Waiting for a deployment: `bhote wait <ref> --deploy[=Label]` / `bhote add <title> --deploy` (topic menu › *Waiting for the deployment*) puts a
+  waiting topic into its own group *Waiting for deployment*, a card with the progress bar and percentage of the deployment it waits for (from
+  the deployment monitor). It goes to review by itself when the deployment is over (ok: check production; failed or canceled: look at it), with a
+  notification. A topic of an agent whose branch a running deployment comes from joins the group by itself. The bhote skill tells agents to use it.
 - `AGENTS_VIA=kharka`: the agents of the other machines come from kharka instead of herdr's saved machines, so no machine
   needs ssh to another. [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes each machine's agents as
   `herdr/<node>` (listed under its `--label`); the collector watches them and looks at once when one changes. The live state of
@@ -25,6 +29,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   without it, past row 9, or elsewhere the key line still says how to get there.
 
 ### Changed
+- *Review ansehen* (the button, or key `1`/`y`) shows the agent and the button goes: you see that you have used it (the note stays).
 - A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
   `machine · agent`, and under it `∟` what the agent works on, as herdr shows it (the topic's title when it has no task), then the
   description and the branch. The card keeps its coloured bar and block edges.

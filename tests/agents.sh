@@ -461,4 +461,32 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ -S "$H/herdr-ssh-$$-0/cm-def" ] && ! grep -q cm-def "$T/mux.log" || exit 4   # its herdr still runs: untouched
   [ -d "$H/herdr-ssh-x-0" ] && [ -L "$H/herdr-ssh-$gone-1" ] && [ -d "$H/keep" ] || exit 5   # not herdr's, a link: untouched
   exit 0 ) && ok "herdr's ssh masters: a gone herdr's is ended and removed, a running one's and anything else stays" || bad "mux sweep: step $?"
+# waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
+( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
+  topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"
+  topic_new "Plain wait" "Alex" ""; pf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+  deploy_wait_set "$df" Backend; topics_load
+  [ "${T_DEP[0]:-}" = 1 ] && [ "${T_STATUS[0]}" = waiting ] && [ "${T_TITLE[0]}" = "Payments Module" ] && [ "${T_DEP[1]:-}" != 1 ] || exit 1   # (the group comes before the plain waiting ones)
+  now=$(date +%s); printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}44${US}56${US}fix/x${US}https://ci/1" "$now${US}IMS${US}Frontend${US}running${US}1${US}4${US}fix/y${US}https://ci/2" > "$SHARED_DIR/deploys.list"
+  deploy_lookup "$df" && [ "$DL_URL" = https://ci/1 ] && [ "$DL_STATE" = running ] || exit 2                   # (the label narrows it: Backend, not Frontend)
+  COLS=50; ROWS=60; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$now; AG_N=0; AG_LINES=(); ui_load; projects_load; topics_load
+  out=$(topics_block | sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
+  printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
+  printf '%s\n' "$out" | grep -q "■ *78%" || exit 5                                                              # 44 of 56 steps
+  printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
+  [ "$(printf '%s\n' "$out" | grep -n "WAITING FOR DEPLOYMENT" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
+  deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
+  printf '%s\n' "$now${US}IMS${US}Backend${US}ok${US}${US}${US}fix/x${US}https://ci/1" > "$SHARED_DIR/deploys.list"
+  deploy_sync; [ "$(topic_get "$df" status)" = review ] && [ -z "$(topic_get "$df" deploy_wait)" ] && [ -z "$(topic_get "$df" deploy_url)" ] || exit 9
+  case "$(topic_get "$df" review_note)" in *"went through"*) ;; *) exit 10 ;; esac
+  [ "$(topic_get "$df" review_reply)" = @jump ] || exit 11
+  deploy_wait_set "$df"; now=$(( $(date +%s) + 5 )); printf '%s\n' "$now${US}IMS${US}Backend${US}failed${US}${US}${US}fix/x${US}https://ci/9" > "$SHARED_DIR/deploys.list"
+  deploy_sync; [ "$(topic_get "$df" status)" = review ] && case "$(topic_get "$df" review_note)" in *"failed"*) true ;; *) false ;; esac || exit 12
+  # an agent's topic on the branch that is being deployed goes there by itself
+  topic_new "On a branch" "" ""; bf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$bf" agent_pane w3:p1; topic_set "$bf" agent_machine Omarchy; topic_set "$bf" agent_branch fix/z; topic_set "$bf" status now
+  printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}fix/z${US}https://ci/3" > "$SHARED_DIR/deploys.list"
+  deploy_sync; [ "$(topic_get "$bf" status)" = waiting ] && [ "$(topic_get "$bf" deploy_wait)" = 1 ] || exit 13
+  topic_set "$bf" status now; [ -z "$(topic_get "$bf" deploy_wait)" ] || exit 14                                  # leaving the wait ends it
+  exit 0 ) && ok "deployment wait: own group with the progress, review when the deployment is over, an agent's branch finds it" || bad "deployment wait: step $?"
 rm -rf "$T"; exit $fail
