@@ -610,7 +610,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  printf '%s\n' "$out" | grep -q "■ *78%" || { deploy_card_set 0; printf 'prog=[%s] d=[%s] t=[%s] st=[%s] cols=%s lang=[%s]\n' "$TI_PROG" "$DL_D" "$DL_T" "${TM_ST:-}" "$COLS" "${LANG:-}" >&2; exit 5; }                                                              # 44 of 56 steps
+  printf '%s\n' "$out" | grep -q "■ *78%" || { printf '%s\n' "$out" | grep -A6 'WAITING FOR' | cut -c1-90 | cat -v >&2; deploy_card_set 0; printf 'prog=[%s] d=[%s] t=[%s] st=[%s] cols=%s lang=[%s]\n' "$TI_PROG" "$DL_D" "$DL_T" "${TM_ST:-}" "$COLS" "${LANG:-}" >&2; exit 5; }                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "WAITING FOR DEPLOYMENT" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
