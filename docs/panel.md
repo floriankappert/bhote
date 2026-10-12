@@ -36,8 +36,15 @@ type, choose, `⏎` jumps there; `x` (`ctrl+x` once something is typed) checks a
 Click a topic (any of its lines, also a done one) to select it, as the arrows do; the list stays where it is while the
 selected topic is in view; a double click opens its page, where a click on an action runs it and a click on the title or
 description edits it in place. Click an agent in the agent area to focus it in herdr. An agent on another machine is
-selected there; herdr lets only its client switch machines, so the key line says so, with the keys (herdr 0.9.3 has no
-call that switches its window to another machine).
+selected there; herdr lets only its client switch machines (herdr 0.9.3 has no call that switches its window to another
+machine). On a Mac with `AGENTS_VIA=kharka` bhote therefore types herdr's key for the agent's row into the herdr window
+(`focus_agent`, e.g. `prefix+ctrl+1..9`, or `[keys.indexed] agents`), and herdr switches to it. The row
+is the agent's place in herdr's agent list: this machine's agents first, then each machine of `herdr machine list` in its
+order, each sorted by workspace number. Typing needs the Accessibility permission for the terminal herdr runs in. A panel
+runs on the machine whose herdr the window shows, so when a Mac shows the other machine's herdr, the click lands in a panel
+that cannot type on the Mac: that panel asks through kharka (`bhote.jump/<node>`, the agent and its herdr's host name), and a
+Mac whose frontmost window title starts with that host name and `: ` types the key (herdr's `window_title` has to start with
+`{hostname}: ` for that). Without all this, without such a key, or past row 9 the key line says how to get there, with the keys.
 
 From anywhere in herdr, the key bound to `bhote.panel.focus` ([herdr plugin](herdr-plugin.md), e.g. prefix then `t`) jumps
 to the panel and back; the panel shows it bottom right (`Ctrl+B|T ⇄` (the keys as they are on the keyboard of the machine you type on: Ctrl+Option+T on a Mac, Ctrl+Alt+T elsewhere)).
