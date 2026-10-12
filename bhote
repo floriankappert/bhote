@@ -95,7 +95,7 @@ AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: i
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
 CLICK_FOCUS_AGENT|on|bool|A click on a topic shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in the herdr agent list; off: the focus goes back to the bhote panel of that tab
 FINISHED_MINUTES|30|int:0:1440|A recently finished card (an agent that stopped without a question: nothing to check) is dismissed by itself after this many minutes; it comes back when the agent works again (0 = never)
-AGENTS_COMPACT|off|bool|Agent overview: only how many agents are active and how many inactive (the <> button on the divider above the agents switches it)
+AGENTS_COMPACT|off|bool|Agent overview: only how many agents are active and how many inactive (the ↕ button on the divider above the agents switches it)
 AGENT_CARDS|on|bool|A working agent without a topic gets a card on now by itself (title: what it works on), gone when it stops working or gets a topic; 15 s of work first
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
 GITHUB_BRANCHES|on|bool|GitHub: show the git branch the agent of a topic works on (read from its working folder by the machine it runs on)
@@ -1856,11 +1856,11 @@ project_color_set() {  # project_color_set <var> <project name>: its colour from
     done <<< "${_rules//,/$'\n'}"
     printf -v "$1" '%s' "$_col"
 }
-agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse), and at its right end a <> button
-    # (a click: the agent overview as counts only, and back; mouse_event takes the four columns COLS-5 .. COLS-2 for it)
-    local w=$(( ${COLS:-44} - 13 )) l r
+agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse), and at its right end a ↕ button
+    # (a click: the agent overview as counts only, and back; mouse_event takes the three columns COLS-4 .. COLS-2 for it)
+    local w=$(( ${COLS:-44} - 12 )) l r
     l=$(( (w - 5) / 2 )); r=$(( w - l ))
-    printf '  %s%s%s ═══ %s%s%s %s<>%s \n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X" "$D" "$X"
+    printf '  %s%s%s ═══ %s%s%s %s↕%s \n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X" "$D" "$X"
 }
 agents_counts() {  # agents_counts: this and the other machines' agents as numbers: AC_ACTIVE (working, testing), AC_NEEDS (waiting for an answer), AC_INACTIVE
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
@@ -2835,7 +2835,7 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
                 MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
         done 2>/dev/null < "$RUN_DIR/tmap"
     fi
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ] && [ "$x" -ge $(( ${COLS:-44} - 5 )) ] && [ "$x" -le $(( ${COLS:-44} - 2 )) ]; then   # the <> button on the divider
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ] && [ "$x" -ge $(( ${COLS:-44} - 4 )) ] && [ "$x" -le $(( ${COLS:-44} - 2 )) ]; then   # the ↕ button on the divider
         MOUSE_KEY=AGMENU; return
     fi
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
@@ -5304,7 +5304,7 @@ bhote_main() {
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
                 TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; *) topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
                 CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
-                AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the <> on the divider: counts only, and back
+                AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ↕ on the divider: counts only, and back
                 m|M) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=ctx; CTX_IDX=0; redraw=1; fi ;;
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)

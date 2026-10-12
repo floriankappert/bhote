@@ -90,7 +90,7 @@ with `AGENT_CAN_CLOSE=on`, `bhote done <id>` when nothing needs checking). The t
 When the agent reports back, or simply stops working, the topic moves to **REVIEW** at the top of the list and herdr shows a
 notification (setting `NOTIFY`). Waiting topics are reminded once after `WAIT_REMIND` hours.
 
-The `<>` button at the right end of the divider above the agents switches the overview to counts only (`✶ 3 active · ○ 4 inactive`, with
+The `↕` button at the right end of the divider above the agents switches the overview to counts only (`✶ 3 active · ○ 4 inactive`, with
 `◉ n need you` when an agent waits for an answer) and back (`AGENTS_COMPACT`). Dragging the rest of the divider still resizes the area.
 
 ## Agents that wait

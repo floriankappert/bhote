@@ -11,7 +11,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
 - The last done topics above the agents are four by default, no longer ten (`DONE_MAX`).
-- The agent overview can show counts only: the `<>` button at the right end of the divider above the agents switches between the list and
+- The agent overview can show counts only: the `↕` button at the right end of the divider above the agents switches between the list and
   `✶ 3 active · ○ 4 inactive` (`AGENTS_COMPACT`; `◉ n need you` appears when an agent waits for an answer).
 - **Recently finished**: a topic on *Now* whose agent stops without a question (nothing to check) moves to its own group *Recently finished*
   (status `finished`) instead of review. With a question, or an agent waiting for an answer, it still goes to review. When the agent works
