@@ -21,6 +21,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   without it, past row 9, or elsewhere the key line still says how to get there.
 
 ### Fixed
+- A card bhote makes for an agent without a topic (`AGENT_CARDS`) no longer disappears once someone works with it. `bhote current`
+  hands it to the agent as its topic, the agent puts it under review, and when the agent then stopped, the card went with it:
+  the review was gone, and the agent's next `bhote now` found no topic. A card that a command uses (`review`, `wait`, `now`,
+  `desc` …) or that is moved off *now* is a topic of its own from then on.
 - The setup wizard's topics step and its summary work under bash 3.2 again (macOS `/bin/bash`): both stopped with
   `syntax error near unexpected token 'newline'`, because bash 3.2 ends a `$( … )` at the `)` of a `case` pattern. The
   patterns there are written `(pattern)` now.

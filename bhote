@@ -1272,6 +1272,7 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         f=${T_FILE[$i]}; [ "$(topic_get "$f" auto_now)" = 1 ] || continue
+        case "${T_STATUS[$i]}" in now|testing) ;; *) topic_set "$f" auto_now ""; continue ;; esac            # moved (review, waiting, later …): a topic now
         case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) ;; *) [ "${T_STATUS[$i]}" = testing ] || { topic_set "$f" deleted 1; continue; } ;; esac       # the agent stopped (but not while its tests run)
         case "$owned" in *$'\n'"${T_AP[$i]}"$'\n'*) topic_set "$f" deleted 1; continue ;; esac            # it got a topic of its own
         cards="$cards${T_AP[$i]}"$'\n'
@@ -5730,6 +5731,7 @@ bhote_cli() {
         done|now|testing|next|review|later|wait|rename|desc|rm|take)
               local f ref=${1:-}; [ -n "$ref" ] || { echo "bhote: $cmd needs a topic (number, id or part of the title)" >&2; return 1; }
               f=$(topic_ref_sync "$ref") || return $?; shift
+              case "$cmd" in done|rm) ;; *) [ "$(topic_get "$f" auto_now)" = 1 ] && topic_set "$f" auto_now "" ;; esac   # a card someone works with: a topic of its own (it no longer goes with the idle agent)
               case "$cmd" in
                   done) local ag_call=""; is_agent && ag_call=1
                         if [ -n "$ag_call" ] && [ "$(cfg_get AGENT_CAN_CLOSE on)" != on ]; then   # an agent may only hand it over
