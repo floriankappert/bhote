@@ -212,7 +212,7 @@ printf 'w1:p1%s%s\n' "$US" "$T/repo/src" > "$AGENT_CWD"; branch_sync
 [ "$(topic_get "$bf" agent_branch)" = feature/login ] && ok "github: the agent's branch is written into its topic" || bad "branch_sync: '$(topic_get "$bf" agent_branch)'"
 u=$(topic_get "$bf" updated); sleep 1; branch_sync; [ "$(topic_get "$bf" updated)" = "$u" ] && ok "github: an unchanged branch is not written again" || bad "branch rewritten"
 frame=$(BHOTE_SOURCE_ONLY= BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=60 BHOTE_ROWS=150 bash ./bhote </dev/null)
-echo "$frame" | grep -A3 "Login form" | grep -q "⎇ feature/login" && ok "github: a branch line under the topic" || bad "panel branch line: $(echo "$frame" | grep -A3 'Login form')"
+echo "$frame" | grep -A3 "Login form" | grep -q "⎇ feature/login" && ok "github: a branch line under the topic" || bad "panel branch line: $(echo "$frame" | head -c 1500 | cat -v)"
 ( topics_load; AG_N=0; AG_LINES=(); find_items; for (( k = 0; k < ${#FI_KIND[@]}; k++ )); do [ "${FI_REF[$k]}" = "$bid" ] && break; done
   case "${FI_LABEL[$k]}" in *"⎇ feature/login"*) exit 0 ;; *) exit 1 ;; esac ) && ok "github: the branch inline in the search" || bad "search branch"
 [ "$(BHOTE_NO_SYNC=1 bhote_cli show "$bid" --json | jq -r .agent.branch)" = feature/login ] && ok "github: agent.branch in the JSON" || bad "json branch"
@@ -432,7 +432,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   mouse_event "2;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 5                                  # the right button
   mouse_event "2;5;1" M; [ "$MOUSE_KEY" = CTX ] && [ -z "$CLICK_T" ] || exit 6                                                      # (not on a topic: no topic)
   projects_load; out=$(bhote_paint ctx); printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -q "ACTIONS · Ctx topic 3" || exit 7
-  menu_build "$TOPIC_DIR/$SEL_ID.topic"; n=${#MENU_ITEMS[@]}; [ "$(wc -l < "$RUN_DIR/pmap")" = "$n" ] || exit 8                   # one clickable row per action
+  menu_build "$TOPIC_DIR/$SEL_ID.topic"; n=${#MENU_ITEMS[@]}; [ "$(wc -l < "$RUN_DIR/pmap" | tr -d " ")" = "$n" ] || exit 8                   # one clickable row per action
   r=$(awk -F'\036' '$2 == 1 { print $1 }' "$RUN_DIR/pmap"); mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = 1 ] || exit 9
   exit 0 ) && ok "menu over the list: ⋮ and the right button open it, its rows are clickable actions" || bad "context menu: step $?"
 # an unchanged agent list stays fresh (bhote find then takes it instead of asking herdr again), and the revision stays
@@ -518,7 +518,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   cfg_set GITHUB_BRANCHES on; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
   out=$(topics_block); printf '%s' "$out" | grep -q $'\033\[38;2;255;62;165m\033\[1mOmarchy' || exit 3                  # (pink, bold)
   plain=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
-  [ "${r1%%Omarchy*}" = "▌ ✶ " ] && [ "${r3%%Doing*}" = "▌   " ] || exit 4
+  [ "${r1%%Omarchy*}" = "▌ ✶ " ] && [ "${r3%%Doing*}" = "▌   " ] || { printf 'r1=[%s] r3=[%s]\n' "$r1" "$r3" | cat -v >&2; exit 4; }
   r4=$(printf '%s\n' "$plain" | grep "Beschr"); r5=$(printf '%s\n' "$plain" | grep "⎇ fix/x"); [ "${r4%%Beschr*}" = "▌   " ] && [ "${r5%%⎇*}" = "▌   " ] || exit 5   # (the description and the branch too)                                           # (text under text: column 5)
   echo "r1=[${r1%%Omarchy*}] r3=[${r3%%Doing*}]" | cat -v >&2; exit 0 ) && ok "agent card: machine name in herdr's colour (pink), the now line indented like the rows above" || bad "card colour/indent: step $?"
 # recently finished: a now topic whose agent stops without a question lands there (a question: review), comes back on now when the agent works again,
@@ -610,7 +610,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  printf '%s\n' "$out" | grep -q "■ *78%" || exit 5                                                              # 44 of 56 steps
+  printf '%s\n' "$out" | grep -q "■ *78%" || { printf '%s\n' "$out" | grep -E 'deploying|%' | cat -v >&2; exit 5; }                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "WAITING FOR DEPLOYMENT" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
