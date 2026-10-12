@@ -580,6 +580,10 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; DRAG=0; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button
   MOUSE_KEY=""; DRAG=0; mouse_event "0;10;30" M; [ "$MOUSE_KEY" != AGMENU ] && [ "$DRAG" = 1 ] || exit 5                                          # elsewhere on the divider: the drag starts
+  # the ↕ is lit while the pointer is on it
+  mouse_event "35;47;30" M; [ "$MOUSE_KEY" = HOVER ] && [ "$HOVER_BTN" = 1 ] || exit 8; MOUSE_KEY=""; mouse_event "35;48;30" M; [ -z "$MOUSE_KEY" ] || exit 9      # (on it: a redraw once)
+  ( ORANGE=LIT; BOLD=B; D=DIM; X=; HOVER_BTN=1; agent_divider | grep -q "BLIT↕" ) || exit 10; ( ORANGE=LIT; BOLD=B; D=DIM; X=; HOVER_BTN=0; agent_divider | grep -q "DIM↕" ) || exit 11
+  mouse_event "35;5;30" M; [ "$MOUSE_KEY" = HOVER ] && [ "$HOVER_BTN" = 0 ] || exit 12                                                                              # (off it: a redraw again)
   # nav-only: what changed on disk is not read again, the next full paint reads it
   topic_new "First" "" ""; ui_load; topic_new "Added later" "" ""
   p1=$(NAV_ONLY=1; bhote_paint main | sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$p1" in *"Added later"*) exit 6 ;; esac

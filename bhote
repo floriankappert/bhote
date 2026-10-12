@@ -1860,7 +1860,8 @@ agent_divider() {  # the handle between topics and agents: a rule with a grip in
     # (a click: the agent overview as counts only, and back; mouse_event takes the three columns COLS-4 .. COLS-2 for it)
     local w=$(( ${COLS:-44} - 12 )) l r
     l=$(( (w - 5) / 2 )); r=$(( w - l ))
-    printf '  %s%s%s ═══ %s%s%s %s↕%s \n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X" "$D" "$X"
+    local bc=$D; [ "${HOVER_BTN:-0}" = 1 ] && bc="$BOLD$ORANGE"                 # the button: grey, orange and bold under the pointer
+    printf '  %s%s%s ═══ %s%s%s %s↕%s \n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X" "$bc" "$X"
 }
 agents_counts() {  # agents_counts: this and the other machines' agents as numbers: AC_ACTIVE (working, testing), AC_NEEDS (waiting for an answer), AC_INACTIVE
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
@@ -2299,7 +2300,7 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
     local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() tz=() n=0 line
     head=$(view_head); topics=$(topics_block)
-    local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${DRAG_ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}" ck=""   # (the agents' area and the keys do not depend on the selection)
+    local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${DRAG_ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}|${HOVER_BTN:-0}" ck=""   # (the agents' area and the keys do not depend on the selection)
     { IFS= read -r ck < "$RUN_DIR/bottom.key"; } 2>/dev/null
     if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
     else bottom=$(view_bottom); printf '%s\n' "$bkey" > "$RUN_DIR/bottom.key" 2>/dev/null; printf '%s' "$bottom" > "$RUN_DIR/bottom.out" 2>/dev/null; fi
@@ -2804,7 +2805,8 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
         if [ "$hd" = 0 ] || [ "$y" -lt "$hd" ]; then
             while IFS=$'\036' read -r hr ht; do [ "$hr" = "$y" ] && { hid=${ht%%!*}; break; }; done 2>/dev/null < "$RUN_DIR/tmap"   # (a button row's ref is <id>!<from>!<to>)
         fi
-        [ "$hid" = "$HOVER_ID" ] || { HOVER_ID=$hid; MOUSE_KEY=HOVER; }
+        local hb=0; [ "$hd" -gt 0 ] && [ "$y" = "$hd" ] && [ "$x" -ge $(( ${COLS:-44} - 4 )) ] && [ "$x" -le $(( ${COLS:-44} - 2 )) ] && hb=1   # (the ↕ on the divider: lit while the pointer is on it)
+        [ "$hid" = "$HOVER_ID" ] && [ "$hb" = "${HOVER_BTN:-0}" ] || { HOVER_ID=$hid; HOVER_BTN=$hb; MOUSE_KEY=HOVER; }
         return
     fi
     if [ "$2" = M ] && [ "$b" = 2 ]; then                      # the right button: the topic's menu (CLICK_T empty: not on a topic)
