@@ -5,16 +5,17 @@ Settings live in one file, `~/.config/bhote/config` (`$XDG_CONFIG_HOME/bhote/con
 settings screen (`,`) and `bhote config set` write it; both check every value against its type. Unknown keys are kept as they are.
 
 Nothing that reaches another machine is on by default: bhote opens no ssh connection until `STORE=remote` or
-`REMOTE_AGENTS=on` says so, and talks to kharka only with `STORE=kharka`.
+`REMOTE_AGENTS=on` says so, and talks to kharka only with `STORE=kharka` or `AGENTS_VIA=kharka`.
 
 | Key | Default | Settings screen | |
 |---|---|---|---|
 | `STORE` | `local` | Data location | `remote` keeps a replica of the topics on `STORE_MACHINE`; `kharka` merges them with the local [kharka](https://github.com/jakobbeyer/kharka) daemon, which syncs every machine through its hub ([data and sync](data-and-sync.md)). |
 | `STORE_MACHINE` | | Data location | The label of a saved herdr machine (`herdr machine list`). |
-| `KHARKA` | | kharka binary (with `STORE=kharka`) | The kharka binary; empty: `kharka` on the `PATH`. The environment variable `KHARKA` comes first. |
+| `KHARKA` | | kharka binary (with `STORE=kharka` or `AGENTS_VIA=kharka`) | The kharka binary; empty: `kharka` on the `PATH`. The environment variable `KHARKA` comes first. |
 | `SYNC_VIA` | `herdr` | Sync through (not with `STORE=kharka`) | How topics travel to `STORE_MACHINE`: `herdr` (through herdr's own connection; each side pulls from the other) or `ssh` (bhote's own ssh; push and pull). See [data and sync](data-and-sync.md). |
-| `PUSH_STATES` | `on` | Push agent states at once | With `REMOTE_AGENTS` on: when an agent here changes its state, the other machines are told at once through herdr (the plugin action `changed`), so their panels show it within about a second instead of after `REMOTE_EVERY`. |
-| `REMOTE_AGENTS` | `off` | Remote agents (via herdr) | List the agents of the saved herdr machines, too (herdr asks them over its ssh connection). |
+| `PUSH_STATES` | `on` | Push agent states at once (not with `AGENTS_VIA=kharka`) | With `REMOTE_AGENTS` on: when an agent here changes its state, the other machines are told at once through herdr (the plugin action `changed`), so their panels show it within about a second instead of after `REMOTE_EVERY`. |
+| `REMOTE_AGENTS` | `off` | Remote agents | List the agents of the other machines, too (`AGENTS_VIA`). |
+| `AGENTS_VIA` | `herdr` | Agents through | Where they come from: `herdr` (its saved machines; herdr asks them over its ssh connection) or `kharka` (what [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes on every machine; no ssh between the machines). See [agents through kharka](data-and-sync.md#agents-through-kharka). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
 | `PANEL_MIN_WIDTH` | `36` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
 | `PANEL_MAX_WIDTH` | `60` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |

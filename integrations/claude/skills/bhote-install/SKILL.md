@@ -63,6 +63,9 @@ in settings › Connections (or `bhote config set CIRCLECI_TOKEN …` typed by t
 `herdr machine list` shows saved machines; add one with `herdr machine add` (the user authenticates) and check
 `herdr machine status`. Both machines must know each other (ssh both ways; Tailscale makes names resolve). bhote itself reports it
 in `bhote setup --json` (`reachable`, `knows_this_machine`). Install bhote on the other machine the same way, with the SAME machine name.
+With kharka and herdr-kharka on every machine, `bhote config set AGENTS_VIA kharka` lists the other machines' agents without
+ssh between them; then each herdr-kharka needs `--label` set to its machine's bhote name, and `--allow-method agent.prompt`
+where agents should get prompts (`machines[].prompts` in `bhote setup --json`).
 
 ## 7. Project CI (monitors)
 

@@ -129,6 +129,28 @@ taken over). Remote commands run
 through `sh -c` as one quoted word, so the remote login shell (zsh, fish) does not matter; ssh runs with `BatchMode`, a
 connect timeout and keep-alives, so a dead connection cannot hang it.
 
+## Agents through kharka
+
+With `REMOTE_AGENTS=on` and `AGENTS_VIA=kharka` the agents of the other machines come from kharka instead of herdr's saved
+machines. [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) runs on every machine and writes what its herdr runs as
+`herdr/<node>`; the kharka daemon here holds every machine's entry, so a look never leaves this machine and no machine needs
+ssh to another. It works with any `STORE`.
+
+- **Names.** A machine is listed under its herdr-kharka label (`--label`, else its kharka node). Topics name the machine of
+  their agent, and every machine reads them, so start herdr-kharka on each machine with `--label` set to the name bhote has
+  there (`HOST_LABEL`, else `Mac` / the host name). An entry of this machine's node, or one labelled like this machine, is left
+  out. The setup wizard checks the label of this machine's herdr-kharka.
+- **Offline.** A machine whose herdr is offline, whose node the hub reports offline (`_nodes/<node>`), or whose entry is older
+  than 60 seconds (herdr-kharka writes at least every 30) keeps its last agents, muted, and gets no work.
+- **At once.** The collector follows `kharka watch` for `herdr/` too (with `STORE=kharka` it watches everything and tells the
+  two apart): another machine's change asks for a look at once, so `PUSH_STATES` and the plugin action `changed` are not used.
+- **Actions.** The live state of an agent there (before a prompt, a transfer, an auto-assign), the prompt itself and the focus
+  are commands: bhote writes `herdr.commands/<node>/<id>` (`from` is this machine's kharka node, `expires` 10 s later),
+  herdr-kharka there runs the method against its herdr and answers in the same record, bhote reads the answer and deletes the
+  record. `agent.get` and `agent.focus` run by default; prompts need `herdr-kharka --commands --allow-method agent.prompt`
+  on the machine that gets them, as any machine on the hub may then type into its agents. Without it bhote says so and sends
+  nothing.
+
 ## What the panels share
 
 All panels of one machine share `$BHOTE_SHARED` (private, owned by the user): the agent lists and the collector lock. One
