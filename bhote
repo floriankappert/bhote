@@ -1570,7 +1570,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         local am an aw mcol; machine_fg_set mcol
         clip_set am "${TI_AGM:-}" 12; clip_set an "$TI_AGN" $(( w - 2 - btn * 3 - 2 - ${#am} - 3 - 1 )); dw_set aw "$am · $an"
         [ -n "$am" ] && am="$mcol$BOLD$am$X$bg$gc · " || aw=$(( aw - 3 ))
-        printf '%s%s%s%s%s%s %s%s%s%s%*s' "${TI_SPIN:+$'\034'$spk$'\034'}" "$trm" "$mk" "$bg" "$bl" "${TI_AGIC:-$gc○}" "$am" "$BOLD$tc" "$an" "$X$bg" $(( w - 2 - 2 - aw - btn * 3 )) ""
+        printf '%s%s%s%s%s%s %s%s%s%s%*s' "${TI_SPIN:+$'\034'$spk$'\034'}" "$trm" "$mk" "$bg" "$bl" "${TI_AGIC:-${gc}○}" "$am" "$BOLD$tc" "$an" "$X$bg" $(( w - 2 - 2 - aw - btn * 3 )) ""
         if [ "$btn" = 1 ]; then printf ' %s⋮%s %s\n' "$gc" "$X$bg" "$X"; else printf '%s\n' "$X"; fi
         clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
         printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
@@ -1609,8 +1609,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 8 )) pf pi bf="" be=""
         [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
             pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
-            for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="$bf■"; else be="$be■"; fi; done
-            [ -n "${BHOTE_DBG_BAR:-}" ] && printf "DBG2 bf=%s be=%s ver=%s\n" "${#bf}" "${#be}" "$BASH_VERSION" >&2
+            for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
             printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
     fi
@@ -4073,7 +4072,7 @@ dash_caption() {  # dash_caption <text>: ┈┈ Text ┈┈┈┈┈ in grey (Do
 }
 mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_FILLED = the cells to colour)
     local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
-    for (( _i = 0; _i < $4; _i++ )); do _b="$_b■"; done
+    for (( _i = 0; _i < $4; _i++ )); do _b="${_b}■"; done
     printf -v "$1" '%s' "$_b"
 }
 mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a subshell
