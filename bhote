@@ -1610,6 +1610,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
             pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
             for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="$bf■"; else be="$be■"; fi; done
+            [ -n "${BHOTE_DBG_BAR:-}" ] && printf "DBG2 bf=%s be=%s ver=%s\n" "${#bf}" "${#be}" "$BASH_VERSION" >&2
             printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
     fi

@@ -256,7 +256,7 @@ topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" =
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x")
   printf '%s\n' "$out" | grep -q "▄▄▄" && printf '%s\n' "$out" | grep -q "▀▀▀" && printf '%s\n' "$out" | grep -q "▌" || exit 3   # (the card's frame stays)
   printf '%s\n' "$out" | grep -q "working" && exit 4                                                                         # (the icon says it)
-  AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || exit 5   # what the icon does not say stays
+  AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }   # what the icon does not say stays
   exit 0 ) && ok "now card: like herdr's agent card, with the card frame, the meta line only for what the icon does not say" || bad "agent card: step $?"
 # /clear: the pane runs a new session. An event without a session id (or one of another session) does not hand the old session's topic over;
 # when the new session starts working, the topic follows it, and its idle then hands the topic back for review
@@ -401,7 +401,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   hd=$(( $(head -1 "$RUN_DIR/tmap" | cut -d$'\036' -f1) - 1 )); mouse_event "0;5;$hd" M; [ -z "$MOUSE_KEY" ] || exit 3   # the caption
   r=$(awk -F'\036' 'NR > 1 && $2 != p { n++ } { p = $2 } n == 3 { print $1; exit }' "$RUN_DIR/tmap"); mouse_event "0;5;$r" M
   [ "$MOUSE_KEY" = TOPIC ] || exit 4; off=$(cat "$RUN_DIR/toff")
-  SEL_ID=$CLICK_T; ui_load; fr2=$(bhote_view); [ "$(cat "$RUN_DIR/toff")" = "$off" ] || exit 5
+  SEL_ID=$CLICK_T; ui_load; fr2=$(bhote_view); [ "$(cat "$RUN_DIR/toff")" = "$off" ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }
   nf() { sed -n "${1}p" | sed 's/┊//g; s/^ *//; s/ *$//'; }   # (the selected entry has a dotted frame, in the gaps and at its sides)
   [ "$(printf '%s\n' "$fr" | nf "$r")" = "$(printf '%s\n' "$fr2" | nf "$r")" ] || exit 6
   [ "$(printf '%s\n' "$fr" | wc -l)" = "$(printf '%s\n' "$fr2" | wc -l)" ] || exit 7
@@ -419,7 +419,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   r=$(awk -F'\036' '$2 == -2 { print $1; exit }' "$RUN_DIR/pmap"); printf '%s\n' "$out" | sed -n "${r}p" | grep -q "Page topic" || exit 6
   mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = -2 ] || exit 7
   grep -q $'\036-1$' "$RUN_DIR/pmap" || exit 8                     # the description (empty: its hint line) too
-  out=$(bhote_paint main); [ ! -s "$RUN_DIR/pmap" ] || exit 5
+  out=$(bhote_paint main); [ ! -s "$RUN_DIR/pmap" ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }
   exit 0 ) && ok "click: actions, title and description on the topic's page are rows of their own (ITEM with the index), the list has none" || bad "action click: step $?"
 # the topic's menu over the list: the right button, the ⋮ on the selected card, and the menu itself (rows with the action's index)
 ( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; AG_N=0; AG_LINES=(); : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
@@ -429,7 +429,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "$(( r + 1 ))p"); case "$ln" in *"Ctx topic 3"*"⋮ ") ;; *) exit 2 ;; esac   # (the title row of the selected card)
   mouse_event "0;$(( COLS - 3 ));$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 3                     # the ⋮ button
   mouse_event "0;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = TOPIC ] || exit 4                                                              # the title itself selects
-  mouse_event "2;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 5                                  # the right button
+  mouse_event "2;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }                                  # the right button
   mouse_event "2;5;1" M; [ "$MOUSE_KEY" = CTX ] && [ -z "$CLICK_T" ] || exit 6                                                      # (not on a topic: no topic)
   projects_load; out=$(bhote_paint ctx); printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -q "ACTIONS · Ctx topic 3" || exit 7
   menu_build "$TOPIC_DIR/$SEL_ID.topic"; n=${#MENU_ITEMS[@]}; [ "$(wc -l < "$RUN_DIR/pmap" | tr -d " ")" = "$n" ] || exit 8                   # one clickable row per action
@@ -453,7 +453,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   find_filter ""; [ "$FI_MORE" = 5 ] || exit 1; [ "${#FI_HIT[@]}" = 27 ] || exit 2                      # 25 done + the open one + the busy agent
   find_filter "IMS free"; [ "${#FI_HIT[@]}" = 0 ] || exit 3                                              # a free agent is not there, not even in the search
   find_filter "done topic"; [ "${#FI_HIT[@]}" = 30 ] && [ "$FI_MORE" = 0 ] || exit 4                      # the search reaches every done topic
-  find_filter ""; first=${FI_HIT[1]}; [ "${FI_NAME[$first]}" = "Done topic 30" ] || exit 5                # the newest done topic first
+  find_filter ""; first=${FI_HIT[1]}; [ "${FI_NAME[$first]}" = "Done topic 30" ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }                # the newest done topic first
   COLS=80; ROWS=60; find_filter ""; out=$(find_draw "" 0 ""); case "$out" in *"+5 more done tasks"*) ;; *) exit 6 ;; esac
   exit 0 ) && ok "find popup: no free agents, the newest 25 done topics and +N more, the search finds all" || bad "find popup done/free: step $?"
 # the ssh masters herdr leaves behind: the one of a gone herdr is ended (ssh -O exit) and its folder removed; a running herdr's stays
@@ -468,7 +468,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ ! -e "$H/herdr-ssh-$gone-0" ] || exit 2
   grep -q -- "-O exit -S $H/herdr-ssh-$gone-0/cm-abc" "$T/mux.log" || exit 3
   [ -S "$H/herdr-ssh-$$-0/cm-def" ] && ! grep -q cm-def "$T/mux.log" || exit 4   # its herdr still runs: untouched
-  [ -d "$H/herdr-ssh-x-0" ] && [ -L "$H/herdr-ssh-$gone-1" ] && [ -d "$H/keep" ] || exit 5   # not herdr's, a link: untouched
+  [ -d "$H/herdr-ssh-x-0" ] && [ -L "$H/herdr-ssh-$gone-1" ] && [ -d "$H/keep" ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }   # not herdr's, a link: untouched
   exit 0 ) && ok "herdr's ssh masters: a gone herdr's is ended and removed, a running one's and anything else stays" || bad "mux sweep: step $?"
 # what the agent does right now (herdr's third line): collected per pane, shown orange under the agent card with the dancing star in front of it
 ( : > "$T/now.out"; COLLECT_NOW="$T/now.out" collect_one Mac >/dev/null; [ "$(cat "$T/now.out")" = "Mac${US}w3:p1${US}✻ Warm-up clock [2J" ] || exit 1                  # (one line, for the working agent that has a now token)
@@ -479,7 +479,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Omarchy${US}w9:p1${US}working${US}bhote${US}x" > "$AGENT_LOCAL"
   topic_new "Card topic" ""  ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent bhote; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w9:p1; topic_set "$cf" status now
   AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); COLS=50; ROWS=40; SPIN_CH=✶; ui_load; topics_load
-  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌   Building the warm-up clock" || exit 5
+  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "▌   Building the warm-up clock" || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }
   printf '%s\n' "$out" | tr -d '\034\035' | grep -c "Building the warm-up" | grep -q '^1$' || exit 6
   AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Building the warm-up"*) exit 7 ;; esac   # (only while it works)
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x"); SPIN_CELLS=""; RUN_DIR=$T/run; mkdir -p "$RUN_DIR"
@@ -519,7 +519,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block); printf '%s' "$out" | grep -q $'\033\[38;2;255;62;165m\033\[1mOmarchy' || exit 3                  # (pink, bold)
   plain=$(printf '%s\n' "$out" | perl -pe 's/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1c.\x1c//g; s/\x1d[^\x1d]*\x1d//g' | tr -d '\001'); r1=$(printf '%s\n' "$plain" | grep "Omarchy · bhote"); r3=$(printf '%s\n' "$plain" | grep "Doing it")
   [ "${r1%%Omarchy*}" = "▌ ✶ " ] && [ "${r3%%Doing*}" = "▌   " ] || { printf 'r1=[%s] r3=[%s]\n' "$r1" "$r3" | cat -v >&2; exit 4; }
-  r4=$(printf '%s\n' "$plain" | grep "Beschr"); r5=$(printf '%s\n' "$plain" | grep "⎇ fix/x"); [ "${r4%%Beschr*}" = "▌   " ] && [ "${r5%%⎇*}" = "▌   " ] || exit 5   # (the description and the branch too)                                           # (text under text: column 5)
+  r4=$(printf '%s\n' "$plain" | grep "Beschr"); r5=$(printf '%s\n' "$plain" | grep "⎇ fix/x"); [ "${r4%%Beschr*}" = "▌   " ] && [ "${r5%%⎇*}" = "▌   " ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }   # (the description and the branch too)                                           # (text under text: column 5)
   echo "r1=[${r1%%Omarchy*}] r3=[${r3%%Doing*}]" | cat -v >&2; exit 0 ) && ok "agent card: machine name in herdr's colour (pink), the now line indented like the rows above" || bad "card colour/indent: step $?"
 # recently finished: a now topic whose agent stops without a question lands there (a question: review), comes back on now when the agent works again,
 # goes by itself after FINISHED_MINUTES; the card bhote makes for an agent without a topic goes the same way; key c / x end it
@@ -532,7 +532,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_set "$wf" status finished; topics_load; COLS=50; ROWS=40; NOW=$(date +%s); AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); ui_load
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "RECENTLY FINISHED" && printf '%s\n' "$out" | grep -q "✓ Omarchy · bhote" && printf '%s\n' "$out" | grep -q "  finished" || exit 4
   cfg_set FINISHED_MINUTES 1; touch -d "2 minutes ago" "$wf" 2>/dev/null; sed -i.bak 's/^updated=.*/updated=1000/' "$wf"; finished_expire
-  [ "$(topic_get "$wf" status)" = later ] && [ "$(topic_get "$wf" dismissed)" = 1 ] || exit 5       # after the time: put away (like a dismissed review card)
+  [ "$(topic_get "$wf" status)" = later ] && [ "$(topic_get "$wf" dismissed)" = 1 ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }       # after the time: put away (like a dismissed review card)
   ev w9:p1 working; [ "$(topic_get "$wf" status)" = now ] || exit 6                                # ... and it comes back when the agent works
   topic_set "$wf" status finished; AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); review_dismiss "$wf"; [ "$(topic_get "$wf" status)" = later ] || exit 7   # c on the card (its agent is idle)
   cfg_set FINISHED_MINUTES 0; topic_set "$wf" status finished; sed -i.bak 's/^updated=.*/updated=1000/' "$wf"; finished_expire; [ "$(topic_get "$wf" status)" = finished ] || exit 8   # 0: never
@@ -552,7 +552,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   echo $(( $(date +%s) - 10 )) > "$SHARED_DIR/nowidle/$(topic_id "$sf")"; herdr() { return 0; }; now_idle_follow
   [ "$(topic_get "$sf" status)" = finished ] || exit 3                                                                      # idle for 8 s and more: recently finished
   setagent working; review_follow; [ "$(topic_get "$sf" status)" = finished ] || exit 4                                    # (the list was stale: a working right after the stop does not reopen it)
-  setagent idle; review_follow; setagent working; review_follow; [ "$(topic_get "$sf" status)" = now ] || exit 5            # (idle seen, then working: reopened)
+  setagent idle; review_follow; setagent working; review_follow; [ "$(topic_get "$sf" status)" = now ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }            # (idle seen, then working: reopened)
   topic_set "$sf" delegated "$(date +%s)"; setagent idle; now_idle_follow; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 6   # just handed to the agent: it has not started yet
   exit 0 ) && ok "now with an idle agent: recently finished after a while (a missed event); a stale working does not reopen it" || bad "now idle follow: step $?"
 # the agent of a card is gone (session ended): the review card closes, a card bhote made is deleted, a topic on now becomes recently finished; not when herdr is silent
@@ -568,7 +568,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$g1" status)" = later ] && [ "$(topic_get "$g1" dismissed)" = 1 ] || exit 2                              # its session ended: the review card closes
   [ "$(topic_get "$g2" deleted)" = 1 ] || exit 3                                                                            # a card bhote made itself: gone
   [ "$(topic_get "$g3" status)" = finished ] || exit 4                                                                      # a topic on now: recently finished
-  [ "$(topic_get "$g4" status)" = review ] && [ "$(topic_get "$g5" status)" = review ] || exit 5                           # (the agent is there; a machine that is not in the lists)
+  [ "$(topic_get "$g4" status)" = review ] && [ "$(topic_get "$g5" status)" = review ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }                           # (the agent is there; a machine that is not in the lists)
   : > "$AGENT_REMOTE"; mk "Machine without agents" Box w3:p1 review; g6=$mkf; agent_gone_follow; past; agent_gone_follow; [ "$(topic_get "$g6" status)" = review ] || exit 6   # (a machine with no agents listed: left alone)
   exit 0 ) && ok "gone agent: its review card closes (a made card goes, now becomes recently finished), only when herdr answers" || bad "gone agent: step $?"
 # the agent overview as counts (the ↕ on the divider), and keys that only move the selection draw from what is loaded
@@ -579,7 +579,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "$out" | grep -q " ↕ " || exit 2                                                                                                  # the button on the divider
   cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; DRAG=0; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button
-  MOUSE_KEY=""; DRAG=0; mouse_event "0;10;30" M; [ "$MOUSE_KEY" != AGMENU ] && [ "$DRAG" = 1 ] || exit 5                                          # elsewhere on the divider: the drag starts
+  MOUSE_KEY=""; DRAG=0; mouse_event "0;10;30" M; [ "$MOUSE_KEY" != AGMENU ] && [ "$DRAG" = 1 ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }                                          # elsewhere on the divider: the drag starts
   # the ↕ is lit while the pointer is on it
   mouse_event "35;47;30" M; [ "$MOUSE_KEY" = HOVER ] && [ "$HOVER_BTN" = 1 ] || exit 8; MOUSE_KEY=""; mouse_event "35;48;30" M; [ -z "$MOUSE_KEY" ] || exit 9      # (on it: a redraw once)
   ( ORANGE=LIT; BOLD=B; D=DIM; X=; HOVER_BTN=1; agent_divider | grep -q "BLIT↕" ) || exit 10; ( ORANGE=LIT; BOLD=B; D=DIM; X=; HOVER_BTN=0; agent_divider | grep -q "DIM↕" ) || exit 11
@@ -610,7 +610,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 40 ] || exit 5                                                              # 44 of 56 steps
+  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 40 ] || { BHOTE_DBG_BAR=1 topics_block >/dev/null; printf "%s" "$bar" | LC_ALL=C od -c | head -8 >&2; exit 5; }                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "WAITING FOR DEPLOYMENT" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
