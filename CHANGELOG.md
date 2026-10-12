@@ -10,6 +10,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
   hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- The last done topics above the agents are four by default, no longer ten (`DONE_MAX`).
+- The agent overview can show counts only: the ⋮ button at the right end of the divider above the agents switches between the list and
+  `✶ 3 active · ○ 4 inactive` (`AGENTS_COMPACT`; `◉ n need you` appears when an agent waits for an answer).
 - **Recently finished**: a topic on *Now* whose agent stops without a question (nothing to check) moves to its own group *Recently finished*
   (status `finished`) instead of review. With a question, or an agent waiting for an answer, it still goes to review. When the agent works
   again the card is back on *Now*; after `FINISHED_MINUTES` (30, 0 = never) it is dismissed by itself (the card bhote makes for an agent
@@ -47,8 +50,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   `machine · agent`, and under it `∟` what the agent works on, as herdr shows it (the topic's title when it has no task), then the
   description and the branch. The card keeps its coloured bar and block edges.
   What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
-- Run from a git checkout that is past the tag of its version (local work), the panel calls itself the next one, `0.9.0 (preview)`;
-  a release install says its version.
+- Run from a git checkout that is past the tag of its version (local work), the panel and `bhote version` call it by its local build number,
+  `0.9.1.1` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
 - After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
   session id no longer hands the old session's topic over.
 - A click on a topic selects it and shows its agent in herdr, like a click on the agent, and leaves the focus on the agent (its grey
@@ -58,6 +61,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the topic can be shown (*Show topic*) and handed over, *Start with agent* only when there is none.
 
 ### Fixed
+- Moving the selection with the arrow keys (and the pointer over the cards) was slow: every key press reloaded all topics and agents and
+  rebuilt the agents' area, about 170 ms. Now a key that only moves the selection draws from what is loaded and keeps the agents' area
+  (about 70 ms); the idle check reloads at least every 2 s.
+- A review or finished card whose agent is gone (its session ended, its pane closed) closes by itself after 30 s, if herdr answers: a review
+  or finished card is put away like a dismissed one (a card bhote made is deleted), a topic on now moves to *Recently finished*.
 - A topic could stay on *Now* with an agent that had stopped: the stop event moved it to *Recently finished*, and the collector's look at a list of
   agents that was a few seconds old put it back on now (it saw "working"). A finished, dismissed or review card is now reopened only after the
   collector saw its agent idle first. And a topic on now whose agent has been idle for two looks (8 s apart, and the topic untouched for 60 s)
@@ -65,6 +73,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - A review card goes by itself when the agent that asked works again after it was idle (a decision was made in its session). Until now only the
   agent's event did that, so a missed event (another machine, a restart) left the card open. A finished deployment's card and an answer in Slack
   stay.
+- A card bhote makes for an agent without a topic (`AGENT_CARDS`) no longer disappears once someone works with it. `bhote current`
+  hands it to the agent as its topic, the agent puts it under review, and when the agent then stopped, the card went with it:
+  the review was gone, and the agent's next `bhote now` found no topic. A card that a command uses (`review`, `wait`, `now`,
+  `desc` …) or that is moved off *now* is a topic of its own from then on.
 - The setup wizard's topics step and its summary work under bash 3.2 again (macOS `/bin/bash`): both stopped with
   `syntax error near unexpected token 'newline'`, because bash 3.2 ends a `$( … )` at the `)` of a `case` pattern. The
   patterns there are written `(pattern)` now.

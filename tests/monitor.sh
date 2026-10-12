@@ -164,14 +164,14 @@ cfg_set HERDR_KEYS_MACHINE Elsewhere; keys_cache_set; rm -f "$KEYS_CACHE"; focus
 printf '[keys]\nprefix = "ctrl+b"\n[[keys.command]]\nkey = "prefix+t"\ncommand = "bhote.panel.focus"\n' > "$KEYS_CACHE"; focus_key_set KK; [ "$KK" = "Ctrl+B|T" ] && ok "keys: read from the other machine's config" || bad "keys after: $KK"
 cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
 
-# the version in the panel: on its release tag it is the version, past the tag (local work) the next minor as a preview
+# the version in the panel: on its release tag it is the version, past the tag (local work) its local build number
 ( vd=$T/vl; rm -rf "$vd"; mkdir -p "$vd"; cp ./bhote "$vd/bhote"; cd "$vd" || exit 9
   git init -q . && git -c user.name=t -c user.email=t@t add bhote && git -c user.name=t -c user.email=t@t commit -qm one && git tag "v$VERSION" || exit 8
   lab() ( BHOTE_SOURCE_ONLY=1; . "$vd/bhote"; version_label_set; printf '%s' "$VERSION_LABEL" )
   [ "$(lab)" = "$VERSION" ] || exit 1
-  echo x >> bhote; git -c user.name=t -c user.email=t@t commit -qam two; maj=${VERSION%%.*}; min=${VERSION#*.}; min=${min%%.*}
-  [ "$(lab)" = "$maj.$(( min + 1 )).0 (preview)" ] || exit 2
-  exit 0 ) && ok "version: the release tag shows the version, a checkout past it the next one as (preview)" || bad "version label: step $?"
+  echo x >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
+  [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = 0.9.1.1 ] || exit 2
+  exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.1.1)" || bad "version label: step $?"
 # the topic page: a done topic gets actions that make sense; the numbers line up
 mf=$TOPIC_DIR/menutest.topic; printf 'id=menutest\ntitle=Menu\nstatus=done\nupdated=1\ndeleted=0\n' > "$mf"; menu_build "$mf"
 case "${MENU_ITEMS[*]}" in *"start|"*|*"wait|"*|*"slack|"*|*"done|"*) bad "done menu: ${MENU_ITEMS[*]}" ;; *"reopen|"*"next|"*"later|"*"delete|"*) ok "menu: a done topic can be reopened, moved, renamed, deleted" ;; *) bad "done menu: ${MENU_ITEMS[*]}" ;; esac
