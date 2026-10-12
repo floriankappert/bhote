@@ -26,6 +26,9 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTO_ASSIGN_MACHINE` | `any` | Prefer agents on | Whose free agents come first: `any` (this machine first) or a machine label; when none is free there, the others. |
 | `AGENT_CAN_CLOSE` | `on` | Agents may close topics | An agent may set its topic to done itself; `off`: only to review, you close it. |
 | `AGENT_TOPICS` | `on` | Agents may create topics | An agent may create topics with `bhote add` (the bhote skill tells it to when it hands work back or waits); `off`: `bhote add` run by an agent creates nothing (a note on stderr, `null` with `--json`, exit `0`), and the agent goes on without a topic. Topics you create, take or transfer are not affected; the “Question from” topics are `AUTO_REVIEW`. |
+| `CLICK_FOCUS_AGENT` | `on` | A click on a topic focuses its agent | A click on a topic card shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in herdr's agent list; `off`: the focus goes back to the bhote panel of that tab (what ⏎ always does). |
+| `FINISHED_MINUTES` | `30` | Recently finished: dismiss after (min) | A recently finished card (an agent that stopped without a question) is dismissed by itself after this many minutes; it comes back when the agent works again. `0`: never. |
+| `AGENTS_COMPACT` | `off` | Agent overview: counts only | Shows only how many agents are active and how many are inactive instead of the list of agents. The `↕` button at the right end of the divider above the agents switches it. |
 | `AGENT_CARDS` | `on` | Cards for agents without a topic | A working agent of this machine that has no topic gets a card on *Now* by itself (title: what it works on), after 15 s of work; the card goes when the agent stops or gets a topic of its own. |
 | `NOTIFY` | `on` | herdr notifications | herdr notifications when a topic is ready for review or done, and when a waiting topic waits too long. |
 | `GITHUB_BRANCHES` | `on` | GitHub: agent branches | The git branch the agent of a topic works on, as a line under the topic (and inline in the search). Each machine reads it for its own agents from their working folder (`.git`, worktrees too) and writes it into the topic when it changes. |
@@ -51,7 +54,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTOSTART` | `on` | Auto-start with herdr | The [herdr plugin](herdr-plugin.md) opens the panel when herdr starts. |
 | `AGENT_ROWS` | automatic | drag the `═══` divider | Height of the agent area in rows. |
 | `TOPICS_SCOPE` | `all` | Topics shown | `project`: the panel lists the topics of its project (the project of the agent in its herdr tab) and those without one; `all`: every topic. |
-| `DONE_MAX` | `10` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
+| `DONE_MAX` | `4` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
 | `ARCHIVE_DAYS` | `7` | Archive after days | Done, next, waiting and parked topics untouched for this many days leave the panel (a line counts them); the search and the CLI still reach them (`0`: never). |
 | `HOST_LABEL` | `Mac` on macOS, else the host name | | How this machine is called in agent lists. Should match the label other machines use for it in `herdr machine list`. |
 | `HERDR_KEYS_MACHINE` | `any` | Keys of machine | The machine whose herdr you type into: the jump key and prefix shown in the panel are read from the `config.toml` of that machine (and shown as on its keyboard: Option on a Mac, Alt elsewhere). `any`: this machine. |

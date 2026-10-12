@@ -6,6 +6,28 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
+  the focus (read from herdr once a second when idle).
+- A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
+  hovered card. ↑↓/1-9/⏎ or a click run an action, esc closes.
+- Done topics, and the lines of next, waiting and parked topics, are a step lighter under the pointer, like the cards.
+- The last done topics above the agents are four by default, no longer ten (`DONE_MAX`).
+- The agent overview can show counts only: the `↕` button at the right end of the divider above the agents switches between the list and
+  `✶ 3 active · ○ 4 inactive` (`AGENTS_COMPACT`; `◉ n need you` appears when an agent waits for an answer). The `↕` lights up (orange, bold) under the pointer.
+- **Recently finished**: a topic on *Now* whose agent stops without a question (nothing to check) moves to its own group *Recently finished*
+  (status `finished`) instead of review. With a question, or an agent waiting for an answer, it still goes to review. When the agent works
+  again the card is back on *Now*; after `FINISHED_MINUTES` (30, 0 = never) it is dismissed by itself (the card bhote makes for an agent
+  without a topic is simply gone); key `c` (dismiss) or `x` (done), or the topic menu, ends it by hand. The card of an agent without a
+  topic follows the same way (it used to vanish when the agent stopped).
+- Dismiss a review card: key `c`, topic menu › *Dismiss: close the card*, `bhote dismiss <ref>`. The card leaves the list (search and CLI still
+  find the topic); when its agent works again the topic is back on *Now* as the agent's work card, with the agent already working it goes
+  straight there.
+- A card of an agent at work shows what the agent does right now, like herdr's agent item: its third line, in orange (the star dances only
+  in the first row). It is read from herdr's `now` token of every machine (also over kharka) and shows only while the agent works.
+- Waiting for a deployment: `bhote wait <ref> --deploy[=Label]` / `bhote add <title> --deploy` (topic menu › *Waiting for the deployment*) puts a
+  waiting topic into its own group *Waiting for deployment*, a card with the progress bar and percentage of the deployment it waits for (from
+  the deployment monitor). It goes to review by itself when the deployment is over (ok: check production; failed or canceled: look at it), with a
+  notification. A topic of an agent whose branch a running deployment comes from joins the group by itself. The bhote skill tells agents to use it.
 - `AGENTS_VIA=kharka`: the agents of the other machines come from kharka instead of herdr's saved machines, so no machine
   needs ssh to another. [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes each machine's agents as
   `herdr/<node>` (listed under its `--label`); the collector watches them and looks at once when one changes. The live state of
@@ -20,7 +42,38 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   herdr (its `window_title` starting with `{hostname}: `) types the key. Needs the Accessibility permission for the terminal;
   without it, past row 9, or elsewhere the key line still says how to get there.
 
+### Changed
+- The machine name in an agent card has the colour herdr gives it in its agent rows (the row token `machine`, its `fg` from herdr's config.toml;
+  pink `#ff3ea5` without one), no longer grey or a project colour. The orange third line, the description and the branch are indented like the rows above them
+  (under the text of the task).
+- *Review ansehen* (the button, or key `1`/`y`) shows the agent and the button goes: you see that you have used it (the note stays).
+- A card on *Now* (and *Testing*) with an agent looks like herdr's agent card: the state's icon (working, needs you, done, idle),
+  `machine · agent`, and under it `∟` what the agent works on, as herdr shows it (the topic's title when it has no task), then the
+  description and the branch. The card keeps its coloured bar and block edges.
+  What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
+- Run from a git checkout that is past the tag of its version (local work), the panel and `bhote version` call it by its local build number,
+  `0.9.1.1` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
+- After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
+  session id no longer hands the old session's topic over.
+- A click on a topic selects it and shows its agent in herdr, like a click on the agent, and leaves the focus on the agent (its grey
+  bar stays in herdr's list; `CLICK_FOCUS_AGENT=off` gives the focus back to the panel). Double click, →: its page.
+- The actions on a topic's page follow its status: the natural next step comes first (*Back to now* in review, *Ready for review* on now,
+  *The wait is over* when waiting, *Work on it now* for up next and parked), nothing offers the status the topic has, an agent on
+  the topic can be shown (*Show topic*) and handed over, *Start with agent* only when there is none.
+
 ### Fixed
+- Moving the selection with the arrow keys (and the pointer over the cards) was slow: every key press reloaded all topics and agents and
+  rebuilt the agents' area, about 170 ms. Now a key that only moves the selection draws from what is loaded and keeps the agents' area
+  (about 70 ms); the idle check reloads at least every 2 s.
+- A review or finished card whose agent is gone (its session ended, its pane closed) closes by itself after 30 s, if herdr answers: a review
+  or finished card is put away like a dismissed one (a card bhote made is deleted), a topic on now moves to *Recently finished*.
+- A topic could stay on *Now* with an agent that had stopped: the stop event moved it to *Recently finished*, and the collector's look at a list of
+  agents that was a few seconds old put it back on now (it saw "working"). A finished, dismissed or review card is now reopened only after the
+  collector saw its agent idle first. And a topic on now whose agent has been idle for two looks (8 s apart, and the topic untouched for 60 s)
+  moves to *Recently finished* (review with a question on the screen) even when no event came, also for agents on another machine.
+- A review card goes by itself when the agent that asked works again after it was idle (a decision was made in its session). Until now only the
+  agent's event did that, so a missed event (another machine, a restart) left the card open. A finished deployment's card and an answer in Slack
+  stay.
 - A card bhote makes for an agent without a topic (`AGENT_CARDS`) no longer disappears once someone works with it. `bhote current`
   hands it to the agent as its topic, the agent puts it under review, and when the agent then stopped, the card went with it:
   the review was gone, and the agent's next `bhote now` found no topic. A card that a command uses (`review`, `wait`, `now`,

@@ -12,6 +12,14 @@ waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are ar
 them), the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
 is selected.
 
+**Recently finished** is a group of cards under now and testing: a topic whose agent stopped without a question (nothing to check; with a
+question it goes to review). It shows the agent with a green check and how long ago it finished. When the agent works again the topic is back on
+now; after `FINISHED_MINUTES` it is dismissed by itself; `c` dismisses it, `x` checks it off.
+
+**Waiting for deployment** is a group of cards between testing and next: a waiting topic with `bhote wait <ref> --deploy` (topic menu ›
+*Waiting for the deployment*). The card shows project and deployment (`IMS · Backend`), its state (deploying, queued, needs approval) and the
+progress as a bar with a percentage, taken from the deployment monitor. When the deployment is over the topic goes to review.
+
 ## Keys
 
 | Key | List |
@@ -22,6 +30,7 @@ is selected.
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |
+| `c` | dismiss a review card: it closes, and opens again as the work card when its agent works again |
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
 | `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one (asks first; warns when the target belongs to another project) |
 | `1` (`y`) | the button of a review topic's card, *Review ansehen* (`bhote review --look`): focuses the topic's agent; the topic stays in review. A click on the button does the same |
@@ -80,6 +89,9 @@ divider to give the agent area more or fewer rows. A topic handed to an agent sh
 with `AGENT_CAN_CLOSE=on`, `bhote done <id>` when nothing needs checking). The topic remembers the agent's pane and session.
 When the agent reports back, or simply stops working, the topic moves to **REVIEW** at the top of the list and herdr shows a
 notification (setting `NOTIFY`). Waiting topics are reminded once after `WAIT_REMIND` hours.
+
+The `↕` button at the right end of the divider above the agents switches the overview to counts only (`✶ 3 active · ○ 4 inactive`, with
+`◉ n need you` when an agent waits for an answer) and back (`AGENTS_COMPACT`). Dragging the rest of the divider still resizes the area.
 
 ## Agents that wait
 

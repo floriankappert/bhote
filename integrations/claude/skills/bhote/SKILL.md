@@ -26,6 +26,9 @@ this step puts it back on `now`. It is not for a topic the user parked or closed
 When the answer shows that the topic is finished after all, use `bhote done <id>` instead. Without this step the panel
 keeps showing "ready for review" while you are working, and the user cannot tell what is waiting for them.
 
+Without `bhote review`, an agent that stops without a question shows as *Recently finished* (a green card, gone by itself after a while): fine for
+work that needs no look. Use `bhote review` whenever the user has to check, decide or answer.
+
 ## When you have to wait for someone or something
 
 When you cannot go on until someone else acts (a deployment has to finish, a reviewer has to approve, infrastructure has
@@ -40,6 +43,15 @@ Examples:
 ```sh
 bhote add "Deploy of billing-export to staging" -w "DevOps" -d "then run the export e2e test against staging" --json
 bhote add "Review of PR #1412" -w "Alex" -d "then merge and test the release notes page" --json
+```
+
+**A deployment of your own change** (you merged, CI deploys, the user has to check it live): do not write "DevOps" as the name, say
+`--deploy`. The topic goes to its own group *Waiting for deployment*, shows the progress of that deployment, and goes to
+review by itself when it is over (done: check production, failed: look at it):
+
+```sh
+bhote add "Payments Module live prüfen" --deploy -d "check the payment flow in production" --json     # --deploy=Backend: only that deployment
+bhote wait <id> --deploy                                                                              # on a topic you have already
 ```
 
 Keep the returned `id`. Tell the user in one sentence what you wait for, then stop or do other work. When the user marks

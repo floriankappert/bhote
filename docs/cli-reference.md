@@ -117,10 +117,28 @@ agent it was
 `review` (with a note on stderr, exit `0`), and you check it off. With `AGENT_TOPICS=off` an agent's `bhote add` creates
 nothing (a note on stderr, `null` with `--json`, exit `0`).
 
+### `bhote dismiss <ref>`
+
+Closes the card of a topic in review or recently finished (`status: finished`: its agent stopped without a question; `bhote list -s finished`)
+(read, nothing to do): the topic is parked (`status: later`, `dismissed: 1`) and no longer in the
+panel's list; search and CLI still find it. When its agent works again it is back on `now` by itself (the agent's event, or the collector when
+it saw the agent idle and then working), and with the agent already working it goes straight to `now`. Exit `1` for a topic that is not in
+review. Also key `c` and the topic menu.
+
 ### `bhote wait <ref> <Name> [--slack <pin>]`
 
 The topic waits for Name from now on (`status: waiting`, `waiting_since` = now). Exit `1` without a name. With `--slack`
 it also pins Slack (see below); a topic that is pinned already waits again from now on (older messages do not count).
+
+### `bhote wait <ref> --deploy[=Label]` and `bhote add <title> --deploy[=Label]`
+
+The topic waits for a deployment of its project (`status: waiting`, `deploy_wait: 1`, `waiting_for: Deployment`). The panel lists it
+in its own group *Waiting for deployment*, as a card with the progress of that deployment (a bar, `44 of 56` jobs or steps as a
+percentage). It binds to the newest deployment under way (or begun after the wait) of its project; `=Label` narrows it to one
+(`Backend`, `Production`, the labels of the deployment monitor). When that deployment is over the topic goes to `review` by itself:
+done says *check it in production*, failed or canceled says so, and a notification comes. Needs the deployment monitor
+(`DEPLOY_MONITOR=on`) on one machine. A topic of an agent whose branch is the one a running deployment comes from joins the group
+without a command. Any other status or `bhote wait <ref> <Name>` ends it.
 
 ### `bhote slack <ref> <pin | off>`
 
@@ -249,7 +267,7 @@ their branches) and writes it into the project. `check` fetches both monitors no
 ### `bhote bar`
 
 One line for a status bar, Waybar-style JSON: `text` (the number of things for you; empty when nothing waits), `tooltip`, `class`
-(attention, busy, idle) and the counts. The Omarchy bar widget `bhote.bar` shows it.
+(attention, busy, idle) and the counts (`review`, `blocked`, `busy`, `now`, `waiting`, `finished`: topics recently finished). The Omarchy bar widget `bhote.bar` shows it.
 
 ### `bhote find`
 
@@ -261,7 +279,8 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 
 ### `bhote version` · `bhote help`
 
-`bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0"}`); also `--version`, `-V`. `bhote help` (`-h`,
+`bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0","build":"0.6.0"}`; from a checkout past the release tag both
+the text and `build` say the local build, `0.9.1.1`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`
@@ -304,7 +323,7 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `n` | integer | Position in `bhote list --all` at the time of the call; a valid ref until topics change. |
 | `title` | string | Never empty. |
 | `description` | string \| null | At most 140 characters. |
-| `status` | `"now"` \| `"testing"` \| `"next"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
+| `status` | `"now"` \| `"testing"` \| `"finished"` \| `"next"` \| `"waiting"` \| `"review"` \| `"later"` \| `"done"` | |
 | `waiting_for` | string \| null | Only while `status` is `waiting`. |
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the topic: `{"name", "machine", "pane", "session", "branch"}` (each may be null; `branch`: the git branch it works on, `@1234abc` when detached). |

@@ -243,7 +243,7 @@ herdr_b() {  # herdr_b <commands>: what herdr-kharka on b writes (label Box)
 {"host":"b","label":"Box","herdr":"online","focused":null,"commands":[$1],
  "workspaces":[{"id":"w1","number":1,"label":"Work"},{"id":"w2","number":2,"label":"Tests","tokens":{"tests":"◌ 3/10"}}],
  "agents":[{"pane":"w1:p1","workspace":"w1","tab":"w1:t1","status":"idle","since":0,"cwd":"/src/shop","tokens":{"task":"∟ Fix it","repo":"github.com/x/shop","project":"proj-shop"}},
-           {"pane":"w2:p1","workspace":"w2","status":"idle","since":0},{"pane":"w2:p2","workspace":"w2","status":"working","since":0},
+           {"pane":"w2:p1","workspace":"w2","status":"idle","since":0},{"pane":"w2:p2","workspace":"w2","status":"working","since":0,"tokens":{"now":"✻ Warm-up\u001b[2J clock"}},
            {"pane":"bad pane","workspace":"w1","status":"idle","since":0}]}
 EOF
 }
@@ -257,6 +257,7 @@ has() { grep -qxF "$(printf '%s' "$2" | tr '|' '\037')" "$1"; }   # has <file> <
 has "$AGENT_REMOTE" "Box|w1:p1|idle|Work|Fix it" && ok "agents: another machine's agent, by its label, with workspace and task" || bad "remote: $(tr '\037' '|' < "$AGENT_REMOTE")"
 has "$AGENT_REMOTE" "Box|w2:p1|testing|Tests|" && has "$AGENT_REMOTE" "Box|w2:p2|working|Tests|" \
     && ok "agents: tests running in its workspace: testing, a working agent stays working" || bad "remote: $(tr '\037' '|' < "$AGENT_REMOTE")"
+has "$AGENT_NOW_R" "Box|w2:p2|✻ Warm-up[2J clock" && [ "$(grep -c . "$AGENT_NOW_R")" = 1 ] && ok "agents: what a working agent does right now (its now token), no escape code, only where there is one" || bad "now: $(tr '\037' '|' < "$AGENT_NOW_R")"
 has "$AGENT_META_R" "Box|w1:p1|w1:t1|a|github.com/x/shop|proj-shop|/src/shop" && ok "agents: tab, repository, project and folder for the projects" || bad "meta: $(tr '\037' '|' < "$AGENT_META_R")"
 grep -q "bad pane\|^Self$(printf '\037')\|^$HOST$(printf '\037')" "$AGENT_REMOTE" && bad "remote: $(tr '\037' '|' < "$AGENT_REMOTE")" \
     || ok "agents: not this machine (its node or its name), no odd pane ids"

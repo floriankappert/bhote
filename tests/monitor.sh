@@ -164,6 +164,14 @@ cfg_set HERDR_KEYS_MACHINE Elsewhere; keys_cache_set; rm -f "$KEYS_CACHE"; focus
 printf '[keys]\nprefix = "ctrl+b"\n[[keys.command]]\nkey = "prefix+t"\ncommand = "bhote.panel.focus"\n' > "$KEYS_CACHE"; focus_key_set KK; [ "$KK" = "Ctrl+B|T" ] && ok "keys: read from the other machine's config" || bad "keys after: $KK"
 cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
 
+# the version in the panel: on its release tag it is the version, past the tag (local work) its local build number
+( vd=$T/vl; rm -rf "$vd"; mkdir -p "$vd"; cp ./bhote "$vd/bhote"; cd "$vd" || exit 9
+  git init -q . && git -c user.name=t -c user.email=t@t add bhote && git -c user.name=t -c user.email=t@t commit -qm one && git tag "v$VERSION" || exit 8
+  lab() ( BHOTE_SOURCE_ONLY=1; . "$vd/bhote"; version_label_set; printf '%s' "$VERSION_LABEL" )
+  [ "$(lab)" = "$VERSION" ] || exit 1
+  echo x >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
+  [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = 0.9.1.1 ] || exit 2
+  exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.1.1)" || bad "version label: step $?"
 # the topic page: a done topic gets actions that make sense; the numbers line up
 mf=$TOPIC_DIR/menutest.topic; printf 'id=menutest\ntitle=Menu\nstatus=done\nupdated=1\ndeleted=0\n' > "$mf"; menu_build "$mf"
 case "${MENU_ITEMS[*]}" in *"start|"*|*"wait|"*|*"slack|"*|*"done|"*) bad "done menu: ${MENU_ITEMS[*]}" ;; *"reopen|"*"next|"*"later|"*"delete|"*) ok "menu: a done topic can be reopened, moved, renamed, deleted" ;; *) bad "done menu: ${MENU_ITEMS[*]}" ;; esac
@@ -171,6 +179,22 @@ printf 'id=menutest\ntitle=Menu\nstatus=later\nupdated=1\ndeleted=0\n' > "$mf"; 
 case "${MENU_ITEMS[*]}" in *"later|"*) bad "later menu offers Park for later" ;; *) ok "menu: a parked topic cannot be parked again" ;; esac
 printf 'id=menutest\ntitle=Menu\nstatus=now\nupdated=1\ndeleted=0\ntransfer_to=Mac/w2:p1\ntransfer_to_name=server\n' > "$mf"; menu_build "$mf"
 case "${MENU_ITEMS[0]}" in "cancelxfer|Cancel the hand-over to server") ok "menu: a pending hand-over can be cancelled" ;; *) bad "cancel item: ${MENU_ITEMS[0]}" ;; esac
+# the actions follow the status: the natural next step comes first, an agent on the topic can be shown, nothing offers the status it has
+mt() { printf 'id=menutest\ntitle=Menu\nstatus=%s\nupdated=1\ndeleted=0\n%b' "$1" "${2:-}" > "$mf"; menu_build "$mf"; }
+mt review; case "${MENU_ITEMS[0]}" in "now|"*) ok "menu: a topic in review goes back to now first" ;; *) bad "review menu: ${MENU_ITEMS[*]}" ;; esac
+mt now; case "${MENU_ITEMS[0]}" in "review|"*) ok "menu: a topic on now can be handed to review" ;; *) bad "now menu: ${MENU_ITEMS[*]}" ;; esac
+case "${MENU_ITEMS[*]}" in *"|Back to now"*|*"now|"*) bad "now menu offers now: ${MENU_ITEMS[*]}" ;; *) ok "menu: now does not offer now" ;; esac
+mt next; case "${MENU_ITEMS[*]}" in *"next|"*) bad "next menu offers Up next" ;; "now|"*) ok "menu: an up-next topic can be worked on now" ;; *) bad "next menu: ${MENU_ITEMS[*]}" ;; esac
+mt waiting 'waiting_for=Alex\n'; case "${MENU_ITEMS[0]}" in "now|The wait is over"*) ok "menu: a waiting topic without an agent: the wait is over → now" ;; *) bad "waiting menu: ${MENU_ITEMS[*]}" ;; esac
+mt review 'agent=bhote\nagent_machine=Omarchy\nagent_pane=w1:p1\n'
+case "${MENU_ITEMS[0]}" in "jump|Show topic") ok "menu: an agent on the topic can be shown" ;; *) bad "jump item: ${MENU_ITEMS[*]}" ;; esac
+case "${MENU_ITEMS[*]}" in *"start|"*) bad "start offered with an agent on the topic" ;; *"transfer|"*) ok "menu: with an agent: transfer, no second start" ;; *) bad "agent menu: ${MENU_ITEMS[*]}" ;; esac
+mt review; case "${MENU_ITEMS[*]}" in *"jump|"*|*"transfer|"*) bad "agentless menu: ${MENU_ITEMS[*]}" ;; *"start|"*) ok "menu: without an agent: start, no show or transfer" ;; *) bad "agentless: ${MENU_ITEMS[*]}" ;; esac
+# "Review ansehen" (hotkey 1 or its button): the agent is shown and the button goes, the note stays, the topic stays in review
+mt review 'review_note=Result is there\nreview_ask=Review ansehen\nreview_reply=@jump\nagent_machine=Omarchy\nagent_pane=w1:p1\n'
+jr=$(agent_jump() { echo "jumped $1 $2"; }; review_act "$mf" 1)   # (a subshell: the stub stays out of the tests below)
+[ "$jr" = "jumped Omarchy w1:p1" ] && [ -z "$(topic_get "$mf" review_ask)" ] && [ "$(topic_get "$mf" review_note)" = "Result is there" ] \
+    && [ "$(topic_get "$mf" status)" = review ] && ok "review: 'Review ansehen' jumps to the agent and the button goes" || bad "review look: '$jr' ask='$(topic_get "$mf" review_ask)'"
 rm -f "$mf"
 a1=$(COLS=40 menu_num_line "" 9 "Describe"); a2=$(COLS=40 menu_num_line "" 10 "Delete"); [ "${a1#*Describe}" != "$a1" ] && [ "$(printf '%s' "$a1" | sed 's/Describe.*//' | wc -c)" = "$(printf '%s' "$a2" | sed 's/Delete.*//' | wc -c)" ] && ok "menu: the text of 9 and 10 starts in the same column" || bad "menu numbers: [$a1] [$a2]"
 

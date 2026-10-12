@@ -98,7 +98,7 @@ B config set DONE_MAX 3 >/dev/null && [ "$(B config get DONE_MAX)" = 3 ] && ok "
 B config set DONE_MAX lots >/dev/null 2>&1; [ $? = 1 ] && [ "$(B config get DONE_MAX)" = 3 ] && ok "config: a value of the wrong type is refused" || bad "config accepted a bad value"
 B config set NOPE 1 >/dev/null 2>&1; [ $? = 1 ] && ok "config: an unknown key is refused" || bad "unknown key accepted"
 B config set AGENT_CAN_CLOSE maybe >/dev/null 2>&1; [ $? = 1 ] && ok "config: bool settings take on/off only" || bad "bool accepted maybe"
-B config unset DONE_MAX >/dev/null; [ "$(B config get DONE_MAX)" = 10 ] && ok "config: unset goes back to the default" || bad "unset"
+B config unset DONE_MAX >/dev/null; [ "$(B config get DONE_MAX)" = 4 ] && ok "config: unset goes back to the default" || bad "unset"
 B config set THEME dracula >/dev/null && [ "$(B config get THEME)" = dracula ] && ok "config: THEME takes dracula" || bad "THEME dracula refused"
 th=$(BHOTE_SOURCE_ONLY=1 BHOTE_FORCE_COLOR=1 bash -c '. ./bhote; theme_apply; printf "%s|%s|%s|%s" "$S" "$BLUE" "$L" "$CARDSEL"')
 case "$th" in *"139;233;253"*"|"*"189;147;249"*"|"*"248;248;242"*"|"*"48;2;68;71;90"*) ok "THEME=dracula: the Dracula colours (accent cyan, review purple, text, selection)" ;; *) bad "dracula colours: $(printf '%q' "$th")" ;; esac
