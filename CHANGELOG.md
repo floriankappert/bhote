@@ -58,6 +58,10 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   the topic can be shown (*Show topic*) and handed over, *Start with agent* only when there is none.
 
 ### Fixed
+- A topic could stay on *Now* with an agent that had stopped: the stop event moved it to *Recently finished*, and the collector's look at a list of
+  agents that was a few seconds old put it back on now (it saw "working"). A finished, dismissed or review card is now reopened only after the
+  collector saw its agent idle first. And a topic on now whose agent has been idle for two looks (8 s apart, and the topic untouched for 60 s)
+  moves to *Recently finished* (review with a question on the screen) even when no event came, also for agents on another machine.
 - A review card goes by itself when the agent that asked works again after it was idle (a decision was made in its session). Until now only the
   agent's event did that, so a missed event (another machine, a restart) left the card open. A finished deployment's card and an answer in Slack
   stay.

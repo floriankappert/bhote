@@ -534,6 +534,18 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "Omarchy${US}w8:p1${US}working${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; [ "$(topic_get "$cf" status)" = now ] || exit 11                  # works again: the same card is back on now
   printf '%s\n' "Omarchy${US}w8:p1${US}idle${US}claude${US}Doing it" > "$AGENT_LOCAL"; agent_cards; sed -i 's/^updated=.*/updated=1000/' "$cf"; finished_expire; [ "$(topic_get "$cf" deleted)" = 1 ] || exit 12   # after the time: gone
   exit 0 ) && ok "recently finished: a stopped agent without a question, back on now when it works, dismissed by itself, c ends it" || bad "recently finished: step $?"
+# a topic on now whose agent stopped and no event moved it: recently finished after two looks; a stale "working" right after the stop does not reopen a finished card
+( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/nowidle" "$SHARED_DIR/revidle"; HOST=Omarchy
+  topic_new "Stuck" "" ""; sf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$sf" agent bhote; topic_set "$sf" agent_machine Omarchy; topic_set "$sf" agent_pane w9:p1; topic_set "$sf" status now; sed -i 's/^updated=.*/updated=1000/' "$sf"
+  setagent() { printf '%s\n' "Omarchy${US}w9:p1${US}$1${US}bhote${US}x" > "$AGENT_LOCAL"; }
+  setagent working; now_idle_follow; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 1                      # it works: stays on now
+  setagent idle; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 2                                          # seen idle once: not yet
+  echo $(( $(date +%s) - 10 )) > "$SHARED_DIR/nowidle/$(topic_id "$sf")"; herdr() { return 0; }; now_idle_follow
+  [ "$(topic_get "$sf" status)" = finished ] || exit 3                                                                      # idle for 8 s and more: recently finished
+  setagent working; review_follow; [ "$(topic_get "$sf" status)" = finished ] || exit 4                                    # (the list was stale: a working right after the stop does not reopen it)
+  setagent idle; review_follow; setagent working; review_follow; [ "$(topic_get "$sf" status)" = now ] || exit 5            # (idle seen, then working: reopened)
+  topic_set "$sf" delegated "$(date +%s)"; setagent idle; now_idle_follow; now_idle_follow; [ "$(topic_get "$sf" status)" = now ] || exit 6   # just handed to the agent: it has not started yet
+  exit 0 ) && ok "now with an idle agent: recently finished after a while (a missed event); a stale working does not reopen it" || bad "now idle follow: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"

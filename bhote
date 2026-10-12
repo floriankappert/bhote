@@ -1450,6 +1450,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             tests_sync
             deploy_sync
             review_follow
+            now_idle_follow
             finished_expire
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
@@ -4048,7 +4049,8 @@ mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a sub
 # wait began. Unbound it looks for the newest entry of its project (and label) that is under way, or that began after deploy_since.
 review_follow() {  # a review card goes by itself when the agent that asked works again after it was idle (the decision was made, in the session):
     # back on now (a "Question from" card of bhote is deleted); a dismissed card comes back the same way. The event of the agent does this at once,
-    # this is for events that did not arrive (another machine, a restart). The agent must have been seen idle first: it may still be writing its hand-over.
+    # this is for events that did not arrive (another machine, a restart). The agent must have been seen idle first (also for a finished or dismissed
+    # card): the list of agents is up to 3 s old, a "working" right after the stop must not reopen it, and it may still be writing its hand-over.
     [ -r "$AGENT_LOCAL" ] || return 0
     local i f id m st d="$SHARED_DIR/revidle"; mkdir -p "$d" 2>/dev/null; topics_load
     for (( i = 0; i < T_N; i++ )); do
@@ -4061,10 +4063,36 @@ review_follow() {  # a review card goes by itself when the agent that asked work
         st=$(awk -F"$US" -v m="$m" -v p="${T_AP[$i]}" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
         case "$st" in
             idle|done|blocked) : > "$d/$id" ;;
-            working) if [ "${T_STATUS[$i]}" != review ] || [ -e "$d/$id" ]; then
+            working) if [ -e "$d/$id" ]; then
                          rm -f "$d/$id"
                          if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1; else topic_set "$f" status now; topic_set "$f" auto_back ""; fi
                      fi ;;
+        esac
+    done
+    return 0
+}
+now_idle_follow() {  # a topic on now whose agent has stopped (seen idle in two looks 8 s apart) and no event moved it (another machine, a restart, a
+    # missed event): it is recently finished (a question on the screen of a local agent, or an agent waiting for an answer: review), as the event does
+    [ -r "$AGENT_LOCAL" ] || return 0
+    local i f id m p st d="$SHARED_DIR/nowidle" t0 now fq; mkdir -p "$d" 2>/dev/null; now=$(date +%s); topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        id=${T_ID[$i]}; f=${T_FILE[$i]}
+        [ "${T_STATUS[$i]}" = now ] && [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || { rm -f "$d/$id"; continue; }      # (handing over: not finished)
+        [ "$(topic_get "$f" auto_now)" = 1 ] && continue                                                                  # (agent_cards does these)
+        [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 30 ] || continue                                                     # (just handed to the agent: it has not started yet)
+        [ $(( now - ${T_UPD[$i]:-0} )) -ge 60 ] || continue                                                               # (put on now a moment ago: the user is about to write to it)
+        m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
+        st=$(awk -F"$US" -v m="$m" -v p="$p" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
+        case "$st" in
+            idle|done) t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
+                if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"
+                elif [ $(( now - $(num_or "$t0" "$now") )) -ge 8 ]; then
+                    rm -f "$d/$id"; fq=""
+                    [ "$m" = "$HOST" ] && fq=$(herdr pane read "$p" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text)
+                    if [ -n "$fq" ]; then topic_set "$f" status review; topic_set "$f" auto_back 1; notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request
+                    else topic_set "$f" status finished; fi
+                fi ;;
+            *) rm -f "$d/$id" ;;
         esac
     done
     return 0
