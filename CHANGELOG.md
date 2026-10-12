@@ -5,6 +5,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Fixed
+- The setup wizard's topics step and its summary work under bash 3.2 again (macOS `/bin/bash`): both stopped with
+  `syntax error near unexpected token 'newline'`, because bash 3.2 ends a `$( … )` at the `)` of a `case` pattern. The
+  patterns there are written `(pattern)` now.
+
 ## [0.8.0] - 2026-10-11
 
 ### Added
