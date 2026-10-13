@@ -2749,25 +2749,30 @@ HAVE_PERL=""; command -v perl >/dev/null 2>&1 && HAVE_PERL=1
 # Input comes through INBUF: one wait takes everything that is there at once (a held arrow key, a drag, fast typing), in ONE
 # perl call on bash 3.2 (it waits whole seconds only); the keys are then taken from the buffer without starting anything.
 INBUF=""
-in_fill() {  # in_fill <seconds | wait>: waits for input, then puts all that is there into INBUF; 1 = nothing came in time
-    local h c t=$1
+in_fill() {  # in_fill <seconds | wait>: waits for input, then puts all that is there into INBUF; 1 = nothing came in time, 2 = end of input (the
+    # terminal is gone: hung up, closed, /dev/tty cannot be opened). A caller that loops must stop on 2: a timeout is normal, EOF returns at once, forever.
+    local h c t=$1 rc
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
-        if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 1; else IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || return 1; fi
+        if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty 2>/dev/null || return 2
+        else IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || { rc=$?; [ "$rc" -gt 128 ] && return 1; return 2; }; fi     # (rc > 128: the timeout)
         INBUF+=$c; while IFS= read -rsn1 -d '' -t 0.005 c </dev/tty 2>/dev/null; do INBUF+=$c; done; return 0
     fi
     if [ -n "$HAVE_PERL" ]; then
         h=$(perl -e 'use IO::Select; my $t = shift; my $s = IO::Select->new(\*STDIN);
             exit 1 unless ($t eq "wait" ? $s->can_read() : $s->can_read($t));
-            my $b = ""; while (1) { my $n = sysread(STDIN, my $c, 4096); last unless $n; $b .= $c; last unless $s->can_read(0.003); }
-            exit 1 unless length $b; print map { sprintf("\\x%02x", ord) } split //, $b' "$t" </dev/tty 2>/dev/null) || return 1
+            my $b = ""; my $n;
+            while (1) { $n = sysread(STDIN, my $c, 4096); last unless $n; $b .= $c; last unless $s->can_read(0.003); }
+            exit 2 unless length $b;                              # readable, but nothing to read: end of input
+            print map { sprintf("\\x%02x", ord) } split //, $b' "$t" </dev/tty 2>/dev/null) || {
+            rc=$?; [ "$rc" = 1 ] && { { : </dev/tty; } 2>/dev/null || return 2; return 1; }; return 2; }       # (1: timeout, unless /dev/tty is gone)
         printf -v h '%b' "$h"; INBUF="$INBUF$h"; return 0
     fi
-    if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 1      # (no perl: whole seconds)
-    else t=${t%.*}; [ "${t:-0}" -ge 1 ] 2>/dev/null || t=1; IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || return 1; fi
+    if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 2      # (no perl: whole seconds)
+    else t=${t%.*}; [ "${t:-0}" -ge 1 ] 2>/dev/null || t=1; IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || { rc=$?; [ "$rc" -gt 128 ] && return 1; return 2; }; fi
     INBUF="$INBUF$c"
 }
-in_get() {  # in_get <var> [seconds]: the next character (Enter reads as empty, like read); without seconds it waits; 1 = none
-    if [ -z "$INBUF" ]; then in_fill "${2:-wait}" || { printf -v "$1" '%s' ""; return 1; }; fi
+in_get() {  # in_get <var> [seconds]: the next character (Enter reads as empty, like read); without seconds it waits; 1 = none, 2 = end of input
+    local _r; if [ -z "$INBUF" ]; then in_fill "${2:-wait}"; _r=$?; [ "$_r" = 0 ] || { printf -v "$1" '%s' ""; return "$_r"; }; fi
     local _c=${INBUF:0:1}; INBUF=${INBUF:1}
     case "$_c" in $'\n'|$'\r') _c="" ;; esac
     printf -v "$1" '%s' "$_c"; return 0
@@ -5234,7 +5239,8 @@ bhote_main() {
         tmo=1                                                  # (the 2 s checks below and the auto-close need a short timeout)
         key=""; rc=0
         [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && tmo=0.3        # the star dances in 0.3 s steps
-        in_get key "$tmo" || rc=142
+        in_get key "$tmo"; rc=$?
+        case "$rc" in 0) ;; 2) exit 0 ;; *) rc=142 ;; esac                # (2: the terminal is gone: leave through the trap, which cleans up; do not spin)
         [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
         if [ "$key" = $'\033' ]; then      # an arrow key (ESC [ A..D, ESC O A..D), a mouse report, another sequence, or a lone Esc
             read_soon k2
