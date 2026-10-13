@@ -287,6 +287,11 @@ printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT
 rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
 topic_set "$cf" status later; printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards
 [ "$(topic_get "$cf" deleted)" != 1 ] && [ -z "$(topic_get "$cf" auto_now)" ] && ok "agent cards: a card moved off now (in the panel) stays" || bad "moved card: deleted=$(topic_get "$cf" deleted)"
+rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; topic_new "Waits" "" ""; wf=$TOPIC_DIR/$NEW_TOPIC_ID.topic
+topic_set "$wf" agent Shop; topic_set "$wf" agent_machine "$HOST"; topic_set "$wf" agent_pane w9:p1; topic_set "$wf" status waiting; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
+cf=$(grep -l '^auto_now=1' "$TOPIC_DIR"/*.topic 2>/dev/null | head -1)
+[ -n "$cf" ] && [ "$(topic_get "$cf" status)" = now ] && ok "agent cards: a working agent with only waiting topics gets a card on now" || bad "no card for an agent with only a waiting topic"
+topic_set "$wf" status now; agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: that card goes when a topic of the agent is on now" || bad "card stayed"
 cfg_set AGENT_CARDS off; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}x" > "$AGENT_LOCAL"; rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
 [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: AGENT_CARDS=off makes none" || bad "card with setting off"
 ) && true

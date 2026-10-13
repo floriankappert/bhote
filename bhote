@@ -1304,7 +1304,7 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
-        case "${T_STATUS[$i]}" in now|testing|finished|review|waiting|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
+        case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
     done
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
