@@ -57,7 +57,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   description and the branch. The card keeps its coloured bar and block edges.
   What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
 - Run from a git checkout that is past the tag of its version (local work), the panel and `bhote version` call it by its local build number,
-  `0.9.1.1` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
+  `0.9.1.2 Preview` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
 - After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
   session id no longer hands the old session's topic over.
 - A click on a topic selects it and shows its agent in herdr, like a click on the agent, and leaves the focus on the agent (its grey
