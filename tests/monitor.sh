@@ -172,6 +172,9 @@ cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
   echo x >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
   [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = "0.9.1.2 Preview" ] || exit 2
   exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.1.2 Preview)" || bad "version label: step $?"
+# the monitor bar is built from whole cells, also where the shell counts bytes (bash 3.2 / macOS without a UTF-8 locale cut ■ in half: ��)
+( export LC_ALL=C; mon_bar_set b 7 10 5; [ "$MB_ON" = "■■■■" ] && [ "$MB_OFF" = "■" ] && [ "$b" = "■■■■■" ] ) \
+    && ok "monitor bar: filled and empty cells are whole characters (also in the C locale)" || bad "monitor bar cells: on=$MB_ON off=$MB_OFF"
 # the topic page: a done topic gets actions that make sense; the numbers line up
 mf=$TOPIC_DIR/menutest.topic; printf 'id=menutest\ntitle=Menu\nstatus=done\nupdated=1\ndeleted=0\n' > "$mf"; menu_build "$mf"
 case "${MENU_ITEMS[*]}" in *"start|"*|*"wait|"*|*"slack|"*|*"done|"*) bad "done menu: ${MENU_ITEMS[*]}" ;; *"reopen|"*"next|"*"later|"*"delete|"*) ok "menu: a done topic can be reopened, moved, renamed, deleted" ;; *) bad "done menu: ${MENU_ITEMS[*]}" ;; esac

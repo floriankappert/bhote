@@ -4111,9 +4111,10 @@ dash_caption() {  # dash_caption <text>: ┈┈ Text ┈┈┈┈┈ in grey (Do
     local rest; rest=$(( ${#RULE_LINE} - 4 - ${#1} )); [ "$rest" -lt 1 ] && rest=1
     printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
 }
-mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_FILLED = the cells to colour)
-    local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
-    for (( _i = 0; _i < $4; _i++ )); do _b="${_b}■"; done
+mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_ON / MB_OFF = the filled and the empty cells)
+    local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f; MB_ON=""; MB_OFF=""
+    # (built cell by cell, never cut with ${bar:0:n}: bash 3.2 without a UTF-8 locale counts bytes and splits the ■)
+    for (( _i = 0; _i < $4; _i++ )); do _b="${_b}■"; if [ "$_i" -lt "$_f" ]; then MB_ON="${MB_ON}■"; else MB_OFF="${MB_OFF}■"; fi; done
     printf -v "$1" '%s' "$_b"
 }
 mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a subshell
@@ -4324,7 +4325,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
         [ -z "$tx" ] && [ -n "$note" ] && tx=${note:0:18}           # a deployment that went through: where it came from
         [ -n "$bar" ] || clip_set tx "$tx" $(( w / 2 )); mon_age_set age "$t"
         right="${tx:+$tx · }$age"; dw_set rw "$right"; rightc=$right
-        [ -n "$bar" ] && { barc="${ORANGE}${bar:0:MB_FILLED}${MUTED}${bar:MB_FILLED}${D}"; rightc=${right/"$bar"/"$barc"}; }   # (the bar in colour, the width counted without it)
+        [ -n "$bar" ] && { barc="${ORANGE}${MB_ON}${MUTED}${MB_OFF}${D}"; rightc=${right/"$bar"/"$barc"}; }   # (the bar in colour, the width counted without it)
         lbl="$pj · $lb"; [ "$st" = running ] && [ -n "$note" ] && lbl="$lbl ($note)"                 # what is going live, in brackets behind the name
         clip_set left "$lbl" $(( w - rw - 3 )); dw_set lw "$left"
         pad=$(( w - 2 - lw - rw )); [ "$pad" -lt 1 ] && pad=1
