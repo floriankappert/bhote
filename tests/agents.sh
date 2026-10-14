@@ -330,6 +330,14 @@ topic_new "Test work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t
 pane_tests_running w1:p1 && bad "no live file: no tests" || ok "testing: no status file, no tests running"
 live null; pane_tests_running w1:p1 && ok "testing: a fresh unfinished status file means tests run" || bad "tests not seen"
 tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: tests run in its worktree: the topic is in testing (agent working too)" || bad "now->testing: $(topic_get "$tf" status)"
+# the testing card: one bar per running suite (two at most), the suite's name in front
+printf '{"tree":"Shop","suite":"client","done":8,"total":10,"startedAt":1,"updatedAt":%s000,"ok":null}\n' "$(date +%s)" > "$T/live/Shop.client.json"
+printf '{"tree":"Shop","suite":"lint","done":1,"total":2,"startedAt":1,"updatedAt":%s000,"ok":null}\n' "$(date +%s)" > "$T/live/Shop.lint.json"; tests_sync
+[ "$(cat "$SHARED_DIR/testprog/${HOST}_w1_p1" 2>/dev/null)" = "$(printf '8 10 client\n1 2 lint')" ] && ok "testing: the progress of two suites is written (the first two by name: client, lint)" || bad "testprog: $(cat "$SHARED_DIR/testprog/${HOST}_w1_p1" 2>&1)"
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; AG_N=1; AG_LINES=("$HOST${US}w1:p1${US}idle${US}Shop${US}t"); COLS=50; ROWS=40; NOW=$(date +%s); topics_load
+out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); nb=$(printf '%s\n' "$out" | grep -c '■.*%')
+printf '%s\n' "$out" | grep -q 'client .*80%' && printf '%s\n' "$out" | grep -q 'lint .*50%' && [ "$nb" = 2 ] && ok "testing: the card shows two bars with their percent" || bad "testing bars ($nb): $out"
+rm -f "$T/live/Shop.client.json" "$T/live/Shop.lint.json"; tests_sync
 printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: an idle agent, tests still run: still testing" || bad "testing hold: $(topic_get "$tf" status)"
 live true; tests_sync; [ "$(topic_get "$tf" status)" = review ] && ok "testing: tests done, the agent idle: review" || bad "testing->review: $(topic_get "$tf" status)"
 topic_set "$tf" status now; live null; tests_sync; printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"; live true; tests_sync

@@ -11,6 +11,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - A "Question from …" review card now goes by itself when the question is settled without the agent working again (e.g. `/clear`, an empty prompt): the agent is idle and its pane no longer ends with a question. A pane on another machine: after `FINISHED_MINUTES`.
 
 ### Added
+- The testing card shows a progress bar for each running suite (two at most, the suite's name in front), like the deployment card, from the live status files of the agent's worktree.
 - The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or

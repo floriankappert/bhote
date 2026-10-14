@@ -1331,6 +1331,22 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     done < "$AGENT_LOCAL"
     return 0
 }
+tests_progress_write() {  # tests_progress_write <machine> <pane> <1|0>: the card of a testing topic shows one bar per running suite (two at most);
+    # this writes them for the panels ($SHARED_DIR/testprog/<machine>_<pane>, a line each: done total suite); 0 removes the file
+    local f="$SHARED_DIR/testprog/${1}_${2}" cwd="" p c top dir tree j
+    f=${f//[^A-Za-z0-9_\/.-]/_}
+    [ "$3" = 1 ] || { rm -f "$f"; return 0; }
+    [ -r "$AGENT_CWD" ] && while IFS=$US read -r p c; do [ "$p" = "$2" ] && { cwd=$c; break; }; done < "$AGENT_CWD"
+    [ -n "$cwd" ] || return 0
+    top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || top=$cwd; tree=${top##*/}
+    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
+    mkdir -p "$SHARED_DIR/testprog" 2>/dev/null
+    for j in "$dir/$tree".*.json; do
+        [ -f "$j" ] || continue
+        jq -r 'select((.finished != true) and (.ok == null) and ((.total // 0) > 0) and (((.updatedAt // 0) / 1000) > (now - 30)))
+            | "\(.suite | tostring | gsub("[\u0000-\u001f\u007f]"; " "))\u001f\(.done // 0)\u001f\(.total // 0)"' "$j" 2>/dev/null
+    done | sort | head -2 | awk -F"$US" '{ print $2 " " $3 " " $1 }' > "$f.tmp" && mv "$f.tmp" "$f"
+}
 tests_sync() {  # the status testing follows the test runs: a topic of a local agent goes to testing while tests run in its worktree (the agent
     # works or not), and when they are done back to now (the agent works, or the topic is an agent's own card) or to review (the agent is idle)
     [ -r "$AGENT_LOCAL" ] || return 0
@@ -1339,6 +1355,7 @@ tests_sync() {  # the status testing follows the test runs: a topic of a local a
         case "${T_STATUS[$i]}" in now|testing) ;; *) continue ;; esac
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         f=${T_FILE[$i]}; pane_tests_running "${T_AP[$i]}" && run=1 || run=0
+        tests_progress_write "${T_AM[$i]:-$HOST}" "${T_AP[$i]}" "$run"
         if [ "${T_STATUS[$i]}" = now ]; then
             [ "$run" = 1 ] && [ -z "${T_TN[$i]}" ] && topic_set "$f" status testing
             continue
@@ -1614,6 +1631,20 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
             printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
     fi
+    if [ "$gap" = 1 ] && [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
+        local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
+        while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
+        [ "$tw" -gt 10 ] && tw=10
+        pw=$(( w - 8 - tw - 1 ))
+        while IFS= read -r tl; do
+            td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
+            [ "$tt" -gt 0 ] && [ "$pw" -gt 3 ] || continue
+            clip_set tn "$tsn" "$tw"; printf -v tn '%-*s' "$tw" "$tn"
+            pf=$(( (td * pw + tt / 2) / tt )); [ "$pf" -gt "$pw" ] && pf=$pw
+            bf=""; be=""; for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
+            printf '%s%s%s%s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
+        done <<< "$TI_TBARS"
+    fi
     if [ "$gap" = 1 ] && [ -n "${11:-}${12:-}" ]; then ti_subcard "$rm" "$bg" "${11:-}" "${12:-}" "${TI_REF:-}" "$w" "$bl"; fi
     if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi
 }
@@ -1727,7 +1758,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
+    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1736,7 +1767,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
     [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     local TI_FRAME=1 TI_OPEN=0
     for (( i = 0; i < T_N; i++ )); do
-        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""
+        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""; TI_TBARS=""
         gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
@@ -1769,6 +1800,10 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
         fi
         TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMETA=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
+        if [ "$st" = testing ] && [ -n "${T_AP[$i]}" ]; then     # the bars of the suites that run (tests_sync writes them, one line each: done total suite)
+            _tp=${T_AM[$i]:-$HOST}_${T_AP[$i]}; _tp=$SHARED_DIR/testprog/${_tp//[^A-Za-z0-9_-]/_}
+            [ -r "$_tp" ] && while IFS= read -r rline; do TI_TBARS="$TI_TBARS${TI_TBARS:+$'\n'}${rline//[[:cntrl:]]/}"; done < "$_tp"
+        fi
         case "$st" in now|testing|finished)                      # a card of an agent at work (finished: its agent has stopped): like herdr's agent card (icon, machine · agent, ∟ the topic)
             if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ]; then
                 TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
