@@ -24,7 +24,7 @@ fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.8.0}
-LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.1.1}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.1.2 for the next build
+LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.1.2 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.1.3 for the next build
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=4
@@ -988,7 +988,7 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
 # the sync state, both agent files and the topics. The screen functions then only print. (Every awk/cat/wc/cut that the
 # drawing used to start cost 5 to 15 ms; a key press took 300 ms.)
 # What the panel calls its version: from a git checkout that is past the tag of its VERSION (local work, a branch, a merge of
-# several) it is LOCAL_BUILD ("0.9.1.1", the fourth number counts the builds); an install from a release (brew, pacman, a checkout on the tag) says VERSION.
+# several) it is LOCAL_BUILD ("0.9.1.2 Preview", the fourth number counts the builds); an install from a release (brew, pacman, a checkout on the tag) says VERSION.
 version_label_set() {
     VERSION_LABEL=$VERSION; [ -n "${BHOTE_NO_PREVIEW:-}" ] && return 0     # (the smoke tests: their pictures must not depend on the checkout)
     local p=${BASH_SOURCE[0]:-$0} l d maj min rest
@@ -1304,7 +1304,7 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
-        case "${T_STATUS[$i]}" in now|testing|finished|review|waiting|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
+        case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
     done
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
@@ -1331,6 +1331,22 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     done < "$AGENT_LOCAL"
     return 0
 }
+tests_progress_write() {  # tests_progress_write <machine> <pane> <1|0>: the card of a testing topic shows one bar per running suite (two at most);
+    # this writes them for the panels ($SHARED_DIR/testprog/<machine>_<pane>, a line each: done total suite); 0 removes the file
+    local f="$SHARED_DIR/testprog/${1}_${2}" cwd="" p c top dir tree j
+    f=${f//[^A-Za-z0-9_\/.-]/_}
+    [ "$3" = 1 ] || { rm -f "$f"; return 0; }
+    [ -r "$AGENT_CWD" ] && while IFS=$US read -r p c; do [ "$p" = "$2" ] && { cwd=$c; break; }; done < "$AGENT_CWD"
+    [ -n "$cwd" ] || return 0
+    top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null) || top=$cwd; tree=${top##*/}
+    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
+    mkdir -p "$SHARED_DIR/testprog" 2>/dev/null
+    for j in "$dir/$tree".*.json; do
+        [ -f "$j" ] || continue
+        jq -r 'select((.finished != true) and (.ok == null) and ((.total // 0) > 0) and (((.updatedAt // 0) / 1000) > (now - 30)))
+            | "\(.suite | tostring | gsub("[\u0000-\u001f\u007f]"; " "))\u001f\(.done // 0)\u001f\(.total // 0)"' "$j" 2>/dev/null
+    done | sort | head -2 | awk -F"$US" '{ print $2 " " $3 " " $1 }' > "$f.tmp" && mv "$f.tmp" "$f"
+}
 tests_sync() {  # the status testing follows the test runs: a topic of a local agent goes to testing while tests run in its worktree (the agent
     # works or not), and when they are done back to now (the agent works, or the topic is an agent's own card) or to review (the agent is idle)
     [ -r "$AGENT_LOCAL" ] || return 0
@@ -1339,6 +1355,7 @@ tests_sync() {  # the status testing follows the test runs: a topic of a local a
         case "${T_STATUS[$i]}" in now|testing) ;; *) continue ;; esac
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         f=${T_FILE[$i]}; pane_tests_running "${T_AP[$i]}" && run=1 || run=0
+        tests_progress_write "${T_AM[$i]:-$HOST}" "${T_AP[$i]}" "$run"
         if [ "${T_STATUS[$i]}" = now ]; then
             [ "$run" = 1 ] && [ -z "${T_TN[$i]}" ] && topic_set "$f" status testing
             continue
@@ -1456,6 +1473,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             now_idle_follow
             agent_gone_follow
             finished_expire
+            auto_question_follow
         fi
         if [ "$lead" = 0 ]; then kharka_follow_stop; sleep "$every_l"; continue; fi   # not the lead: nobody takes a poke here (and nobody follows kharka), one sleep
         w=0; while [ "$w" -lt $(( every_l * 5 )) ]; do         # wait in 0.2 s steps: a poke (agent event, CLI change) ends it
@@ -1613,6 +1631,20 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
             printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
     fi
+    if [ "$gap" = 1 ] && [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
+        local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
+        while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
+        [ "$tw" -gt 10 ] && tw=10
+        pw=$(( w - 8 - tw - 1 ))
+        while IFS= read -r tl; do
+            td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
+            [ "$tt" -gt 0 ] && [ "$pw" -gt 3 ] || continue
+            clip_set tn "$tsn" "$tw"; printf -v tn '%-*s' "$tw" "$tn"
+            pf=$(( (td * pw + tt / 2) / tt )); [ "$pf" -gt "$pw" ] && pf=$pw
+            bf=""; be=""; for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
+            printf '%s%s%s%s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
+        done <<< "$TI_TBARS"
+    fi
     if [ "$gap" = 1 ] && [ -n "${11:-}${12:-}" ]; then ti_subcard "$rm" "$bg" "${11:-}" "${12:-}" "${TI_REF:-}" "$w" "$bl"; fi
     if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi
 }
@@ -1726,7 +1758,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
 topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
+    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
@@ -1735,7 +1767,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
     [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     local TI_FRAME=1 TI_OPEN=0
     for (( i = 0; i < T_N; i++ )); do
-        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""
+        st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""; TI_TBARS=""
         gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
@@ -1768,6 +1800,10 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
             rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
         fi
         TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMETA=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
+        if [ "$st" = testing ] && [ -n "${T_AP[$i]}" ]; then     # the bars of the suites that run (tests_sync writes them, one line each: done total suite)
+            _tp=${T_AM[$i]:-$HOST}_${T_AP[$i]}; _tp=$SHARED_DIR/testprog/${_tp//[^A-Za-z0-9_-]/_}
+            [ -r "$_tp" ] && while IFS= read -r rline; do TI_TBARS="$TI_TBARS${TI_TBARS:+$'\n'}${rline//[[:cntrl:]]/}"; done < "$_tp"
+        fi
         case "$st" in now|testing|finished)                      # a card of an agent at work (finished: its agent has stopped): like herdr's agent card (icon, machine · agent, ∟ the topic)
             if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ]; then
                 TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
@@ -2748,25 +2784,30 @@ HAVE_PERL=""; command -v perl >/dev/null 2>&1 && HAVE_PERL=1
 # Input comes through INBUF: one wait takes everything that is there at once (a held arrow key, a drag, fast typing), in ONE
 # perl call on bash 3.2 (it waits whole seconds only); the keys are then taken from the buffer without starting anything.
 INBUF=""
-in_fill() {  # in_fill <seconds | wait>: waits for input, then puts all that is there into INBUF; 1 = nothing came in time
-    local h c t=$1
+in_fill() {  # in_fill <seconds | wait>: waits for input, then puts all that is there into INBUF; 1 = nothing came in time, 2 = end of input (the
+    # terminal is gone: hung up, closed, /dev/tty cannot be opened). A caller that loops must stop on 2: a timeout is normal, EOF returns at once, forever.
+    local h c t=$1 rc
     if [ "${BASH_VERSINFO[0]}" -ge 4 ]; then
-        if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 1; else IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || return 1; fi
+        if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty 2>/dev/null || return 2
+        else IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || { rc=$?; [ "$rc" -gt 128 ] && return 1; return 2; }; fi     # (rc > 128: the timeout)
         INBUF+=$c; while IFS= read -rsn1 -d '' -t 0.005 c </dev/tty 2>/dev/null; do INBUF+=$c; done; return 0
     fi
     if [ -n "$HAVE_PERL" ]; then
         h=$(perl -e 'use IO::Select; my $t = shift; my $s = IO::Select->new(\*STDIN);
             exit 1 unless ($t eq "wait" ? $s->can_read() : $s->can_read($t));
-            my $b = ""; while (1) { my $n = sysread(STDIN, my $c, 4096); last unless $n; $b .= $c; last unless $s->can_read(0.003); }
-            exit 1 unless length $b; print map { sprintf("\\x%02x", ord) } split //, $b' "$t" </dev/tty 2>/dev/null) || return 1
+            my $b = ""; my $n;
+            while (1) { $n = sysread(STDIN, my $c, 4096); last unless $n; $b .= $c; last unless $s->can_read(0.003); }
+            exit 2 unless length $b;                              # readable, but nothing to read: end of input
+            print map { sprintf("\\x%02x", ord) } split //, $b' "$t" </dev/tty 2>/dev/null) || {
+            rc=$?; [ "$rc" = 1 ] && { { : </dev/tty; } 2>/dev/null || return 2; return 1; }; return 2; }       # (1: timeout, unless /dev/tty is gone)
         printf -v h '%b' "$h"; INBUF="$INBUF$h"; return 0
     fi
-    if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 1      # (no perl: whole seconds)
-    else t=${t%.*}; [ "${t:-0}" -ge 1 ] 2>/dev/null || t=1; IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || return 1; fi
+    if [ "$t" = wait ]; then IFS= read -rsn1 -d '' c </dev/tty || return 2      # (no perl: whole seconds)
+    else t=${t%.*}; [ "${t:-0}" -ge 1 ] 2>/dev/null || t=1; IFS= read -rsn1 -d '' -t "$t" c </dev/tty 2>/dev/null || { rc=$?; [ "$rc" -gt 128 ] && return 1; return 2; }; fi
     INBUF="$INBUF$c"
 }
-in_get() {  # in_get <var> [seconds]: the next character (Enter reads as empty, like read); without seconds it waits; 1 = none
-    if [ -z "$INBUF" ]; then in_fill "${2:-wait}" || { printf -v "$1" '%s' ""; return 1; }; fi
+in_get() {  # in_get <var> [seconds]: the next character (Enter reads as empty, like read); without seconds it waits; 1 = none, 2 = end of input
+    local _r; if [ -z "$INBUF" ]; then in_fill "${2:-wait}"; _r=$?; [ "$_r" = 0 ] || { printf -v "$1" '%s' ""; return "$_r"; }; fi
     local _c=${INBUF:0:1}; INBUF=${INBUF:1}
     case "$_c" in $'\n'|$'\r') _c="" ;; esac
     printf -v "$1" '%s' "$_c"; return 0
@@ -4070,9 +4111,10 @@ dash_caption() {  # dash_caption <text>: ┈┈ Text ┈┈┈┈┈ in grey (Do
     local rest; rest=$(( ${#RULE_LINE} - 4 - ${#1} )); [ "$rest" -lt 1 ] && rest=1
     printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
 }
-mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_FILLED = the cells to colour)
-    local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f
-    for (( _i = 0; _i < $4; _i++ )); do _b="${_b}■"; done
+mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_ON / MB_OFF = the filled and the empty cells)
+    local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f; MB_ON=""; MB_OFF=""
+    # (built cell by cell, never cut with ${bar:0:n}: bash 3.2 without a UTF-8 locale counts bytes and splits the ■)
+    for (( _i = 0; _i < $4; _i++ )); do _b="${_b}■"; if [ "$_i" -lt "$_f" ]; then MB_ON="${MB_ON}■"; else MB_OFF="${MB_OFF}■"; fi; done
     printf -v "$1" '%s' "$_b"
 }
 mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a subshell
@@ -4168,6 +4210,33 @@ finished_expire() {  # a recently finished card is dismissed by itself after FIN
     done
     return 0
 }
+auto_question_follow() {  # a "Question from" card of bhote (auto) goes when its question is settled although the agent never worked again (answered
+    # and cleared with /clear, a new prompt in another place, an empty prompt): the agent is idle and its pane no longer ends with a question (seen in two
+    # looks 8 s apart). A pane on another machine cannot be read: there the card goes after FINISHED_MINUTES (0: never). A blocked agent still waits: stays.
+    [ -r "$AGENT_LOCAL" ] || return 0
+    local i f id m p st d="$SHARED_DIR/qidle" t0 now fq mins; mkdir -p "$d" 2>/dev/null; now=$(date +%s); topics_load
+    cfg_var mins FINISHED_MINUTES 30; num_set mins "$mins" 30
+    for (( i = 0; i < T_N; i++ )); do
+        id=${T_ID[$i]}; f=${T_FILE[$i]}
+        [ "${T_STATUS[$i]}" = review ] && [ -n "${T_AP[$i]}" ] && [ "$(topic_get "$f" auto)" = 1 ] || { rm -f "$d/$id"; continue; }
+        m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
+        st=$(awk -F"$US" -v m="$m" -v p="$p" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
+        case "$st" in
+            idle|done)
+                if [ "$m" != "$HOST" ]; then
+                    [ "$mins" -gt 0 ] && [ $(( now - ${T_UPD[$i]:-$now} )) -ge $(( mins * 60 )) ] && topic_set "$f" deleted 1
+                    continue
+                fi
+                fq=$(herdr pane read "$p" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text)
+                if [ -n "$fq" ]; then rm -f "$d/$id"; continue; fi
+                t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
+                if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"
+                elif [ $(( now - $(num_or "$t0" "$now") )) -ge 8 ]; then rm -f "$d/$id"; topic_set "$f" deleted 1; fi ;;
+            *) rm -f "$d/$id" ;;
+        esac
+    done
+    return 0
+}
 deploy_wait_set() {  # deploy_wait_set <topic file> [label]: the topic waits for a deployment of its project (the label narrows it: Backend, Production)
     local f=$1 now; now=$(date +%s)
     topic_set "$f" status waiting; topic_set "$f" waiting_for "Deployment${2:+ $2}"; topic_set "$f" waiting_since "$now"
@@ -4256,7 +4325,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
         [ -z "$tx" ] && [ -n "$note" ] && tx=${note:0:18}           # a deployment that went through: where it came from
         [ -n "$bar" ] || clip_set tx "$tx" $(( w / 2 )); mon_age_set age "$t"
         right="${tx:+$tx · }$age"; dw_set rw "$right"; rightc=$right
-        [ -n "$bar" ] && { barc="${ORANGE}${bar:0:MB_FILLED}${MUTED}${bar:MB_FILLED}${D}"; rightc=${right/"$bar"/"$barc"}; }   # (the bar in colour, the width counted without it)
+        [ -n "$bar" ] && { barc="${ORANGE}${MB_ON}${MUTED}${MB_OFF}${D}"; rightc=${right/"$bar"/"$barc"}; }   # (the bar in colour, the width counted without it)
         lbl="$pj · $lb"; [ "$st" = running ] && [ -n "$note" ] && lbl="$lbl ($note)"                 # what is going live, in brackets behind the name
         clip_set left "$lbl" $(( w - rw - 3 )); dw_set lw "$left"
         pad=$(( w - 2 - lw - rw )); [ "$pad" -lt 1 ] && pad=1
@@ -5206,7 +5275,8 @@ bhote_main() {
         tmo=1                                                  # (the 2 s checks below and the auto-close need a short timeout)
         key=""; rc=0
         [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && tmo=0.3        # the star dances in 0.3 s steps
-        in_get key "$tmo" || rc=142
+        in_get key "$tmo"; rc=$?
+        case "$rc" in 0) ;; 2) exit 0 ;; *) rc=142 ;; esac                # (2: the terminal is gone: leave through the trap, which cleans up; do not spin)
         [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
         if [ "$key" = $'\033' ]; then      # an arrow key (ESC [ A..D, ESC O A..D), a mouse report, another sequence, or a lone Esc
             read_soon k2

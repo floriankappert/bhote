@@ -5,7 +5,14 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Fixed
+- macOS: the progress bars in the Deployments and Tests lists showed `��` where the shell counts bytes (no UTF-8 locale): the bar is no longer cut with `${bar:0:n}`.
+- A panel whose terminal is gone (pane closed, process still alive) no longer spins at full CPU: input reads tell the end of input (`in_fill`/`in_get` return 2) from a timeout (1), and the panel cleans up and exits on it. New suite `tests/input.sh`.
+- A working agent whose topics are all waiting gets a card on now (it works on something that has no topic); it goes when a topic of the agent is on now, testing, review or next.
+- A "Question from …" review card now goes by itself when the question is settled without the agent working again (e.g. `/clear`, an empty prompt): the agent is idle and its pane no longer ends with a question. A pane on another machine: after `FINISHED_MINUTES`.
+
 ### Added
+- The testing card shows a progress bar for each running suite (two at most, the suite's name in front), like the deployment card, from the live status files of the agent's worktree.
 - The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
   the focus (read from herdr once a second when idle).
 - A menu for a topic over the list, with the actions of its page: key `m`, the right mouse button, or the ⋮ button on the selected or
@@ -52,7 +59,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   description and the branch. The card keeps its coloured bar and block edges.
   What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
 - Run from a git checkout that is past the tag of its version (local work), the panel and `bhote version` call it by its local build number,
-  `0.9.1.1` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
+  `0.9.1.2 Preview` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
 - After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
   session id no longer hands the old session's topic over.
 - A click on a topic selects it and shows its agent in herdr, like a click on the agent, and leaves the focus on the agent (its grey

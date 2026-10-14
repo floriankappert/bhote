@@ -287,6 +287,11 @@ printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT
 rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards; cf=$(ls "$TOPIC_DIR"/*.topic | head -1)
 topic_set "$cf" status later; printf '%s\n' "$HOST${US}w9:p1${US}idle${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; agent_cards
 [ "$(topic_get "$cf" deleted)" != 1 ] && [ -z "$(topic_get "$cf" auto_now)" ] && ok "agent cards: a card moved off now (in the panel) stays" || bad "moved card: deleted=$(topic_get "$cf" deleted)"
+rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}Next step" > "$AGENT_LOCAL"; topic_new "Waits" "" ""; wf=$TOPIC_DIR/$NEW_TOPIC_ID.topic
+topic_set "$wf" agent Shop; topic_set "$wf" agent_machine "$HOST"; topic_set "$wf" agent_pane w9:p1; topic_set "$wf" status waiting; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
+cf=$(grep -l '^auto_now=1' "$TOPIC_DIR"/*.topic 2>/dev/null | head -1)
+[ -n "$cf" ] && [ "$(topic_get "$cf" status)" = now ] && ok "agent cards: a working agent with only waiting topics gets a card on now" || bad "no card for an agent with only a waiting topic"
+topic_set "$wf" status now; agent_cards; [ "$(topic_get "$cf" deleted)" = 1 ] && ok "agent cards: that card goes when a topic of the agent is on now" || bad "card stayed"
 cfg_set AGENT_CARDS off; printf '%s\n' "$HOST${US}w9:p1${US}working${US}Shop (main)${US}x" > "$AGENT_LOCAL"; rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "$(( $(date +%s) - 20 ))" > "$RUN_DIR/cards/w9_p1"; agent_cards
 [ "$(ls "$TOPIC_DIR"/*.topic 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && ok "agent cards: AGENT_CARDS=off makes none" || bad "card with setting off"
 ) && true
@@ -325,6 +330,14 @@ topic_new "Test work" "" "x"; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t
 pane_tests_running w1:p1 && bad "no live file: no tests" || ok "testing: no status file, no tests running"
 live null; pane_tests_running w1:p1 && ok "testing: a fresh unfinished status file means tests run" || bad "tests not seen"
 tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: tests run in its worktree: the topic is in testing (agent working too)" || bad "now->testing: $(topic_get "$tf" status)"
+# the testing card: one bar per running suite (two at most), the suite's name in front
+printf '{"tree":"Shop","suite":"client","done":8,"total":10,"startedAt":1,"updatedAt":%s000,"ok":null}\n' "$(date +%s)" > "$T/live/Shop.client.json"
+printf '{"tree":"Shop","suite":"lint","done":1,"total":2,"startedAt":1,"updatedAt":%s000,"ok":null}\n' "$(date +%s)" > "$T/live/Shop.lint.json"; tests_sync
+[ "$(cat "$SHARED_DIR/testprog/${HOST}_w1_p1" 2>/dev/null)" = "$(printf '8 10 client\n1 2 lint')" ] && ok "testing: the progress of two suites is written (the first two by name: client, lint)" || bad "testprog: $(cat "$SHARED_DIR/testprog/${HOST}_w1_p1" 2>&1)"
+printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; AG_N=1; AG_LINES=("$HOST${US}w1:p1${US}idle${US}Shop${US}t"); COLS=50; ROWS=40; NOW=$(date +%s); topics_load
+out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); nb=$(printf '%s\n' "$out" | grep -c '■.*%')
+printf '%s\n' "$out" | grep -q 'client .*80%' && printf '%s\n' "$out" | grep -q 'lint .*50%' && [ "$nb" = 2 ] && ok "testing: the card shows two bars with their percent" || bad "testing bars ($nb): $out"
+rm -f "$T/live/Shop.client.json" "$T/live/Shop.lint.json"; tests_sync
 printf '%s\n' "$HOST${US}w1:p1${US}idle${US}Shop${US}t" > "$AGENT_LOCAL"; tests_sync; [ "$(topic_get "$tf" status)" = testing ] && ok "testing: an idle agent, tests still run: still testing" || bad "testing hold: $(topic_get "$tf" status)"
 live true; tests_sync; [ "$(topic_get "$tf" status)" = review ] && ok "testing: tests done, the agent idle: review" || bad "testing->review: $(topic_get "$tf" status)"
 topic_set "$tf" status now; live null; tests_sync; printf '%s\n' "$HOST${US}w1:p1${US}working${US}Shop${US}t" > "$AGENT_LOCAL"; live true; tests_sync
@@ -508,6 +521,15 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$sl" status)" = review ] && [ "$(topic_get "$dp" status)" = review ] || exit 3                          # (an answer in Slack, a finished deployment: stay)
   mk "Question from bhote" w5:p1; q=$mkf; topic_set "$q" auto 1; setst idle; review_follow; setst working; review_follow; [ "$(topic_get "$q" deleted)" = 1 ] || exit 4
   exit 0 ) && ok "review: it goes by itself when the agent works again after it was idle" || bad "review follow: step $?"
+# an auto question card goes when its agent is idle and the pane shows no question any more (two looks 8 s apart); a blocked agent keeps it; another machine: after FINISHED_MINUTES
+( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/qidle"; herdr() { return 0; }
+  mk() { topic_new "Question from bhote" "" ""; mkf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mkf" auto 1; topic_set "$mkf" status review; topic_set "$mkf" agent_machine "$1"; topic_set "$mkf" agent_pane "$2"; }
+  mk "$HOST" w5:p1; q=$mkf; mk "$HOST" w6:p1; b=$mkf
+  printf '%s\n%s\n' "$HOST${US}w5:p1${US}idle${US}b${US}x" "$HOST${US}w6:p1${US}blocked${US}b${US}x" > "$AGENT_LOCAL"
+  auto_question_follow; [ "$(topic_get "$q" deleted)" != 1 ] || exit 1                                                    # (first look only notes it)
+  printf '%s\n' "$(( $(date +%s) - 20 ))" > "$SHARED_DIR/qidle/$(basename "$q" .topic)"
+  auto_question_follow; [ "$(topic_get "$q" deleted)" = 1 ] && [ "$(topic_get "$b" deleted)" != 1 ] || exit 2
+  exit 0 ) && ok "auto question: it goes when the agent is idle and nothing is asked any more" || bad "auto question follow: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
 ( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"
