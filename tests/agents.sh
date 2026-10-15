@@ -537,6 +537,13 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topics_load; agent_reopen_pick s1 w4:p1 "$HOST" 1; [ "${T_TITLE[$REOPEN_IDX]}" = New ] || exit 1                      # (the newest of this agent, not another agent's)
   topic_set "$o" status now; topics_load; agent_reopen_pick s1 w4:p1 "$HOST" 1; [ "$REOPEN_IDX" = -1 ] || exit 2         # (it has a card on now already: no second one)
   exit 0 ) && ok "agent cards: of several finished cards only the newest of an agent reopens" || bad "reopen pick: step $?"
+# the old ones (ARCHIVE_DAYS) are a section of their own under Done: a caption, the count and the key of the search
+( rm -f "$TOPIC_DIR"/*.topic; NOW=$(date +%s); COLS=50; FIND_KEY_SHOW="Ctrl+T"; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45)
+  topic_new "Fresh" "" ""; topic_new "Ancient" "" ""; af="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$af" status later; topic_set "$af" updated $(( NOW - 30 * 86400 ))
+  topics_load; [ "$(archived_count)" = 1 ] || exit 1
+  out=$(archived_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Archived"*"1 archived · Ctrl+T search"*) ;; *) exit 2 ;; esac
+  topic_set "$af" updated "$NOW"; topics_load; [ -z "$(archived_block)" ] || exit 3                                      # (nothing archived: no section)
+  exit 0 ) && ok "archived: its own section under Done (caption, count, search key)" || bad "archived section: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
 ( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"

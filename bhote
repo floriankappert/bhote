@@ -1821,10 +1821,6 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
     done
     TI_AGN=""
-    if [ "${PLAN_ARCH:-0}" -gt 0 ] && [ "$mode" != cards ]; then                        # where the old ones are
-        local rest="$PLAN_ARCH archived"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
-        printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
-    fi
 }
 done_mc() {  # done_mc <topic index>: DONE_MC = the short code of the machine whose agent did it (MAC, OMR), only with more than one machine
     local _m=${T_AM[$1]:-}; DONE_MC=""; [ -n "$_m" ] || return 0
@@ -1866,6 +1862,22 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     if [ "$all" -gt "$n" ]; then more_row done $(( all - n ))
     else local cap; num_set cap "${U_DONE_MAX:-}" 4; [ "$all" -gt "$cap" ] && more_row done 0; fi
     return 0
+}
+archived_count() {  # archived_count: the topics that are not shown any more because nobody touched them for ARCHIVE_DAYS (what topics_plan counts as PLAN_ARCH)
+    local i n=0 st
+    for (( i = 0; i < T_N; i++ )); do
+        st=${T_STATUS[$i]}
+        [ "$st" = later ] && [ "${T_DM[$i]:-}" = 1 ] && continue
+        in_scope "$i" || continue
+        case "$st" in review|now|testing|finished) continue ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && continue ;; esac
+        topic_archived "$i" && n=$(( n + 1 ))
+    done
+    printf '%s' "$n"
+}
+archived_block() {  # the Archived section under Done: a caption and how many there are, with the key of the search that finds them
+    local n rest; n=$(archived_count); [ "$n" -gt 0 ] || return 0
+    rest="$n archived"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
+    dash_caption Archived; printf '  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
     local art=(".-----.  .-----.  zZ" "| -_- |  | u_u | z" "'--+--'  '--+--'" "  /|\\      /|\\") l in=$(( ${COLS:-44} - 4 ))
@@ -2352,9 +2364,9 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
     else bottom=$(view_bottom); printf '%s\n' "$bkey" > "$RUN_DIR/bottom.key" 2>/dev/null; printf '%s' "$bottom" > "$RUN_DIR/bottom.out" 2>/dev/null; fi
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
-    num_set dn "${U_DONE_MAX:-}" 4; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
-    while [ "$dh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
-        dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
+    num_set dn "${U_DONE_MAX:-}" 4; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"; archived_block); [ -n "$dblk" ] && count_lines dh "$dblk"
+    while [ "$dh" -gt 0 ] && [ "$dn" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
+        dn=$(( dn - 1 )); dblk=$(done_block "$dn"; archived_block); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
     done
     local mblk mh=0; mblk=$(monitors_block); [ -n "$mblk" ] && count_lines mh "$mblk"
     [ "$mh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh - mh )) -lt $(( th < 6 ? th : 6 )) ] && { mblk=""; mh=0; }   # low: no monitors

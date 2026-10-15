@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Changed
+- Archived is a section of its own under Done (a caption, the count and the key of the search), no longer a grey line below the lists.
 - The lines (Next, Waiting, Later) sit at the bottom, docked above Done; the cards (review, now, testing, deploying, finished) are on top. The agent divider and the rule above the keys are dotted like the captions; the jump key at the bottom right is gone.
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
