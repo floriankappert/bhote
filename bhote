@@ -2345,8 +2345,8 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
     local _n=0 _l; while IFS= read -r _l; do _n=$(( _n + 1 )); done <<< "$2"; printf -v "$1" '%s' "$_n"
 }
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
-    local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() tz=() n=0 line
-    head=$(view_head); topics=$(topics_block)
+    local head topics lists bottom dblk hh th lh=0 bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() tz=() n=0 line lsel=-1
+    head=$(view_head); topics=$(topics_block cards); lists=$(topics_block lists)
     local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}|${HOVER_BTN:-0}" ck=""   # (the agents' area and the keys do not depend on the selection)
     { IFS= read -r ck < "$RUN_DIR/bottom.key"; } 2>/dev/null
     if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
@@ -2358,9 +2358,12 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     done
     local mblk mh=0; mblk=$(monitors_block); [ -n "$mblk" ] && count_lines mh "$mblk"
     [ "$mh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh - mh )) -lt $(( th < 6 ? th : 6 )) ] && { mblk=""; mh=0; }   # low: no monitors
-    avail=$(( ${ROWS:-40} - hh - bh - dh - mh ))
+    [ -n "$lists" ] && count_lines lh "$lists"
+    local lcut=$lh need=$(( th < 6 ? th : 6 ))                  # the lines (next, waiting, later) sit at the bottom above Done; low: they lose their last rows, the cards keep room
+    [ $(( ${ROWS:-40} - hh - bh - dh - mh - lcut )) -lt "$need" ] && { lcut=$(( ${ROWS:-40} - hh - bh - dh - mh - need )); [ "$lcut" -lt 0 ] && lcut=0; }
+    avail=$(( ${ROWS:-40} - hh - bh - dh - mh - lcut ))
     case "$th:$topics" in *"the agents are bored"*) [ "$th" -gt "$avail" ] && {   # no room for the bored agents: their line only
-        topics=$(BORED_SMALL=1 topics_block); count_lines th "$topics"; } ;; esac
+        topics=$(BORED_SMALL=1 topics_block cards); count_lines th "$topics"; } ;; esac
     printf '%s\n' "$head"; VP_ROW=$hh; VP_MAP=""; VP_SPIN=""
     view_lines tl tr sel "$topics"; n=${#tl[@]}
     if [ "$th" -le "$avail" ]; then
@@ -2382,6 +2385,7 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
         view_put 0 $(( n < avail ? n : avail ))
     fi
     for (( i = 0; i < pad; i++ )); do printf '\n'; done; VP_ROW=$(( VP_ROW + pad ))
+    [ "$lcut" -gt 0 ] && { view_lines tl tr lsel "$lists"; view_put 0 "$lcut"; }           # the lines of next, waiting and later, docked above Done
     [ "$dh" -gt 0 ] && { view_lines tl tr sel "$dblk"; view_put 0 "${#tl[@]}"; }
     [ "$mh" -gt 0 ] && { view_lines tl tr sel "$mblk"; view_put 0 "${#tl[@]}"; }          # (through the map: the captions are buttons)
     printf '%s' "$VP_MAP" 2>/dev/null > "$RUN_DIR/tmap"           # the topics' rows on screen: a click selects one

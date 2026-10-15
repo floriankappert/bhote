@@ -6,9 +6,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Changed
+- The lines (Next, Waiting, Later) sit at the bottom, docked above Done; the cards (review, now, testing, deploying, finished) are on top. The agent divider and the rule above the keys are dotted like the captions; the jump key at the bottom right is gone.
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
 ### Fixed
+- An agent with several recently finished cards no longer reopens all of them when it works again: only the newest comes back on now (two cards for one agent in NOW).
 - macOS: the progress bars in the Deployments and Tests lists showed `��` where the shell counts bytes (no UTF-8 locale): the bar is no longer cut with `${bar:0:n}`.
 - A panel whose terminal is gone (pane closed, process still alive) no longer spins at full CPU: input reads tell the end of input (`in_fill`/`in_get` return 2) from a timeout (1), and the panel cleans up and exits on it. New suite `tests/input.sh`.
 - A working agent whose topics are all waiting gets a card on now (it works on something that has no topic); it goes when a topic of the agent is on now, testing, review or next.
