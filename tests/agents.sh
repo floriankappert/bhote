@@ -530,6 +530,13 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "$(( $(date +%s) - 20 ))" > "$SHARED_DIR/qidle/$(basename "$q" .topic)"
   auto_question_follow; [ "$(topic_get "$q" deleted)" = 1 ] && [ "$(topic_get "$b" deleted)" != 1 ] || exit 2
   exit 0 ) && ok "auto question: it goes when the agent is idle and nothing is asked any more" || bad "auto question follow: step $?"
+# an agent with several recently finished cards: only the newest comes back on now when it works again (not all of them: two cards for one agent), none when it has one on now
+( rm -f "$TOPIC_DIR"/*.topic
+  mk() { topic_new "$1" "" ""; mkf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mkf" agent_pane w4:p1; topic_set "$mkf" agent_machine "$HOST"; topic_set "$mkf" agent_session s1; topic_set "$mkf" status "$2"; topic_set "$mkf" updated "$3"; }
+  mk Old finished 100; o=$mkf; mk New finished 200; n=$mkf; mk Other finished 300; ot=$mkf; topic_set "$ot" agent_session s9; topic_set "$ot" agent_pane w5:p1
+  topics_load; agent_reopen_pick s1 w4:p1 "$HOST" 1; [ "${T_TITLE[$REOPEN_IDX]}" = New ] || exit 1                      # (the newest of this agent, not another agent's)
+  topic_set "$o" status now; topics_load; agent_reopen_pick s1 w4:p1 "$HOST" 1; [ "$REOPEN_IDX" = -1 ] || exit 2         # (it has a card on now already: no second one)
+  exit 0 ) && ok "agent cards: of several finished cards only the newest of an agent reopens" || bad "reopen pick: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
 ( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"

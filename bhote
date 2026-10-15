@@ -1760,19 +1760,22 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
         printf '\035%s\035%s  %s●%s%s %s%s%s%*s%s%s%s %s\n' "${T_ID[$i]}" "$CARDHOV" "$dc" "$X" "$CARDHOV" "$BOLD$LSEL" "$t" "$X$CARDHOV" $(( w - 5 - tw - ${#tm} )) "" "$DSEL" "$tm" "$X$CARDHOV" "$X"
     else printf '\035%s\035  %s●%s %s%s%s%*s%s%s%s\n' "${T_ID[$i]}" "$dc" "$X" "$TITLE" "$t" "$X" $(( w - 5 - tw - ${#tm} )) "" "$D" "$tm" "$X"; fi
 }
-topics_block() {  # the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below
-    local i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
+topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below.
+    # cards: the cards (review, now, testing, deploying, finished), lists: the lines (next, waiting, later) and the archive note; the frame puts the
+    # cards on top and the lists at the bottom, above Done. Without an argument: both, in order (the tests).
+    local mode=${1:-all} i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
-    if [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
+    if [ "$mode" != lists ] && [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
         printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
     fi
-    [ "$open" -gt 0 ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
+    [ "$open" -gt 0 ] || [ "$mode" = lists ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
     local TI_FRAME=1 TI_OPEN=0
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""; TI_TBARS=""
         gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
+        case "$gk" in next|waiting|later) [ "$mode" = cards ] && continue ;; *) [ "$mode" = lists ] && continue ;; esac   # (cards on top, the lines at the bottom)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
         if [ -n "${PLAN_BEFORE[$i]:-}" ]; then pn=PLAN_N_${PLAN_BEFORE[$i]}; more_row "${PLAN_BEFORE[$i]}" $(( ${!pn} - ${LINE_MAX:-10} )); fi   # a closed group: "+N more" after the last shown
         [ "${PLAN_VIS[$i]}" = 1 ] || continue
@@ -1818,7 +1821,7 @@ topics_block() {  # the topics on now, grouped by status (review, now, next, wai
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
     done
     TI_AGN=""
-    if [ "${PLAN_ARCH:-0}" -gt 0 ]; then                        # where the old ones are
+    if [ "${PLAN_ARCH:-0}" -gt 0 ] && [ "$mode" != cards ]; then                        # where the old ones are
         local rest="$PLAN_ARCH archived"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
         printf '\n  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
     fi
@@ -4132,6 +4135,24 @@ mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a sub
 # A topic that waits for a deployment (status waiting, deploy_wait=1; own group WAITING FOR DEPLOYMENT) follows one entry of deploys.list:
 # deploy_url is the entry it is bound to, deploy_match (optional) the label it may bind to (Backend, Production), deploy_since when the
 # wait began. Unbound it looks for the newest entry of its project (and label) that is under way, or that began after deploy_since.
+agent_reopen_pick() {  # agent_reopen_pick <session> <pane> <machine> <strict 0|1>: REOPEN_IDX = the ONE recently finished or dismissed card of this agent that
+    # comes back on now when it works again: the newest. An agent can have several (a card for each piece of work, one session): they must not all reopen.
+    # None when the agent already has a card on now or testing. strict: a pane counts only for a topic without a session (after /clear).
+    local i; REOPEN_IDX=-1; local bu=-1
+    for (( i = 0; i < T_N; i++ )); do
+        { [ -n "$1" ] && [ "${T_AS[$i]}" = "$1" ]; } || { [ -n "$2" ] && [ "${T_AP[$i]}" = "$2" ] && [ "${T_AM[$i]:-$3}" = "$3" ] && { [ "$4" != 1 ] || [ -z "${T_AS[$i]}" ]; }; } || continue
+        [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
+        case "${T_STATUS[$i]}" in
+            now|testing) [ -z "${T_TN[$i]}" ] && { REOPEN_IDX=-1; return 0; } ;;
+            finished) ;;
+            later) [ "${T_DM[$i]:-}" = 1 ] || continue ;;
+            *) continue ;;
+        esac
+        [ "${T_STATUS[$i]}" = now ] && continue
+        [ "${T_UPD[$i]:-0}" -ge "$bu" ] && { bu=${T_UPD[$i]:-0}; REOPEN_IDX=$i; }
+    done
+    return 0
+}
 review_follow() {  # a review card goes by itself when the agent that asked works again after it was idle (the decision was made, in the session):
     # back on now (a "Question from" card of bhote is deleted); a dismissed card comes back the same way. The event of the agent does this at once,
     # this is for events that did not arrive (another machine, a restart). The agent must have been seen idle first (also for a finished or dismissed
@@ -4150,7 +4171,9 @@ review_follow() {  # a review card goes by itself when the agent that asked work
             idle|done|blocked) : > "$d/$id" ;;
             working) if [ -e "$d/$id" ]; then
                          rm -f "$d/$id"
-                         if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1; else topic_set "$f" status now; topic_set "$f" auto_back ""; fi
+                         if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
+                         elif [ "${T_STATUS[$i]}" = review ]; then topic_set "$f" status now; topic_set "$f" auto_back ""
+                         else agent_reopen_pick "" "${T_AP[$i]}" "$m" 0; [ "$REOPEN_IDX" = "$i" ] && { topic_set "$f" status now; topic_set "$f" auto_back ""; }; fi   # (a finished or dismissed card: only the newest of its agent)
                      fi ;;
         esac
     done
@@ -5640,7 +5663,8 @@ cli_event() {
                 working)                                           # the user answered: what bhote put under review for it goes away or back
                     if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
                     elif [ "${T_STATUS[$i]}" = finished ] || { [ "${T_STATUS[$i]}" = later ] && [ "$(topic_get "$f" dismissed)" = 1 ]; }; then
-                        topic_set "$f" status now; topic_set "$f" auto_back ""     # a finished or dismissed card: its agent works again, the card is open again (as its work card)
+                        agent_reopen_pick "$sess" "$pane" "$HOST" 1
+                        [ "$REOPEN_IDX" = "$i" ] && { topic_set "$f" status now; topic_set "$f" auto_back ""; }     # a finished or dismissed card: its agent works again, the newest of its cards is open again (as its work card)
                     elif [ "${T_STATUS[$i]}" = review ] && { [ "$(topic_get "$f" auto_back)" = 1 ] || [ "$prev" != working ]; }; then
                         topic_set "$f" status now; topic_set "$f" auto_back ""     # (any review topic: the agent working again is the answer; no need for the agent to remember)
                     fi ;;
