@@ -79,8 +79,8 @@ listed, each name carries its machine's **code** in front: `MAC|Shop (main)`, `O
 named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
 `OMR`, MacBook Pro `MBP`), unique over all machines; settings › *Connections* › *Code of …* and the setup wizard set one by
 hand (empty: made from the name again). A code set by hand is a record in the topic store, so every machine shows the same.
-A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. Drag the `═══`
-divider to give the agent area more or fewer rows. A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
+A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. The ↕ at the end of the rule above the agents
+switches the agent overview to counts only (there is no drag handle; `AGENT_ROWS` sets the area's height). A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
 `finished · x = done`, `gone`).
 
 ## Handing a topic to an agent

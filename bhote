@@ -1904,12 +1904,11 @@ project_color_set() {  # project_color_set <var> <project name>: its colour from
     done <<< "${_rules//,/$'\n'}"
     printf -v "$1" '%s' "$_col"
 }
-agent_divider() {  # the handle between topics and agents: a rule with a grip in the middle (drag it with the mouse), and at its right end a ↕ button
+agent_divider() {  # the rule between topics and agents, and at its right end a ↕ button
     # (a click: the agent overview as counts only, and back; mouse_event takes the three columns COLS-4 .. COLS-2 for it)
-    local w=$(( ${COLS:-44} - 12 )) l r
-    l=$(( (w - 5) / 2 )); r=$(( w - l ))
+    local w=$(( ${COLS:-44} - 7 ))
     local bc=$D; [ "${HOVER_BTN:-0}" = 1 ] && bc="$BOLD$ORANGE"                 # the button: grey, orange and bold under the pointer
-    printf '  %s%s%s ═══ %s%s%s %s↕%s \n' "$B" "$(hline "$l")" "$X$D" "$X$B" "$(hline "$r")" "$X" "$bc" "$X"
+    printf '  %s%s%s %s↕%s \n' "$B" "$(hline "$w")" "$X" "$bc" "$X"
 }
 agents_counts() {  # agents_counts: this and the other machines' agents as numbers: AC_ACTIVE (working, testing), AC_NEEDS (waiting for an answer), AC_INACTIVE
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
@@ -1923,7 +1922,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     # sidebar), muted when the machine does not answer. A project's agents come from their repo/project tokens (project_sync).
     local i k m id st raw off name task ic nc label cw maxr cell plain _ln n=0 shown hidden=0 r lines=() lc=() lid=() rid=()
     maxr=$(( ${ROWS:-40} - 21 - ${HEAD_ROWS:-0} )); [ "$maxr" -lt 1 ] && maxr=1     # automatic: the head, the keys and four lines of topics always stay
-    local want; want=${DRAG_ROWS:-$U_AGENT_ROWS}; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # dragged by the divider
+    local want; want=$U_AGENT_ROWS; [ -n "$want" ] && agent_rows_clamp_set maxr "$want"   # AGENT_ROWS in the config
     cw=$(( (${COLS:-44} - 4) / 2 ))
     agent_divider
     local compact; cfg_var compact AGENTS_COMPACT off
@@ -2348,7 +2347,7 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
     local head topics bottom dblk hh th bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() tz=() n=0 line
     head=$(view_head); topics=$(topics_block)
-    local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${DRAG_ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}|${HOVER_BTN:-0}" ck=""   # (the agents' area and the keys do not depend on the selection)
+    local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}|${HOVER_BTN:-0}" ck=""   # (the agents' area and the keys do not depend on the selection)
     { IFS= read -r ck < "$RUN_DIR/bottom.key"; } 2>/dev/null
     if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
     else bottom=$(view_bottom); printf '%s\n' "$bkey" > "$RUN_DIR/bottom.key" 2>/dev/null; printf '%s' "$bottom" > "$RUN_DIR/bottom.out" 2>/dev/null; fi
@@ -2622,7 +2621,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     if [ -n "${FIND_KEY_SHOW:-}" ]; then hk "$FIND_KEY_SHOW" "find a topic or agent, jump to it"
     else hk "-" "find and jump: settings › Find key"; fi
     hk_group "MOUSE"
-    hk "drag ═══" "resize the agent area"; hk "click topic" "select it, show its agent"; hk "right click" "the topic's menu (also ⋮ on the card)"; hk "2× click" "open its page"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
+    hk "click topic" "select it, show its agent"; hk "right click" "the topic's menu (also ⋮ on the card)"; hk "2× click" "open its page"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
     printf '\n'; rule
     printf ' %s← esc back%s\n' "$D" "$X"
 }
@@ -2837,9 +2836,9 @@ ask_drain() {  # throw away input that is still waiting (the rest of a multi-lin
     fi
     return 0
 }
-# The divider above the agents is a handle like herdr's sidebar split: press on it, drag, release. Its row is written by the frame
-# (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is kept as AGENT_ROWS in the config.
-MOUSE_ON=$'\033[?1003h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1006l'; DRAG=0; DRAG_ROWS=""; HOVER_ID=""   # (1003: also motion without a button, for the hover on the cards)
+# The divider above the agents carries the ↕ button (a click: counts only). Its row is written by the frame
+# (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is AGENT_ROWS in the config.
+MOUSE_ON=$'\033[?1003h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1006l'; HOVER_ID=""   # (1003: also motion without a button, for the hover on the cards)
 # Terminals report presses, not double clicks: a second press on the same topic within half a second is one (OPEN: its page).
 # Milliseconds from perl (bash 3.2 has no EPOCHREALTIME); without perl only two presses in the same second count.
 CLICK_LAST=""; CLICK_AT=0
@@ -2849,7 +2848,7 @@ click_twice() {  # click_twice <topic id>: 0 when this press makes a double clic
     if [ "$1" = "$CLICK_LAST" ] && [ $(( now - CLICK_AT )) -le 500 ]; then CLICK_LAST=""; return 0; fi
     CLICK_LAST=$1; CLICK_AT=$now; return 1
 }
-mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the divider moves, ITEM/AGENT/TOPIC/OPEN on a click, else empty)
+mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (ITEM/AGENT/TOPIC/OPEN on a click, else empty)
     local b x y div rest; MOUSE_KEY=""
     b=${1%%;*}; rest=${1#*;}; x=${rest%%;*}; y=${rest#*;}
     case "$b$x$y" in *[!0-9]*) return ;; esac
@@ -2868,11 +2867,11 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
         while IFS=$'\036' read -r r t; do [ "$r" = "$y" ] && [ -n "$t" ] && { CLICK_T=${t%%!*}; break; }; done 2>/dev/null < "$RUN_DIR/tmap"
         return
     fi
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ]; then  # a row of this frame that bhote_paint noted (an action on the topic's page)?
+    if [ "$2" = M ] && [ "$b" = 0 ]; then  # a row of this frame that bhote_paint noted (an action on the topic's page)?
         local r t; while IFS=$'\036' read -r r t; do [ "$r" = "$y" ] && { CLICK_I=$t; MOUSE_KEY=ITEM; return; }; done 2>/dev/null < "$RUN_DIR/pmap"
     fi
     div=$(cat "$RUN_DIR/divrow" 2>/dev/null); div=$(num_or "$div" 0)
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && [ "$div" -gt 0 ] && [ "$y" -ge $(( div + 1 )) ]; then   # below the divider: an agent?
+    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$div" -gt 0 ] && [ "$y" -ge $(( div + 1 )) ]; then   # below the divider: an agent?
         local split rel line ag; split=$(head -1 "$RUN_DIR/agmap" 2>/dev/null); split=$(num_or "$split" 0); rel=$(( y - div - 1 ))
         line=$(awk -F'\036' -v r="$rel" 'NR > 1 && $1 == r { print; exit }' "$RUN_DIR/agmap" 2>/dev/null)
         if [ -n "$line" ] && [ "$split" -gt 0 ]; then
@@ -2880,7 +2879,7 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
             [ -n "$ag" ] && { CLICK_M=${ag%%$US*}; CLICK_P=${ag#*$US}; CLICK_P=${CLICK_P%%$US*}; MOUSE_KEY=AGENT; return; }
         fi
     fi
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$DRAG" != 1 ] && { [ "$div" = 0 ] || [ "$y" -lt "$div" ]; }; then   # above it: a topic?
+    if [ "$2" = M ] && [ "$b" = 0 ] && { [ "$div" = 0 ] || [ "$y" -lt "$div" ]; }; then   # above it: a topic?
         local r t; while IFS=$'\036' read -r r t; do
             [ "$r" = "$y" ] && [ -n "$t" ] && {
                 case "$t" in *"!@"*) local c1=${t#*!@} c2; c2=${c1#*!}; c1=${c1%%!*}; CLICK_T=${t%%!*}; t=$CLICK_T      # the ⋮ button on the title row: "<id>!@<from>!<to>"
@@ -2894,15 +2893,6 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (DRAG while the div
     if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ] && [ "$x" -ge $(( ${COLS:-44} - 4 )) ] && [ "$x" -le $(( ${COLS:-44} - 2 )) ]; then   # the ↕ button on the divider
         MOUSE_KEY=AGMENU; return
     fi
-    if [ "$2" = M ] && [ "$b" = 0 ] && [ "$y" = "$div" ]; then
-        DRAG=1; DRAG_Y0=$y; DRAG_R0=$(num_or "$(cat "$RUN_DIR/agrows" 2>/dev/null)" 1); return
-    fi
-    if [ "$DRAG" = 1 ] && [ "$2" = M ] && [ "$b" = 32 ]; then       # moving with the button held: up = more agent rows
-        DRAG_ROWS=$(( DRAG_R0 + DRAG_Y0 - y )); [ "$DRAG_ROWS" -lt 1 ] && DRAG_ROWS=1; MOUSE_KEY=DRAG; return
-    fi
-    if [ "$DRAG" = 1 ] && [ "$2" = m ]; then
-        DRAG=0; [ -n "$DRAG_ROWS" ] && cfg_set AGENT_ROWS "$(agent_rows_clamp "$DRAG_ROWS")"; DRAG_ROWS=""; MOUSE_KEY=DRAG
-    fi
 }
 agent_rows_clamp_set() {  # agent_rows_clamp_set <var> <n>: at least 1 agent row, and at least 4 lines stay for the topics
     local _n _max=$(( ${ROWS:-40} - 3 - 4 - 4 ))   # head 3, divider/header/rule/keys 4, topics 4
@@ -2910,7 +2900,6 @@ agent_rows_clamp_set() {  # agent_rows_clamp_set <var> <n>: at least 1 agent row
     [ "$_max" -lt 1 ] && _max=1; [ "$_n" -gt "$_max" ] && _n=$_max; [ "$_n" -lt 1 ] && _n=1
     printf -v "$1" '%s' "$_n"
 }
-agent_rows_clamp() { agent_rows_clamp_set _ARC "$1"; printf '%s' "$_ARC"; }
 # The one-line editor at the bottom. ←→ move, Option+←→ (also Ctrl) jump a word, Shift adds a selection (Shift+Option by words),
 # Home/End or Ctrl-A/Ctrl-E (Cmd+←→), Backspace/Delete remove the selection or one character, Option+Backspace a word,
 # Ctrl-U/Ctrl-K cut to the start/end. Typing replaces the selection. Enter keeps the text, Esc throws it away.
@@ -5339,7 +5328,7 @@ bhote_main() {
         if [ "${SETUP_PENDING:-}" = 1 ]; then
             if [ "$view" != splash ]; then                     # the pane got too small for the welcome screen: next start
                 SETUP_PENDING=0; PROMPT_TEXT="PRESS ANY KEY TO START"; lock_drop "$SHARED_DIR/setup.lock" "$$"
-            elif [ -n "$key" ] && [ "$key" != DRAG ]; then
+            elif [ -n "$key" ]; then
                 case "$key" in
                     q|Q) exit 0 ;;                               # quit, the setup comes again next time
                     ESC) ;;                                      # not now: the list, the setup comes again next time
@@ -5352,7 +5341,7 @@ bhote_main() {
         if [ "$view" = settings ]; then
             case "$key" in
                 ","|ESC|q|Q) case "${SET_PAGE:-main}" in connections|projects) SET_PAGE=main; SET_IDX=0 ;; project) SET_PAGE=projects; SET_IDX=0 ;; *) view=$back ;; esac; redraw=1 ;;
-                ""|DRAG|AGENT|TOPIC|OPEN|ITEM) ;;
+                ""|AGENT|TOPIC|OPEN|ITEM) ;;
                 *) SETTINGS_GO=""; settings_key "$key"; [ "$SETTINGS_GO" = hotkeys ] && view=hotkeys
                    [ "$SETTINGS_GO" = connections ] && { SET_PAGE=connections; SET_IDX=0; }
                    [ "$SETTINGS_GO" = projects ] && { SET_PAGE=projects; SET_IDX=0; }
@@ -5412,7 +5401,6 @@ bhote_main() {
         else
             case "$key" in
                 "") ;;
-                DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
                 TOPIC) [ "$view" = main ] && { case "$CLICK_T" in cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
                 CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu

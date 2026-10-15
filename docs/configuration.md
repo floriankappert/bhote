@@ -52,7 +52,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `SPLASH_AUTOCLOSE` | `on` | Close welcome screen after 15 s | |
 | `SPLASH_SECONDS` | `15` | | Seconds until the welcome screen closes itself. |
 | `AUTOSTART` | `on` | Auto-start with herdr | The [herdr plugin](herdr-plugin.md) opens the panel when herdr starts. |
-| `AGENT_ROWS` | automatic | drag the `═══` divider | Height of the agent area in rows. |
+| `AGENT_ROWS` | automatic | settings file only | Height of the agent area in rows. |
 | `TOPICS_SCOPE` | `all` | Topics shown | `project`: the panel lists the topics of its project (the project of the agent in its herdr tab) and those without one; `all`: every topic. |
 | `DONE_MAX` | `4` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
 | `ARCHIVE_DAYS` | `7` | Archive after days | Done, next, waiting and parked topics untouched for this many days leave the panel (a line counts them); the search and the CLI still reach them (`0`: never). |
