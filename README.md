@@ -84,7 +84,7 @@ After an update, `bhote reload` restarts the panels of the machine (never type i
 Start herdr; the panel opens next to the agent pane of each tab (or run `bhote` in any pane). The first start shows the
 setup wizard. Then:
 
-- `n` adds a topic (`Fix the login redirect; users land on /home`), `↑↓` choose one, `s` starts it on a free agent.
+- `n` adds a topic (`Fix the login redirect; users land on /home`), click one, `s` starts it on a free agent.
 - `x` checks it off, `→` opens its page with every action, `,` opens the settings.
 - From a script or an agent:
 
@@ -97,8 +97,7 @@ setup wizard. Then:
 
 | key | does |
 |---|---|
-| `↑↓` / `jk` | move |
-| `⏎` | jump to the topic's agent in herdr (in another tab the focus goes to the bhote panel there; no agent: the topic's page) |
+| click | a card: show its agent in herdr; the `›` on it or a double click, and a click on a line (next, waiting, later, done): the topic's page |
 | `→`, `←` / `esc` | the topic's page / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |

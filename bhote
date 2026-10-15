@@ -1568,7 +1568,7 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
     # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
     local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n rm=""
     [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
-    local tw dw2 btn=0   # btn: the selected or hovered card has a ⋮ button on its title row (right edge): the topic's menu
+    local tw dw2 btn=0   # btn: the selected or hovered card has a › button on its title row (right edge): the topic's page
     [ "${TI_FRAME:-0}" = 1 ] && [ -n "${TI_REF:-}" ] && { [ "$1" = 1 ] || [ "$TI_REF" = "${HOVER_ID:-}" ]; } && btn=1
     clip_set t "$5" $(( w - 3 - btn * 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
     local bl="  " gap=${TI_FRAME:-0} bar=""        # TI_FRAME (the panel's list): every entry is a card, the selected one a lighter card
@@ -1592,14 +1592,14 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         clip_set am "${TI_AGM:-}" 12; clip_set an "$TI_AGN" $(( w - 2 - btn * 3 - 2 - ${#am} - 3 - 1 )); dw_set aw "$am · $an"
         [ -n "$am" ] && am="$mcol$BOLD$am$X$bg$gc · " || aw=$(( aw - 3 ))
         printf '%s%s%s%s%s%s %s%s%s%s%*s' "${TI_SPIN:+$'\034'$spk$'\034'}" "$trm" "$mk" "$bg" "$bl" "${TI_AGIC:-${gc}○}" "$am" "$BOLD$tc" "$an" "$X$bg" $(( w - 2 - 2 - aw - btn * 3 )) ""
-        if [ "$btn" = 1 ]; then printf ' %s⋮%s %s\n' "$gc" "$X$bg" "$X"; else printf '%s\n' "$X"; fi
+        if [ "$btn" = 1 ]; then printf ' %s›%s %s\n' "$gc" "$X$bg" "$X"; else printf '%s\n' "$X"; fi
         clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
         printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
         if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
             clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"                  # (indented like the rows above: under the icon's text)
             printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
         fi
-    elif [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s⋮%s %s\n' "$trm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
+    elif [ "$btn" = 1 ]; then printf '%s%s%s%s%s%s%s%*s %s›%s %s\n' "$trm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 5 - tw )) "" "$gc" "$X$bg" "$X"
     else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi
     if [ "$ag" = 1 ]; then                                      # an agent's card: everything under the task starts under its text (column 5)
         [ -n "$d" ] && { clip_set d "$6" $(( w - 5 )); dw_set dw2 "$d"; printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 4 - dw2 )) "" "$X"; }
@@ -2217,6 +2217,15 @@ panel_width_clamp() {
 # herdr window you clicked in (focus_agent "prefix+ctrl+1..9", or [keys.indexed] agents): herdr then
 # switches the machine itself. Otherwise, or when that fails, the key line says how to get there for a few seconds.
 FLASH_MSG=""; FLASH_UNTIL=0
+topic_is_card() {  # topic_is_card <id>: 0 for a card (review, now, testing, finished, waiting for a deployment): a click shows its agent; the lines (next,
+    # waiting, later, done) open their page
+    local i; for (( i = 0; i < T_N; i++ )); do
+        [ "${T_ID[$i]}" = "$1" ] || continue
+        case "${T_STATUS[$i]}" in review|now|testing|finished) return 0 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && return 0 ;; esac
+        return 1
+    done
+    return 1
+}
 topic_jump() {  # topic_jump [click]: the selected topic's agent, shown in herdr; in another tab of this machine the focus goes to the panel there (a click
     # with CLICK_FOCUS_AGENT on: it stays on the agent, whose bar then stays in herdr's list), the topic selected. 1 when it has no agent that herdr knows now
     local f m p ast keep=""; [ "${1:-}" = click ] && [ "$(cfg_get CLICK_FOCUS_AGENT on)" = on ] && keep=1
@@ -2342,7 +2351,7 @@ view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of
     agents_block
     printf '  %s%s%s\n' "$MUTED" "${DASH_LINE:-┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈}" "$X"       # (the same dashes as the captions)
     local sg="" left right="" room=$(( ${COLS:-44} - 4 )) lw rw
-    left="↑↓ move · , settings"
+    left=", settings"
     if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -lt "$FLASH_UNTIL" ]; then     # a short note (a click on a remote agent) instead of the keys
         printf '  %s%s%s' "$S" "$(clip "$FLASH_MSG" "$room")" "$X"; return
     fi
@@ -2623,8 +2632,8 @@ bhote_hotkeys() {  # every key, grouped by screen
     local k
     printf '\n %sHotkeys%s\n' "$L" "$X"; rule
     hk_group "LIST"
-    hk "↑↓ jk" "move"; hk "⏎" "jump to the topic's agent (none: its page)"; hk "→" "the topic's page"; hk "n" "new topic (Title; description @Name)"
-    hk "m" "the topic's menu (its actions)"; hk "e" "edit the title"; hk "d" "edit the description"
+    hk "→" "the topic's page"; hk "n" "new topic (Title; description @Name)"
+    hk "e" "edit the title"; hk "d" "edit the description"
     hk "s" "start on a free agent"; hk "t" "Steal & Transfer to another agent"; hk "x" "mark done"; hk "c" "dismiss a review card (it opens again when its agent works)"; hk "a" "suggestions from agents"
     hk "," "settings"; hk "S" "welcome screen"; hk "w" "setup wizard (after an update: only the new steps)"; hk "q" "quit"
     hk_group "MENUS AND PICKERS"
@@ -2637,7 +2646,7 @@ bhote_hotkeys() {  # every key, grouped by screen
     if [ -n "${FIND_KEY_SHOW:-}" ]; then hk "$FIND_KEY_SHOW" "find a topic or agent, jump to it"
     else hk "-" "find and jump: settings › Find key"; fi
     hk_group "MOUSE"
-    hk "click topic" "select it, show its agent"; hk "right click" "the topic's menu (also ⋮ on the card)"; hk "2× click" "open its page"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
+    hk "click card" "select it, show its agent"; hk "› / 2× click" "open its page"; hk "click line" "open its page (next, waiting, later, done)"; hk "click action" "run it on the page"; hk "click field" "edit it in place"; hk "click agent" "focus it in herdr"
     printf '\n'; rule
     printf ' %s← esc back%s\n' "$D" "$X"
 }
@@ -5442,10 +5451,9 @@ bhote_main() {
             case "$key" in
                 "") ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
-                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
+                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; if topic_is_card "$CLICK_T"; then topic_jump click || { view=menu; MENU_IDX=0; }; else view=menu; MENU_IDX=0; fi ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
+                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*) ;; *) SEL_ID=$CLICK_T; view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the › on a card: its page
                 AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ↕ on the divider: counts only, and back
-                m|M) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=ctx; CTX_IDX=0; redraw=1; fi ;;
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
                 OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
@@ -5463,11 +5471,7 @@ bhote_main() {
                          if [ -n "$f" ] && ask "Description: " "$(topic_get "$f" description)" "$DESC_MAX"; then topic_set "$f" description "$ANSWER"; fi; redraw=1; fi ;;
                 n|N) if [ "$view" = main ]; then prompt_new_topic; redraw=1; else view=main; redraw=1; fi ;;
                 ",") back=$view; [ "$back" = splash ] && back=main; view=settings; SET_PAGE=main; SET_IDX=0; redraw=1 ;;
-                UP|k) if [ "$view" = main ]; then sel_move -1; redraw=1; NAV_ONLY=1; fi ;;      # on the start screen the wheel does nothing
-                DOWN|j) if [ "$view" = main ]; then sel_move +1; redraw=1; NAV_ONLY=1; fi ;;
-                ENTER) if [ "$view" = splash ]; then view=main
-                       elif case "${SEL_ID:-}" in more:*) true ;; *) false ;; esac; then toggle_expand "${SEL_ID#more:}"   # "+N more": open or close the group
-                       elif [ -n "$(sel_file)" ]; then topic_jump || { view=menu; MENU_IDX=0; }; fi; redraw=1 ;;   # its agent, like a click; else its page
+                ENTER) if [ "$view" = splash ]; then view=main; redraw=1; fi ;;                 # (the list is for the mouse: no arrow keys, no Enter)
                 RIGHT) if [ "$view" = splash ]; then view=main; elif case "${SEL_ID:-}" in more:*) true ;; *) false ;; esac; then toggle_expand "${SEL_ID#more:}"; elif [ -n "$(sel_file)" ]; then view=menu; MENU_IDX=0; fi; redraw=1 ;;
                 *) if [ "$view" = splash ]; then view=main; redraw=1; fi ;;
             esac
