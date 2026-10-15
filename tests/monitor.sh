@@ -157,6 +157,15 @@ case "$blk" in *"2 running"*"1 failed"*) [ "$(printf '%s\n' "$blk" | wc -l | tr 
 case "$blk" in *"Web · Backend"*) bad "small view still lists entries" ;; *) ok "deployments, small: no entries" ;; esac
 case "$blk" in *"$(printf '\035cap:deploys\035')"*) ok "section: the caption carries its ref (a click toggles)" ;; *) bad "caption ref" ;; esac
 section_toggle deploys; ! section_compact deploys && ok "section: toggled back" || bad "toggle back"
+# a failure that a newer run of the same project and name made good is "resolved", in the small view and in the list
+{ printf '%s\n' "$(( t0 - 1 ))${US}Web${US}Backend${US}ok${US}${US}${US}fix/n1${US}u1" "$(( t0 - 2 ))${US}Web${US}Backend${US}failed${US}${US}${US}fix/n2${US}u2" \
+    "$(( t0 - 3 ))${US}Web${US}Frontend${US}failed${US}${US}${US}fix/n3${US}u3" "$(( t0 - 4 ))${US}Web${US}Backend${US}running${US}1${US}4${US}fix/n4${US}u4"; } > "$SHARED_DIR/deploys.list"
+section_toggle deploys
+blk=$( COLS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); monitor_block deploys 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' )
+case "$blk" in *"1 running · ✗ 1 failed · ✓ 1 resolved"*) ok "deployments, small: open failures and resolved ones are told apart" ;; *) bad "resolved (small): $blk" ;; esac
+section_toggle deploys
+blk=$( COLS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); monitor_block deploys 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' )
+[ "$(printf '%s\n' "$blk" | grep -c "failed · resolved")" = 1 ] && [ "$(printf '%s\n' "$blk" | grep "Frontend" | grep -c resolved)" = 0 ] && ok "deployments: a failure with a newer success says resolved, an open one does not" || bad "resolved (list): $blk"
 cp "$T/deploys.keep" "$SHARED_DIR/deploys.list"
 cfg_set DEPLOY_MONITOR off; cfg_set TEST_MONITOR off; [ -z "$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )" ] && ok "panel: monitors off, no block" || bad "block while off"
 

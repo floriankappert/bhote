@@ -4332,23 +4332,31 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     [ -n "${NOW:-}" ] || NOW=$(date +%s)
     dash_caption "$cap" "$kind"
     if section_compact "$kind"; then                            # counts only: what runs now, and how many of the last 10 failed
-        local run=0 bad=0 seen=0
-        while IFS=$US read -r t pj lb st _; do
-            seen=$(( seen + 1 )); [ "$st" = running ] && run=$(( run + 1 )); [ "$seen" -le 10 ] && [ "$st" = failed ] && bad=$(( bad + 1 ))
+        local run=0 bad=0 fixed=0 seen=0 okk=$'\n'
+        while IFS=$US read -r t pj lb st _; do               # (newest first: a failure is resolved when a newer run of the same project and name went through)
+            seen=$(( seen + 1 )); [ "$st" = running ] && run=$(( run + 1 ))
+            [ "$st" = ok ] && okk="$okk$pj|$lb"$'\n'
+            if [ "$st" = failed ] && [ "$seen" -le 10 ]; then case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fixed=$(( fixed + 1 )) ;; *) bad=$(( bad + 1 )) ;; esac; fi
         done < "$SHARED_DIR/$kind.list"
         printf '  %s✶%s %s%d running%s %s·%s ' "$ORANGE" "$X" "$BOLD$ORANGE" "$run" "$X" "$D" "$X"
-        if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s\n' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s\n' "$D" "$X"; fi
+        if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s' "$D" "$X"; fi
+        [ "$fixed" -gt 0 ] && printf ' %s·%s %s✓ %d resolved%s' "$D" "$X" "$GREEN" "$fixed" "$X"
+        printf '\n'
         return 0
     fi
+    local okk=$'\n' fx
     while IFS=$US read -r t pj lb st d tot note url; do
+        fx=0; [ "$st" = ok ] && okk="$okk$pj|$lb"$'\n'
+        [ "$st" = failed ] && case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fx=1 ;; esac      # (a newer run of the same project and name went through: resolved)
         [ "$n" -lt "$max" ] || { more=$(( more + 1 )); continue; }
         bar=""
         case "$st" in
             running) ic="${ORANGE}✶"; tx="running"; case "$d:$tot" in *[!0-9:]*|:*|*:) ;; *) [ "$tot" -gt 0 ] && { pct=$(( d * 100 / tot )); mon_bar_set bar "$d" "$tot" 5; tx="$bar $pct%"; } ;; esac ;;
             queued) ic="${D}◌"; tx="queued" ;; approval) ic="${Y}⏸"; tx="approval" ;; ok) ic="${GREEN}✓"; tx="" ;;
-            failed) ic="${NN}✗"; tx="failed" ;; *) ic="${D}⊘"; tx="canceled" ;;
+            failed) if [ "$fx" = 1 ]; then ic="${D}✗"; tx="failed · resolved"; else ic="${NN}✗"; tx="failed"; fi ;; *) ic="${D}⊘"; tx="canceled" ;;
         esac
         [ "$kind" = tests ] && [ -n "$note" ] && [ "$st" != running ] && tx=$note
+        [ "$fx" = 1 ] && [ "$kind" = tests ] && tx="$tx · resolved"
         [ -z "$tx" ] && [ -n "$note" ] && tx=${note:0:18}           # a deployment that went through: where it came from
         [ -n "$bar" ] || clip_set tx "$tx" $(( w / 2 )); mon_age_set age "$t"
         right="${tx:+$tx · }$age"; dw_set rw "$right"; rightc=$right
