@@ -4425,15 +4425,19 @@ skill_put() {  # skill_put <source folder> <skill folder>: a link into a checkou
         mkdir -p "$t" && cp "$s/SKILL.md" "$t/SKILL.md"
     fi
 }
+claude_profiles() {  # claude_profiles: sets CLAUDE_DIRS to every Claude Code profile of this machine (CLAUDE_CONFIG_DIR, ~/.claude, ~/.claude*)
+    local d seen=" "; CLAUDE_DIRS=()
+    for d in "${CLAUDE_CONFIG_DIR:-}" "$HOME"/.claude "$HOME"/.claude[0-9a-zA-Z_-]*; do
+        [ -n "$d" ] && [ -d "$d" ] || continue; case "$seen" in *" $d "*) continue ;; esac; seen="$seen$d "; CLAUDE_DIRS[${#CLAUDE_DIRS[@]}]=$d
+    done
+    [ ${#CLAUDE_DIRS[@]} -gt 0 ] || { CLAUDE_DIRS[0]=${CLAUDE_CONFIG_DIR:-$HOME/.claude}; mkdir -p "${CLAUDE_DIRS[0]}"; }
+}
 cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote-install into every Claude profile (skill_put)
-    local sd d n dirs=() seen=" " done_n=0 prof
+    local sd n done_n=0 prof
     sd=$(w_share integrations/claude/skills) || { echo "bhote: the skills are not part of this installation" >&2; return 1; }
     sd=$sd/integrations/claude/skills
-    for d in "${CLAUDE_CONFIG_DIR:-}" "$HOME"/.claude "$HOME"/.claude[0-9a-zA-Z_-]*; do
-        [ -n "$d" ] && [ -d "$d" ] || continue; case "$seen" in *" $d "*) continue ;; esac; seen="$seen$d "; dirs[${#dirs[@]}]=$d
-    done
-    [ ${#dirs[@]} -gt 0 ] || { dirs[0]=${CLAUDE_CONFIG_DIR:-$HOME/.claude}; mkdir -p "${dirs[0]}"; }
-    for prof in "${dirs[@]}"; do
+    claude_profiles
+    for prof in "${CLAUDE_DIRS[@]}"; do
         for n in bhote bhote-install; do
             [ -f "$sd/$n/SKILL.md" ] || continue
             skill_put "$sd/$n" "$prof/skills/$n" && { printf 'skill %s -> %s\n' "$n" "${prof/#$HOME/~}/skills/$n"; done_n=$(( done_n + 1 )); }
@@ -4441,6 +4445,32 @@ cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote
     done
     [ "$done_n" -gt 0 ] || return 1
     printf 'Now open Claude Code and say: /bhote-install  (it sets up the rest: herdr plugin, hooks, machines, monitors).\n'
+}
+cli_mod() {  # bhote mod [install|remove|status]: the Claude Code mod bhote-topic (the topic above the prompt, /topic) in every Claude
+    # profile: bhote's folder integrations/claude is a marketplace "bhote", the mod a plugin of it (claude plugin ...). Needs Claude Code 2.1.287+.
+    local act=${1:-install} root prof out rc=0 n=0
+    case "$act" in install|update|remove|status) ;; *) echo "bhote: mod [install|remove|status]" >&2; return 1 ;; esac
+    command -v claude >/dev/null 2>&1 || { echo "bhote: claude (Claude Code) is not on the PATH" >&2; return 1; }
+    root=$(w_share integrations/claude/.claude-plugin) || { echo "bhote: the mod is not part of this installation" >&2; return 1; }
+    root=$root/integrations/claude
+    claude_profiles
+    for prof in "${CLAUDE_DIRS[@]}"; do
+        export CLAUDE_CONFIG_DIR=$prof
+        case "$act" in
+            status) if claude plugin list 2>/dev/null | grep -q 'bhote-topic@bhote'; then printf 'mod bhote-topic: installed in %s\n' "${prof/#$HOME/~}"
+                    else printf 'mod bhote-topic: not installed in %s\n' "${prof/#$HOME/~}"; fi ;;
+            remove) claude plugin uninstall bhote-topic@bhote >/dev/null 2>&1; claude plugin marketplace remove bhote >/dev/null 2>&1
+                    printf 'mod bhote-topic: removed from %s\n' "${prof/#$HOME/~}" ;;
+            *)      claude plugin marketplace list 2>/dev/null | grep -Eq '[[:space:]]bhote$' || claude plugin marketplace add "$root" >/dev/null 2>&1 \
+                        || { echo "bhote: could not add the marketplace to ${prof/#$HOME/~}" >&2; rc=1; continue; }
+                    claude plugin marketplace update bhote >/dev/null 2>&1
+                    if out=$(claude plugin install bhote-topic@bhote 2>&1) || out=$(claude plugin update bhote-topic@bhote 2>&1); then
+                        printf 'mod bhote-topic -> %s\n' "${prof/#$HOME/~}"; n=$(( n + 1 ))
+                    else echo "bhote: the mod did not install in ${prof/#$HOME/~}: $(printf '%s' "$out" | tail -1)" >&2; rc=1; fi ;;
+        esac
+    done
+    [ "$act" = install ] || [ "$act" = update ] && [ "$n" -gt 0 ] && printf 'Restart Claude Code (or /reload-plugins) to load it.\n'
+    return $rc
 }
 cli_reload() {  # bhote reload: restarts every bhote panel of this machine (after an update). Never types into a panel that still runs:
     # the old panel is ended first (its main process, by group), and only a pane that is a plain shell again gets the command.
@@ -4845,6 +4875,14 @@ setup_step_checks() {
         w_yn "Install the bhote skill for Claude Code (${sk/#$HOME/~})?" Y; r=$?; [ $r = 3 ] && return
         [ $r = 0 ] && { skill_put "$src" "$sk" && w_ok "Claude skill" "installed" || w_bad "Claude skill" "could not be installed"
             [ -f "${src}-install/SKILL.md" ] && skill_put "${src}-install" "${sk}-install" && w_ok "Claude skill" "bhote-install: an agent can set bhote up on a machine"; }
+    fi
+    if command -v claude >/dev/null 2>&1; then
+        if claude plugin list 2>/dev/null | grep -q 'bhote-topic@bhote'; then w_ok "Claude mod" "bhote-topic: your topic above the prompt"
+        elif [ -f "$(w_share integrations/claude/.claude-plugin)/integrations/claude/.claude-plugin/marketplace.json" ] 2>/dev/null; then
+            w_warn "Claude mod" "not installed: no topic band above the prompt, no /topic"
+            w_yn "Install the bhote-topic mod for Claude Code (every profile)?" Y; r=$?; [ $r = 3 ] && return
+            [ $r = 0 ] && { cli_mod install >/dev/null 2>&1 && w_ok "Claude mod" "installed (restart Claude Code)" || w_bad "Claude mod" "could not be installed: bhote mod install"; }
+        fi
     fi
     w_continue
 }
@@ -6176,6 +6214,7 @@ bhote — topics and agents next to herdr.
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
   bhote skills [install]             put the Claude Code skills bhote and bhote-install into every Claude profile (then /bhote-install)
+  bhote mod [install|remove|status]  the Claude Code mod bhote-topic (your topic above the prompt, /topic) in every Claude profile
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
@@ -6211,6 +6250,7 @@ bhote_cli() {
         update) cli_update ;;
         reload) cli_reload ;;
         skills) cli_skills "$@" ;;
+        mod) cli_mod "$@" ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;

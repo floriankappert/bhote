@@ -1,0 +1,11 @@
+{
+  "name": "bhote",
+  "owner": { "name": "Florian Kappert" },
+  "plugins": [
+    {
+      "name": "bhote-topic",
+      "source": "./mods/bhote-topic",
+      "description": "Claude Code mod: the agent's bhote topic above the prompt, and /topic"
+    }
+  ]
+}

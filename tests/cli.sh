@@ -209,4 +209,21 @@ HOME=$SH CLAUDE_CONFIG_DIR= bash "$P/bin/bhote" skills install >/dev/null 2>&1
 [ ! -L "$SH/.claude/skills/bhote" ] && cmp -s "$SH/.claude/skills/bhote/SKILL.md" integrations/claude/skills/bhote/SKILL.md \
     && ok "skills from a package: a copy, the link from before is gone" || bad "skills package: $(ls -la "$SH/.claude/skills")"
 
+# mod: bhote-topic goes into every Claude profile as a plugin of the marketplace "bhote" (a fake claude logs each call)
+cat > "$T/bin/claude" <<'SH'
+#!/bin/sh
+echo "$CLAUDE_CONFIG_DIR: $*" >> "$FAKE_CLAUDE_LOG"
+case "$*" in "plugin list"*) grep -q 'install bhote-topic' "$FAKE_CLAUDE_LOG" && echo "bhote-topic@bhote" ;; esac
+exit 0
+SH
+chmod +x "$T/bin/claude"; export FAKE_CLAUDE_LOG=$T/claude.log; : > "$FAKE_CLAUDE_LOG"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod install >"$T/out" 2>&1
+grep -q "^$SH/.claude: plugin marketplace add $PWD/integrations/claude" "$FAKE_CLAUDE_LOG" && grep -q "^$SH/.claude2: plugin install bhote-topic@bhote" "$FAKE_CLAUDE_LOG" \
+    && ok "mod install: the marketplace and the plugin in every profile" || bad "mod install: $(cat "$FAKE_CLAUDE_LOG")"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod status 2>&1 | grep -q "installed in .*\.claude$" && ok "mod status" || bad "mod status: $(HOME=$SH CLAUDE_CONFIG_DIR= B mod status 2>&1)"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod remove >/dev/null 2>&1; grep -q "plugin uninstall bhote-topic@bhote" "$FAKE_CLAUDE_LOG" && ok "mod remove" || bad "mod remove"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod nope >/dev/null 2>&1 && bad "mod accepted an unknown action" || ok "mod: an unknown action is exit 1"
+[ -f integrations/claude/mods/bhote-topic/.claude-plugin/plugin.json ] && [ -f integrations/claude/.claude-plugin/marketplace.json ] \
+    && jq -e '.plugins[0].name == "bhote-topic"' integrations/claude/.claude-plugin/marketplace.json >/dev/null && ok "the mod and its marketplace are in the repository" || bad "mod files missing"
+
 rm -rf "$T"; exit $fail

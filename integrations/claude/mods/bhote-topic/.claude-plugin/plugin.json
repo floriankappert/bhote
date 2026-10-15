@@ -1,0 +1,8 @@
+{
+  "name": "bhote-topic",
+  "version": "0.1.0",
+  "description": "Shows this agent's bhote topic above the prompt (status colour, description, age) and adds /topic to change its status",
+  "author": { "name": "Florian Kappert" },
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

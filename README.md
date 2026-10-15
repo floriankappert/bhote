@@ -27,6 +27,7 @@ wide, with a small sheepdog that guards the herd.
 - **Deployment and test monitor:** the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test jobs, local runs through `bhote test run`, live status files) of your projects, seven each, with progress bars, above the agents.
 - **Search from anywhere in herdr** (the find key, e.g. `ctrl+alt+t`): all agents and topics, `⏎` jumps there, `ctrl+n` adds a topic.
 - **Topics are plain files**, kept in sync with a second machine through herdr's own connection, or with every machine through [kharka](https://github.com/jakobbeyer/kharka) (opt-in); **update notice** when a newer version is out.
+- **Claude Code mod:** the agent's topic as a coloured band above the prompt (status, description, age) and `/topic review|done|…` to change it without a turn ([how](docs/claude-mod.md); `bhote mod install`).
 - **Omarchy bar widget**, themes (terminal colours, Catppuccin or Dracula, each role overridable), a **setup wizard** and the Claude skill `/bhote-install`.
 - A **CLI** (every command with `--json`) to create and close topics from scripts and agents.
 
@@ -34,7 +35,7 @@ wide, with a small sheepdog that guards the herd.
 
 - macOS or Linux, bash 3.2 or newer (the bash that ships with macOS is enough)
 - [herdr](https://herdr.dev) and `jq`
-- optional: Claude Code (skills, the SessionStart hook, the Slack watch), `gh` or a CircleCI token (the monitors), Omarchy (the bar widget)
+- optional: Claude Code (skills, the SessionStart hook, the Slack watch, the 2.1.287+ topic mod), `gh` or a CircleCI token (the monitors), Omarchy (the bar widget)
 
 ## Install
 
@@ -156,7 +157,7 @@ rm ~/.config/omarchy/plugins/bhote.bar                # Omarchy bar widget (inst
 ```
 
 Your topics and settings stay until you remove them: `~/.config/bhote` and `${XDG_DATA_HOME:-~/.local/share}/bhote`.
-Claude Code: delete `skills/bhote` and `skills/bhote-install` in each Claude profile (`~/.claude`, …) and the
+Claude Code: `bhote mod remove` (the mod), delete `skills/bhote` and `skills/bhote-install` in each Claude profile (`~/.claude`, …) and the
 `bhote current` entry under `hooks.SessionStart` in its `settings.json`.
 
 ## Contributing

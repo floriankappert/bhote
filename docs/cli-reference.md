@@ -289,6 +289,13 @@ Puts the Claude Code skills `bhote` and `bhote-install` into every Claude profil
 `~/.claude*`) and says to continue with `/bhote-install`. From a git checkout each skill is a link into it (it stays current
 with every `git pull`; an earlier copy that holds only `SKILL.md` becomes a link), from a package a copy.
 
+### `bhote mod [install|remove|status]`
+
+The [Claude Code mod](claude-mod.md) `bhote-topic` (the topic as a band above the prompt, `/topic`) in every Claude profile:
+`install` (the default; again after a bhote update) adds `integrations/claude` as the marketplace `bhote` and installs the plugin,
+`remove` takes both away, `status` says where it is installed. Needs `claude` (Claude Code 2.1.287+) on the PATH; exit 1 when
+a profile failed.
+
 ### `bhote update`
 
 Asks GitHub whether a newer version is out and prints the command that updates this installation (brew, `git pull`,

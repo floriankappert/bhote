@@ -20,6 +20,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - A "Question from …" review card now goes by itself when the question is settled without the agent working again (e.g. `/clear`, an empty prompt): the agent is idle and its pane no longer ends with a question. A pane on another machine: after `FINISHED_MINUTES`.
 
 ### Added
+- **Claude Code mod `bhote-topic`** ([docs](docs/claude-mod.md)): a band above the Claude Code prompt with the agent's topic (title, description, status badge in the status colour, age that moves on) and `/topic review|done|now|next|later|testing|dismiss|wait <Name>|hide|show` without a Claude turn. `bhote mod [install|remove|status]` puts it into every Claude profile (`integrations/claude` is the marketplace `bhote`); the setup wizard and `/bhote-install` offer it. Needs Claude Code 2.1.287+.
 - Done, Deployments and Tests can be switched to a small view like the agents: the ↕ at the end of the caption (or a click on it) shows only `14 done`, or `x running · y failed` (failures among the last 10; a failure that a newer run of the same project and name made good counts as `✓ resolved`, and says so in the list, too). Settings `DONE_COMPACT`, `DEPLOYS_COMPACT`, `TESTS_COMPACT`.
 - The testing card shows a progress bar for each running suite (two at most, the suite's name in front), like the deployment card, from the live status files of the agent's worktree.
 - The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
