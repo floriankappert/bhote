@@ -1877,7 +1877,7 @@ archived_count() {  # archived_count: the topics that are not shown any more bec
 archived_block() {  # the Archived section under Done: a caption and how many there are, with the key of the search that finds them
     local n rest; n=$(archived_count); [ "$n" -gt 0 ] || return 0
     rest="$n archived"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
-    dash_caption Archived; printf '  %s%s%s\n' "$D" "$(clip "$rest" $(( ${COLS:-44} - 4 )))" "$X"
+    dash_caption Archived; printf '  %s▤%s %s%s%s\n' "$D" "$X" "$D" "$(clip "$rest" $(( ${COLS:-44} - 6 )))" "$X"      # (an icon in front, like the ✓ of Done)
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
     local art=(".-----.  .-----.  zZ" "| -_- |  | u_u | z" "'--+--'  '--+--'" "  /|\\      /|\\") l in=$(( ${COLS:-44} - 4 ))
