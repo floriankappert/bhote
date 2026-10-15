@@ -1334,6 +1334,27 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     done < "$AGENT_LOCAL"
     return 0
 }
+agent_dedup() {  # one agent, one card on now/testing: an agent that has several (a card for each piece of work, one session) keeps the newest;
+    # the older ones are recently finished (agent_reopen_pick brings back one of them when the agent works on it again)
+    local i j f keep
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in now|testing) ;; *) continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || continue
+        [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
+        keep=1
+        for (( j = 0; j < T_N; j++ )); do
+            [ "$j" = "$i" ] && continue
+            case "${T_STATUS[$j]}" in now|testing) ;; *) continue ;; esac
+            [ "${T_AP[$j]}" = "${T_AP[$i]}" ] && [ "${T_AM[$j]:-$HOST}" = "${T_AM[$i]:-$HOST}" ] && [ -z "${T_TN[$j]}" ] || continue
+            [ "$(topic_get "${T_FILE[$j]}" auto_now)" = 1 ] && continue
+            [ "${T_ID[$j]%%-*}" -gt "${T_ID[$i]%%-*}" ] 2>/dev/null && { keep=0; break; }
+            [ "${T_ID[$j]%%-*}" = "${T_ID[$i]%%-*}" ] && [[ "${T_ID[$j]}" > "${T_ID[$i]}" ]] && { keep=0; break; }
+        done
+        [ "$keep" = 1 ] || { topic_set "${T_FILE[$i]}" status finished; topic_set "${T_FILE[$i]}" auto_back ""; }
+    done
+    return 0
+}
 tests_progress_write() {  # tests_progress_write <machine> <pane> <1|0>: the card of a testing topic shows one bar per running suite (two at most);
     # this writes them for the panels ($SHARED_DIR/testprog/<machine>_<pane>, a line each: done total suite); 0 removes the file
     local f="$SHARED_DIR/testprog/${1}_${2}" cwd="" p c top dir tree j
@@ -1470,6 +1491,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             remind_waiting
             auto_assign
             agent_cards
+            agent_dedup
             tests_sync
             deploy_sync
             review_follow

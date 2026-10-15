@@ -12,6 +12,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
 ### Fixed
+- One agent, one card on now/testing: when an agent had several topics there (a card for each piece of work, one session), the list showed two cards for it. Now the newest stays and the older ones are recently finished.
 - An agent with several recently finished cards no longer reopens all of them when it works again: only the newest comes back on now (two cards for one agent in NOW).
 - macOS: the progress bars in the Deployments and Tests lists showed `��` where the shell counts bytes (no UTF-8 locale): the bar is no longer cut with `${bar:0:n}`.
 - A panel whose terminal is gone (pane closed, process still alive) no longer spins at full CPU: input reads tell the end of input (`in_fill`/`in_get` return 2) from a timeout (1), and the panel cleans up and exits on it. New suite `tests/input.sh`.

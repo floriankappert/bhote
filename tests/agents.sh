@@ -544,6 +544,13 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topics_load; agent_reopen_pick s1 w4:p1 "$HOST" 1; [ "${T_TITLE[$REOPEN_IDX]}" = New ] || exit 1                      # (the newest of this agent, not another agent's)
   topic_set "$o" status now; topics_load; agent_reopen_pick s1 w4:p1 "$HOST" 1; [ "$REOPEN_IDX" = -1 ] || exit 2         # (it has a card on now already: no second one)
   exit 0 ) && ok "agent cards: of several finished cards only the newest of an agent reopens" || bad "reopen pick: step $?"
+# an agent with two cards on now/testing keeps the newest; the older one is recently finished (an agent's own card and another agent's are left alone)
+( rm -f "$TOPIC_DIR"/*.topic
+  mk() { topic_new "$1" "" ""; mkf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mkf" agent_pane "$2"; topic_set "$mkf" agent_machine "$HOST"; topic_set "$mkf" agent_session s1; topic_set "$mkf" status "$3"; }
+  mk Old w4:p1 testing; o=$mkf; sleep 1; mk New w4:p1 testing; n=$mkf; mk Other w5:p1 now; ot=$mkf
+  agent_dedup; [ "$(topic_get "$o" status)" = finished ] && [ "$(topic_get "$n" status)" = testing ] && [ "$(topic_get "$ot" status)" = now ] || exit 1
+  agent_dedup; [ "$(topic_get "$n" status)" = testing ] || exit 2
+  exit 0 ) && ok "agent cards: one agent keeps one card on now/testing (the newest)" || bad "agent dedup: step $?"
 # the old ones (ARCHIVE_DAYS) are a section of their own under Done: a caption, the count and the key of the search
 ( rm -f "$TOPIC_DIR"/*.topic; NOW=$(date +%s); COLS=50; FIND_KEY_SHOW="Ctrl+T"; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45)
   topic_new "Fresh" "" ""; topic_new "Ancient" "" ""; af="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$af" status later; topic_set "$af" updated $(( NOW - 30 * 86400 ))
