@@ -97,7 +97,7 @@ setup wizard. Then:
 
 | key | does |
 |---|---|
-| click | a card: show its agent in herdr; the `›` on it or a double click, and a click on a line (next, waiting, later, done): the topic's page |
+| click | a card: show its agent in herdr; a double click, and a click on a line (next, waiting, later, done): the topic's page |
 | `→`, `←` / `esc` | the topic's page / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |

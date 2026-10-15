@@ -22,11 +22,11 @@ progress as a bar with a percentage, taken from the deployment monitor. When the
 
 ## Keys
 
-The list is for the mouse: **click a card** to show its agent in herdr (on another machine: selected there; in another tab the focus goes to the bhote panel there), **click the `›` on a card or double-click it** to open its page, **click a line** (next, waiting, later, done) to open its page. There are no arrow keys or `⏎` on the list, and no context menu (the page has the actions).
+The list is for the mouse: **click a card** to show its agent in herdr (on another machine: selected there; in another tab the focus goes to the bhote panel there), **double-click it** to open its page, **click a line** (next, waiting, later, done) to open its page. There are no arrow keys or `⏎` on the list, and no context menu (the page has the actions).
 
 | Key | List |
 |---|---|
-| `→` | the topic's page (also the `›` on a card, a double click on a card, or a click on a line: next, waiting, later, done): title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
+| `→` | the topic's page (also a double click on a card, or a click on a line: next, waiting, later, done): title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |

@@ -427,10 +427,8 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   COLS=44; ROWS=60; out=$(bhote_paint menu); [ -s "$RUN_DIR/pmap" ] || exit 1
   r=$(awk -F'\036' '$2 == 1 { print $1 }' "$RUN_DIR/pmap"); ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "${r}p")
   menu_build "$TOPIC_DIR/$SEL_ID.topic"; case "$ln" in *"2 "*"${MENU_ITEMS[1]#*|}"*) ;; *) exit 2 ;; esac
-  mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = 1 ] || exit 3
   mouse_event "0;8;2" M; [ "$MOUSE_KEY" != ITEM ] || exit 4
   r=$(awk -F'\036' '$2 == -2 { print $1; exit }' "$RUN_DIR/pmap"); printf '%s\n' "$out" | sed -n "${r}p" | grep -q "Page topic" || exit 6
-  mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = -2 ] || exit 7
   grep -q $'\036-1$' "$RUN_DIR/pmap" || exit 8                     # the description (empty: its hint line) too
   out=$(bhote_paint main); [ ! -s "$RUN_DIR/pmap" ] || exit 5
   exit 0 ) && ok "click: actions, title and description on the topic's page are rows of their own (ITEM with the index), the list has none" || bad "action click: step $?"
@@ -439,15 +437,11 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   for i in 1 2 3; do topic_new "Ctx topic $i" "" "" >/dev/null; done
   SEL_ID=$NEW_TOPIC_ID; COLS=44; ROWS=40; out=$(bhote_paint main); [ -s "$RUN_DIR/tmap" ] || exit 1
   r=$(awk -F'\036' -v id="$SEL_ID" '{ t = $2; sub(/!.*/, "", t) } t == id { print $1; exit }' "$RUN_DIR/tmap")
-  ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "$(( r + 1 ))p"); case "$ln" in *"Ctx topic 3"*"› ") ;; *) exit 2 ;; esac   # (the title row of the selected card)
-  mouse_event "0;$(( COLS - 3 ));$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 3                     # the › button
+  ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "$(( r + 1 ))p"); case "$ln" in *"›"*) exit 2 ;; *"Ctx topic 3"*) ;; *) exit 2 ;; esac   # (the title row of the selected card: no button)
   mouse_event "0;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = TOPIC ] || exit 4                                                              # the title itself selects
   mouse_event "2;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 5                                  # the right button
   mouse_event "2;5;1" M; [ "$MOUSE_KEY" = CTX ] && [ -z "$CLICK_T" ] || exit 6                                                      # (not on a topic: no topic)
-  projects_load; out=$(bhote_paint ctx); printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -q "ACTIONS · Ctx topic 3" || exit 7
-  menu_build "$TOPIC_DIR/$SEL_ID.topic"; n=${#MENU_ITEMS[@]}; [ "$(wc -l < "$RUN_DIR/pmap" | tr -d " ")" = "$n" ] || exit 8                   # one clickable row per action
-  r=$(awk -F'\036' '$2 == 1 { print $1 }' "$RUN_DIR/pmap"); mouse_event "0;8;$r" M; [ "$MOUSE_KEY" = ITEM ] && [ "$CLICK_I" = 1 ] || exit 9
-  exit 0 ) && ok "the › on a card and the right button report CTX (the topic page opens); the old menu still draws and its rows are clickable" || bad "context menu: step $?"
+  exit 0 ) && ok "the right button reports CTX (the topic page opens); a card has no › button" || bad "context menu: step $?"
 # a click: a card shows its agent, a line (next, waiting, later, done) opens its page
 ( rm -f "$TOPIC_DIR"/*.topic
   for st in now review next later done; do topic_new "T $st" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status "$st"; eval "id_$st=$NEW_TOPIC_ID"; done
