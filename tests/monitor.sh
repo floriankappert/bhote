@@ -166,6 +166,14 @@ case "$blk" in *"1 running · ✗ 1 failed · ✓ 1 resolved"*) ok "deployments,
 section_toggle deploys
 blk=$( COLS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); monitor_block deploys 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' )
 [ "$(printf '%s\n' "$blk" | grep -c "failed · resolved")" = 1 ] && [ "$(printf '%s\n' "$blk" | grep "Frontend" | grep -c resolved)" = 0 ] && ok "deployments: a failure with a newer success says resolved, an open one does not" || bad "resolved (list): $blk"
+# nothing running: the small view has no colour on it (grey), with something running it is orange
+printf '%s\n' "$(( t0 - 1 ))${US}Web${US}Backend${US}ok${US}${US}${US}fix/z${US}uz" > "$SHARED_DIR/deploys.list"; section_toggle deploys
+blk=$( ORANGE=ORG; D=DIM; BOLD=B; X=; COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitor_block deploys 4 )
+case "$blk" in *ORG*) bad "0 running: still coloured: $blk" ;; *"DIM0 running"*) ok "small view: 0 running has no colour" ;; *) bad "0 running: $blk" ;; esac
+printf '%s\n' "$(( t0 - 1 ))${US}Web${US}Backend${US}running${US}1${US}4${US}fix/z${US}uz" > "$SHARED_DIR/deploys.list"
+blk=$( ORANGE=ORG; D=DIM; BOLD=B; X=; COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitor_block deploys 4 )
+case "$blk" in *"BORG1 running"*) ok "small view: with something running it is orange" ;; *) bad "1 running: $blk" ;; esac
+section_toggle deploys
 cp "$T/deploys.keep" "$SHARED_DIR/deploys.list"
 cfg_set DEPLOY_MONITOR off; cfg_set TEST_MONITOR off; [ -z "$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )" ] && ok "panel: monitors off, no block" || bad "block while off"
 

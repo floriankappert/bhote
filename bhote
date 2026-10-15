@@ -1941,7 +1941,8 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     local compact; cfg_var compact AGENTS_COMPACT off
     if [ "$compact" = on ] && [ "$AG_N" -gt 0 ]; then              # counts only: no rows to click, no star to dance
         agents_counts
-        printf '  %s✶%s %s%d active%s' "$ORANGE" "$X" "$BOLD$ORANGE" "$AC_ACTIVE" "$X"
+        local ac=$ORANGE ab="$BOLD$ORANGE"; [ "$AC_ACTIVE" -gt 0 ] || { ac=$D; ab=$D; }       # (none active: no colour)
+        printf '  %s✶%s %s%d active%s' "$ac" "$X" "$ab" "$AC_ACTIVE" "$X"
         [ "$AC_NEEDS" -gt 0 ] && printf ' %s·%s %s◉ %d need you%s' "$D" "$X" "$NN" "$AC_NEEDS" "$X"
         printf ' %s·%s %s○ %d inactive%s\n' "$D" "$X" "$D" "$AC_INACTIVE" "$X"
         echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
@@ -4376,7 +4377,8 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
             [ "$st" = ok ] && okk="$okk$pj|$lb"$'\n'
             if [ "$st" = failed ] && [ "$seen" -le 10 ]; then case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fixed=$(( fixed + 1 )) ;; *) bad=$(( bad + 1 )) ;; esac; fi
         done < "$SHARED_DIR/$kind.list"
-        printf '  %s✶%s %s%d running%s %s·%s ' "$ORANGE" "$X" "$BOLD$ORANGE" "$run" "$X" "$D" "$X"
+        local rc=$ORANGE rb="$BOLD$ORANGE"; [ "$run" -gt 0 ] || { rc=$D; rb=$D; }            # (nothing runs: no colour)
+        printf '  %s✶%s %s%d running%s %s·%s ' "$rc" "$X" "$rb" "$run" "$X" "$D" "$X"
         if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s' "$D" "$X"; fi
         [ "$fixed" -gt 0 ] && printf ' %s·%s %s✓ %d resolved%s' "$D" "$X" "$GREEN" "$fixed" "$X"
         printf '\n'
