@@ -1904,11 +1904,9 @@ project_color_set() {  # project_color_set <var> <project name>: its colour from
     done <<< "${_rules//,/$'\n'}"
     printf -v "$1" '%s' "$_col"
 }
-agent_divider() {  # the rule between topics and agents, and at its right end a ↕ button
-    # (a click: the agent overview as counts only, and back; mouse_event takes the three columns COLS-4 .. COLS-2 for it)
-    local w=$(( ${COLS:-44} - 7 ))
-    local bc=$D; [ "${HOVER_BTN:-0}" = 1 ] && bc="$BOLD$ORANGE"                 # the button: grey, orange and bold under the pointer
-    printf '  %s%s%s %s↕%s \n' "$B" "$(hline "$w")" "$X" "$bc" "$X"
+agent_divider() {  # the caption above the agents, drawn like the others (┈┈ Agents ┈┈┈ ↕): the ↕ is a button (a click: the agent overview as counts
+    # only, and back; mouse_event takes the three columns COLS-4 .. COLS-2 for it)
+    dash_caption Agents agents
 }
 agents_counts() {  # agents_counts: this and the other machines' agents as numbers: AC_ACTIVE (working, testing), AC_NEEDS (waiting for an answer), AC_INACTIVE
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
@@ -2327,13 +2325,12 @@ jump_request() {  # jump_request <watch line>: another machine's panel asks (jum
 }
 view_bottom() {  # the agents, a rule and the keys: pinned to the bottom edge of the panel
     agents_block
-    rule
+    printf '  %s%s%s\n' "$MUTED" "${DASH_LINE:-┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈}" "$X"       # (the same dashes as the captions)
     local sg="" left right="" room=$(( ${COLS:-44} - 4 )) lw rw
     left="↑↓ move · , settings"
     if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -lt "$FLASH_UNTIL" ]; then     # a short note (a click on a remote agent) instead of the keys
         printf '  %s%s%s' "$S" "$(clip "$FLASH_MSG" "$room")" "$X"; return
     fi
-    [ -n "${FOCUS_KEY:-}" ] && right="$FOCUS_KEY ⇄"         # bottom right: the herdr key that jumps here and back
     dw_set lw "$left"; dw_set rw "$right"
     if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=", settings$sg"; dw_set lw "$left"; fi
     if [ -n "$right" ] && [ $(( lw + 3 + rw )) -gt "$room" ]; then left=""; dw_set lw "$left"; fi   # narrow: only the key
@@ -4104,10 +4101,14 @@ update_command() {  # the command that updates bhote the way it was installed he
     if [ -n "$d" ] && git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then echo "git -C ${d/#$HOME/~} pull"; return; fi
     echo "install the new version the way you installed bhote (see the README)"
 }
-dash_caption() {  # dash_caption <text> [done|deploys|tests]: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests); with a section the row is its toggle:
-    # a ↕ at the right end, and a click anywhere on the row switches the section to counts only and back (ref cap:<section>)
-    local rest ref="" btn=""; rest=$(( ${#RULE_LINE} - 4 - ${#1} ))
-    if [ -n "${2:-}" ]; then ref=$'\035'"cap:$2"$'\035'; rest=$(( rest - 2 )); btn=" ${D}↕${X}"; fi
+dash_caption() {  # dash_caption <text> [done|deploys|tests|agents]: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests, Agents); with a section the row has a ↕ at the
+    # right end: on done, deploys and tests a click anywhere on the row switches the section to counts only and back (ref cap:<section>); on agents only the
+    # button counts (mouse_event, AGMENU)
+    local rest ref="" btn="" bc=$D; rest=$(( ${#RULE_LINE} - 4 - ${#1} ))
+    if [ -n "${2:-}" ]; then
+        if [ "$2" = agents ]; then [ "${HOVER_BTN:-0}" = 1 ] && bc="$BOLD$ORANGE"; else ref=$'\035'"cap:$2"$'\035'; fi
+        rest=$(( rest - 2 )); btn=" ${bc}↕${X}"
+    fi
     [ "$rest" -lt 1 ] && rest=1
     printf '%s  %s┈┈%s %s%s%s %s%s%s%s\n' "$ref" "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X" "$btn"
 }
