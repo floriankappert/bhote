@@ -145,6 +145,19 @@ blk=$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )
 echo "$blk" | grep -q "Deployments" && echo "$blk" | grep -q "Web · Backend" && echo "$blk" | grep -q "approval" && echo "$blk" | grep -q "Tests" \
   && [ "$(echo "$blk" | grep -c "Web · \|Rails · \|web-wt1 · \|Plain · ")" -le 14 ] && ok "panel: both blocks, seven entries each at most" || bad "block: $blk"
 echo "$blk" | grep -q "Web · Backend (feat/login)" && ok "panel: a running entry says in brackets what goes live" || bad "running note: $blk"
+# the small view of a section: how many run, and how many of the LAST TEN failed (a failure further back does not count); the caption is the button
+cp "$SHARED_DIR/deploys.list" "$T/deploys.keep"; t0=$(date +%s)
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    case $i in 1|2) st=running ;; 3|11) st=failed ;; *) st=ok ;; esac
+    printf '%s\n' "$(( t0 - i ))${US}Web${US}Backend${US}$st${US}1${US}4${US}fix/b$i${US}https://ci/$i"
+done > "$SHARED_DIR/deploys.list"
+section_toggle deploys; section_compact deploys && ok "section: the toggle switches to counts only" || bad "toggle"
+blk=$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitor_block deploys 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' )
+case "$blk" in *"2 running"*"1 failed"*) [ "$(printf '%s\n' "$blk" | wc -l | tr -d ' ')" = 2 ] && ok "deployments, small: 2 running · 1 failed (the failure beyond the last ten is not counted), two lines" || bad "small lines: $blk" ;; *) bad "small view: $blk" ;; esac
+case "$blk" in *"Web · Backend"*) bad "small view still lists entries" ;; *) ok "deployments, small: no entries" ;; esac
+case "$blk" in *"$(printf '\035cap:deploys\035')"*) ok "section: the caption carries its ref (a click toggles)" ;; *) bad "caption ref" ;; esac
+section_toggle deploys; ! section_compact deploys && ok "section: toggled back" || bad "toggle back"
+cp "$T/deploys.keep" "$SHARED_DIR/deploys.list"
 cfg_set DEPLOY_MONITOR off; cfg_set TEST_MONITOR off; [ -z "$( COLS=50; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); monitors_block )" ] && ok "panel: monitors off, no block" || bad "block while off"
 
 # new features: the head says so until the wizard ran at the current level; the wizard then offers only the new steps

@@ -95,6 +95,9 @@ AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: i
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
 CLICK_FOCUS_AGENT|on|bool|A click on a topic shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in the herdr agent list; off: the focus goes back to the bhote panel of that tab
 FINISHED_MINUTES|30|int:0:1440|A recently finished card (an agent that stopped without a question: nothing to check) is dismissed by itself after this many minutes; it comes back when the agent works again (0 = never)
+DONE_COMPACT|off|bool|Done section: only the number of done topics (the ↕ button on its caption switches it)
+DEPLOYS_COMPACT|off|bool|Deployments section: only how many run and how many of the last 10 failed (the ↕ button on its caption switches it)
+TESTS_COMPACT|off|bool|Tests section: only how many run and how many of the last 10 failed (the ↕ button on its caption switches it)
 AGENTS_COMPACT|off|bool|Agent overview: only how many agents are active and how many inactive (the ↕ button on the divider above the agents switches it)
 AGENT_CARDS|on|bool|A working agent without a topic gets a card on now by itself (title: what it works on), gone when it stops working or gets a topic; 15 s of work first
 NOTIFY|on|bool|herdr notifications: a topic is ready, done, or waits too long
@@ -1827,9 +1830,13 @@ done_mc() {  # done_mc <topic index>: DONE_MC = the short code of the machine wh
 }
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
-    [ "$max" -gt 0 ] || return 0
     local dn=() used=" " best bu u j sel_in=0                 # newest first: by the last change (checking off is one); builtins only
     for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && ! topic_archived "$i" && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
+    if section_compact done; then                               # counts only: no rows to click
+        [ "$all" -gt 0 ] || return 0
+        dash_caption Done done; printf '  %s✓%s %s%d done%s\n' "$GREEN" "$X" "$D" "$all" "$X"; return 0
+    fi
+    [ "$max" -gt 0 ] || return 0
     while [ "$n" -lt "$max" ] && [ "$n" -lt "$all" ]; do
         best=-1; bu=-1
         for j in "${dn[@]}"; do case "$used" in *" $j "*) continue ;; esac; u=${T_UPD[$j]:-0}; [ "$u" -ge "$bu" ] && { bu=$u; best=$j; }; done
@@ -1839,7 +1846,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
         for j in ${dn[@]+"${dn[@]}"}; do [ "${T_ID[$j]}" = "$SEL_ID" ] && { idx[$n]=$j; n=$(( n + 1 )); break; }; done
     fi
     [ "$n" -gt 0 ] || return 0
-    dash_caption Done
+    dash_caption Done done
     for (( k = 0; k < n; k++ )); do
         i=${idx[$k]}; ago_set tm "${T_UPD[$i]:-${NOW:-0}}"                  # when it was checked off (its last change), on the right
         done_mc "$i"; [ -n "$DONE_MC" ] && tm="$DONE_MC $tm"                        # and in front of it the machine of the agent that did it
@@ -2377,7 +2384,7 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     fi
     for (( i = 0; i < pad; i++ )); do printf '\n'; done; VP_ROW=$(( VP_ROW + pad ))
     [ "$dh" -gt 0 ] && { view_lines tl tr sel "$dblk"; view_put 0 "${#tl[@]}"; }
-    [ "$mh" -gt 0 ] && printf '%s\n' "$mblk"
+    [ "$mh" -gt 0 ] && { view_lines tl tr sel "$mblk"; view_put 0 "${#tl[@]}"; }          # (through the map: the captions are buttons)
     printf '%s' "$VP_MAP" 2>/dev/null > "$RUN_DIR/tmap"           # the topics' rows on screen: a click selects one
     printf '%s' "$VP_SPIN" 2>/dev/null > "$RUN_DIR/spinrows"      # and where a card's star dances (row:column)
     echo $(( ${ROWS:-40} - bh + 1 )) 2>/dev/null > "$RUN_DIR/divrow"     # the divider is the first line of the bottom part
@@ -2496,6 +2503,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_TOPICS|Agents may create topics"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENT_CARDS|Cards for agents without a topic"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AGENTS_COMPACT|Agent overview: counts only"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|DONE_COMPACT|Done: count only"; SET_ROWS[${#SET_ROWS[@]}]="bool|DEPLOYS_COMPACT|Deployments: counts only"; SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_COMPACT|Tests: counts only"
     SET_ROWS[${#SET_ROWS[@]}]="num|FINISHED_MINUTES|Recently finished: dismiss after (min)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|CLICK_FOCUS_AGENT|A click on a topic focuses its agent"
     SET_ROWS[${#SET_ROWS[@]}]="num|ARCHIVE_DAYS|Archive after days"
@@ -4107,9 +4115,19 @@ update_command() {  # the command that updates bhote the way it was installed he
     if [ -n "$d" ] && git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then echo "git -C ${d/#$HOME/~} pull"; return; fi
     echo "install the new version the way you installed bhote (see the README)"
 }
-dash_caption() {  # dash_caption <text>: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests)
-    local rest; rest=$(( ${#RULE_LINE} - 4 - ${#1} )); [ "$rest" -lt 1 ] && rest=1
-    printf '  %s┈┈%s %s%s%s %s%s%s\n' "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X"
+dash_caption() {  # dash_caption <text> [done|deploys|tests]: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests); with a section the row is its toggle:
+    # a ↕ at the right end, and a click anywhere on the row switches the section to counts only and back (ref cap:<section>)
+    local rest ref="" btn=""; rest=$(( ${#RULE_LINE} - 4 - ${#1} ))
+    if [ -n "${2:-}" ]; then ref=$'\035'"cap:$2"$'\035'; rest=$(( rest - 2 )); btn=" ${D}↕${X}"; fi
+    [ "$rest" -lt 1 ] && rest=1
+    printf '%s  %s┈┈%s %s%s%s %s%s%s%s\n' "$ref" "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X" "$btn"
+}
+section_toggle() {  # section_toggle <done|deploys|tests>: counts only, and back
+    local k; k="$(printf '%s' "$1" | tr a-z A-Z)_COMPACT"
+    if section_compact "$1"; then cfg_set "$k" off; else cfg_set "$k" on; fi
+}
+section_compact() {  # section_compact <done|deploys|tests>: 0 when that section shows counts only
+    local v; cfg_var v "$(printf '%s' "$1" | tr a-z A-Z)_COMPACT" off; [ "$v" = on ]
 }
 mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_ON / MB_OFF = the filled and the empty cells)
     local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f; MB_ON=""; MB_OFF=""
@@ -4312,7 +4330,16 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     case "$kind" in deploys) cap="Deployments" ;; *) cap="Tests" ;; esac
     [ -s "$SHARED_DIR/$kind.list" ] || return 0
     [ -n "${NOW:-}" ] || NOW=$(date +%s)
-    dash_caption "$cap"
+    dash_caption "$cap" "$kind"
+    if section_compact "$kind"; then                            # counts only: what runs now, and how many of the last 10 failed
+        local run=0 bad=0 seen=0
+        while IFS=$US read -r t pj lb st _; do
+            seen=$(( seen + 1 )); [ "$st" = running ] && run=$(( run + 1 )); [ "$seen" -le 10 ] && [ "$st" = failed ] && bad=$(( bad + 1 ))
+        done < "$SHARED_DIR/$kind.list"
+        printf '  %s✶%s %s%d running%s %s·%s ' "$ORANGE" "$X" "$BOLD$ORANGE" "$run" "$X" "$D" "$X"
+        if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s\n' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s\n' "$D" "$X"; fi
+        return 0
+    fi
     while IFS=$US read -r t pj lb st d tot note url; do
         [ "$n" -lt "$max" ] || { more=$(( more + 1 )); continue; }
         bar=""
@@ -5379,13 +5406,13 @@ bhote_main() {
                 "") ;;
                 DRAG) [ "$view" = main ] && redraw=1 ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) toggle_expand "${CLICK_T#more:}" ;; *) topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
-                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
+                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; topic_jump click ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
+                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*) ;; *) SEL_ID=$CLICK_T; view=ctx; CTX_IDX=0 ;; esac; redraw=1; } ;;   # the right button, or the ⋮ on a card: its menu
                 AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ↕ on the divider: counts only, and back
                 m|M) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then view=ctx; CTX_IDX=0; redraw=1; fi ;;
                 ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
-                OPEN) [ "$view" = main ] && { SEL_ID=$CLICK_T; case "$CLICK_T" in more:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
+                OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;

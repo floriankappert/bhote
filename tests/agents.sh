@@ -619,6 +619,9 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   HOVER_ID=$did; out=$(done_block 4); case "$out" in *HOVBG*"Finished one"*) ;; *) exit 2 ;; esac                           # (the done one under the pointer)
   case "$out" in *"$(printf '\035%s\035' "$did")"*) ;; *) exit 3 ;; esac                                                       # (and it stays clickable: its ref is still there)
   HOVER_ID=$nid; SEL_IDX=-99; out=$(topic_line "$(for ((k=0;k<T_N;k++)); do [ "${T_ID[$k]}" = "$nid" ] && echo $k; done)"); case "$out" in *HOVBG*"Up next one"*) ;; *) exit 4 ;; esac   # (a line of the list)
+  cfg_set DONE_COMPACT on; topic_new "Finished two" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status done; topics_load
+  out=$(done_block 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"2 done"*) ;; *) exit 5 ;; esac; case "$out" in *"Finished one"*) exit 6 ;; esac   # (done, small: the number, no rows)
+  case "$out" in *"$(printf '\035cap:done\035')"*) ;; *) exit 7 ;; esac; cfg_set DONE_COMPACT off
   exit 0 ) && ok "hover: done topics and the lines of the list are a step lighter under the pointer" || bad "hover lines: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
 ( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
