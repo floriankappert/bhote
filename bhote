@@ -1844,10 +1844,10 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     done
     TI_AGN=""
 }
-done_mc() {  # done_mc <topic index>: DONE_MC = the short code of the machine whose agent did it (MAC, OMR), only with more than one machine
+done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC·w3:a1 on another machine), only with more than one machine
     local _m=${T_AM[$1]:-}; DONE_MC=""; [ -n "$_m" ] || return 0
     [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; [ "${MC_N:-0}" -gt 1 ] || return 0
-    agent_code_set DONE_MC "$_m" "${T_AG[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # MAC4 (the agent's own number), else MAC
+    agent_pane_code_set DONE_MC "$_m" "${T_AP[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # MAC·w3:a1 (the agent), else MAC
 }
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
@@ -2018,12 +2018,12 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         local cells=() cid=() cwid=() nc2=0 pre pre0 an plen rk rkst pcol tt tj tw
         for rk in 0 1 2; do                                    # inside a project: the active ones first (orange), then those that need you (red), then the idle (grey)
         for mm in "${machines[@]}"; do
-            pre0=""; [ "$nm" -gt 1 ] && machine_code_set pre0 "$mm"   # MAC4|name: the machine's code and the agent's own number
+            pre0=""; [ "$nm" -gt 1 ] && machine_code_set pre0 "$mm"   # MAC·w3:a1|name: the agent (the machine's code in front when it is on another machine)
             for (( i = 0; i < AG_N; i++ )); do
                 IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
                 [ "$m" = "$mm" ] || continue
                 if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
-                pre=""; plen=0; [ -n "$pre0" ] && { agentnum_set an "$m" "$name"; pre="$pre0$an|"; plen=${#pre}; }
+                pre=""; plen=0; [ -n "$pre0" ] && { agent_pane_code_set pre "$m" "$id"; [ -n "$pre" ] && { pre="$pre|"; dw_set plen "$pre"; }; }
                 raw=$st; off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
                 case "$st" in working|testing) rkst=0 ;; blocked) rkst=1 ;; *) rkst=2 ;; esac; [ "$rkst" = "$rk" ] || continue
                 case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; *) ic="${D}○" ;; esac
@@ -3405,6 +3405,13 @@ agentnum_set() {  # agentnum_set <var> <machine> <agent name>: its number, empty
     local _i _k="$2/${3//[[:cntrl:]]/}"; printf -v "$1" '%s' ""
     for (( _i = 0; _i < AN_N; _i++ )); do [ "${AN_KEY[$_i]}" = "$_k" ] && { printf -v "$1" '%s' "${AN_NUM[$_i]}"; return 0; }; done
     return 1
+}
+agent_pane_code_set() {  # agent_pane_code_set <var> <machine> <pane id>: the agent's name, herdr's workspace and pane number as w3:a1 (pane w3:p1); an agent of another
+    # machine carries that machine's code in front (MAC·w3:a1). "" when the pane id is not of that kind. (MAC4, the machine code and a number, stays a ref: agent_code_set)
+    local _p=$3 _b _c
+    case "$_p" in w[A-Za-z0-9]*:p[0-9]*) _b="${_p%%:p*}:a${_p##*:p}" ;; *) printf -v "$1" '%s' ""; return 0 ;; esac
+    if [ -n "$2" ] && [ "$2" != "$HOST" ]; then [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; machine_code_set _c "$2" || _c=$2; _b="$_c·$_b"; fi
+    printf -v "$1" '%s' "$_b"
 }
 agent_code_set() {  # agent_code_set <var> <machine> <agent name>: MAC4 (the machine's code and the agent's number), "" without a code
     local _c _n; [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; agentnum_load
@@ -6087,7 +6094,7 @@ current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "si
         in_scope "$i" || continue
         g=${T_STATUS[$i]}
         [ "$g" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && g=deploying
-        agent_code_set cd "${T_AM[$i]:-$HOST}" "${T_AG[$i]}"                    # (MAC4, OMR3: the agent, on any machine kharka reaches, as in the panel)
+        agent_pane_code_set cd "${T_AM[$i]:-$HOST}" "${T_AP[$i]}"              # (w3:a1, MAC·w3:a1: the agent, on any machine kharka reaches, as in the panel)
         row="${T_UPD[$i]:-0}$US$(topic_n "${T_FILE[$i]}")$US${T_TITLE[$i]//[[:cntrl:]]/ }$US${T_AG[$i]//[[:cntrl:]]/ }$US${cd//[[:cntrl:]]/ }"$'\n'
         case "$g" in
             review) Lr="$Lr$row" ;; now) Ln="$Ln$row" ;; testing) Lt="$Lt$row" ;; deploying) Ld="$Ld$row" ;; finished) Lf="$Lf$row" ;;
@@ -6134,7 +6141,17 @@ agent_ref() {  # agent_ref <ref>: AR_M AR_P AR_NAME AR_ST AR_TASK. ref: a number
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
         if [ "$ref" = "$m/$id" ] || { [ "$ref" = "$id" ] && [ "$m" = "$HOST" ]; }; then AR_M=$m; AR_P=$id; AR_ST=$st; AR_NAME=$name; AR_TASK=$task; return 0; fi
     done
-    case "$ref" in [A-Za-z][A-Za-z][A-Za-z][0-9]*) local want ac; want=$(printf '%s' "$ref" | tr '[:lower:]' '[:upper:]')   # MAC4, omr1: the agent's own code
+    case "$ref" in [Ww]?*:[Aa][0-9]*|*"·"[Ww]?*:[Aa][0-9]*)     # w3:a1 (on whichever machine has it; MAC·w3:a1 names the machine)
+        local lref ac2 b2 hit=0 hm="" hp="" hs="" hn="" ht=""; lref=$(printf '%s' "$ref" | tr '[:upper:]' '[:lower:]')
+        for (( i = 0; i < AG_N; i++ )); do
+            IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+            agent_pane_code_set ac2 "$m" "$id"; [ -n "$ac2" ] || continue; b2=${ac2##*·}
+            [ "$lref" = "$(printf '%s' "$ac2" | tr '[:upper:]' '[:lower:]')" ] || [ "$lref" = "$(printf '%s' "$b2" | tr '[:upper:]' '[:lower:]')" ] || continue
+            hit=$(( hit + 1 )); hm=$m; hp=$id; hs=$st; hn=$name; ht=$task
+        done
+        if [ "$hit" = 1 ]; then AR_M=$hm; AR_P=$hp; AR_ST=$hs; AR_NAME=$hn; AR_TASK=$ht; return 0; fi
+        if [ "$hit" -gt 1 ]; then echo "bhote: '$ref' is on $hit machines: name the machine (MAC·$ref, or machine/pane)" >&2; return 2; fi ;; esac
+    case "$ref" in [A-Za-z][A-Za-z][A-Za-z][0-9]*) local want ac; want=$(printf '%s' "$ref" | tr '[:lower:]' '[:upper:]')   # MAC4, omr1: the old code, still a ref
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             agent_code_set ac "$m" "$name"; [ "$ac" = "$want" ] && { AR_M=$m; AR_P=$id; AR_ST=$st; AR_NAME=$name; AR_TASK=$task; return 0; }
@@ -6148,19 +6165,19 @@ agent_ref() {  # agent_ref <ref>: AR_M AR_P AR_NAME AR_ST AR_TASK. ref: a number
     echo "bhote: '$ref' matches $hits agents, use the number or machine/pane (bhote agents)" >&2; return 2
 }
 cli_agents() {  # bhote agents [--json]
-    local i m id st name task first=1 tid t code
+    local i m id st name task first=1 tid t code alias
     cli_agents_load; agentnum_load
     [ -n "$json" ] && printf '['
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        agent_code_set code "$m" "$name"
+        agent_pane_code_set code "$m" "$id"; agent_code_set alias "$m" "$name"
         tid=""; for (( t = 0; t < T_N; t++ )); do [ "${T_STATUS[$t]}" != done ] && [ "${T_AM[$t]}" = "$m" ] && [ "${T_AP[$t]}" = "$id" ] && { tid=${T_ID[$t]}; break; }; done
         if [ -n "$json" ]; then
             [ "$first" = 1 ] || printf ','; first=0
             local free=false; case "$st" in idle|done) free=true ;; esac   # (not inside $( ): bash 3.2 misreads a case there)
-            printf '{"n":%s,"code":%s,"machine":%s,"pane":%s,"status":%s,"name":%s,"task":%s,"free":%s,"topic":%s}' "$(( i + 1 ))" "$(json_opt "$code")" "$(json_str "$m")" "$(json_str "$id")" \
+            printf '{"n":%s,"code":%s,"alias":%s,"machine":%s,"pane":%s,"status":%s,"name":%s,"task":%s,"free":%s,"topic":%s}' "$(( i + 1 ))" "$(json_opt "$code")" "$(json_opt "$alias")" "$(json_str "$m")" "$(json_str "$id")" \
                 "$(json_str "$st")" "$(json_str "$name")" "$(json_opt "$task")" "$free" "$(json_opt "$tid")"
-        else local mp; pad_set mp "$m" 8; printf '%3s  %-5s %s %-9s %s%s\n' "$(( i + 1 ))" "$code" "$mp" "$st" "$name" "${task:+  · $task}"; fi
+        else local mp; pad_set mp "$m" 8; local cp; pad_set cp "$code" 10; printf '%3s  %s %s %-9s %s%s\n' "$(( i + 1 ))" "$cp" "$mp" "$st" "$name" "${task:+  · $task}"; fi
     done
     if [ -n "$json" ]; then printf ']\n'; fi
     return 0

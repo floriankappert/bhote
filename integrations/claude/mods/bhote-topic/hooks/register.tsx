@@ -269,7 +269,7 @@ export const register: Register = (on, options) => {
       await refresh($)
     }
     const current = await read($, topic)
-    const { Box, Text, Button, Link, Markdown } = $.ui.resolve(e)
+    const { Box, Text, Button, Markdown } = $.ui.resolve(e)
 
     if (current === null) {
       return (
@@ -288,6 +288,18 @@ export const register: Register = (on, options) => {
       await $.process.run(['bhote', ...argv, current.id], { timeoutMs: 10000 })
       await refresh($)
     }
+    // a link without the URL written out: herdr's terminal draws no hyperlinks, so Link would print the whole address; this opens it in the browser
+    const openUrl = (key: string, url: string) => (
+      <Button
+        key={key}
+        plain
+        onPress={async () => {
+          await $.process.run(['sh', '-c', 'command -v xdg-open >/dev/null 2>&1 && xdg-open "$1" || open "$1"', 'sh', url], { timeoutMs: 10000 })
+        }}
+      >
+        <Text dimColor underline>{' ↗ open'}</Text>
+      </Button>
+    )
     const line = (name: string, value: string, c?: string) => (
       <Text key={name}>
         <Text dimColor>{name.padEnd(8)}</Text>
@@ -336,7 +348,7 @@ export const register: Register = (on, options) => {
               </Text>
             )}
           </Text>
-          {deploy.url && <Link href={deploy.url} label=" ↗" />}
+          {deploy.url && openUrl("deploy-open", deploy.url)}
         </Box>,
       )
     }
@@ -358,7 +370,7 @@ export const register: Register = (on, options) => {
           <Box justifyContent="space-between">
             <Text bold>{current.title}</Text>
           </Box>
-          <Box>
+          <Box marginBottom={1}>
             <Text bold color="inverseText" backgroundColor={color}>
               {` ${label.toUpperCase()} `}
             </Text>
@@ -401,11 +413,17 @@ export const register: Register = (on, options) => {
                 <Text dimColor>{'  ' + list.total}</Text>
               </Text>
               {list.items.map(x => (
-                <Text key={sec.key + '-' + x.n + x.title}>
-                  <Text color={sec.color}>{sec.mark + ' '}</Text>
-                  <Text>{x.title}</Text>
-                  <Text dimColor>{(x.code || x.agent ? '  ' + [x.code, x.agent].filter(Boolean).join(' ') : '') + '  ' + ago(now - x.updated)}</Text>
-                </Text>
+                <Box key={sec.key + '-' + x.n + x.title} paddingX={1} justifyContent="space-between">
+                  <Box flexShrink={1}>
+                    <Text wrap="truncate">
+                      <Text color={sec.color}>{sec.mark + ' '}</Text>
+                      <Text>{x.title}</Text>
+                    </Text>
+                  </Box>
+                  <Box flexShrink={0} marginLeft={1}>
+                    <Text dimColor>{[x.code || x.agent, ago(now - x.updated)].filter(Boolean).join(' ')}</Text>
+                  </Box>
+                </Box>
               ))}
               {list.total > list.items.length && <Text dimColor>{`+${list.total - list.items.length} more`}</Text>}
             </Box>
@@ -427,7 +445,7 @@ export const register: Register = (on, options) => {
                   </Text>
                 )}
               </Text>
-              <Link href={pr.url} label=" ↗" />
+              {openUrl("pr-open", pr.url)}
             </Box>
           )}
           {rows}
