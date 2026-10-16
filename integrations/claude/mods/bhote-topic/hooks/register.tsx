@@ -60,6 +60,7 @@ const ACTIONS: Record<string, Action[]> = {
   next: [{ ...RESUME, label: 'Start' }, DONE],
   later: [{ ...RESUME, label: 'Start' }, DONE],
 }
+const clip = (x: string, n: number) => (x.length > n ? x.slice(0, Math.max(1, n - 1)) + '…' : x) // a Button draws its text whole: the title is cut here
 const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)
 const DEPLOY_STATE: Record<string, string> = { queued: 'queued', approval: 'needs approval', ok: 'deployed', failed: 'failed', canceled: 'canceled' }
 const isBusy = (p: Progress) => p.tests.length > 0 || (p.deploy !== null && ['running', 'queued', 'approval'].includes(p.deploy.state))
@@ -359,6 +360,7 @@ export const register: Register = (on, options) => {
     // this session's agent as the lists name it: herdr's workspace and pane number, w3:a1 for the pane w3:p1
     const pane = current.agent?.pane ?? ''
     const thisAgent = /^w[A-Za-z0-9]+:p\d+$/.test(pane) ? pane.replace(/:p(\d+)$/, ':a$1') : ''
+    const room = Math.max(10, e.props.bodyColumns - 6) // the width of an item's title: the pane's body less the padding and the mark
     const pr = ctx?.pr ?? null
     const reply = current.review?.actions.filter(a => !a.jump && a.reply) ?? []
     // a button as a chip: bold dark text on a coloured block (FINISHED), one press anywhere on it
@@ -428,13 +430,13 @@ export const register: Register = (on, options) => {
                 // two lines, both pressable: the title, and under it the elbow, the agent's address and when; a press shows the agent in herdr
                 <Box key={sec.key + '-' + x.n + x.title} flexDirection="column" paddingX={1}>
                   <Button key={'t-' + x.n + x.title} plain onPress={jump(x)}>
-                    <Text wrap="truncate">
+                    <Text>
                       <Text color={sec.color}>{sec.mark + ' '}</Text>
-                      <Text>{x.title}</Text>
+                      <Text bold color="text">{clip(x.title, room)}</Text>
                     </Text>
                   </Button>
                   <Button key={'a-' + x.n + x.title} plain onPress={jump(x)}>
-                    <Text dimColor wrap="truncate">{'  ∟ ' + [x.code || x.agent, ago(now - x.updated)].filter(Boolean).join('  ')}</Text>
+                    <Text color="inactive">{'  ∟ ' + [x.code || x.agent, ago(now - x.updated)].filter(Boolean).join('  ')}</Text>
                   </Button>
                 </Box>
               ))}
