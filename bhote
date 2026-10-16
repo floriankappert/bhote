@@ -121,6 +121,7 @@ AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends i
 DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monitor (the checkboxes in its caption): their entries are not shown
 TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor (the checkboxes in its caption): their entries and the local runs of their worktrees are not shown
 KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
+CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of the agent: the band above the prompt and the pane (/topic pane). Off: it draws nothing and asks bhote for nothing
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -1284,9 +1285,9 @@ collector_lead() {  # collector_lead <main pid>: 0 when this panel is the collec
 project_autoselect() {  # project_autoselect <text>: PROJ_ID of the project whose name stands in the text as whole words (the longest name; none when two differ)
     local txt pn best="" bl=0 k tie=0 n; PROJ_ID=""
     projects_load                                              # (the projects may have changed since the last look)
-    txt=" $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ' | tr -s ' ') "
+    txt=" $(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ' | tr -s ' ') "
     for (( k = 0; k < P_N; k++ )); do
-        pn=$(printf '%s' "${P_NAME[$k]}" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ' | tr -s ' '); pn=${pn# }; pn=${pn% }
+        pn=$(printf '%s' "${P_NAME[$k]}" | LC_ALL=C tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]' ' ' | tr -s ' '); pn=${pn# }; pn=${pn% }
         [ "${#pn}" -ge 3 ] || continue
         case "$txt" in *" $pn "*) n=${#pn}
             if [ "$n" -gt "$bl" ]; then best=${P_ID[$k]}; bl=$n; tie=0; elif [ "$n" = "$bl" ] && [ "${P_ID[$k]}" != "$best" ]; then tie=1; fi ;; esac
@@ -1844,10 +1845,10 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     done
     TI_AGN=""
 }
-done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC·w3:a1 on another machine), only with more than one machine
+done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine
     local _m=${T_AM[$1]:-}; DONE_MC=""; [ -n "$_m" ] || return 0
     [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; [ "${MC_N:-0}" -gt 1 ] || return 0
-    agent_pane_code_set DONE_MC "$_m" "${T_AP[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # MAC·w3:a1 (the agent), else MAC
+    agent_pane_code_set DONE_MC "$_m" "${T_AP[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # MAC/w3:a1 (the agent), else MAC
 }
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
@@ -2018,7 +2019,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         local cells=() cid=() cwid=() nc2=0 pre pre0 an plen rk rkst pcol tt tj tw
         for rk in 0 1 2; do                                    # inside a project: the active ones first (orange), then those that need you (red), then the idle (grey)
         for mm in "${machines[@]}"; do
-            pre0=""; [ "$nm" -gt 1 ] && machine_code_set pre0 "$mm"   # MAC·w3:a1|name: the agent (the machine's code in front when it is on another machine)
+            pre0=""; [ "$nm" -gt 1 ] && machine_code_set pre0 "$mm"   # MAC/w3:a1|name: the agent (the machine's code in front when it is on another machine)
             for (( i = 0; i < AG_N; i++ )); do
                 IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
                 [ "$m" = "$mm" ] || continue
@@ -2177,8 +2178,8 @@ key_pretty() {  # key_pretty <var> <herdr key>: "prefix+t" -> "Ctrl+B|T", "ctrl+
             alt|option|opt) [ "$_mac" = 1 ] && _t=Option || _t=Alt ;;
             cmd|command|super|meta|win) [ "$_mac" = 1 ] && _t=Cmd || _t=Super ;;
             space) _t=Space ;; enter|return) _t=Enter ;; esc|escape) _t=Esc ;; tab) _t=Tab ;; backspace) _t=Backspace ;;
-            up|down|left|right|home|end|delete|insert|pageup|pagedown) _t="$(printf '%s' "${_t:0:1}" | tr '[:lower:]' '[:upper:]')${_t:1}" ;;
-            ?) _t=$(printf '%s' "$_t" | tr '[:lower:]' '[:upper:]') ;;
+            up|down|left|right|home|end|delete|insert|pageup|pagedown) _t="$(printf '%s' "${_t:0:1}" | LC_ALL=C tr '[:lower:]' '[:upper:]')${_t:1}" ;;
+            ?) _t=$(printf '%s' "$_t" | LC_ALL=C tr '[:lower:]' '[:upper:]') ;;
         esac
         _o="$_o${_o:++}$_t"
     done
@@ -2566,6 +2567,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="bool|UPDATE_CHECK|Check for updates"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|CLAUDE_MOD|Claude Code mod (band, pane)"
     [ "$(cfg_get REMOTE_AGENTS off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|HERDR_KEYS_MACHINE|Keyboard of herdr on"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
@@ -3319,7 +3321,7 @@ projects_load() {  # P_* arrays, by name
         done
     done
 }
-project_slug() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//' | cut -c1-40; }
+project_slug() { printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '-' | sed 's/--*/-/g; s/^-//; s/-$//' | cut -c1-40; }
 project_name() {  # project_name <id>: its name (empty: none)
     local i; for (( i = 0; i < P_N; i++ )); do [ "${P_ID[$i]}" = "$1" ] && { printf '%s' "${P_NAME[$i]}"; return 0; }; done; return 1
 }
@@ -3407,10 +3409,10 @@ agentnum_set() {  # agentnum_set <var> <machine> <agent name>: its number, empty
     return 1
 }
 agent_pane_code_set() {  # agent_pane_code_set <var> <machine> <pane id>: the agent's name, herdr's workspace and pane number as w3:a1 (pane w3:p1); an agent of another
-    # machine carries that machine's code in front (MAC·w3:a1). "" when the pane id is not of that kind. (MAC4, the machine code and a number, stays a ref: agent_code_set)
+    # machine carries that machine's code in front (MAC/w3:a1). "" when the pane id is not of that kind. (MAC4, the machine code and a number, stays a ref: agent_code_set)
     local _p=$3 _b _c
     case "$_p" in w[A-Za-z0-9]*:p[0-9]*) _b="${_p%%:p*}:a${_p##*:p}" ;; *) printf -v "$1" '%s' ""; return 0 ;; esac
-    if [ -n "$2" ] && [ "$2" != "$HOST" ]; then [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; machine_code_set _c "$2" || _c=$2; _b="$_c·$_b"; fi
+    if [ -n "$2" ] && [ "$2" != "$HOST" ]; then [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; machine_code_set _c "$2" || _c=$2; _b="$_c/$_b"; fi
     printf -v "$1" '%s' "$_b"
 }
 agent_code_set() {  # agent_code_set <var> <machine> <agent name>: MAC4 (the machine's code and the agent's number), "" without a code
@@ -3433,7 +3435,7 @@ agentnum_assign() {  # this machine's agents without a number get the next free 
 }
 machine_code_save() {  # machine_code_save <machine> <code | "">: sets it by hand (empty: made from the name again); 1 = taken or not 3 letters
     local name=${1//[[:cntrl:]]/} c f slug now i
-    c=$(printf '%s' "$2" | tr '[:lower:]' '[:upper:]' | tr -d ' ')
+    c=$(printf '%s' "$2" | LC_ALL=C tr '[:lower:]' '[:upper:]' | tr -d ' ')
     [ -z "$c" ] || machine_code_ok "$c" || { echo "bhote: a machine code is three letters A-Z" >&2; return 1; }
     machine_codes_load
     if [ -n "$c" ]; then for (( i = 0; i < MC_N; i++ )); do
@@ -3481,7 +3483,7 @@ git_repo_key_set() {  # git_repo_key_set <var> <folder>: the key of the reposito
     if [ -n "$_u" ]; then
         _u=${_u#*://}; _u=${_u#*@}; _u=${_u%.git}; _u=${_u%/}
         case "$_u" in *:*) case "${_u#*:}" in [0-9]*/*) _u="${_u%%:*}/${_u#*:*/}" ;; *) _u="${_u%%:*}/${_u#*:}" ;; esac ;; esac   # host:owner/x (scp form) or host:port/owner/x
-        printf -v "$1" '%s' "$(printf '%s' "$_u" | tr '[:upper:]' '[:lower:]')"
+        printf -v "$1" '%s' "$(printf '%s' "$_u" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
     else printf -v "$1" 'dir:%s' "${_main##*/}"; fi
 }
 # ── talking to agents: the live state of one agent pane, and a prompt to it (both through herdr, --machine for other machines)
@@ -3933,7 +3935,7 @@ monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAME
     local IFS=,; for k in $repos; do case "$k" in github.com/*/*) slug=${k#github.com/}; break ;; esac; done; unset IFS
     [ -n "$slug" ] || { MD_WHY="no GitHub repository pinned"; return 1; }
     gh_ok || { MD_WHY="gh is not logged in (gh auth login)"; return 1; }
-    k=$(gh_t repo view "$slug" --json nameWithOwner --jq .nameWithOwner 2>/dev/null); [ "$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$slug" | tr '[:upper:]' '[:lower:]')" ] && slug=$k    # (CircleCI's project slug is case sensitive: bilendo/IMS, not bilendo/ims)
+    k=$(gh_t repo view "$slug" --json nameWithOwner --jq .nameWithOwner 2>/dev/null); [ "$(printf '%s' "$k" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$slug" | LC_ALL=C tr '[:upper:]' '[:lower:]')" ] && slug=$k    # (CircleCI's project slug is case sensitive: bilendo/IMS, not bilendo/ims)
     y=$(gh_t api "repos/$slug/contents/.circleci/config.yml" --jq .content 2>/dev/null | tr -d '\n' | base64 -d 2>/dev/null)
     if [ -n "$y" ]; then                                       # CircleCI: the deploy jobs and the branches they run on
         MD_CI="circleci:gh/$slug"
@@ -4061,7 +4063,7 @@ mon_job_label() {  # mon_job_label <job> <map job=Label,…>: its entry in the m
     return 0
 }
 mon_job_word() {  # mon_job_word <job>: the last word of the name, capitalised (deploy-ecs-backend: Backend); a name without a dash: nothing
-    local n=$1; case "$n" in *-*) n=${n##*-}; printf '%s%s' "$(printf '%s' "${n:0:1}" | tr '[:lower:]' '[:upper:]')" "${n:1}" ;; esac
+    local n=$1; case "$n" in *-*) n=${n##*-}; printf '%s%s' "$(printf '%s' "${n:0:1}" | LC_ALL=C tr '[:lower:]' '[:upper:]')" "${n:1}" ;; esac
 }
 tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jobs of the last runs (a run's jobs are read once per state)
     local runs id wf st up br url jf j s n f p
@@ -4076,7 +4078,7 @@ tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jo
               (map(select(.status == "completed")) | length), length, (.[0].name | sub(" \\([0-9]+/[0-9]+\\)$"; "")), (map(.startedAt) | min) ] | map(tostring) | join("\u001f")' "$jf" 2>/dev/null)
         [ -n "$j" ] || continue
         IFS=$US read -r s f n p st <<< "$j"
-        mon_line "$(mon_iso "$st")" "$1" "$p" "$s" "$f" "$n" "$br‖" "$url"
+        mon_line "$(mon_iso "$st")" "$1" "$p" "$s" "$f" "$n" "$br|~|" "$url"
     done < <(printf '%s' "$runs" | jq -r '.[] | [.databaseId, .workflowName, .status, .updatedAt, .headBranch, .url] | map(tostring) | join("\u001f")')
     find "$SHARED_DIR/ghjobs" -type f -mmin +1440 -delete 2>/dev/null
 }
@@ -4089,7 +4091,7 @@ tests_circleci() {  # tests_circleci <project> <slug> <job names>: the test jobs
                 elif all(.status == "success") then "ok" else "canceled" end), (map(select(.status | term)) | length), length, .[0].name ] | map(tostring) | join("\u001f")' 2>/dev/null)
         [ -n "$j" ] || continue
         IFS=$US read -r s d tot nm <<< "$j"
-        mon_line "$(mon_iso "$cr")" "$1" "$nm" "$s" "$d" "$tot" "$br‖" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+        mon_line "$(mon_iso "$cr")" "$1" "$nm" "$s" "$d" "$tot" "$br|~|" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
     done < <(circleci_workflows "$2" "" 4)
 }
 tree_branch_set() {  # tree_branch_set <var> <worktree folder name>: the branch that worktree is on now, from the folder of an agent that works in it ("" when no
@@ -4110,7 +4112,7 @@ tests_local() {  # the local runs (bhote test run) and the live status files (TE
         local st="" en="" ex="" pj="" nm="" sm="" tr="" pid="" bn=""
         while IFS= read -r line; do case "$line" in started=*) st=${line#*=} ;; branch=*) bn=${line#*=} ;; ended=*) en=${line#*=} ;; exit=*) ex=${line#*=} ;; project=*) pj=${line#*=} ;; name=*) nm=${line#*=} ;; summary=*) sm=${line#*=} ;; tree=*) tr=${line#*=} ;; pid=*) pid=${line#*=} ;; esac; done < "$f"
         local s=running; if [ -n "$en" ]; then [ "$ex" = 0 ] && s=ok || s=failed; elif [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then s=canceled; fi
-        mon_line "$st" "${pj:-$tr}" "$nm" "$s" "" "" "$bn‖$sm" ""
+        mon_line "$st" "${pj:-$tr}" "$nm" "$s" "" "" "$bn|~|$sm" ""
     done
     dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
     for f in "$dir"/*.json; do
@@ -4122,7 +4124,7 @@ tests_local() {  # the local runs (bhote test run) and the live status files (TE
             | (if .ok == true then "ok" elif .ok == false then "failed" elif ($now - $up) > 30 then "canceled" else "running" end) as $s
             | [(.startedAt / 1000 | floor | tostring), (.tree | c), (.suite | c), $s, (.done | n), (.total | n),
                (((if (.failed // 0) > 0 then "\(.failed) failed · " else "" end) + "\(.passed // 0) passed") | c), ""] | join("\u001f")' "$f" 2>/dev/null | while IFS=$US read -r a1 a2 a3 a4 a5 a6 a7 a8; do
-            [ -n "$a1" ] || continue; tree_branch_set bn "$a2"; printf '%s\n' "$a1$US$a2$US$a3$US$a4$US$a5$US$a6$US$bn‖$a7$US$a8"
+            [ -n "$a1" ] || continue; tree_branch_set bn "$a2"; printf '%s\n' "$a1$US$a2$US$a3$US$a4$US$a5$US$a6$US$bn|~|$a7$US$a8"
         done
     done
 }
@@ -4143,7 +4145,7 @@ monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project wit
             esac
         done
         [ "$kind" = tests ] && [ "$(cfg_get TEST_LOCAL on)" = on ] && tests_local
-    } 2>/dev/null | grep -E "^[0-9]+$US" | sort -t "$US" -k1,1nr | head -50 > "$tmp"
+    } 2>/dev/null | grep -E "^[0-9]+$US" | LC_ALL=C sort -t "$US" -k1,1nr | head -50 > "$tmp"
     if [ -s "$tmp" ] || [ ! -s "$SHARED_DIR/$kind.list" ]; then mv "$tmp" "$SHARED_DIR/$kind.list"; else rm -f "$tmp"; fi   # (a round that found nothing, e.g. offline, keeps the last list)
     printf '%s\n' "$(date +%s)" > "$SHARED_DIR/$kind.at"
     poke
@@ -4290,15 +4292,15 @@ mon_projects_ci() {  # mon_projects_ci: MPC = the names of the projects that hav
     return 0
 }
 mon_list_in() {  # mon_list_in <list> <name>: 0 when the comma separated list has that name (not case sensitive)
-    local e IFS=, n; n=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
-    for e in $1; do [ "$(printf '%s' "$e" | tr '[:upper:]' '[:lower:]')" = "$n" ] && return 0; done
+    local e IFS=, n; n=$(printf '%s' "$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    for e in $1; do [ "$(printf '%s' "$e" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$n" ] && return 0; done
     return 1
 }
 mon_hidden() {  # mon_hidden <off list> <entry project>: 0 when the entry belongs to a project that is switched off: the project (its name, or a folder
     # of it: IMS-wt1 is IMS; the project with the longest name that fits wins, so Bilendo-marketing is not Bilendo)
-    local lp ln best="" i; lp=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+    local lp ln best="" i; lp=$(printf '%s' "$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')
     for (( i = 0; i < P_N; i++ )); do
-        ln=$(printf '%s' "${P_NAME[$i]}" | tr '[:upper:]' '[:lower:]')
+        ln=$(printf '%s' "${P_NAME[$i]}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
         case "$lp" in "$ln"|"$ln"-*|"$ln"_*) [ "${#ln}" -gt "${#best}" ] && best=${P_NAME[$i]} ;; esac
     done
     [ -n "$best" ] && mon_list_in "$1" "$best"
@@ -4322,7 +4324,7 @@ mon_abbr_set() {  # mon_abbr_set <var> <project name> <abbreviations taken, spac
     # (Bilendo Marketing: BM), the first three letters of a single word longer than 3 (Rails: RAI), a short name as it is (IMS); a clash takes the next
     # candidate (the first three letters, the first two plus the last initial) and at last a digit (BI2)
     local n=$2 w words=() ini="" flat c cand=() i k
-    n=$(printf '%s' "$n" | tr '[:lower:]' '[:upper:]'); flat=${n//[!A-Z0-9]/}
+    n=$(printf '%s' "$n" | LC_ALL=C tr '[:lower:]' '[:upper:]'); flat=${n//[!A-Z0-9]/}
     for w in $(printf '%s' "$n" | tr -c 'A-Z0-9' ' '); do words[${#words[@]}]=$w; ini="$ini${w:0:1}"; done
     [ -n "$flat" ] || flat=PRJ
     if [ "${#words[@]}" -gt 1 ]; then cand[0]=${ini:0:3}; else cand[0]=${flat:0:3}; fi
@@ -4651,7 +4653,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
             queued) ic="${D}◌"; tx="queued" ;; approval) ic="${Y}⏸"; tx="approval" ;; ok) ic="${GREEN}✓"; tx="" ;;
             failed) if [ "$fx" = 1 ]; then ic="${D}✗"; tx="failed · resolved"; else ic="${NN}✗"; tx="failed"; fi ;; *) ic="${D}⊘"; tx="canceled" ;;
         esac
-        br=""; case "$note" in *‖*) br=${note%%‖*}; note=${note#*‖} ;; esac           # tests: the branch that was tested, then the result (an old list: the result only)
+        br=""; case "$note" in *"|~|"*) br=${note%%"|~|"*}; note=${note#*"|~|"} ;; esac           # tests: the branch that was tested, then the result (an old list: the result only)
         [ "$kind" = tests ] && [ -n "$note" ] && [ "$st" != running ] && tx=$note
         [ "$fx" = 1 ] && [ "$kind" = tests ] && tx="$tx · resolved"
         [ -n "$bar" ] || clip_set tx "$tx" $(( w / 2 )); mon_age_set age "$t"
@@ -4766,7 +4768,7 @@ cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now w
     [ $(( $(date +%s) - at )) -ge "$every" ] && monitor_fetch "$kind"
     [ -n "$json" ] && printf '['
     while IFS=$US read -r t pj lb st d tot note url; do
-        note=${note//‖/ · }; note=${note# · }; note=${note% · }                          # (a test's branch and result, one text)
+        note=${note//"|~|"/ · }; note=${note# · }; note=${note% · }                          # (a test's branch and result, one text)
         [ -n "$t" ] || continue
         case "$t" in *[!0-9]*) continue ;; esac; case "$d" in ''|*[!0-9]*) d="" ;; esac; case "$tot" in ''|*[!0-9]*) tot="" ;; esac
         if [ -n "$json" ]; then [ "$first" = 1 ] || printf ','; first=0
@@ -4883,7 +4885,7 @@ w_key() {  # w_key <allowed keys, e.g. "ynsq">: waits for one of them or Enter (
             $'\033') local _sq=""; while read_soon _r; do _sq="$_sq$_r"; done   # an arrow: ← → when asked for (< >), else it goes
                 case "$_sq:$1" in "[C:"*">"*|"OC:"*">"*) k=RIGHT; break ;; "[D:"*"<"*|"OD:"*"<"*) k=LEFT; break ;; esac; continue ;;
             *) case "$1" in *"$k"*) break ;; esac
-               case "$k" in [A-Z]) case "$1" in *"$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]')"*) k=$(printf '%s' "$k" | tr '[:upper:]' '[:lower:]'); break ;; esac ;; esac ;;
+               case "$k" in [A-Z]) case "$1" in *"$(printf '%s' "$k" | LC_ALL=C tr '[:upper:]' '[:lower:]')"*) k=$(printf '%s' "$k" | LC_ALL=C tr '[:upper:]' '[:lower:]'); break ;; esac ;; esac ;;
         esac
     done
     stty "$_s" </dev/tty 2>/dev/null
@@ -5035,7 +5037,7 @@ w_reach() {  # every candidate is tried at once (ssh, 3 s): the answer goes into
 w_saved_shorts() {  # the short names (and Tailscale IPs) of the machines herdr has saved already
     local label host en ip
     while IFS=$US read -r label host en <&3; do
-        host=${host#*@}; printf '%s\n' "$(printf '%s' "${host%%.*}" | tr '[:upper:]' '[:lower:]')"
+        host=${host#*@}; printf '%s\n' "$(printf '%s' "${host%%.*}" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
         w_has_ts && { ip=$(w_ts ip -4 "${host%%.*}" 2>/dev/null | head -1); [ -n "$ip" ] && printf '%s\n' "$ip"; }
     done 3<<< "$(w_machines)"
 }
@@ -5178,7 +5180,7 @@ setup_add_machine() {  # setup_add_machine <host or user@host>: user, test, labe
     if [ -n "$dup" ]; then w_warn "$short" "saved already as $dup"; return; fi
     printf '  %s→ %s%s\n' "$C" "$(clip "testing ssh to $t" $(( W - 2 )))" "$X"; w_probe "$t"; w_probe_say
     case "$W_PROBE" in ok|password) ;; *) return ;; esac
-    lab="$(printf '%s' "${short:0:1}" | tr '[:lower:]' '[:upper:]')${short:1}"
+    lab="$(printf '%s' "${short:0:1}" | LC_ALL=C tr '[:lower:]' '[:upper:]')${short:1}"
     w_read lab "Label for it in herdr and bhote:" "$lab"; [ "$W_QUIT" = 1 ] && return
     case "$lab" in ''|*[!A-Za-z0-9._\ -]*) w_bad "refused" "letters, digits, . _ - and spaces only"; return ;; esac
     if w_machines | awk -F'\037' -v l="$lab" '$1 == l { f = 1 } END { exit !f }'; then w_warn "$lab" "this label is taken"; return; fi
@@ -6094,7 +6096,7 @@ current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "si
         in_scope "$i" || continue
         g=${T_STATUS[$i]}
         [ "$g" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && g=deploying
-        agent_pane_code_set cd "${T_AM[$i]:-$HOST}" "${T_AP[$i]}"              # (w3:a1, MAC·w3:a1: the agent, on any machine kharka reaches, as in the panel)
+        agent_pane_code_set cd "${T_AM[$i]:-$HOST}" "${T_AP[$i]}"              # (w3:a1, MAC/w3:a1: the agent, on any machine kharka reaches, as in the panel)
         row="${T_UPD[$i]:-0}$US$(topic_n "${T_FILE[$i]}")$US${T_TITLE[$i]//[[:cntrl:]]/ }$US${T_AG[$i]//[[:cntrl:]]/ }$US${cd//[[:cntrl:]]/ }$US${T_AM[$i]:-$HOST}$US${T_AP[$i]//[[:cntrl:]]/ }"$'\n'
         case "$g" in
             review) Lr="$Lr$row" ;; now) Ln="$Ln$row" ;; testing) Lt="$Lt$row" ;; deploying) Ld="$Ld$row" ;; finished) Lf="$Lf$row" ;;
@@ -6108,8 +6110,10 @@ current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "si
     [ -n "$lists" ] || lists="{}"
     printf '{"pr":%s,"siblings":%s,"lists":%s}' "$pr" "$sib" "$lists"
 }
-cli_current() {  # bhote current [--json [--full]]
-    local i f hit="" full=""; [ "${1:-}" = --full ] && full=1; topics_load
+cli_current() {  # bhote current [--json [--full] [--mod]]: --mod is the Claude Code mod asking: with CLAUDE_MOD off it gets {"disabled":true} and draws nothing
+    local i f hit="" full="" mod=""; for i in "$@"; do case "$i" in --full) full=1 ;; --mod) mod=1 ;; esac; done
+    if [ -n "$mod" ] && [ "$(cfg_get CLAUDE_MOD on)" = off ]; then printf '{"disabled":true}\n'; return 0; fi
+    topics_load
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in now|testing|finished|review|waiting) ;; *) continue ;; esac
         if { [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ "${T_AS[$i]}" = "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}" ]; } \
@@ -6141,17 +6145,17 @@ agent_ref() {  # agent_ref <ref>: AR_M AR_P AR_NAME AR_ST AR_TASK. ref: a number
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
         if [ "$ref" = "$m/$id" ] || { [ "$ref" = "$id" ] && [ "$m" = "$HOST" ]; }; then AR_M=$m; AR_P=$id; AR_ST=$st; AR_NAME=$name; AR_TASK=$task; return 0; fi
     done
-    case "$ref" in [Ww]?*:[Aa][0-9]*|*"·"[Ww]?*:[Aa][0-9]*)     # w3:a1 (on whichever machine has it; MAC·w3:a1 names the machine)
-        local lref ac2 b2 hit=0 hm="" hp="" hs="" hn="" ht=""; lref=$(printf '%s' "$ref" | tr '[:upper:]' '[:lower:]')
+    case "$ref" in [Ww]?*:[Aa][0-9]*|*"/"[Ww]?*:[Aa][0-9]*)     # w3:a1 (on whichever machine has it; MAC/w3:a1 names the machine)
+        local lref ac2 b2 hit=0 hm="" hp="" hs="" hn="" ht=""; lref=$(printf '%s' "$ref" | LC_ALL=C tr '[:upper:]' '[:lower:]')
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-            agent_pane_code_set ac2 "$m" "$id"; [ -n "$ac2" ] || continue; b2=${ac2##*·}
-            [ "$lref" = "$(printf '%s' "$ac2" | tr '[:upper:]' '[:lower:]')" ] || [ "$lref" = "$(printf '%s' "$b2" | tr '[:upper:]' '[:lower:]')" ] || continue
+            agent_pane_code_set ac2 "$m" "$id"; [ -n "$ac2" ] || continue; b2=${ac2##*/}
+            [ "$lref" = "$(printf '%s' "$ac2" | LC_ALL=C tr '[:upper:]' '[:lower:]')" ] || [ "$lref" = "$(printf '%s' "$b2" | LC_ALL=C tr '[:upper:]' '[:lower:]')" ] || continue
             hit=$(( hit + 1 )); hm=$m; hp=$id; hs=$st; hn=$name; ht=$task
         done
         if [ "$hit" = 1 ]; then AR_M=$hm; AR_P=$hp; AR_ST=$hs; AR_NAME=$hn; AR_TASK=$ht; return 0; fi
-        if [ "$hit" -gt 1 ]; then echo "bhote: '$ref' is on $hit machines: name the machine (MAC·$ref, or machine/pane)" >&2; return 2; fi ;; esac
-    case "$ref" in [A-Za-z][A-Za-z][A-Za-z][0-9]*) local want ac; want=$(printf '%s' "$ref" | tr '[:lower:]' '[:upper:]')   # MAC4, omr1: the old code, still a ref
+        if [ "$hit" -gt 1 ]; then echo "bhote: '$ref' is on $hit machines: name the machine (MAC/$ref, or machine/pane)" >&2; return 2; fi ;; esac
+    case "$ref" in [A-Za-z][A-Za-z][A-Za-z][0-9]*) local want ac; want=$(printf '%s' "$ref" | LC_ALL=C tr '[:lower:]' '[:upper:]')   # MAC4, omr1: the old code, still a ref
         for (( i = 0; i < AG_N; i++ )); do
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             agent_code_set ac "$m" "$name"; [ "$ac" = "$want" ] && { AR_M=$m; AR_P=$id; AR_ST=$st; AR_NAME=$name; AR_TASK=$task; return 0; }
@@ -6384,12 +6388,12 @@ find_items() {  # topics in the list's status order (review, now, next, waiting,
             FI_LABEL[$n]="$m${task:+ · $task}"; FI_TM[$n]=""; case "$st" in off-*) FI_LABEL[$n]="$m reconnecting${task:+ · $task}" ;; esac; lowsrc="$lowsrc$name $m $task agent"$'\n'; n=$(( n + 1 ))
         done
     done
-    i=0; while IFS= read -r m; do FI_LOW[$i]=$m; i=$(( i + 1 )); done <<< "$(printf '%s' "$lowsrc" | tr '[:upper:]' '[:lower:]')"
+    i=0; while IFS= read -r m; do FI_LOW[$i]=$m; i=$(( i + 1 )); done <<< "$(printf '%s' "$lowsrc" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
 }
 FI_HIT=()
 find_filter() {  # find_filter <query>: FI_HIT = the matching items (every word must appear), in their group order
     local q w i ok words=()
-    q=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"; FI_HIT=(); FI_MORE=0
+    q=$(printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]'); read -r -a words <<< "$q"; FI_HIT=(); FI_MORE=0
     for (( i = 0; i < ${#FI_KIND[@]}; i++ )); do
         if [ ${#words[@]} = 0 ] && [ -n "${FI_DR[$i]:-}" ] && [ "${FI_DR[$i]}" -ge "$DONE_SHOWN" ]; then FI_MORE=$(( FI_MORE + 1 )); continue; fi   # nothing typed: only the newest done topics
         ok=1; for w in ${words[@]+"${words[@]}"}; do case "${FI_LOW[$i]}" in *"$w"*) ;; *) ok=0; break ;; esac; done
@@ -6715,7 +6719,7 @@ bhote_cli() {
                        local ri rl="" rr="" lab rep
                        for (( ri = 0; ri < rn; ri++ )); do
                            lab=${rasks[$ri]//¦/}; lab=${lab:0:24}; [ -n "$lab" ] || continue; rep=${rreps[$ri]//¦/}
-                           [ -n "$rep" ] || { rep=${lab%\?}; rep=$(printf '%s' "$rep" | tr '[:upper:]' '[:lower:]'); }   # default: the label as a sentence
+                           [ -n "$rep" ] || { rep=${lab%\?}; rep=$(printf '%s' "$rep" | LC_ALL=C tr '[:upper:]' '[:lower:]'); }   # default: the label as a sentence
                            rl="$rl${rl:+¦}$lab"; rr="$rr${rr:+¦}${rep:0:400}"
                        done
                        topic_set "$f" review_note "${rnote:0:$REVIEW_NOTE_MAX}"; topic_set "$f" review_ask "$rl"; topic_set "$f" review_reply "$rr"

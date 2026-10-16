@@ -25,6 +25,11 @@ session itself, so you see it without looking at the panel. It needs Claude Code
 The mod only calls the CLI (`bhote current --json`, `bhote <status> <id>`), so it finds the topic the way `bhote current` does
 (Claude session, else herdr pane). An agent without a topic, or one whose topic is done, shows no band.
 
+## Switching it off
+
+`bhote config set CLAUDE_MOD off` (or settings › *Claude Code mod*) switches the display off on this machine: the band and the pane are empty, `/topic` says so,
+and the mod asks bhote for nothing but once a minute whether it may draw again. It needs no `/reload-plugins`. The other machines have a setting of their own.
+
 ## Install
 
 ```sh

@@ -76,7 +76,7 @@ by `PROJECT_COLORS`. Behind an agent's name stands the topic it works on (seven 
 Every agent has a name of its own: herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (shown in the list, behind done topics and
 as a ref in `bhote agents` and `bhote transfer`; the older code `MAC4`, a machine code and a number, still works as a ref). When the agents of
 more than one machine are listed, the name is shown in front of each agent, and an agent of another machine carries its machine's **code** in
-front of it: `w3:a1|Shop (main)`, `MAC·w3:a1|root` (a session in the home folder, named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
+front of it: `w3:a1|Shop (main)`, `MAC/w3:a1|root` (a session in the home folder, named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
 `OMR`, MacBook Pro `MBP`), unique over all machines; settings › *Connections* › *Code of …* and the setup wizard set one by
 hand (empty: made from the name again). A code set by hand is a record in the topic store, so every machine shows the same.
 A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. The ↕ at the end of the rule above the agents

@@ -242,7 +242,7 @@ mkdir -p "$HOME/.cache/bhote/test-status"; ms=$(( $(date +%s) * 1000 ))
 printf '{"tree":"web-wt1","suite":"server","done":5,"total":10,"passed":40,"failed":0,"startedAt":%s,"updatedAt":%s,"finished":false,"ok":null}' "$ms" "$ms" > "$HOME/.cache/bhote/test-status/web-wt1.server.json"
 printf '{"tree":"web-wt1","suite":"client","done":9,"total":9,"passed":90,"failed":2,"startedAt":1000,"updatedAt":2000,"finished":true,"ok":false}' > "$HOME/.cache/bhote/test-status/web-wt1.client.json"
 l=$(tests_local)
-echo "$l" | grep -q "web-wt1${US}server${US}running${US}5${US}10" && echo "$l" | grep -q "web-wt1${US}client${US}failed${US}9${US}9${US}‖2 failed · 90 passed" && ok "status files: running with progress, failed with counts" || bad "status files: $l"
+echo "$l" | grep -q "web-wt1${US}server${US}running${US}5${US}10" && echo "$l" | grep -q "web-wt1${US}client${US}failed${US}9${US}9${US}|~|2 failed · 90 passed" && ok "status files: running with progress, failed with counts" || bad "status files: $l"
 printf '{"tree":"evil\\u001b[31m","suite":"s","done":"a[$(touch %s/pwned)]","total":"9","passed":1,"failed":0,"startedAt":%s,"updatedAt":%s,"ok":null}' "$T" "$ms" "$ms" > "$HOME/.cache/bhote/test-status/evil.json"
 l=$(tests_local | grep evil); rm -f "$HOME/.cache/bhote/test-status/evil.json"
 case "$l" in *$'\033'*) bad "status file: escape code kept" ;; *) [ -n "$l" ] && ok "status file: control characters are cleaned" || bad "status file: dropped: $l" ;; esac
@@ -281,7 +281,7 @@ nc() { LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
   && [ "$(mon_shipped "Add credits (#123)")" = "Add credits (#123)" ] && ok "deployments: a merge commit says its branch (and the pull request), a squash title stays" || bad "shipped: $(mon_shipped "Merge pull request #1525 from bilendo/chore/scoped-local-tests") / $(mon_shipped "Merge branch 'feat/x' into main")"
 t2=$(date +%s); { printf '%s\n' "$(( t2 - 1 ))${US}IMS${US}Backend${US}ok${US}5${US}5${US}chore/scoped-local-tests (#1525)${US}u1"; } > "$SHARED_DIR/deploys.list"
 blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 | nc ); case "$blk" in *"IMS · Backend (chore/scoped-local-tests (#1525))"*) ok "deployments: a deployment that went through says what went live" ;; *) bad "shipped shown: $blk" ;; esac
-{ printf '%s\n' "$(( t2 - 1 ))${US}IMS-wt1${US}server${US}ok${US}${US}${US}feat/x‖9015 passed${US}" "$(( t2 - 2 ))${US}Web${US}build${US}ok${US}${US}${US}fix/y‖${US}u2" "$(( t2 - 3 ))${US}Web${US}unit${US}ok${US}${US}${US}12 runs${US}"; } > "$SHARED_DIR/tests.list"
+{ printf '%s\n' "$(( t2 - 1 ))${US}IMS-wt1${US}server${US}ok${US}${US}${US}feat/x|~|9015 passed${US}" "$(( t2 - 2 ))${US}Web${US}build${US}ok${US}${US}${US}fix/y|~|${US}u2" "$(( t2 - 3 ))${US}Web${US}unit${US}ok${US}${US}${US}12 runs${US}"; } > "$SHARED_DIR/tests.list"
 blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block tests 4 | nc )
 case "$blk" in *"IMS-wt1 · server (feat/x)"*"9015 passed"*) ok "tests: the branch that was tested behind the name, the result on the right" ;; *) bad "tests branch: $blk" ;; esac
 case "$blk" in *"Web · build (fix/y)"*) ok "tests: a CI run says its branch" ;; *) bad "tests ci branch: $blk" ;; esac
@@ -297,7 +297,7 @@ nc() { LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
 blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 )
 cap=$(printf '%s\n' "$blk" | head -1)
 case "$cap" in *"$(printf '\035cap:deploys!')"*) ok "checkboxes: the caption ref carries their columns" ;; *) bad "caption ranges: $cap" ;; esac
-plain=$(printf '%s\n' "$cap" | sed 's/\x1d[^\x1d]*\x1d//' | nc); case "$plain" in *"☑ IMS"*"☑ RAI"*"☑ WEB"*"↕"*) ok "checkboxes: one for each project with a CI, all shown, on the caption row" ;; *) bad "chips: $plain" ;; esac
+plain=$(printf '%s\n' "$cap" | tr -d '\035' | sed 's/^cap:deploys![0-9!]*//' | nc); case "$plain" in *"☑ IMS"*"☑ RAI"*"☑ WEB"*"↕"*) ok "checkboxes: one for each project with a CI, all shown, on the caption row" ;; *) bad "chips: $plain" ;; esac
 case "$plain" in *Plain*) bad "a project without CI has a checkbox: $plain" ;; *) ok "checkboxes: none for a project without CI" ;; esac
 # the columns in the ref are the columns of the checkbox on the screen (1 based): the first range starts on its ☑
 rng=$(printf '%s' "$cap" | sed 's/^\x1d[^!]*!\([0-9]*\)!\([0-9]*\).*/\1 \2/' | head -c 20); set -- $rng

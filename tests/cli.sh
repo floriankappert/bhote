@@ -28,7 +28,7 @@ B done 1 >/dev/null; B list --all | grep -q "done .*Release notes" && ok "done b
 B done "price list" >/dev/null; B list --all | grep -q "done .*Price list" && ok "done by part of the title" || bad "done by title"
 id=$(B list --json --all | python3 -c "import sys,json; print([t for t in json.load(sys.stdin) if 'Kafka' in t['title']][0]['id'])")
 B show "$id" | grep -q "Kafka role" && ok "show by the full id" || bad "show by id"
-B show "${id:0:8}" >/dev/null 2>&1; [ "$?" = 2 ] && ok "an id start shared by several topics is reported as ambiguous" || bad "shared id prefix"
+B show "${id:0:4}" >/dev/null 2>&1; [ "$?" = 2 ] && ok "an id start shared by several topics is reported as ambiguous" || bad "shared id prefix"
 
 # ambiguity and misses
 B add "Kafka monitoring" >/dev/null
@@ -254,6 +254,12 @@ FAKE_ONLINE=false B kharka watch; grep -qE 'kharka-daemon|dev.kharka.daemon' "$F
 B kharka watch status | grep -q "herdr entry is" && ok "kharka watch status" || bad "kharka watch status"
 B kharka nope >/dev/null 2>&1 && bad "kharka accepted an unknown command" || ok "kharka: an unknown command is exit 1"
 rm -f "$T/bin/kharka"
+
+# CLAUDE_MOD: off, the Claude Code mod (it asks with --mod) gets {"disabled":true} and draws nothing; the plain `current` and --json without --mod stay as they are
+[ "$(B current --json --mod)" = null ] && ok "current --mod: on (the default), an agent without a topic gets null" || bad "current --mod on: $(B current --json --mod)"
+B config set CLAUDE_MOD off >/dev/null; [ "$(B current --json --mod)" = '{"disabled":true}' ] && [ "$(B current --json)" = null ] \
+    && ok "current --mod: CLAUDE_MOD off says disabled to the mod only" || bad "current --mod off: $(B current --json --mod) / $(B current --json)"
+B config set CLAUDE_MOD on >/dev/null; [ "$(B current --json --mod)" = null ] && ok "current --mod: on again" || bad "current --mod on again"
 
 # mod: bhote-topic goes into every Claude profile as a plugin of the marketplace "bhote" (a fake claude logs each call)
 cat > "$T/bin/claude" <<'SH'

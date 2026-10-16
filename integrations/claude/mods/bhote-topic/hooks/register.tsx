@@ -68,6 +68,7 @@ const isBusy = (p: Progress) => p.tests.length > 0 || (p.deploy !== null && ['ru
 const parse = (stdout: string): Topic | null => {
   try {
     const t = JSON.parse(stdout)
+    isOff = t?.disabled === true // the bhote setting CLAUDE_MOD is off: nothing is drawn
     if (!t || !t.id) return null
     return {
       id: t.id,
@@ -94,12 +95,13 @@ const parse = (stdout: string): Topic | null => {
 // a turn runs, or tests or a deployment: the topic is read every few seconds
 let isWorking = false
 let isBusyNow = false
+let isOff = false // bhote says the mod is switched off (CLAUDE_MOD)
 let isPaneOpen = false // the pane is open: the whole picture (pull request, other topics) is read
 let tick = 0
 
 async function refresh($: EngineInterface) {
   try {
-    const ran = await $.process.run(isPaneOpen ? ['bhote', 'current', '--json', '--full'] : ['bhote', 'current', '--json'], { timeoutMs: isPaneOpen ? 20000 : 5000 })
+    const ran = await $.process.run(isPaneOpen ? ['bhote', 'current', '--json', '--full', '--mod'] : ['bhote', 'current', '--json', '--mod'], { timeoutMs: isPaneOpen ? 20000 : 5000 })
     const next = ran.exitCode === 0 ? parse(ran.stdout) : null
     isBusyNow = next !== null && isBusy(next.progress)
     await update($, topic, () => next)
@@ -151,6 +153,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'topic' }, async ($, e) => {
     const [sub = 'status', ...rest] = e.args.trim().split(/\s+/)
     const current = await read($, topic)
+    if (isOff) return { text: 'The topic display is switched off in bhote (setting CLAUDE_MOD).' }
 
     if (sub === 'pane') {
       if (isPaneOpen) {
@@ -275,7 +278,7 @@ export const register: Register = (on, options) => {
     if (current === null) {
       return (
         <Box>
-          <Text dimColor>No bhote topic for this agent.</Text>
+          <Text dimColor>{isOff ? 'Switched off in bhote (setting CLAUDE_MOD).' : 'No bhote topic for this agent.'}</Text>
         </Box>
       )
     }

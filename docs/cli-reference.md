@@ -215,9 +215,9 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 The agents herdr knows (this machine, and the other machines when `REMOTE_AGENTS=on`: herdr's saved ones, or the ones in
 kharka with `AGENTS_VIA=kharka`), numbered. Every agent also has a
 name of its own: herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (with the machine's code in front on another machine,
-`MAC·w3:a1`; it is shown in the agent list and behind done topics). The older code, a machine code and a number kept for good (`MAC4`, `OMR1`),
+`MAC/w3:a1`; it is shown in the agent list and behind done topics). The older code, a machine code and a number kept for good (`MAC4`, `OMR1`),
 still works as a ref and is the `alias` in `--json`. The numbers, the names and the codes are agent refs for `transfer` and `jump`; a name that two
-machines have (`w3:a1`) asks for the machine (`MAC·w3:a1`). `--json`: an array of `{"n", "code", "alias", "machine", "pane", "status", "name", "task", "free", "topic"}`.
+machines have (`w3:a1`) asks for the machine (`MAC/w3:a1`). `--json`: an array of `{"n", "code", "alias", "machine", "pane", "status", "name", "task", "free", "topic"}`.
 
 ### `bhote jump <machine> <pane> | <agent>`
 

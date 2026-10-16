@@ -146,7 +146,7 @@ grep -q "^Laptop${US}w3:p1${US}off-working" "$AGENT_REMOTE" && grep -qx Laptop "
 FAKE_DOWN=1 collect_remote; grep -q "${US}off-off-" "$AGENT_REMOTE" && bad "off- doubled" || ok "remote: still away, marked once"
 collect_local; frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=()
   while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < <(agents_all); agents_block )
-echo "$frame" | grep -q "LPT ◐ reconnecting" && echo "$frame" | grep -q "LPT·w3:a1|" && ok "panel: the machine (its code) says reconnecting, its agents stay listed" || bad "panel reconnecting: $(echo "$frame" | grep -n 'LPT\|┈')"
+echo "$frame" | grep -q "LPT ◐ reconnecting" && echo "$frame" | grep -q "LPT/w3:a1|" && ok "panel: the machine (its code) says reconnecting, its agents stay listed" || bad "panel reconnecting: $(echo "$frame" | grep -n 'LPT\|┈')"
 ( AG_N=0; AG_LINES=(); while IFS= read -r l; do AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); done < "$AGENT_REMOTE"; agent_state_set s Laptop w3:p1; [ "$s" = off-working ] ) \
   && ok "remote: a topic's agent on it reads off-working (shown as offline)" || bad "agent state offline"
 collect_remote; grep -q "^Laptop${US}w3:p1${US}working" "$AGENT_REMOTE" && [ ! -s "$SHARED_DIR/machines.offline" ] && ok "remote: back again, live states" || bad "back online"
@@ -166,7 +166,7 @@ nt=$(BHOTE_NO_SYNC=1 bhote_cli list --all --json | jq length)
 frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037idle\037Laptop / root\037' $'Laptop\037w9:p3\037idle\037api\037'); agents_block )
 echo "$frame" | grep -q "|" && bad "one machine: codes shown" || ok "codes: one machine listed, no codes"
 frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037idle\037Laptop / root\037' $"$HOST"$'\037w1:p1\037idle\037api\037'); agents_block )
-echo "$frame" | grep -q "LPT·w9:a2|root" && echo "$frame" | grep -q "w1:a1|api" && ! echo "$frame" | grep -qi "^ *laptop *$" && ok "codes: agent|name (LPT·w9:a2|root on another machine, w1:a1|api here), no machine sub-captions" || bad "codes in the list: $frame"
+echo "$frame" | grep -q "LPT/w9:a2|root" && echo "$frame" | grep -q "w1:a1|api" && ! echo "$frame" | grep -qi "^ *laptop *$" && ok "codes: agent|name (LPT/w9:a2|root on another machine, w1:a1|api here), no machine sub-captions" || bad "codes in the list: $frame"
 cfg_set REMOTE_AGENTS off
 # projects: this machine's agents get repo and project tokens (only on a change); the panel reads them back
 mkdir -p "$T/prj"; git -C "$T/prj" init -q -b main; git -C "$T/prj" remote add origin https://github.com/acme/shop.git
@@ -397,17 +397,17 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf 'id=an-Laptop-beta\nkind=agentnum\ntitle=Laptop/beta\nnum=7\nupdated=1\ndeleted=0\n' > "$TOPIC_DIR/an-Laptop-beta.topic"; AN_AT=-999
   agent_code_set x Mac alpha; agent_code_set y Laptop beta; case "$x$y" in [A-Z][A-Z][A-Z]1[A-Z][A-Z][A-Z]7) ;; *) exit 1 ;; esac
   agent_ref "$(echo "$y" | tr '[:upper:]' '[:lower:]')" && [ "$AR_NAME" = beta ] ) && ok "agent numbers: a code (any case) finds the agent" || bad "agent code ref"
-# an agent's name is herdr's workspace and pane number (w3:a1 for the pane w3:p1), with the machine's code in front on another machine (MAC·w3:a1);
+# an agent's name is herdr's workspace and pane number (w3:a1 for the pane w3:p1), with the machine's code in front on another machine (MAC/w3:a1);
 # a ref in either form finds it, a name that two machines have asks for the machine, and the old code (MAC4) stays a ref
 ( HOST=Mac; MC_N=0; AG_N=3; AG_LINES=($'Mac\037w1:p1\037idle\037alpha\037' $'Laptop\037w2:p1\037idle\037beta\037' $'Laptop\037w1:p1\037idle\037gamma\037')
   agent_pane_code_set a Mac w1:p1; agent_pane_code_set b Laptop w2:p1; agent_pane_code_set c Mac weird; agent_pane_code_set g Laptop w1:p1
-  [ "$a" = w1:a1 ] && case "$b" in *·w2:a1) ;; *) exit 1 ;; esac && [ -z "$c" ] || exit 2
+  [ "$a" = w1:a1 ] && case "$b" in */w2:a1) ;; *) exit 1 ;; esac && [ -z "$c" ] || exit 2
   agent_ref w2:a1 && [ "$AR_NAME" = beta ] || exit 3
   agent_ref W2:A1 && [ "$AR_NAME" = beta ] || exit 4
   agent_ref w1:a1 >/dev/null 2>&1; [ $? = 2 ] || exit 5
   agent_ref "$g" && [ "$AR_NAME" = gamma ] || exit 6
   agent_ref "Mac/w1:p1" && [ "$AR_NAME" = alpha ] || exit 7
-  exit 0 ) && ok "agent names: w3:a1 (MAC·w3:a1 on another machine), found by it in any case, asks for the machine when two have it" || bad "agent pane code: step $?"
+  exit 0 ) && ok "agent names: w3:a1 (MAC/w3:a1 on another machine), found by it in any case, asks for the machine when two have it" || bad "agent pane code: step $?"
 # Steal & Transfer into another project is refused (only on purpose)
 ( agent_live() { LIVE_ST=idle; LIVE_SESS=s1; LIVE_CWD=/x; }; notify() { :; }; agent_send() { :; }
   rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Mac${US}w2:p1${US}t${US}a${US}${US}proj-shop${US}/y" > "$AGENT_META_L"; : > "$AGENT_META_R"

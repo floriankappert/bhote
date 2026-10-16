@@ -18,7 +18,7 @@ wide, with a small sheepdog that guards the herd.
 - **Topics** move through `now`, `next`, `waiting` (for a name, with a date), `review`, `later` and `done`, each with an optional description.
   The panel shows review and now as cards, next, waiting and parked ones as lines grouped by status; the last done topics sit in their own area, with the agent that did them.
 - **Agents of all machines** in one list, grouped by project: working ones in Claude orange, ones that need you in red, idle ones grey,
-  with the topic each works on. Every agent has a name of its own, herdr's workspace and pane number (`w3:a1`, `MAC·w3:a1` on another machine), also a ref for the CLI.
+  with the topic each works on. Every agent has a name of its own, herdr's workspace and pane number (`w3:a1`, `MAC/w3:a1` on another machine), also a ref for the CLI.
 - **Start a topic on a free agent** (`s`): bhote sends title and description to its pane. With `AUTO_ASSIGN` a `now` topic is started by itself on the next free agent of its project.
 - **Review topics by themselves:** an agent that asks you a question or waits for an answer gets a review topic (`Question from <agent>`); it goes when the agent works again (`AUTO_REVIEW`).
 - **Waiting:** agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on. A waiting topic can carry a **Slack pin** (channel, DM or thread); when someone writes there, it goes to review. Claude Code and its Slack connector do the reading, so bhote needs no Slack token.
