@@ -9,6 +9,12 @@ bhote=$(command -v bhote 2>/dev/null)
 for c in "$HOME/.local/bin/bhote" /opt/homebrew/bin/bhote /usr/local/bin/bhote /usr/bin/bhote; do [ -n "$bhote" ] && break; [ -x "$c" ] && bhote=$c; done
 cfg=${BHOTE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/config}
 width=${BHOTE_PANEL_WIDTH:-80}
+# the settings PANEL_MIN_WIDTH / PANEL_MAX_WIDTH (settings › Panel width) bound the width a new panel gets, as they bound an open one
+if [ -r "$cfg" ]; then
+    lo=$(sed -n 's/^PANEL_MIN_WIDTH=//p' "$cfg" | tail -1); hi=$(sed -n 's/^PANEL_MAX_WIDTH=//p' "$cfg" | tail -1)
+    case "$hi" in ''|*[!0-9]*) ;; *) [ "$width" -gt "$hi" ] && width=$hi ;; esac
+    case "$lo" in ''|*[!0-9]*) ;; *) [ "$width" -lt "$lo" ] && width=$lo ;; esac
+fi
 keep=${BHOTE_AGENT_MIN_WIDTH:-64}
 mode=${1:-startup}
 # BHOTE_DRY=1 only prints what would be done
