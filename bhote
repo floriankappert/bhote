@@ -185,6 +185,7 @@ TOPIC_DIR=$DATA_DIR/topics
 REMOTE_TOPIC_DIR=${BHOTE_REMOTE_DIR:-.local/share/bhote/topics}      # relative to the remote home
 STORE_STATUS="$DATA_DIR/store.status"                                 # state=ok|offline, ok_at=<epoch>; shared by all panels
 STORE_DIRTY="$SHARED_DIR/dirty"                          # touched by every local change: sync at once
+TOPICS_CHANGED="$SHARED_DIR/topics.changed"              # touched by every topic write (any process): the collector loads the topics anew
 store_ssh() { local host=$1; shift; case "$host" in ''|-*|*[!A-Za-z0-9._@:%-]*) return 1 ;; esac   # never an option, never odd characters
     "${BHOTE_SSH:-ssh}" -o BatchMode=yes -o ConnectTimeout=4 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 "$host" "$@"; }
 # The remote LOGIN shell may be zsh or fish: an empty glob aborts a zsh command line. So every remote script goes to
@@ -351,7 +352,7 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     fi
     [ "$locked" = 1 ] && topic_unlock "$f"
     [ "$rc" = 0 ] || return 1
-    : > "$STORE_DIRTY"
+    : > "$STORE_DIRTY"; : > "$TOPICS_CHANGED"
 }
 topic_new() {  # topic_new <title> [waiting for] [description]
     mkdir -p "$TOPIC_DIR"
@@ -363,7 +364,7 @@ topic_new() {  # topic_new <title> [waiting for] [description]
     printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\n' \
         "$id" "$title" "$status" "$2" "$since" "$now" "$now" "${3:-}" > "$TOPIC_DIR/$id.topic"
     NEW_TOPIC_ID=$id
-    : > "$STORE_DIRTY"
+    : > "$STORE_DIRTY"; : > "$TOPICS_CHANGED"
 }
 store_tag() {  # the note after the topic count: offline, or (kharka) a hub that is away
     STORE_TAG_OUT=""
@@ -373,7 +374,13 @@ store_tag() {  # the note after the topic count: offline, or (kharka) a hub that
 }
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, testing, next, waiting, later, done; inside a group by file name = by creation.
+# In the collector (TOPICS_ONCE=1) a dozen steps ask per round: they share one load, and only a topic write since (TOPICS_CHANGED,
+# by this or any other process) loads anew. The marker goes BEFORE the files are read: a write during the read loads again.
 topics_load() {
+    if [ "${TOPICS_ONCE:-0}" = 1 ]; then
+        [ "${TOPICS_HAVE:-0}" = 1 ] && [ ! -e "$TOPICS_CHANGED" ] && return 0
+        rm -f "$TOPICS_CHANGED"; TOPICS_HAVE=1
+    fi
     local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br pj kd dp dm seen n=0 a_dm a_dp a_as a_dl a_tn a_sl a_sm a_br a_pj s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
     for f in "$TOPIC_DIR"/*.topic; do
         [ -f "$f" ] || continue
@@ -1420,7 +1427,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
         kill -0 "$1" 2>/dev/null || { kharka_follow_stop; kill $sync_pid $slack_pid $dep_pid $tst_pid $rem_pid $upd_pid $key_pid $mux_pid 2>/dev/null; exit 0; }   # the panel is gone (also after kill -9): stop, never loop on alone
         cfg_var every_l LOCAL_EVERY 3; cfg_var every_r REMOTE_EVERY 5
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
-        lead=0
+        lead=0; TOPICS_ONCE=1; TOPICS_HAVE=0                  # each round reads the topics once (topics_load); merges of the round before count too
         if collector_lead "$1"; then
             lead=1; local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
             [ -e "$SHARED_DIR/remote.due" ] && ! { [ -n "$rem_pid" ] && kill -0 "$rem_pid" 2>/dev/null; } && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine (kept while a round still runs)

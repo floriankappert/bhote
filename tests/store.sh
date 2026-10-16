@@ -145,4 +145,16 @@ pm=""; self_pid_set pm; [ "$pm" = "$$" ] || bad "self_pid_set: the main shell is
   ( p1=""; self_pid_set p1; [ "$p1" != "$p0" ] && kill -0 "$p1" 2>/dev/null && lock_take "$SHARED_DIR/t.lock" "$p1" && sleep 1 ) &
   sleep 0.5; lock_take "$SHARED_DIR/t.lock" "$p0" && exit 2; wait; lock_take "$SHARED_DIR/t.lock" "$p0" || exit 3
   lock_drop "$SHARED_DIR/t.lock" "$p0"; exit 0 ) && ok "sync lock: a background sync in a subshell holds it against the panel" || bad "sync lock shared with a subshell: step $?"
+
+# 8) the collector reads the topics once per round: again only after a topic write (by itself or another process)
+( mkdir -p "$SHARED_DIR"; TOPICS_ONCE=1; TOPICS_HAVE=0
+  mk "$TOPIC_DIR" once1 "Before the round" 99996; topics_load; n0=$T_N
+  mk "$TOPIC_DIR" once2 "Written without topic_set" 99997; topics_load; [ "$T_N" = "$n0" ] || exit 1          # (the load of this round counts)
+  topic_set "$TOPIC_DIR/once1.topic" title "Changed in the round"; topics_load; [ "$T_N" = $(( n0 + 1 )) ] || exit 2
+  for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = once1 ] && [ "${T_TITLE[$i]}" = "Changed in the round" ] && exit 0; done; exit 3 ) \
+  && ok "collector: one topic load per round, again after a write" || bad "collector topic load: step $?"
+( TOPICS_ONCE=1; TOPICS_HAVE=0; topics_load; n0=$T_N; ( topic_new "From another process" ); topics_load; [ "$T_N" = $(( n0 + 1 )) ] ) \
+  && ok "collector: a topic made by another process loads in the same round" || bad "collector missed a new topic"
+( topics_load; n0=$T_N; mk "$TOPIC_DIR" once3 "Panel sees it" 99998; topics_load; [ "$T_N" = $(( n0 + 1 )) ] ) \
+  && ok "panel: every topics_load reads the files (no cache outside the collector)" || bad "panel cached the topics"
 rm -rf "$T"; exit $fail
