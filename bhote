@@ -209,6 +209,7 @@ store_place() {  # where the replica is: the machine's label, kharka, or local
 # on the PATH; the daemon is found where kharka looks itself ($KHARKA_SOCKET, else its default socket).
 kharka_bin_set() { local _kbv=${KHARKA:-}; [ -n "$_kbv" ] || cfg_var _kbv KHARKA ""; printf -v "$1" '%s' "${_kbv:-kharka}"; }   # kharka_bin_set <var> (an odd name: never the caller's)
 kharka_run() { local _kb; kharka_bin_set _kb; "$_kb" "$@"; }   # kharka_run <kharka arguments>
+rmf() { [ -e "$1" ] && rm -f "$1"; return 0; }   # rm -f only when there is something to remove: the follow-ups ask it for every topic, every round, and a process each is what made the panel slow
 kharka_found() { local _kb; kharka_bin_set _kb; command -v "$_kb" >/dev/null 2>&1; }
 kharka_key() {  # kharka_key <file name>: the key of its entry (KHARKA_JQ_KEY below decides the same way)
     local id=${1%.topic}
@@ -380,35 +381,58 @@ store_tag() {  # the note after the topic count: offline, or (kharka) a hub that
 }
 # All topics are read ONCE per screen into arrays (pure bash, no subshell per topic: a draw used to start a few awk per topic
 # and grew with the square of the count). Order: review, now, testing, next, waiting, later, done; inside a group by file name = by creation.
+TOPIC_KEYS="title status waiting_for waiting_since updated deleted description agent agent_machine agent_pane agent_session delegated transfer_to_name slack_label slack_msg agent_branch project kind deploy_wait dismissed auto_now auto review_src"
+topics_index_build() {  # topics_index_build <files>: ONE awk reads every topic file (the first value of a key counts) and writes the index $TOPICS_IDX: a first line #<count> <topic folder> (two data sets never share one), then a
+    # record per file (path, then TOPIC_KEYS, separated by US). Every process that lists the topics (panels, collector, CLI) reads this instead of parsing hundreds of files in bash.
+    local tmp="$TOPICS_IDX.tmp.$$"; mkdir -p "$SHARED_DIR" 2>/dev/null
+    { printf '#%s %s %s%s%s\n' "$#" "$TOPIC_DIR" "$RANDOM" "$RANDOM" "$$"; if [ "$#" -gt 0 ]; then awk -v US="$US" -v KEYS="$TOPIC_KEYS" '
+        function flush(   i, line) { if (f == "") return; line = f; for (i = 1; i <= nk; i++) line = line US v[K[i]]; print line }
+        BEGIN { nk = split(KEYS, K, " "); for (i = 1; i <= nk; i++) want[K[i]] = 1 }
+        FNR == 1 { flush(); f = FILENAME; delete v; delete seen }
+        { k = $0; sub(/=.*/, "", k); if (!(k in seen)) { seen[k] = 1; if (k in want) { val = $0; sub(/^[^=]*=/, "", val); v[k] = val } } }
+        END { flush() }' "$@"; fi; } > "$tmp" 2>/dev/null && mv -f "$tmp" "$TOPICS_IDX" 2>/dev/null; rm -f "$tmp" 2>/dev/null; return 0
+}
+topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
+    local f hdr stale=0 files; TOPICS_IDX="$SHARED_DIR/topics.idx"; files=("$TOPIC_DIR"/*.topic); [ -f "${files[0]}" ] || files=()
+    if [ ! -f "$TOPICS_IDX" ]; then stale=1
+    else
+        { read -r hdr; } < "$TOPICS_IDX" 2>/dev/null; case "$hdr" in "#${#files[@]} $TOPIC_DIR "*) ;; *) stale=1 ;; esac
+        if [ "$stale" = 0 ]; then for f in "${files[@]}"; do [ "$TOPICS_IDX" -nt "$f" ] || { stale=1; break; }; done; fi
+    fi
+    [ "$stale" = 0 ] || topics_index_build ${files[@]+"${files[@]}"}
+    TI_TOKEN=""; { read -r hdr; } < "$TOPICS_IDX" 2>/dev/null; TI_TOKEN=${hdr##* }          # (the last word of the first line: new with every rebuild, the same for every process)
+}
 topics_load() {
-    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br pj kd dp dm seen n=0 a_dm a_dp a_as a_dl a_tn a_sl a_sm a_br a_pj s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
-    for f in "$TOPIC_DIR"/*.topic; do
-        [ -f "$f" ] || continue
-        title=""; st=now; wf=""; ws=""; up=0; del=0; desc=""; ag=""; am=""; ap=""; as=""; dl=""; tn=""; sl=""; sm=""; br=""; pj=""; kd=""; dp=""; dm=""; seen=" "
-        while IFS= read -r line; do
-            k=${line%%=*}; v=${line#*=}
-            case "$seen" in *" $k "*) continue ;; esac; seen="$seen$k "     # the FIRST value counts, everywhere (topic_get does the same)
-            case "$k" in title) title=$v ;; status) st=$v ;; waiting_for) wf=$v ;; waiting_since) ws=$v ;; updated) up=$v ;; deleted) del=$v ;; description) desc=$v ;; agent) ag=$v ;; agent_machine) am=$v ;; agent_pane) ap=$v ;; agent_session) as=$v ;; delegated) dl=$v ;; transfer_to_name) tn=$v ;; slack_label) sl=$v ;; slack_msg) sm=$v ;; agent_branch) br=$v ;; project) pj=$v ;; kind) kd=$v ;; deploy_wait) dp=$v ;; dismissed) dm=$v ;; esac
-        done < "$f"
-        [ "$del" = 1 ] && continue
-        [ -n "$kd" ] && continue                                   # a project record (kind=project), not a topic
-        case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
-        case "$st" in now|testing|finished|next|waiting|review|later|done) ;; *) st=now ;; esac
-        case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
-        id=${f##*/}; id=${id%.topic}
-        a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; a_pj[$n]=${pj//[!A-Za-z0-9_-]/}; a_dp[$n]=${dp//[!0-9]/}; a_dm[$n]=${dm//[!0-9]/}; n=$(( n + 1 ))
-    done
-    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=(); T_PJ=(); T_DEP=(); T_DM=()
+    # unchanged since THIS process parsed (the index has the same token, and it is not stale): the arrays stand as they are, nothing is read.
+    # (A stamp file would be shared with the collector's subshell, which loads, too: it would tell this process "current" for data the collector read.)
+    topics_index_ensure
+    [ -n "${T_N:-}" ] && [ "$TI_TOKEN" = "${TL_TOKEN:-}" ] && return 0
+    local f line k v id title st wf ws up del desc ag am ap as dl tn sl sm br pj kd dp dm aun au rsrc seen n=0 a_an a_au a_rs a_dm a_dp a_as a_dl a_tn a_sl a_sm a_br a_pj s i m=0 a_file a_id a_title a_st a_wf a_ws a_up a_desc a_ag a_am a_ap
+    {   read -r line                                                # (the count line)
+        while IFS=$US read -r f title st wf ws up del desc ag am ap as dl tn sl sm br pj kd dp dm aun au rsrc; do
+            [ -n "$f" ] || continue
+            [ -n "$st" ] || st=now; [ -n "$up" ] || up=0
+            [ "$del" = 1 ] && continue
+            [ -n "$kd" ] && continue                                   # a project record (kind=project), not a topic
+            case "$title$wf$desc$ag$am$ap$st" in *[[:cntrl:]]*) title=${title//[[:cntrl:]]/}; wf=${wf//[[:cntrl:]]/}; desc=${desc//[[:cntrl:]]/}; ag=${ag//[[:cntrl:]]/}; am=${am//[[:cntrl:]]/}; ap=${ap//[[:cntrl:]]/}; st=${st//[[:cntrl:]]/} ;; esac
+            case "$st" in now|testing|finished|next|waiting|review|later|done) ;; *) st=now ;; esac
+            case "$ws" in *[!0-9]*) ws="" ;; esac; case "$up" in ''|*[!0-9]*) up=0 ;; esac
+            id=${f##*/}; id=${id%.topic}
+            a_file[$n]=$f; a_id[$n]=$id; a_title[$n]=$title; a_st[$n]=$st; a_wf[$n]=$wf; a_ws[$n]=$ws; a_up[$n]=$up; a_desc[$n]=$desc; a_ag[$n]=$ag; a_am[$n]=$am; a_ap[$n]=$ap; a_as[$n]=${as//[!A-Za-z0-9-]/}; a_dl[$n]=${dl//[!0-9]/}; a_tn[$n]=${tn//[[:cntrl:]]/}; a_sl[$n]=${sl//[[:cntrl:]]/}; a_sm[$n]=${sm//[[:cntrl:]]/}; a_br[$n]=${br//[[:cntrl:]]/}; a_pj[$n]=${pj//[!A-Za-z0-9_-]/}; a_dp[$n]=${dp//[!0-9]/}; a_dm[$n]=${dm//[!0-9]/}; a_an[$n]=${aun//[!0-9]/}; a_au[$n]=${au//[!0-9]/}; a_rs[$n]=${rsrc//[!A-Za-z0-9_-]/}; n=$(( n + 1 ))
+        done
+    } < "$TOPICS_IDX"
+    T_FILE=(); T_ID=(); T_TITLE=(); T_STATUS=(); T_WFOR=(); T_WSINCE=(); T_UPD=(); T_DESC=(); T_AG=(); T_AM=(); T_AP=(); T_AS=(); T_DL=(); T_TN=(); T_SL=(); T_SM=(); T_BR=(); T_PJ=(); T_DEP=(); T_DM=(); T_AN=(); T_AU=(); T_RS=()
     for s in review now testing deploying finished next waiting later done; do     # review first: it waits for you; deploying = waiting for a deployment (status waiting, deploy_wait=1)
         for (( i = 0; i < n; i++ )); do
             case "$s" in deploying) [ "${a_st[$i]}" = waiting ] && [ "${a_dp[$i]}" = 1 ] || continue ;;
                 waiting) [ "${a_st[$i]}" = waiting ] && [ "${a_dp[$i]}" != 1 ] || continue ;;
                 *) [ "${a_st[$i]}" = "$s" ] || continue ;; esac
             T_FILE[$m]=${a_file[$i]}; T_ID[$m]=${a_id[$i]}; T_TITLE[$m]=${a_title[$i]}; T_STATUS[$m]=${s/deploying/waiting}
-            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; T_PJ[$m]=${a_pj[$i]}; T_DEP[$m]=${a_dp[$i]}; T_DM[$m]=${a_dm[$i]}; m=$(( m + 1 ))
+            T_WFOR[$m]=${a_wf[$i]}; T_WSINCE[$m]=${a_ws[$i]}; T_UPD[$m]=${a_up[$i]}; T_DESC[$m]=${a_desc[$i]}; T_AG[$m]=${a_ag[$i]}; T_AM[$m]=${a_am[$i]}; T_AP[$m]=${a_ap[$i]}; T_AS[$m]=${a_as[$i]}; T_DL[$m]=${a_dl[$i]}; T_TN[$m]=${a_tn[$i]}; T_SL[$m]=${a_sl[$i]}; T_SM[$m]=${a_sm[$i]}; T_BR[$m]=${a_br[$i]}; T_PJ[$m]=${a_pj[$i]}; T_DEP[$m]=${a_dp[$i]}; T_DM[$m]=${a_dm[$i]}; T_AN[$m]=${a_an[$i]}; T_AU[$m]=${a_au[$i]}; T_RS[$m]=${a_rs[$i]}; m=$(( m + 1 ))
         done
     done
     T_N=$m
+    TL_TOKEN=$TI_TOKEN
 }
 panel_shows() { case "$1" in now|testing|finished|next|review|waiting) return 0 ;; esac; return 1; }   # the panel lists these; later and done only in search and CLI
 EXPANDED=" "     # the groups whose "+N more" was opened (next, waiting, later, done); the panel keeps it while it runs
@@ -1063,6 +1087,9 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
     if [ $# -eq 0 ]; then                                      # this machine: where its agents work (their branch, see branch_sync)
         printf '%s' "$panes" | jq -r '.result.panes[] | select(.agent) | [.pane_id, ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0000-\u001f]"; ""))] | join("\u001f")' > "$AGENT_CWD.tmp.$$" 2>/dev/null \
             && mv "$AGENT_CWD.tmp.$$" "$AGENT_CWD" 2>/dev/null
+        # which pane has the focus, and its tab (the list says so): the panels read this file once a second instead of each asking herdr (a process pipeline and an API call per panel per second)
+        printf '%s\n' "$(printf '%s' "$panes" | jq -r '[.result.panes[]? | select(.focused == true)][0] | if . == null then "" else "\(.pane_id) \(.tab_id // "")" end' 2>/dev/null)" > "$SHARED_DIR/focus.pane.tmp.$$" 2>/dev/null \
+            && mv -f "$SHARED_DIR/focus.pane.tmp.$$" "$SHARED_DIR/focus.pane" 2>/dev/null
     fi
     # control characters out of every text (a name must not carry escape codes to the terminal), only plain pane ids
     local tb; cfg_var tb TESTS_BUSY on
@@ -1310,12 +1337,12 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     topics_load
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
-        [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
+        [ "${T_AN[$i]}" = 1 ] && continue
         case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
     done
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
-        f=${T_FILE[$i]}; [ "$(topic_get "$f" auto_now)" = 1 ] || continue
+        f=${T_FILE[$i]}; [ "${T_AN[$i]}" = 1 ] || continue
         case "${T_STATUS[$i]}" in now|testing|finished) ;; *) topic_set "$f" auto_now ""; continue ;; esac            # moved (review, waiting, later …): a topic now
         case "$work" in *$'\n'"${T_AP[$i]}"$'\n'*) [ "${T_STATUS[$i]}" = finished ] && topic_set "$f" status now ;;       # (it works again: the card is open again)
             *) [ "${T_STATUS[$i]}" = now ] && topic_set "$f" status finished ;; esac                                  # the agent stopped (but not while its tests run): recently finished
@@ -1345,13 +1372,13 @@ agent_dedup() {  # one agent, one card on now/testing: an agent that has several
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in now|testing) ;; *) continue ;; esac
         [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || continue
-        [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
+        [ "${T_AN[$i]}" = 1 ] && continue
         keep=1
         for (( j = 0; j < T_N; j++ )); do
             [ "$j" = "$i" ] && continue
             case "${T_STATUS[$j]}" in now|testing) ;; *) continue ;; esac
             [ "${T_AP[$j]}" = "${T_AP[$i]}" ] && [ "${T_AM[$j]:-$HOST}" = "${T_AM[$i]:-$HOST}" ] && [ -z "${T_TN[$j]}" ] || continue
-            [ "$(topic_get "${T_FILE[$j]}" auto_now)" = 1 ] && continue
+            [ "${T_AN[$j]}" = 1 ] && continue
             [ "${T_ID[$j]%%-*}" -gt "${T_ID[$i]%%-*}" ] 2>/dev/null && { keep=0; break; }
             [ "${T_ID[$j]%%-*}" = "${T_ID[$i]%%-*}" ] && [[ "${T_ID[$j]}" > "${T_ID[$i]}" ]] && { keep=0; break; }
         done
@@ -4291,18 +4318,24 @@ mon_projects_ci() {  # mon_projects_ci: MPC = the names of the projects that hav
     for (( i = 0; i < P_N; i++ )); do [ -n "$(topic_get "${P_FILE[$i]}" ci)" ] && MPC[${#MPC[@]}]=${P_NAME[$i]}; done
     return 0
 }
-mon_list_in() {  # mon_list_in <list> <name>: 0 when the comma separated list has that name (not case sensitive)
-    local e IFS=, n; n=$(printf '%s' "$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')
-    for e in $1; do [ "$(printf '%s' "$e" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$n" ] && return 0; done
-    return 1
+uc_set() {  # uc_set <var> <text>: upper case without a process (bash 3.2 has no ${x^^}); non-letters, also bytes of other scripts, stay as they are
+    local _s=$2 _o="" _c _i _p _l=abcdefghijklmnopqrstuvwxyz _u=ABCDEFGHIJKLMNOPQRSTUVWXYZ
+    for (( _i = 0; _i < ${#_s}; _i++ )); do _c=${_s:_i:1}; case "$_c" in [a-z]) _p=${_l%%"$_c"*}; _o="$_o${_u:${#_p}:1}" ;; *) _o="$_o$_c" ;; esac; done
+    printf -v "$1" '%s' "$_o"
+}
+mon_list_in() {  # mon_list_in <list> <name>: 0 when the comma separated list has that name (not case sensitive; nocasematch, no process: this runs for every entry of every frame)
+    local e IFS=, was=0; shopt -q nocasematch && was=1; shopt -s nocasematch
+    for e in $1; do if [[ "$e" == "$2" ]]; then [ "$was" = 1 ] || shopt -u nocasematch; return 0; fi; done
+    [ "$was" = 1 ] || shopt -u nocasematch; return 1
 }
 mon_hidden() {  # mon_hidden <off list> <entry project>: 0 when the entry belongs to a project that is switched off: the project (its name, or a folder
     # of it: IMS-wt1 is IMS; the project with the longest name that fits wins, so Bilendo-marketing is not Bilendo)
-    local lp ln best="" i; lp=$(printf '%s' "$2" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    local lp=$2 ln best="" i was=0; shopt -q nocasematch && was=1; shopt -s nocasematch
     for (( i = 0; i < P_N; i++ )); do
-        ln=$(printf '%s' "${P_NAME[$i]}" | LC_ALL=C tr '[:upper:]' '[:lower:]')
-        case "$lp" in "$ln"|"$ln"-*|"$ln"_*) [ "${#ln}" -gt "${#best}" ] && best=${P_NAME[$i]} ;; esac
+        ln=${P_NAME[$i]}
+        if [[ "$lp" == "$ln" || "$lp" == "$ln"-* || "$lp" == "$ln"_* ]]; then [ "${#ln}" -gt "${#best}" ] && best=$ln; fi
     done
+    [ "$was" = 1 ] || shopt -u nocasematch
     [ -n "$best" ] && mon_list_in "$1" "$best"
 }
 mon_list_shown() {  # mon_list_shown <deploys|tests>: the file the monitor block reads: the list, without the projects that are switched off
@@ -4323,9 +4356,9 @@ mon_chip_toggle() {  # mon_chip_toggle <deploys|tests> <n>: switch the n-th proj
 mon_abbr_set() {  # mon_abbr_set <var> <project name> <abbreviations taken, space separated>: at most 3 characters, capitals: the initials of the words
     # (Bilendo Marketing: BM), the first three letters of a single word longer than 3 (Rails: RAI), a short name as it is (IMS); a clash takes the next
     # candidate (the first three letters, the first two plus the last initial) and at last a digit (BI2)
-    local n=$2 w words=() ini="" flat c cand=() i k
-    n=$(printf '%s' "$n" | LC_ALL=C tr '[:lower:]' '[:upper:]'); flat=${n//[!A-Z0-9]/}
-    for w in $(printf '%s' "$n" | tr -c 'A-Z0-9' ' '); do words[${#words[@]}]=$w; ini="$ini${w:0:1}"; done
+    local n w words=() ini="" flat c cand=() i k
+    uc_set n "$2"; flat=${n//[!A-Z0-9]/}
+    for w in ${n//[!A-Z0-9]/ }; do words[${#words[@]}]=$w; ini="$ini${w:0:1}"; done
     [ -n "$flat" ] || flat=PRJ
     if [ "${#words[@]}" -gt 1 ]; then cand[0]=${ini:0:3}; else cand[0]=${flat:0:3}; fi
     cand[1]=${flat:0:3}; cand[2]="${flat:0:2}${ini: -1}"; cand[3]=${flat:0:1}${flat: -2}
@@ -4375,11 +4408,11 @@ dash_caption() {  # dash_caption <text> [done|deploys|tests|agents]: ┈┈ Text
     printf '%s  %s┈┈%s %s%s%s %s%s%s%s\n' "$ref" "$MUTED" "$X" "$D" "$1" "$X" "$MUTED" "${DASH_LINE:0:$rest}" "$X" "$btn"
 }
 section_toggle() {  # section_toggle <done|deploys|tests>: counts only, and back
-    local k; k="$(printf '%s' "$1" | tr a-z A-Z)_COMPACT"
+    local k; uc_set k "$1"; k="${k}_COMPACT"
     if section_compact "$1"; then cfg_set "$k" off; else cfg_set "$k" on; fi
 }
 section_compact() {  # section_compact <done|deploys|tests>: 0 when that section shows counts only
-    local v; cfg_var v "$(printf '%s' "$1" | tr a-z A-Z)_COMPACT" off; [ "$v" = on ]
+    local v k; uc_set k "$1"; cfg_var v "${k}_COMPACT" off; [ "$v" = on ]            # (no process: the screen asks this for every section, every frame)
 }
 mon_bar_set() {  # mon_bar_set <var> <done> <total> <cells>: ■■■■■ as in the Claude status line (MB_ON / MB_OFF = the filled and the empty cells)
     local _f=$(( ($2 * $4 + $3 / 2) / $3 )) _i _b=""; [ "$_f" -gt "$4" ] && _f=$4; MB_FILLED=$_f; MB_ON=""; MB_OFF=""
@@ -4400,7 +4433,7 @@ agent_reopen_pick() {  # agent_reopen_pick <session> <pane> <machine> <strict 0|
     local i; REOPEN_IDX=-1; local bu=-1
     for (( i = 0; i < T_N; i++ )); do
         { [ -n "$1" ] && [ "${T_AS[$i]}" = "$1" ]; } || { [ -n "$2" ] && [ "${T_AP[$i]}" = "$2" ] && [ "${T_AM[$i]:-$3}" = "$3" ] && { [ "$4" != 1 ] || [ -z "${T_AS[$i]}" ]; }; } || continue
-        [ "$(topic_get "${T_FILE[$i]}" auto_now)" = 1 ] && continue
+        [ "${T_AN[$i]}" = 1 ] && continue
         case "${T_STATUS[$i]}" in
             now|testing) [ -z "${T_TN[$i]}" ] && { REOPEN_IDX=-1; return 0; } ;;
             finished) ;;
@@ -4423,13 +4456,13 @@ review_follow() {  # a review card goes by itself when the agent that asked work
         id=${T_ID[$i]}; f=${T_FILE[$i]}
         case "${T_STATUS[$i]}" in review|later|finished) ;; *) continue ;; esac
         [ "${T_STATUS[$i]}" = later ] && [ "${T_DM[$i]:-}" != 1 ] && continue
-        [ "${T_STATUS[$i]}" = review ] && { [ -z "${T_SM[$i]}" ] && [ "$(topic_get "$f" review_src)" != deploy ] || continue; }   # (an answer in Slack, a finished deployment: not the agent's)
+        [ "${T_STATUS[$i]}" = review ] && { [ -z "${T_SM[$i]}" ] && [ "${T_RS[$i]}" != deploy ] || continue; }   # (an answer in Slack, a finished deployment: not the agent's)
         m=${T_AM[$i]:-$HOST}
         st=$(awk -F"$US" -v m="$m" -v p="${T_AP[$i]}" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
         case "$st" in
             idle|done|blocked) : > "$d/$id" ;;
             working) if [ -e "$d/$id" ]; then
-                         rm -f "$d/$id"
+                         rmf "$d/$id"
                          if [ "$(topic_get "$f" auto)" = 1 ]; then topic_set "$f" deleted 1
                          elif [ "${T_STATUS[$i]}" = review ]; then topic_set "$f" status now; topic_set "$f" auto_back ""
                          else agent_reopen_pick "" "${T_AP[$i]}" "$m" 0; [ "$REOPEN_IDX" = "$i" ] && { topic_set "$f" status now; topic_set "$f" auto_back ""; }; fi   # (a finished or dismissed card: only the newest of its agent)
@@ -4444,8 +4477,8 @@ now_idle_follow() {  # a topic on now whose agent has stopped (seen idle in two 
     local i f id m p st d="$SHARED_DIR/nowidle" t0 now fq; mkdir -p "$d" 2>/dev/null; now=$(date +%s); topics_load
     for (( i = 0; i < T_N; i++ )); do
         id=${T_ID[$i]}; f=${T_FILE[$i]}
-        [ "${T_STATUS[$i]}" = now ] && [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || { rm -f "$d/$id"; continue; }      # (handing over: not finished)
-        [ "$(topic_get "$f" auto_now)" = 1 ] && continue                                                                  # (agent_cards does these)
+        [ "${T_STATUS[$i]}" = now ] && [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || { rmf "$d/$id"; continue; }      # (handing over: not finished)
+        [ "${T_AN[$i]}" = 1 ] && continue                                                                  # (agent_cards does these)
         [ $(( now - $(num_or "${T_DL[$i]}" 0) )) -ge 30 ] || continue                                                     # (just handed to the agent: it has not started yet)
         [ $(( now - ${T_UPD[$i]:-0} )) -ge 60 ] || continue                                                               # (put on now a moment ago: the user is about to write to it)
         m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
@@ -4454,12 +4487,12 @@ now_idle_follow() {  # a topic on now whose agent has stopped (seen idle in two 
             idle|done) t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
                 if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"
                 elif [ $(( now - $(num_or "$t0" "$now") )) -ge 8 ]; then
-                    rm -f "$d/$id"; fq=""
+                    rmf "$d/$id"; fq=""
                     [ "$m" = "$HOST" ] && fq=$(herdr pane read "$p" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text)
                     if [ -n "$fq" ]; then topic_set "$f" status review; topic_set "$f" auto_back 1; notify "Ready for review" "${T_TITLE[$i]} (${T_AG[$i]:-agent})" request
                     else topic_set "$f" status finished; fi
                 fi ;;
-            *) rm -f "$d/$id" ;;
+            *) rmf "$d/$id" ;;
         esac
     done
     return 0
@@ -4471,18 +4504,18 @@ agent_gone_follow() {  # the agent of a card is gone (its session ended, its pan
     local i f id m p st d="$SHARED_DIR/agentgone" now t0 any=0; mkdir -p "$d" 2>/dev/null; now=$(date +%s); topics_load
     for (( i = 0; i < T_N; i++ )); do
         id=${T_ID[$i]}; f=${T_FILE[$i]}
-        case "${T_STATUS[$i]}" in review|finished|now) ;; *) rm -f "$d/$id"; continue ;; esac
-        [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || { rm -f "$d/$id"; continue; }                                    # (handing over: the agent is still needed)
+        case "${T_STATUS[$i]}" in review|finished|now) ;; *) rmf "$d/$id"; continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ -z "${T_TN[$i]}" ] || { rmf "$d/$id"; continue; }                                    # (handing over: the agent is still needed)
         m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
-        if [ "$m" = "$HOST" ]; then [ -s "$AGENT_LOCAL" ] || { rm -f "$d/$id"; continue; }
-        else awk -F"$US" -v m="$m" '$1 == m && $3 !~ /^off-/ { f = 1 } END { exit !f }' "$AGENT_REMOTE" 2>/dev/null || { rm -f "$d/$id"; continue; }; fi   # (the machine answers, with agents)
+        if [ "$m" = "$HOST" ]; then [ -s "$AGENT_LOCAL" ] || { rmf "$d/$id"; continue; }
+        else awk -F"$US" -v m="$m" '$1 == m && $3 !~ /^off-/ { f = 1 } END { exit !f }' "$AGENT_REMOTE" 2>/dev/null || { rmf "$d/$id"; continue; }; fi   # (the machine answers, with agents)
         st=$(awk -F"$US" -v m="$m" -v p="$p" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
-        [ -z "$st" ] || { rm -f "$d/$id"; continue; }                                                                    # (it is there)
+        [ -z "$st" ] || { rmf "$d/$id"; continue; }                                                                    # (it is there)
         t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
         if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"; continue; fi
         [ $(( now - $(num_or "$t0" "$now") )) -ge 30 ] || continue
         herdr pane list >/dev/null 2>&1 || { rm -f "$d"/*; return 0; }                                                   # (herdr does not answer: nobody is gone)
-        rm -f "$d/$id"
+        rmf "$d/$id"
         if [ "$(topic_get "$f" auto)" = 1 ] || [ "$(topic_get "$f" auto_now)" = 1 ]; then topic_set "$f" deleted 1
         elif [ "${T_STATUS[$i]}" = now ]; then topic_set "$f" status finished
         else topic_set "$f" status later; topic_set "$f" dismissed 1; topic_set "$f" auto_back ""; fi
@@ -4508,7 +4541,7 @@ auto_question_follow() {  # a "Question from" card of bhote (auto) goes when its
     cfg_var mins FINISHED_MINUTES 30; num_set mins "$mins" 30
     for (( i = 0; i < T_N; i++ )); do
         id=${T_ID[$i]}; f=${T_FILE[$i]}
-        [ "${T_STATUS[$i]}" = review ] && [ -n "${T_AP[$i]}" ] && [ "$(topic_get "$f" auto)" = 1 ] || { rm -f "$d/$id"; continue; }
+        [ "${T_STATUS[$i]}" = review ] && [ -n "${T_AP[$i]}" ] && [ "${T_AU[$i]}" = 1 ] || { rmf "$d/$id"; continue; }
         m=${T_AM[$i]:-$HOST}; p=${T_AP[$i]}
         st=$(awk -F"$US" -v m="$m" -v p="$p" '$1 == m && $2 == p { print $3; exit }' "$AGENT_LOCAL" "$AGENT_REMOTE" 2>/dev/null)
         case "$st" in
@@ -4518,11 +4551,11 @@ auto_question_follow() {  # a "Question from" card of bhote (auto) goes when its
                     continue
                 fi
                 fq=$(herdr pane read "$p" --source recent-unwrapped --lines 80 2>/dev/null | pane_question_text)
-                if [ -n "$fq" ]; then rm -f "$d/$id"; continue; fi
+                if [ -n "$fq" ]; then rmf "$d/$id"; continue; fi
                 t0=""; { read -r t0 < "$d/$id"; } 2>/dev/null
                 if [ -z "$t0" ]; then printf '%s\n' "$now" > "$d/$id"
-                elif [ $(( now - $(num_or "$t0" "$now") )) -ge 8 ]; then rm -f "$d/$id"; topic_set "$f" deleted 1; fi ;;
-            *) rm -f "$d/$id" ;;
+                elif [ $(( now - $(num_or "$t0" "$now") )) -ge 8 ]; then rmf "$d/$id"; topic_set "$f" deleted 1; fi ;;
+            *) rmf "$d/$id" ;;
         esac
     done
     return 0
@@ -5632,7 +5665,8 @@ bhote_main() {
     local back=main
     redraw=1
     while true; do
-        if [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
+        if [ "$redraw" = 1 ] && [ -z "$key" ] && [ "${TAB_VISIBLE:-1}" = 0 ] && [ "$view" = main ]; then redraw=0; DIRTY=1   # (its tab is not shown: it draws when it is; DIRTY says there is something to draw)
+        elif [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
         elif [ "$redraw" = 1 ]; then
             redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; }
             [ "$view" = splash ] && ! splash_fits && view=main
@@ -5640,13 +5674,13 @@ bhote_main() {
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
             bhote_paint "$view"; dog_prev_reset "$view"
             if [ "$view" = main ]; then spin_cells; else SPIN_CELLS=""; fi
-            if [ "$view" = splash ] || [ -n "$SPIN_CELLS" ]; then [ -e "$RUN_DIR/anim.want" ] || : > "$RUN_DIR/anim.want"; else [ ! -e "$RUN_DIR/anim.want" ] || rm -f "$RUN_DIR/anim.want"; fi
+            if { [ "$view" = splash ] || [ -n "$SPIN_CELLS" ]; } && [ "${TAB_VISIBLE:-1}" = 1 ]; then [ -e "$RUN_DIR/anim.want" ] || : > "$RUN_DIR/anim.want"; else [ ! -e "$RUN_DIR/anim.want" ] || rm -f "$RUN_DIR/anim.want"; fi
         elif [ "$anim" = 1 ]; then anim=0; dog_animate "$view"; fi
         [ "$view" = splash ] && [ -z "${SPLASH_SINCE:-}" ] && SPLASH_SINCE=$SECONDS
         [ "$view" = splash ] || SPLASH_SINCE=""
         tmo=1                                                  # (the 2 s checks below and the auto-close need a short timeout)
         key=""; rc=0
-        [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && tmo=0.3        # the star dances in 0.3 s steps
+        [ -n "${SPIN_CELLS:-}" ] && [ "$view" = main ] && [ "${TAB_VISIBLE:-1}" = 1 ] && tmo=0.3        # the star dances in 0.3 s steps (only where it is seen)
         in_get key "$tmo"; rc=$?
         case "$rc" in 0) ;; 2) exit 0 ;; *) rc=142 ;; esac                # (2: the terminal is gone: leave through the trap, which cleans up; do not spin)
         [ "$rc" = 0 ] && [ -z "$key" ] && key=ENTER      # Enter reads as an empty key; a timeout (rc > 128) stays empty
@@ -5670,7 +5704,12 @@ bhote_main() {
         fi
         if [ "$key" = HOVER ]; then key=""; [ "$view" = main ] && { redraw=1; NAV_ONLY=1; }; fi   # the pointer moved onto another card (or off the cards)
         if [ -z "$key" ] && [ -n "${HERDR_PANE_ID:-}" ] && [ "$SECONDS" != "${FOCUS_AT:-}" ]; then      # is this the pane you are in? Asked once a second when idle
-            FOCUS_AT=$SECONDS; _pf=$(pane_focused)
+            FOCUS_AT=$SECONDS; _pf=""
+            _vis=1
+            if [ -e "$SHARED_DIR/focus.pane" ]; then _fp=""; _ft=""; { read -r _fp _ft < "$SHARED_DIR/focus.pane"; } 2>/dev/null; [ "$_fp" = "$HERDR_PANE_ID" ] && _pf=true || _pf=false   # (the collector wrote it)
+                [ -n "$_ft" ] && [ -n "${HERDR_TAB_ID:-}" ] && [ "$_ft" != "$HERDR_TAB_ID" ] && _vis=0      # (another tab shows: nobody sees this panel, it does not dance)
+            else _pf=$(pane_focused); fi
+            [ "$_vis" = "${TAB_VISIBLE:-1}" ] || { TAB_VISIBLE=$_vis; if [ "$_vis" = 1 ]; then redraw=1; DIRTY=0; else rmf "$RUN_DIR/anim.want"; fi; }
             if [ "$_pf" != "${PANE_FOCUS:-}" ]; then PANE_FOCUS=$_pf; [ "$view" = main ] && redraw=1; fi
         fi
         if [ "${SETUP_PENDING:-}" = 1 ]; then
@@ -5789,10 +5828,19 @@ bhote_main() {
         else SEL_SEEN=${SEL_SEEN:-none}; fi
         if [ -z "$key" ] && [ "$SECONDS" -ge $(( ${chk:-0} + 2 )) ]; then
             chk=$SECONDS
-            m1=$( { agents_all; cat "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.at" "$SHARED_DIR/tests.at" 2>/dev/null; head -1 "$STORE_STATUS" 2>/dev/null; cat "$CONFIG_FILE" 2>/dev/null; } | cksum )   # also the settings: a new theme shows at once
-            if [ "$m1" != "$last_m" ]; then last_m=$m1; case "$view" in main|settings) redraw=1 ;; esac; fi
+            if panel_changed; then                              # a file the panel shows is newer than the last look (no process: this runs in every panel every 2 s)
+                case "$view" in main|settings) [ "${TAB_VISIBLE:-1}" = 1 ] && redraw=1 || DIRTY=1 ;; esac    # (a panel in a tab nobody sees waits: it draws when the tab shows)
+            fi
         fi
     done
+}
+panel_changed() {  # 0 when something the panel shows changed since the last look: the topics (their shared index, which the collector keeps current), the agents' revision, the monitors' clock, the store status, the settings
+    local f
+    if [ ! -f "$RUN_DIR/chk.stamp" ]; then : > "$RUN_DIR/chk.stamp"; return 0; fi
+    for f in "$SHARED_DIR/topics.idx" "$SHARED_DIR/agents.rev" "$SHARED_DIR/deploys.at" "$SHARED_DIR/tests.at" "$STORE_STATUS" "$CONFIG_FILE"; do
+        [ -e "$f" ] || continue; [ "$RUN_DIR/chk.stamp" -nt "$f" ] || { : > "$RUN_DIR/chk.stamp"; return 0; }
+    done
+    return 1
 }
 bhote_draw() { case "$1" in main) bhote_view ;; hotkeys) bhote_hotkeys ;; suggest) bhote_suggest ;; menu) bhote_menu ;; pick) bhote_pick ;; settings) bhote_settings ;; *) bhote_splash ;; esac; }
 # One frame = ONE write: home, every line cleared to its end, then the rest of the screen cleared. No full clear first,

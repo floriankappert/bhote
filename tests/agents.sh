@@ -408,6 +408,14 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   agent_ref "$g" && [ "$AR_NAME" = gamma ] || exit 6
   agent_ref "Mac/w1:p1" && [ "$AR_NAME" = alpha ] || exit 7
   exit 0 ) && ok "agent names: w3:a1 (MAC/w3:a1 on another machine), found by it in any case, asks for the machine when two have it" || bad "agent pane code: step $?"
+# the topics are read once per change, per process: a subshell (the collector) that changes a topic AND loads must not make the parent think its own copy is current
+( rm -f "$TOPIC_DIR"/*.topic; topic_new "Shared view" "" "" >/dev/null; f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topics_load; [ "${T_STATUS[0]}" = now ] || exit 1
+  ( topic_set "$f" status review; topics_load; [ "${T_STATUS[0]}" = review ] ) || exit 2
+  topics_load; [ "${T_STATUS[0]}" = review ] || exit 3                                    # (the subshell read the new state; this copy must read it, too)
+  ( topic_set "$f" title "Renamed" ) ; topics_load; [ "${T_TITLE[0]}" = Renamed ] || exit 4  # (a change this process did not even load)
+  topics_load; n1=${T_N}; topic_new "Another" "" "" >/dev/null; topics_load; [ "${T_N}" = $(( n1 + 1 )) ] || exit 5   # (a new file)
+  rm -f "$f"; topics_load; [ "${T_N}" = "$n1" ] || exit 6                                # (a file gone)
+  exit 0 ) && ok "topics: read again when another process changed them, also one that loaded them first" || bad "topics_load shared state: step $?"
 # Steal & Transfer into another project is refused (only on purpose)
 ( agent_live() { LIVE_ST=idle; LIVE_SESS=s1; LIVE_CWD=/x; }; notify() { :; }; agent_send() { :; }
   rm -f "$TOPIC_DIR"/*.topic; printf '%s\n' "Mac${US}w2:p1${US}t${US}a${US}${US}proj-shop${US}/y" > "$AGENT_META_L"; : > "$AGENT_META_R"
