@@ -290,7 +290,7 @@ cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
   git init -q . && git -c user.name=t -c user.email=t@t add bhote && git -c user.name=t -c user.email=t@t commit -qm one && git tag "v$VERSION" || exit 8
   lab() ( BHOTE_SOURCE_ONLY=1; . "$vd/bhote"; version_label_set; printf '%s' "$VERSION_LABEL" )
   [ "$(lab)" = "$VERSION" ] || exit 1
-  echo x >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
+  echo '# a local change' >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
   [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = "0.9.1.3 Preview" ] || exit 2
   exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.1.3 Preview)" || bad "version label: step $?"
 # the monitor bar is built from whole cells, also where the shell counts bytes (bash 3.2 / macOS without a UTF-8 locale cut ■ in half: ��)
