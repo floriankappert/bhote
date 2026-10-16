@@ -6095,14 +6095,14 @@ current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "si
         g=${T_STATUS[$i]}
         [ "$g" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && g=deploying
         agent_pane_code_set cd "${T_AM[$i]:-$HOST}" "${T_AP[$i]}"              # (w3:a1, MAC·w3:a1: the agent, on any machine kharka reaches, as in the panel)
-        row="${T_UPD[$i]:-0}$US$(topic_n "${T_FILE[$i]}")$US${T_TITLE[$i]//[[:cntrl:]]/ }$US${T_AG[$i]//[[:cntrl:]]/ }$US${cd//[[:cntrl:]]/ }"$'\n'
+        row="${T_UPD[$i]:-0}$US$(topic_n "${T_FILE[$i]}")$US${T_TITLE[$i]//[[:cntrl:]]/ }$US${T_AG[$i]//[[:cntrl:]]/ }$US${cd//[[:cntrl:]]/ }$US${T_AM[$i]:-$HOST}$US${T_AP[$i]//[[:cntrl:]]/ }"$'\n'
         case "$g" in
             review) Lr="$Lr$row" ;; now) Ln="$Ln$row" ;; testing) Lt="$Lt$row" ;; deploying) Ld="$Ld$row" ;; finished) Lf="$Lf$row" ;;
         esac
     done
     local lists
     lists=$(jq -n -c --arg review "$Lr" --arg now "$Ln" --arg testing "$Lt" --arg deploying "$Ld" --arg finished "$Lf" '
-        def p($s; $l): ($s | split("\n") | map(select(length > 0) | split("\u001f") | {updated: (.[0] | tonumber? // 0), n: (.[1] | tonumber? // 0), title: .[2], agent: (.[3] // ""), code: (.[4] // "")}) | sort_by(-.updated)) as $a
+        def p($s; $l): ($s | split("\n") | map(select(length > 0) | split("\u001f") | {updated: (.[0] | tonumber? // 0), n: (.[1] | tonumber? // 0), title: .[2], agent: (.[3] // ""), code: (.[4] // ""), machine: (.[5] // ""), pane: (.[6] // "")}) | sort_by(-.updated)) as $a
             | {total: ($a | length), items: $a[0:$l]};
         {review: p($review; 8), now: p($now; 6), testing: p($testing; 6), deploying: p($deploying; 6), finished: p($finished; 5)}' 2>/dev/null) || lists="{}"
     [ -n "$lists" ] || lists="{}"
@@ -6180,6 +6180,15 @@ cli_agents() {  # bhote agents [--json]
         else local mp; pad_set mp "$m" 8; local cp; pad_set cp "$code" 10; printf '%3s  %s %s %-9s %s%s\n' "$(( i + 1 ))" "$cp" "$mp" "$st" "$name" "${task:+  · $task}"; fi
     done
     if [ -n "$json" ]; then printf ']\n'; fi
+    return 0
+}
+cli_jump() {  # bhote jump <machine> <pane> | <agent ref>: shows that agent in herdr (another machine: focused there, through kharka or herdr)
+    local m="" p=""
+    if [ $# -ge 2 ]; then m=$1; p=$2
+    elif [ $# -eq 1 ]; then cli_agents_load; agent_ref "$1" || return $?; m=$AR_M; p=$AR_P
+    else echo "bhote: jump <machine> <pane> | <agent>" >&2; return 1; fi
+    agent_jump "$m" "$p" || { echo "bhote: no agent $m/$p to show" >&2; return 1; }
+    [ "$m" = "$HOST" ] || sleep 2                                  # (the call to another machine runs in the background: it needs a moment before this process ends)
     return 0
 }
 cli_transfer() {  # bhote transfer <from agent> <to agent> [--topic <ref>]
@@ -6563,6 +6572,7 @@ bhote — topics and agents next to herdr.
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
   bhote skills [install]             put the Claude Code skills bhote and bhote-install into every Claude profile (then /bhote-install)
+  bhote jump <machine> <pane> | <agent>  show that agent in herdr (another machine: focused there)
   bhote kharka watch [install|uninstall|status]  restart herdr-kharka when its entry stops being written (one look; install: a timer every minute)
   bhote mod [install|remove|status]  the Claude Code mod bhote-topic (your topic above the prompt, /topic) in every Claude profile
   bhote update                       is there a newer version, and the command that updates it
@@ -6601,6 +6611,7 @@ bhote_cli() {
         reload) cli_reload ;;
         skills) cli_skills "$@" ;;
         mod) cli_mod "$@" ;;
+        jump) bhote_info; cli_jump "$@" ;;
         kharka) bhote_info; cli_kharka "$@" ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;

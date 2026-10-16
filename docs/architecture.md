@@ -45,7 +45,7 @@ The script is ordered top to bottom; every part starts with a `# ── name` li
 | the settings screen | the rows of every settings page and their keys |
 | the animation | the welcome-screen dog and the busy agents' star (a ticker that only decides the picture; the main loop draws) |
 | suggestions, the picker | `a` (topics from what agents work on), `s` (choose a free agent) |
-| projects, machine codes, agent numbers | project records and repository keys, `MAC`/`OMR` codes, `MAC4` numbers |
+| projects, machine codes, agent names | project records and repository keys, `MAC`/`OMR` codes, agent names `w3:a1` from herdr's pane ids (`MAC4` numbers stay refs) |
 | talking to agents | the live state of a pane and prompts to it, through herdr (`--machine` for another machine) |
 | Steal & Transfer | hand-over prompts and their state ([how it works](steal-and-transfer.md)) |
 | Slack pins | the Slack watch through Claude Code |

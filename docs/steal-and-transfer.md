@@ -10,7 +10,7 @@ context, when another machine or worktree should continue, or when you need the 
   asks before it starts, and warns when the target belongs to another project than the topic. A pending hand-over can be
   cancelled from the topic's page.
 - **From the command line:** `bhote transfer <from> <to> [--topic <ref>] [--force]`. `<from>` and `<to>` are agents from
-  `bhote agents`: a number or a code (`MAC4`), `machine/pane` (`Omarchy/w4:p1`), a pane id, or a part of the name. A target of
+  `bhote agents`: a number or a name (`w3:a1`; `MAC·w3:a1` on another machine; the older code `MAC4` works, too), `machine/pane` (`Omarchy/w4:p1`), a pane id, or a part of the name. A target of
   another project is refused unless you add `--force`. Without `--topic` bhote
   takes the topic of the source agent, or creates one from its current task.
 

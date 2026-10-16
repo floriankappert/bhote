@@ -36,7 +36,7 @@ const bar = (done: number, total: number) => {
   return { full, rest: BAR - full, pct: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0 }
 }
 // the cards of the panel, in its order: what waits for you, what runs, what waits for a deployment, what was finished lately
-const SECTIONS = [
+const SECTIONS: { key: string; title: string; color: string; mark: string }[] = [
   { key: 'review', title: 'In review', color: 'error', mark: '●' },
   { key: 'now', title: 'Now', color: 'claude', mark: '●' },
   { key: 'testing', title: 'Testing', color: 'permission', mark: '●' },
@@ -79,7 +79,7 @@ const parse = (stdout: string): Topic | null => {
       waitingFor: t.waiting_for ?? null,
       waitingSince: t.waiting_since ?? null,
       project: t.project ?? null,
-      agent: t.agent ? { name: t.agent.name ?? null, machine: t.agent.machine ?? null, branch: t.agent.branch ?? null } : null,
+      agent: t.agent ? { name: t.agent.name ?? null, machine: t.agent.machine ?? null, branch: t.agent.branch ?? null, pane: t.agent.pane ?? null } : null,
       slack: t.slack ? { label: t.slack.label ?? null, message: t.slack.message ?? null } : null,
       review: t.review ? { summary: t.review.summary ?? null, actions: t.review.actions ?? [] } : null,
       progress: t.progress ?? { tests: [], deploy: null },
@@ -241,12 +241,12 @@ export const register: Register = (on, options) => {
       <Box borderStyle="round" borderColor={color} paddingX={1} flexDirection="column">
         <Box justifyContent="space-between">
           <Box flexDirection="column">
-            <Text bold>
+            <Text bold color="text">
               🐕 {current.title}
             </Text>
             {current.description && (
               <Box paddingLeft={3}>
-                <Text dimColor>{current.description}</Text>
+                <Text color="inactive">{current.description}</Text>
               </Box>
             )}
           </Box>
@@ -284,6 +284,9 @@ export const register: Register = (on, options) => {
     const label = current.waitingFor ? `waiting for ${current.waitingFor}` : current.status
     const ctx = current.context
     const { tests, deploy } = current.progress
+    const jump = (x: { machine?: string; pane?: string }) => async () => {
+      if (x.pane) await $.process.run(['bhote', 'jump', x.machine ?? '', x.pane], { timeoutMs: 15000 })
+    }
     const act = (...argv: string[]) => async () => {
       await $.process.run(['bhote', ...argv, current.id], { timeoutMs: 10000 })
       await refresh($)
@@ -353,6 +356,9 @@ export const register: Register = (on, options) => {
       )
     }
 
+    // this session's agent as the lists name it: herdr's workspace and pane number, w3:a1 for the pane w3:p1
+    const pane = current.agent?.pane ?? ''
+    const thisAgent = /^w[A-Za-z0-9]+:p\d+$/.test(pane) ? pane.replace(/:p(\d+)$/, ':a$1') : ''
     const pr = ctx?.pr ?? null
     const reply = current.review?.actions.filter(a => !a.jump && a.reply) ?? []
     // a button as a chip: bold dark text on a coloured block (FINISHED), one press anywhere on it
@@ -366,9 +372,15 @@ export const register: Register = (on, options) => {
 
     return (
       <Box flexDirection="column" paddingX={1} paddingTop={1} backgroundColor={paneBg} minHeight={e.props.scroll.bodyRows}>
+        {thisAgent !== '' && (
+          <Text>
+            <Text dimColor>{'This agent  '}</Text>
+            <Text bold color="text">{thisAgent}</Text>
+          </Text>
+        )}
         <Box borderStyle="round" borderColor={color} paddingX={1} flexDirection="column">
           <Box justifyContent="space-between">
-            <Text bold>{current.title}</Text>
+            <Text bold color="text">{current.title}</Text>
           </Box>
           <Box marginBottom={1}>
             <Text bold color="inverseText" backgroundColor={color}>
@@ -376,7 +388,7 @@ export const register: Register = (on, options) => {
             </Text>
             <Text dimColor>{current.updated ? '  ' + ago(now - current.updated) : ''}</Text>
           </Box>
-          {current.description && <Markdown text={current.description} dimColor />}
+          {current.description && <Text color="inactive">{current.description}</Text>}
           {bars.length > 0 && (
             <Box flexDirection="column" marginTop={1}>
               {bars}
@@ -413,16 +425,17 @@ export const register: Register = (on, options) => {
                 <Text dimColor>{'  ' + list.total}</Text>
               </Text>
               {list.items.map(x => (
-                <Box key={sec.key + '-' + x.n + x.title} paddingX={1} justifyContent="space-between">
-                  <Box flexShrink={1}>
+                // two lines, both pressable: the title, and under it the elbow, the agent's address and when; a press shows the agent in herdr
+                <Box key={sec.key + '-' + x.n + x.title} flexDirection="column" paddingX={1}>
+                  <Button key={'t-' + x.n + x.title} plain onPress={jump(x)}>
                     <Text wrap="truncate">
                       <Text color={sec.color}>{sec.mark + ' '}</Text>
                       <Text>{x.title}</Text>
                     </Text>
-                  </Box>
-                  <Box flexShrink={0} marginLeft={1}>
-                    <Text dimColor>{[x.code || x.agent, ago(now - x.updated)].filter(Boolean).join(' ')}</Text>
-                  </Box>
+                  </Button>
+                  <Button key={'a-' + x.n + x.title} plain onPress={jump(x)}>
+                    <Text dimColor wrap="truncate">{'  ∟ ' + [x.code || x.agent, ago(now - x.updated)].filter(Boolean).join('  ')}</Text>
+                  </Button>
                 </Box>
               ))}
               {list.total > list.items.length && <Text dimColor>{`+${list.total - list.items.length} more`}</Text>}

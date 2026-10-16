@@ -224,6 +224,11 @@ pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
     && ok "current --json: the deployment its topic waits for, with done and total" || bad "current progress deploy: $pr"
 CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -e 'del(.progress) | keys | length == 13' >/dev/null && ok "current --json: the topic object is unchanged next to progress" || bad "current --json keys"
 
+# jump: shows an agent in herdr (a pane of this machine: herdr agent focus <pane>), by <machine> <pane> or by an agent's name
+: > "$FAKE_LOG"; B jump w1:a1 >/dev/null 2>&1; for _i in 1 2 3 4 5 6 7 8 9 10; do grep -q 'agent focus w1:p1' "$FAKE_LOG" && break; sleep 0.2; done
+grep -q 'agent focus w1:p1' "$FAKE_LOG" && ok "jump: an agent by its name (w1:a1) is focused in herdr" || bad "jump by name: $(cat "$FAKE_LOG")"
+B jump >/dev/null 2>&1 && bad "jump without an agent was accepted" || ok "jump: no agent is exit 1"
+
 # kharka watch: herdr-kharka is restarted when its entry in kharka stops being written (the process may live on), the daemon when it is offline twice in a row
 cat > "$T/bin/kharka" <<'SH'
 #!/bin/sh
