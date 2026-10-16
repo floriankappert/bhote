@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Changed
+- The panel is wider by default: 80 columns when the plugin opens it (was 44), the pane stays between 66 and 100 columns (`PANEL_MIN_WIDTH` 66, was 36; `PANEL_MAX_WIDTH` 100, was 60), and the list uses up to 100 columns. Open panels that are narrower are widened to the minimum; set `BHOTE_PANEL_WIDTH` (the plugin) or the two settings to go back.
 - The list is for the mouse: a click on a card shows its agent, a double click opens its page (no `›` button, no ⋮ menu), a click on a line (next, waiting, later, done) opens its page. The arrow keys, `⏎`, `m` and the right-button menu are gone from the list.
 - Archived is a section of its own under Done (a caption, the count and the key of the search), no longer a grey line below the lists.
 - The lines (Next, Waiting, Later) sit at the bottom, docked above Done; the cards (review, now, testing, deploying, finished) are on top. The agent divider and the rule above the keys are dotted like the captions; the jump key at the bottom right is gone.

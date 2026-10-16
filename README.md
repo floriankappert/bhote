@@ -8,7 +8,7 @@
 
 A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you work on, who you wait for) next to your
 **agents** (who is free, who is busy), on every machine you work on. herdr is a terminal multiplexer for coding agents
-such as Claude Code and Codex; bhote sits in a narrow pane next to them. It is a single bash script, about 44 columns
+such as Claude Code and Codex; bhote sits in a narrow pane next to them. It is a single bash script, about 80 columns
 wide, with a small sheepdog that guards the herd.
 
 <p align="center"><img src="docs/screenshot.svg" width="380" alt="The bhote panel: topics in review, now, next and waiting, the last done topics, and the agents grouped by project"></p>

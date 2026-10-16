@@ -1,7 +1,7 @@
 # The panel
 
-`bhote` without arguments is a panel for a herdr pane of about 44 columns (it works from 30 to any width; the list uses up to
-60 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
+`bhote` without arguments is a panel for a herdr pane of about 80 columns (it works from 30 to any width; the list uses up to
+100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
 The list shows what is on. **Review**, **now** and **testing** topics are cards (title, description, agent, branch; a review card has its

@@ -17,8 +17,8 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `REMOTE_AGENTS` | `off` | Remote agents | List the agents of the other machines, too (`AGENTS_VIA`). |
 | `AGENTS_VIA` | `herdr` | Agents through | Where they come from: `herdr` (its saved machines; herdr asks them over its ssh connection) or `kharka` (what [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes on every machine; no ssh between the machines). See [agents through kharka](data-and-sync.md#agents-through-kharka). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
-| `PANEL_MIN_WIDTH` | `36` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
-| `PANEL_MAX_WIDTH` | `60` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |
+| `PANEL_MIN_WIDTH` | `66` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
+| `PANEL_MAX_WIDTH` | `100` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
 | `REMOTE_EVERY` | `5` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
 | `TESTS_BUSY` | `on` | Running tests = agent busy | While tests run in an agent's worktree (a live status file in `TEST_STATUS_DIR` named after the worktree folder, not finished, touched in the last 30 s; also a run in the background) the agent counts as busy, not free, and its topic is in the status **testing**, whether the agent works or not. When the tests are done the topic goes to `now` (the agent works) or to review (the agent is idle). |
