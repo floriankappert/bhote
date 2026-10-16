@@ -32,8 +32,16 @@ the wizard, or ⏎ on *CI* in the project's settings):
 |---|---|---|
 | `ci` | `github:<owner/repo>` | `circleci:gh/<owner/repo>` (when the repository has `.circleci/config.yml`) |
 | `deploy_branches` | the default branch (`main`) | `branch=Label` from the deploy jobs' branch filters: `develop=Staging,main=Production` |
-| `deploy_names` | the workflows with "deploy" in their name, `Workflow=Label` (`Backend Deployment=Backend`) | job names; empty: every job with "deploy" or "approv" in it |
+| `deploy_names` | the workflows with "deploy" in their name, `Workflow=Label` (`Backend Deployment=Backend`) | deploy jobs, `job=Label` (`deploy-ecs-backend=Backend`); empty: every job with "deploy" in it (else "approv"), labelled by the last word of its name |
 | `test_names` | job names; empty: every job with "test" in it (matrix shards `Tests (1/4)` are one entry) | job names; empty: every job with "test" or "build" in it |
+
+**CircleCI deployments.** A deployment is a workflow run that contains a deploy job: one entry per workflow, labelled by that job
+(`IMS · Backend`), on the branches of `deploy_branches` (when the deploy jobs run on `main` only, only `main`). Its progress is the jobs
+that are over of the jobs the workflow has (tests, image build, rollout), without `notify-*` jobs and jobs that did not run; `approval`
+is a hold for approval, `failed` also a test job that failed before the rollout. A project with a dynamic config (`setup: true`, the jobs
+in `.circleci/continue.yml`) is detected through its continuation. The jobs of a finished workflow are read once. An agent whose branch
+has a merged pull request waits for the deployment of `main` that carries it (the commit title ends with `(#123)`), like for a deployment
+of its own branch on GitHub.
 
 A deployment pipeline with a manual approval (a CircleCI `type: approval` job, a GitHub environment that waits) shows
 `approval` until someone approves it. Production deployments made by hand outside CI (Capistrano from a laptop) are not seen.

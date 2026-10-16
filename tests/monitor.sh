@@ -16,9 +16,14 @@ case "$*" in
     "auth status"*) exit 0 ;;
     "api user"*) echo flo ;;
     "api repos/acme/rails/contents/.circleci/config.yml"*) printf '{"content":"%s"}' "$(base64 -w0 < "$FAKE_DIR/circle.yml" 2>/dev/null || base64 < "$FAKE_DIR/circle.yml" | tr -d '\n')" > "$FAKE_DIR/c.json"; out "$FAKE_DIR/c.json" ;;
+    "api repos/acme/IMS/contents/.circleci/config.yml"*) printf '{"content":"%s"}' "$(base64 -w0 < "$FAKE_DIR/ims-setup.yml" 2>/dev/null || base64 < "$FAKE_DIR/ims-setup.yml" | tr -d '\n')" > "$FAKE_DIR/c.json"; out "$FAKE_DIR/c.json" ;;
+    "api repos/acme/IMS/contents/.circleci/continue.yml"*) printf '{"content":"%s"}' "$(base64 -w0 < "$FAKE_DIR/ims-continue.yml" 2>/dev/null || base64 < "$FAKE_DIR/ims-continue.yml" | tr -d '\n')" > "$FAKE_DIR/c.json"; out "$FAKE_DIR/c.json" ;;
     "api repos/"*) exit 1 ;;
+    "pr list -R acme/ims --head feat/credits"*) echo '[{"number":123}]' > "$FAKE_DIR/pr.json"; out "$FAKE_DIR/pr.json" ;;
+    "pr list"*) echo '[]' > "$FAKE_DIR/pr.json"; out "$FAKE_DIR/pr.json" ;;
     "workflow list -R acme/web"*) echo '[{"name":"Backend Deployment"},{"name":"Frontend Deployment"},{"name":"Lint"}]' > "$FAKE_DIR/w.json"; out "$FAKE_DIR/w.json" ;;
     "workflow list"*) echo '[]' > "$FAKE_DIR/w.json"; out "$FAKE_DIR/w.json" ;;
+    "repo view acme/IMS"*|"repo view acme/ims"*) echo '{"nameWithOwner":"acme/IMS"}' > "$FAKE_DIR/r.json"; out "$FAKE_DIR/r.json" ;;
     "repo view acme/web"*) echo '{"defaultBranchRef":{"name":"main"}}' > "$FAKE_DIR/r.json"; out "$FAKE_DIR/r.json" ;;
     "run list"*) out "$FAKE_DIR/runs.json" ;;
     "run view"*) out "$FAKE_DIR/jobs.json" ;;
@@ -31,8 +36,13 @@ cfg=$(cat); echo "curl $* | $cfg" >> "$FAKE_LOG"
 case "$cfg" in *"Circle-Token: tok123"*) ;; *) exit 22 ;; esac
 for a in "$@"; do url=$a; done
 case "$url" in
+    *"/project/gh/acme/ims/pipeline?branch=main") cat "$FAKE_DIR/pl-ims.json" ;;
     *"/pipeline?branch=develop") cat "$FAKE_DIR/pl-develop.json" ;;
     *"/pipeline?branch=main") cat "$FAKE_DIR/pl-main.json" ;;
+    *"/pipeline/i1/workflow") cat "$FAKE_DIR/wf-i1.json" ;;
+    *"/workflow/iw1/job") cat "$FAKE_DIR/jobs-iw1.json" ;;
+    *"/workflow/iw2/job") cat "$FAKE_DIR/jobs-iw2.json" ;;
+    *"/workflow/iw3/job") cat "$FAKE_DIR/jobs-iw3.json" ;;
     *"/pipeline/p1/workflow") echo '{"items":[{"id":"w1","status":"success","created_at":"2026-10-08T09:00:00.120Z"}]}' ;;
     *"/pipeline/p2/workflow") echo '{"items":[{"id":"w2","status":"on_hold","created_at":"2026-10-08T10:00:00.000Z"}]}' ;;
     *"/workflow/w1/job") echo '{"items":[{"name":"build","status":"success"},{"name":"deploy-staging","status":"success"}]}' ;;
@@ -119,6 +129,87 @@ echo "$d" | grep -q "Rails${US}Staging${US}ok${US}2${US}2${US}Merge x" && echo "
 grep -q "tok123" <(grep "^curl " "$FAKE_LOG" | sed 's/ | .*//') && bad "the token is on curl's command line" || ok "circleci: the token never on a command line"
 t=$(tests_circleci Rails gh/acme/rails "")
 echo "$t" | grep -q "Rails${US}build${US}ok" && ok "circleci tests: the build job of the last pipeline" || bad "circleci tests: $t"
+
+# a dynamic CircleCI config (setup: true, the jobs in continue.yml): detect reads the continuation; deploys main only, a label for each deploy job
+cat > "$FAKE_DIR/ims-setup.yml" <<'Y'
+version: 2.1
+setup: true
+workflows:
+  path-filter:
+    jobs:
+      - path-filtering/filter:
+          config-path: .circleci/continue.yml
+Y
+cat > "$FAKE_DIR/ims-continue.yml" <<'Y'
+version: 2.1
+workflows:
+  ims-backend-workflow:
+    jobs:
+      # Branches only: proves it builds. On main the deploy runs, and a deploy still runs its own tests.
+      - build-backend
+      - notify-backend-tests-failed:
+          requires:
+            - build-backend: [failed]
+          filters:
+            branches:
+              only: main
+      - build-images-backend:
+          filters:
+            branches:
+              only: main
+      - deploy-ecs-backend:
+          requires:
+            - build-backend
+            - build-images-backend
+          filters:
+            branches:
+              only: main
+  ims-frontend-workflow:
+    jobs:
+      - build-frontend:
+          filters:
+            branches:
+              ignore: main
+      - release-and-deploy-frontend:
+          filters:
+            branches:
+              only: main
+jobs:
+  build-backend: {}
+Y
+B project add IMS >/dev/null; topic_set "$TOPIC_DIR/proj-ims.topic" repos github.com/acme/ims
+out=$(B monitor detect IMS 2>&1)
+[ "$(topic_get "$TOPIC_DIR/proj-ims.topic" ci)" = circleci:gh/acme/IMS ] && [ "$(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_branches)" = "main=main" ] \
+  && [ "$(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_names)" = "deploy-ecs-backend=Backend,release-and-deploy-frontend=Frontend" ] \
+  && ok "detect: a dynamic CircleCI config is read through its continuation (deploy jobs, labels, main only), the slug as GitHub spells it" || bad "detect ims: $out · $(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_branches) · $(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_names)"
+echo '{"items":[{"id":"i1","number":77,"vcs":{"branch":"main","commit":{"subject":"Add credits (#123)"}}}]}' > "$FAKE_DIR/pl-ims.json"
+echo '{"items":[{"id":"iw1","name":"ims-backend-workflow","status":"running","created_at":"2026-10-16T09:00:00.000Z"},{"id":"iw2","name":"ims-frontend-workflow","status":"success","created_at":"2026-10-16T09:00:00.000Z"},{"id":"iw3","name":"path-filter","status":"success","created_at":"2026-10-16T09:00:00.000Z"}]}' > "$FAKE_DIR/wf-i1.json"
+echo '{"items":[{"name":"build-backend","status":"success"},{"name":"notify-backend-tests-failed","status":"not_run"},{"name":"build-images-backend","status":"running"},{"name":"deploy-ecs-backend","status":"blocked"}]}' > "$FAKE_DIR/jobs-iw1.json"
+echo '{"items":[{"name":"release-and-deploy-frontend","status":"success"}]}' > "$FAKE_DIR/jobs-iw2.json"
+echo '{"items":[{"name":"path-filtering/filter","status":"success"}]}' > "$FAKE_DIR/jobs-iw3.json"
+d=$(deploys_circleci IMS gh/acme/ims "main=main" "deploy-ecs-backend=Backend,release-and-deploy-frontend=Frontend")
+echo "$d" | grep -q "IMS${US}Backend${US}running${US}1${US}3${US}Add credits (#123)${US}https://app.circleci.com/pipelines/gh/acme/ims/77/workflows/iw1" \
+  && echo "$d" | grep -q "IMS${US}Frontend${US}ok${US}1${US}1${US}" && [ "$(printf '%s\n' "$d" | wc -l)" = 2 ] \
+  && ok "circleci: one deployment per workflow with a deploy job (labelled by it), no notify job in the progress, the setup workflow is none" || bad "circleci ims: $d"
+d=$(deploys_circleci IMS gh/acme/ims "main=main" "")
+echo "$d" | grep -q "IMS${US}Backend${US}running" && echo "$d" | grep -q "IMS${US}Frontend${US}ok" && ok "circleci: without a names map the label is the last word of the deploy job" || bad "circleci ims labels: $d"
+ls "$SHARED_DIR/ccjobs/iw2" >/dev/null 2>&1 && [ ! -e "$SHARED_DIR/ccjobs/iw1" ] && ok "circleci: the jobs of a finished workflow are kept, a running one is read again" || bad "circleci job cache: $(ls "$SHARED_DIR/ccjobs" 2>&1)"
+
+# an agent's deployment: main is deployed, its commit title ends with the pull request ("(#123)"): the topic of the agent whose branch has that merged PR waits for it
+topic_new "Credits work" "" "" >/dev/null; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+topic_set "$cf" status now; topic_set "$cf" agent_pane w1:p1; topic_set "$cf" agent_machine "$HOST"; topic_set "$cf" agent_branch feat/credits; topic_set "$cf" project proj-ims
+topic_new "Other work" "" "" >/dev/null; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
+topic_set "$of" status now; topic_set "$of" agent_pane w2:p1; topic_set "$of" agent_machine "$HOST"; topic_set "$of" agent_branch feat/other; topic_set "$of" project proj-ims
+printf '%s\n' "$(date +%s)${US}IMS${US}Backend${US}running${US}1${US}3${US}Add credits (#123)${US}https://app.circleci.com/pipelines/gh/acme/ims/77/workflows/iw1" > "$SHARED_DIR/deploys.list"
+deploy_sync
+[ "$(topic_get "$cf" status)" = waiting ] && [ "$(topic_get "$cf" deploy_wait)" = 1 ] && [ "$(topic_get "$cf" waiting_for)" = "Deployment Backend" ] \
+  && [ "$(topic_get "$cf" deploy_url)" = "https://app.circleci.com/pipelines/gh/acme/ims/77/workflows/iw1" ] && [ "$(topic_get "$of" status)" = now ] \
+  && ok "circleci: the agent whose branch has the merged pull request waits for the deployment of main (another agent does not)" || bad "deploy_sync by PR: $(topic_get "$cf" status) / $(topic_get "$of" status)"
+topic_set "$cf" status now; topic_set "$cf" deploy_wait ""
+printf '%s\n' "$(date +%s)${US}IMS${US}Backend${US}running${US}1${US}3${US}Merge pull request #123 from acme/feat/cre${US}https://app.circleci.com/pipelines/gh/acme/ims/78/workflows/iw9" > "$SHARED_DIR/deploys.list"
+deploy_sync
+[ "$(topic_get "$cf" status)" = waiting ] && [ "$(topic_get "$cf" deploy_url)" = "https://app.circleci.com/pipelines/gh/acme/ims/78/workflows/iw9" ] \
+  && ok "circleci: a merge commit's title (\"Merge pull request #123 from …\") binds the same way" || bad "deploy_sync by merge commit: $(topic_get "$cf" status)"
 
 # local runs: bhote test run passes output and exit code through and keeps a summary; status files
 out=$(cd "$T" && bash "$OLDPWD/bhote" test run -n unit -- sh -c 'echo "12 runs, 30 assertions, 1 failures, 0 errors, 0 skips"; exit 3'); rc=$?
