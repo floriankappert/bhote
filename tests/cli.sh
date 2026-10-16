@@ -151,7 +151,7 @@ case "$frame" in *"Up soon"*Done*"Closed one"*"↕"*) ok "panel: done topics in 
 for i in 1 2 3; do B add "Old done $i" -s done >/dev/null; done; sleep 1; B add "Old done 4" -s done >/dev/null; B config set DONE_MAX 3 >/dev/null
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
 sect=$(echo "$frame" | sed -n '/┈┈ Done/,/↕/p')
-[ "$(echo "$sect" | grep -c '✓')" = 3 ] && echo "$sect" | grep -q '^  +[0-9]* more done' \
+[ "$(echo "$sect" | grep -c '✓ [A-Za-z]')" = 3 ] && echo "$sect" | grep -q '^  +[0-9]* more done' \
   && echo "$sect" | grep -q "✓ Old done 4" && ok "panel: only the last DONE_MAX done ones (a check each, newest first), +n more done" || bad "panel: DONE_MAX not kept: $sect"
 # an agent takes over a topic it did not create: take, or now run by an agent
 B add "Foreign topic" >/dev/null; out=$(CLAUDECODE=1 HERDR_PANE_ID=w9:p1 CLAUDE_CODE_SESSION_ID=abc-1 B take "Foreign topic" --json)
@@ -223,6 +223,32 @@ pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
 [ "$(printf '%s' "$pr" | jq -c '[.tests, .deploy.label, .deploy.state, .deploy.done, .deploy.total]')" = '[[],"Backend","running",1,4]' ] \
     && ok "current --json: the deployment its topic waits for, with done and total" || bad "current progress deploy: $pr"
 CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -e 'del(.progress) | keys | length == 13' >/dev/null && ok "current --json: the topic object is unchanged next to progress" || bad "current --json keys"
+
+# kharka watch: herdr-kharka is restarted when its entry in kharka stops being written (the process may live on), the daemon when it is offline twice in a row
+cat > "$T/bin/kharka" <<'SH'
+#!/bin/sh
+age() { echo $(( ($(date +%s) - $1) * 1000 )); }
+case "$*" in
+    whoami) echo testnode ;;
+    status) echo "{\"online\":${FAKE_ONLINE:-true},\"pending\":0}" ;;
+    "get --entry herdr/testnode") echo "{\"hlc\":\"$(age ${FAKE_AGE:-5})-0-testnode\",\"value\":{}}" ;;
+    "get --entry herdr/peer") echo "{\"hlc\":\"$(age 3)-0-peer\",\"value\":{}}" ;;
+    "ls herdr/") printf 'herdr/peer\nherdr/testnode\n' ;;
+    *) exit 1 ;;
+esac
+SH
+for c in systemctl launchctl; do printf '#!/bin/sh\necho "$0 $*" >> "$FAKE_SVC"\nexit 0\n' > "$T/bin/$c"; done
+chmod +x "$T/bin/kharka" "$T/bin/systemctl" "$T/bin/launchctl"; export FAKE_SVC=$T/svc.log; : > "$FAKE_SVC"; rm -f "$T/data/kharka-watch."*
+FAKE_AGE=5 B kharka watch; [ ! -s "$T/data/kharka-watch.log" ] && ! grep -qE 'restart|kickstart' "$FAKE_SVC" && ok "kharka watch: a fresh entry, nothing is restarted" || bad "kharka watch fresh: $(cat "$FAKE_SVC")"
+FAKE_AGE=500 B kharka watch
+grep -qE 'restart herdr-kharka.service|kickstart -k .*dev.kharka.herdr' "$FAKE_SVC" && grep -q "herdr/testnode is 500 s old" "$T/data/kharka-watch.log" && grep -q "peers peer:3s" "$T/data/kharka-watch.log" \
+    && ok "kharka watch: a stale entry restarts herdr-kharka and the log says why (age, peers)" || bad "kharka watch stale: $(cat "$FAKE_SVC") / $(cat "$T/data/kharka-watch.log" 2>&1)"
+n0=$(grep -cE 'restart|kickstart' "$FAKE_SVC"); FAKE_AGE=500 B kharka watch; [ "$(grep -cE 'restart|kickstart' "$FAKE_SVC")" = "$n0" ] && ok "kharka watch: not twice in three minutes" || bad "kharka watch cooldown"
+rm -f "$T/data/kharka-watch.state"; : > "$FAKE_SVC"; FAKE_ONLINE=false B kharka watch; ! grep -qE 'restart|kickstart' "$FAKE_SVC" && ok "kharka watch: a daemon offline once is waited for" || bad "kharka watch offline once"
+FAKE_ONLINE=false B kharka watch; grep -qE 'kharka-daemon|dev.kharka.daemon' "$FAKE_SVC" && grep -q "daemon is offline" "$T/data/kharka-watch.log" && ok "kharka watch: offline twice in a row restarts the daemon, too" || bad "kharka watch offline twice: $(cat "$FAKE_SVC")"
+B kharka watch status | grep -q "herdr entry is" && ok "kharka watch status" || bad "kharka watch status"
+B kharka nope >/dev/null 2>&1 && bad "kharka accepted an unknown command" || ok "kharka: an unknown command is exit 1"
+rm -f "$T/bin/kharka"
 
 # mod: bhote-topic goes into every Claude profile as a plugin of the marketplace "bhote" (a fake claude logs each call)
 cat > "$T/bin/claude" <<'SH'

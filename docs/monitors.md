@@ -14,6 +14,16 @@ them, their modules and their connections; settings › *Projects* › *name* �
   ✗ Acme · build              develop · 1h
 ```
 
+**Switching projects off.** In the caption of each block there is a checkbox for every project that has a CI: `☑ IMS  ☑ BIL  ☐ BM`: the name is shortened to at most 3 characters (the initials of several words, `Bilendo Marketing` is BM; the first three letters of one word, `Bilendo` is BIL; a short name as it is; a clash takes the next candidate).
+A click on a box switches that project off (☐) or on again (☑); the rest of the caption row still toggles the small view. A project that is off has
+no entries in that block (the deployments and the tests are switched separately); the local test runs of its worktrees go with it (`IMS-wt1`,
+`ims-ai-finance` are IMS; with several projects the longest name that fits wins). Checkboxes that do not fit on the row continue in a row below.
+Everything is still fetched, so a waiting topic still follows its deployment. The settings are `DEPLOY_PROJECTS_OFF` and `TEST_PROJECTS_OFF`.
+
+Behind the name, in brackets, stands what the entry is about: for a deployment what went live (the branch of a merged pull request with its number,
+`chore/scoped-local-tests (#1525)`, else the commit title), for a test run the branch that was tested (a CI run: its branch; a local run: the branch of
+the worktree, as an agent in it has it checked out, or of the folder where `bhote test run` ran). The result of a test run (`9015 passed`) stays on the right.
+
 `✶` running (progress from the jobs' steps), `◌` queued, `⏸` waiting for an approval, `✓` done, `✗` failed, `⊘` canceled.
 
 ## Connections

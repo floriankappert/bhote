@@ -8,7 +8,7 @@ herdr=${HERDR_BIN_PATH:-herdr}
 bhote=$(command -v bhote 2>/dev/null)
 for c in "$HOME/.local/bin/bhote" /opt/homebrew/bin/bhote /usr/local/bin/bhote /usr/bin/bhote; do [ -n "$bhote" ] && break; [ -x "$c" ] && bhote=$c; done
 cfg=${BHOTE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/config}
-width=${BHOTE_PANEL_WIDTH:-80}
+width=${BHOTE_PANEL_WIDTH:-56}
 # the settings PANEL_MIN_WIDTH / PANEL_MAX_WIDTH (settings › Panel width) bound the width a new panel gets, as they bound an open one
 if [ -r "$cfg" ]; then
     lo=$(sed -n 's/^PANEL_MIN_WIDTH=//p' "$cfg" | tail -1); hi=$(sed -n 's/^PANEL_MAX_WIDTH=//p' "$cfg" | tail -1)

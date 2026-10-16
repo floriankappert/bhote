@@ -17,7 +17,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `REMOTE_AGENTS` | `off` | Remote agents | List the agents of the other machines, too (`AGENTS_VIA`). |
 | `AGENTS_VIA` | `herdr` | Agents through | Where they come from: `herdr` (its saved machines; herdr asks them over its ssh connection) or `kharka` (what [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes on every machine; no ssh between the machines). See [agents through kharka](data-and-sync.md#agents-through-kharka). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
-| `PANEL_MIN_WIDTH` | `66` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
+| `PANEL_MIN_WIDTH` | `50` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
 | `PANEL_MAX_WIDTH` | `100` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
 | `REMOTE_EVERY` | `5` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
@@ -44,6 +44,9 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TEST_STATUS_DIR` | `~/.cache/bhote/test-status` | Status files | Folder with live test status files (one JSON per suite, format in [Monitors](monitors.md)). |
 | `UPDATE_CHECK` | `on` | Check for updates | The collector asks GitHub for the newest `vX.Y.Z` tag every 6 hours. A newer version shows in Settings and in the head of the panel with the command that updates it (`brew update && brew upgrade bhote`, `git -C <checkout> pull`, …). `bhote update` asks right now. |
 | `AUTO_REVIEW` | `on` | Review topic for a question | An agent that has no topic and waits for an answer (herdr status *blocked*) or ends its turn with a question (its last line ends with “?”) gets a review topic “Question from <agent>” with the question as its description; it goes when the agent works again. A plain “done, okay” hand-back makes no topic. A topic in work goes to review when its agent hands back and returns to now when it works again; this also holds for a topic the agent put under review itself with `bhote review`. |
+| `DEPLOY_PROJECTS_OFF` | | Projects off (deployments) | Comma-separated project names switched off in the Deployments block: the checkboxes in its caption write it. |
+| `TEST_PROJECTS_OFF` | | Projects off (tests) | The same for the Tests block; the local runs of a project's worktrees (`IMS-wt1` is IMS) go with it. |
+| `KHARKA_WATCH_STALE` | `90` | Restart after (s) | `bhote kharka watch` restarts `herdr-kharka` when its entry in kharka (`herdr/<node>`) is older than this. |
 | `MONITOR_ROWS` | `4` | Entries shown | Entries each monitor shows. |
 | `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |

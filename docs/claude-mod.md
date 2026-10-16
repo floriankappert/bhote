@@ -11,6 +11,13 @@ session itself, so you see it without looking at the panel. It needs Claude Code
   status files, see [monitors](monitors.md)), and one for the deployment its topic waits for (`IMS · Backend ■■■□□ 60% (3/5)`; `queued`,
   `needs approval` and `failed` as words). A deployment the agent starts by pushing its branch is bound to the topic by bhote, so it shows up
   without anyone asking. The topic is read every 5 s while a turn runs or something is under way, else once a minute.
+- **A pane beside the chat** (`/topic pane`, again to close): the whole picture of the topic in a box docked beside the transcript, in the
+  fullscreen layout (`"tui": "fullscreen"`) from 110 columns (else it sits above the prompt, or waits until the terminal is wide enough). Title, status
+  and age, the description (Markdown), project, agent, machine and branch, who it waits for and since when, the Slack pin, the pull request of the
+  branch (`#26 open ✓3 ✗0 ◌0`, a link) and its checks, the test and deployment bars (the deployment with a link), the review summary with the
+  review card's buttons (a button answers the agent and puts the topic back on now), the other topics that are on the cards of the panel (of every machine kharka reaches, each with the agent's code `MAC4`/`OMR3`: in review, now, testing, deploying, recently finished, each with its count and `+n more`; next,
+  waiting, later, done and archived ones are not shown), and buttons for Review, Done, Next and Later. It is read every 10 s while it is open (`bhote current --json --full`). The band above the prompt stays, as the small
+  version for a narrow terminal.
 - **`/topic`** changes the topic of the agent without a Claude turn (also while Claude works, no tokens):
   `/topic` shows it, `/topic review|done|now|next|later|testing|dismiss` sets the status, `/topic wait <Name>` waits for a name,
   `/topic hide` and `/topic show` hide and show the band.

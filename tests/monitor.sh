@@ -19,7 +19,7 @@ case "$*" in
     "api repos/acme/IMS/contents/.circleci/config.yml"*) printf '{"content":"%s"}' "$(base64 -w0 < "$FAKE_DIR/ims-setup.yml" 2>/dev/null || base64 < "$FAKE_DIR/ims-setup.yml" | tr -d '\n')" > "$FAKE_DIR/c.json"; out "$FAKE_DIR/c.json" ;;
     "api repos/acme/IMS/contents/.circleci/continue.yml"*) printf '{"content":"%s"}' "$(base64 -w0 < "$FAKE_DIR/ims-continue.yml" 2>/dev/null || base64 < "$FAKE_DIR/ims-continue.yml" | tr -d '\n')" > "$FAKE_DIR/c.json"; out "$FAKE_DIR/c.json" ;;
     "api repos/"*) exit 1 ;;
-    "pr list -R acme/ims --head feat/credits"*) echo '[{"number":123}]' > "$FAKE_DIR/pr.json"; out "$FAKE_DIR/pr.json" ;;
+    "pr list -R acme/ims --head feat/credits"*) echo '[{"number":123,"title":"Add credits","state":"OPEN","isDraft":false,"url":"https://github.com/acme/ims/pull/123","statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"},{"status":"COMPLETED","conclusion":"FAILURE"},{"status":"IN_PROGRESS","conclusion":""},{"state":"SUCCESS"}]}]' > "$FAKE_DIR/pr.json"; out "$FAKE_DIR/pr.json" ;;
     "pr list"*) echo '[]' > "$FAKE_DIR/pr.json"; out "$FAKE_DIR/pr.json" ;;
     "workflow list -R acme/web"*) echo '[{"name":"Backend Deployment"},{"name":"Frontend Deployment"},{"name":"Lint"}]' > "$FAKE_DIR/w.json"; out "$FAKE_DIR/w.json" ;;
     "workflow list"*) echo '[]' > "$FAKE_DIR/w.json"; out "$FAKE_DIR/w.json" ;;
@@ -210,6 +210,27 @@ printf '%s\n' "$(date +%s)${US}IMS${US}Backend${US}running${US}1${US}3${US}Merge
 deploy_sync
 [ "$(topic_get "$cf" status)" = waiting ] && [ "$(topic_get "$cf" deploy_url)" = "https://app.circleci.com/pipelines/gh/acme/ims/78/workflows/iw9" ] \
   && ok "circleci: a merge commit's title (\"Merge pull request #123 from …\") binds the same way" || bad "deploy_sync by merge commit: $(topic_get "$cf" status)"
+# the pull request of the agent's branch (state, checks) and the other open topics of its project (bhote current --json --full: what the mod's pane shows)
+pi=$(branch_pr_info acme/ims feat/credits)
+[ "$(printf '%s' "$pi" | jq -c '[.number, .state, .draft, .checks.total, .checks.success, .checks.failed, .checks.pending]')" = '[123,"open",false,4,2,1,1]' ] && ok "pull request: number, state and the checks (2 passed, 1 failed, 1 running)" || bad "branch_pr_info: $pi"
+[ "$(branch_pr_info acme/ims feat/none)" = null ] && ok "pull request: none for a branch without one" || bad "pr none: $(branch_pr_info acme/ims feat/none)"
+topics_load; cx=$(current_context "$cf")
+[ "$(printf '%s' "$cx" | jq -c '[.pr.number, (.siblings | length), .siblings[0].title, .siblings[0].status]')" = '[123,1,"Other work","now"]' ] && ok "context: the pull request of the branch and the other open topics of the project" || bad "context: $cx"
+topic_new "Asks you" "" "" >/dev/null; rf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$rf" status review; topic_set "$rf" agent "OMR9"
+topic_new "Old finished" "" "" >/dev/null; f1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f1" status finished; topic_set "$f1" updated 1700000100
+topic_new "New finished" "" "" >/dev/null; f2="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f2" status finished; topic_set "$f2" updated 1700000200
+topics_load; cx=$(current_context "$cf")
+[ "$(printf '%s' "$cx" | jq -c '[(.lists.review.items | map(.title)), .lists.review.items[0].agent, (.lists.finished.items | map(.title))]')" = '[["Asks you"],"OMR9",["New finished","Old finished"]]' ] \
+  && ok "context: the topics in review, and the recently finished ones (newest first)" || bad "context lists: $cx"
+topic_new "Queued up" "" "" >/dev/null; qf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$qf" status next
+topic_new "Waits for Sam" "Sam" "" >/dev/null
+topic_new "Waits for CI" "" "" >/dev/null; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; deploy_wait_set "$df"
+topic_new "Parked" "" "" >/dev/null; lf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$lf" status later
+topic_new "Checked off" "" "" >/dev/null; of2="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$of2" status done
+topics_load; cx=$(current_context "$cf")
+[ "$(printf '%s' "$cx" | jq -c '[.lists | to_entries[] | select(.value.total > 0) | .key + ":" + (.value.total | tostring)] | join(" ")')" = '"review:1 now:1 deploying:1 finished:2"' ] \
+  && [ "$(printf '%s' "$cx" | jq -c '.lists | keys')" = '["deploying","finished","now","review","testing"]' ] \
+  && ok "context: the cards of the panel as lists with their totals (review, now, testing, deploying, finished); next, waiting, later and done are not in it" || bad "context groups: $(printf '%s' "$cx" | jq -c '.lists | map_values(.total)')"
 
 # local runs: bhote test run passes output and exit code through and keeps a summary; status files
 out=$(cd "$T" && bash "$OLDPWD/bhote" test run -n unit -- sh -c 'echo "12 runs, 30 assertions, 1 failures, 0 errors, 0 skips"; exit 3'); rc=$?
@@ -221,7 +242,7 @@ mkdir -p "$HOME/.cache/bhote/test-status"; ms=$(( $(date +%s) * 1000 ))
 printf '{"tree":"web-wt1","suite":"server","done":5,"total":10,"passed":40,"failed":0,"startedAt":%s,"updatedAt":%s,"finished":false,"ok":null}' "$ms" "$ms" > "$HOME/.cache/bhote/test-status/web-wt1.server.json"
 printf '{"tree":"web-wt1","suite":"client","done":9,"total":9,"passed":90,"failed":2,"startedAt":1000,"updatedAt":2000,"finished":true,"ok":false}' > "$HOME/.cache/bhote/test-status/web-wt1.client.json"
 l=$(tests_local)
-echo "$l" | grep -q "web-wt1${US}server${US}running${US}5${US}10" && echo "$l" | grep -q "web-wt1${US}client${US}failed${US}9${US}9${US}2 failed · 90 passed" && ok "status files: running with progress, failed with counts" || bad "status files: $l"
+echo "$l" | grep -q "web-wt1${US}server${US}running${US}5${US}10" && echo "$l" | grep -q "web-wt1${US}client${US}failed${US}9${US}9${US}‖2 failed · 90 passed" && ok "status files: running with progress, failed with counts" || bad "status files: $l"
 printf '{"tree":"evil\\u001b[31m","suite":"s","done":"a[$(touch %s/pwned)]","total":"9","passed":1,"failed":0,"startedAt":%s,"updatedAt":%s,"ok":null}' "$T" "$ms" "$ms" > "$HOME/.cache/bhote/test-status/evil.json"
 l=$(tests_local | grep evil); rm -f "$HOME/.cache/bhote/test-status/evil.json"
 case "$l" in *$'\033'*) bad "status file: escape code kept" ;; *) [ -n "$l" ] && ok "status file: control characters are cleaned" || bad "status file: dropped: $l" ;; esac
@@ -248,6 +269,54 @@ case "$blk" in *"2 running"*"1 failed"*) [ "$(printf '%s\n' "$blk" | wc -l | tr 
 case "$blk" in *"Web · Backend"*) bad "small view still lists entries" ;; *) ok "deployments, small: no entries" ;; esac
 case "$blk" in *"$(printf '\035cap:deploys\035')"*) ok "section: the caption carries its ref (a click toggles)" ;; *) bad "caption ref" ;; esac
 section_toggle deploys; ! section_compact deploys && ok "section: toggled back" || bad "toggle back"
+# the project names in the checkboxes: at most 3 characters, no two the same
+ab() { mon_abbr_set r "$1" "${2:-}"; printf '%s' "$r"; }
+[ "$(ab IMS)" = IMS ] && [ "$(ab Rails)" = RAI ] && [ "$(ab "Bilendo Marketing")" = BM ] && [ "$(ab Bilendo)" = BIL ] && [ "$(ab "Bhote CLI")" = BC ] && [ "$(ab micro-manager)" = MM ] && [ "$(ab Ab)" = AB ] \
+  && ok "abbreviations: initials of several words, three letters of one, a short name as it is" || bad "abbreviations: $(ab IMS) $(ab Rails) $(ab "Bilendo Marketing") $(ab Bilendo) $(ab "Bhote CLI") $(ab micro-manager)"
+[ "$(ab "Big Mountain" "BM")" = BIG ] && [ "$(ab "Big Mountain" "BM BIG")" = BIM ] && [ "$(ab "Big Mountain" "BM BIG BIM BIN")" = BI2 ] \
+  && ok "abbreviations: a clash takes the next candidate, at last a digit" || bad "abbreviation clashes: $(ab "Big Mountain" "BM") $(ab "Big Mountain" "BM BIG") $(ab "Big Mountain" "BM BIG BIM BIN")"
+# what went live and which branch is tested: in brackets behind the name, also when it went through
+nc() { LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+[ "$(mon_shipped "Merge pull request #1525 from bilendo/chore/scoped-local-tests")" = "chore/scoped-local-tests (#1525)" ] && [ "$(mon_shipped "Merge branch 'feat/x' into main")" = "feat/x" ] \
+  && [ "$(mon_shipped "Add credits (#123)")" = "Add credits (#123)" ] && ok "deployments: a merge commit says its branch (and the pull request), a squash title stays" || bad "shipped: $(mon_shipped "Merge pull request #1525 from bilendo/chore/scoped-local-tests") / $(mon_shipped "Merge branch 'feat/x' into main")"
+t2=$(date +%s); { printf '%s\n' "$(( t2 - 1 ))${US}IMS${US}Backend${US}ok${US}5${US}5${US}chore/scoped-local-tests (#1525)${US}u1"; } > "$SHARED_DIR/deploys.list"
+blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 | nc ); case "$blk" in *"IMS · Backend (chore/scoped-local-tests (#1525))"*) ok "deployments: a deployment that went through says what went live" ;; *) bad "shipped shown: $blk" ;; esac
+{ printf '%s\n' "$(( t2 - 1 ))${US}IMS-wt1${US}server${US}ok${US}${US}${US}feat/x‖9015 passed${US}" "$(( t2 - 2 ))${US}Web${US}build${US}ok${US}${US}${US}fix/y‖${US}u2" "$(( t2 - 3 ))${US}Web${US}unit${US}ok${US}${US}${US}12 runs${US}"; } > "$SHARED_DIR/tests.list"
+blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block tests 4 | nc )
+case "$blk" in *"IMS-wt1 · server (feat/x)"*"9015 passed"*) ok "tests: the branch that was tested behind the name, the result on the right" ;; *) bad "tests branch: $blk" ;; esac
+case "$blk" in *"Web · build (fix/y)"*) ok "tests: a CI run says its branch" ;; *) bad "tests ci branch: $blk" ;; esac
+case "$blk" in *"Web · unit"*"12 runs"*) case "$blk" in *"Web · unit ("*) bad "a run without a branch has brackets: $blk" ;; *) ok "tests: an entry without a branch (an old list) keeps its result" ;; esac ;; *) bad "tests old entry: $blk" ;; esac
+# the branch of a local run: from the folder of an agent that works in that worktree
+wt=$T/wtree/ims-wt9; mkdir -p "$wt"; git -C "$wt" init -q . && git -C "$wt" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one && git -C "$wt" checkout -q -b feat/live
+printf '%s\n' "w1:p1${US}$wt" > "$T/agent.cwd"; ( AGENT_CWD=$T/agent.cwd; tree_branch_set b ims-wt9; [ "$b" = feat/live ] && tree_branch_set b nothere && [ -z "$b" ] ) && ok "tests: the branch of a worktree comes from the folder of the agent in it" || bad "tree_branch_set"
+# a checkbox for each project with a CI in the caption (☑ shown, ☐ off): a click on it switches the project, the entries of a switched-off project
+# (and the local runs of its worktrees: IMS-wt1 is IMS) are not shown; what does not fit goes to a row below; the ref carries the columns
+t1=$(date +%s); { printf '%s\n' "$(( t1 - 1 ))${US}Web${US}Backend${US}ok${US}${US}${US}fix/a${US}ua" "$(( t1 - 2 ))${US}Rails${US}Production${US}ok${US}${US}${US}fix/b${US}ub" \
+    "$(( t1 - 3 ))${US}Web-wt1${US}server${US}ok${US}${US}${US}x${US}uc"; } > "$SHARED_DIR/deploys.list"
+nc() { LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 )
+cap=$(printf '%s\n' "$blk" | head -1)
+case "$cap" in *"$(printf '\035cap:deploys!')"*) ok "checkboxes: the caption ref carries their columns" ;; *) bad "caption ranges: $cap" ;; esac
+plain=$(printf '%s\n' "$cap" | sed 's/\x1d[^\x1d]*\x1d//' | nc); case "$plain" in *"☑ IMS"*"☑ RAI"*"☑ WEB"*"↕"*) ok "checkboxes: one for each project with a CI, all shown, on the caption row" ;; *) bad "chips: $plain" ;; esac
+case "$plain" in *Plain*) bad "a project without CI has a checkbox: $plain" ;; *) ok "checkboxes: none for a project without CI" ;; esac
+# the columns in the ref are the columns of the checkbox on the screen (1 based): the first range starts on its ☑
+rng=$(printf '%s' "$cap" | sed 's/^\x1d[^!]*!\([0-9]*\)!\([0-9]*\).*/\1 \2/' | head -c 20); set -- $rng
+ch=$(printf '%s' "$plain" | python3 -c 'import sys; s=sys.stdin.read(); i=int(sys.argv[1]); print(s[i-1:i+1])' "$1" 2>/dev/null)
+case "$ch" in "☑ ") ok "checkboxes: the first range starts on its box" ;; *) bad "range $1-$2 is [$ch] in: $plain" ;; esac
+mon_chip_toggle deploys 3                                   # (the projects by name: IMS, Rails, Web)
+[ "$(cfg_get DEPLOY_PROJECTS_OFF)" = Web ] && ok "checkboxes: a click switches that project off (setting DEPLOY_PROJECTS_OFF)" || bad "off list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
+blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 | nc )
+case "$blk" in *"☐ WEB"*"☑"*|*"☑"*"☐ WEB"*) ok "checkboxes: the box of a project that is off is empty" ;; *) bad "off box: $blk" ;; esac
+case "$blk" in *"Web · Backend"*|*"Web-wt1"*) bad "entries of a switched-off project still shown: $blk" ;; *"Rails · Production"*) ok "checkboxes: its entries (and its worktrees') are gone, the others stay" ;; *) bad "off entries: $blk" ;; esac
+mon_chip_toggle deploys 1; mon_chip_toggle deploys 3
+[ "$(cfg_get DEPLOY_PROJECTS_OFF)" = IMS ] && ok "checkboxes: the second click switches it on again, another project off" || bad "toggle list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
+mon_chip_toggle deploys 1; [ -z "$(cfg_get DEPLOY_PROJECTS_OFF)" ] && ok "checkboxes: all switched on: an empty list" || bad "empty list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
+mon_chip_toggle deploys 1; mon_chip_toggle deploys 2; mon_chip_toggle deploys 3
+blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 | nc )
+[ "$(printf '%s\n' "$blk" | grep -c "·")" = 0 ] && printf '%s\n' "$blk" | head -1 | grep -q "Deployments" && ok "checkboxes: with every project off only the caption stays (to switch them on again)" || bad "all off: $blk"
+mon_chip_toggle deploys 1; mon_chip_toggle deploys 2; mon_chip_toggle deploys 3
+blk=$( COLS=36; RULE_LINE=$(hline 31); DASH_LINE=$(dline 31); monitor_block deploys 4 )
+printf '%s\n' "$blk" | grep -q "$(printf '\035pf:deploys!')" && ok "checkboxes: what does not fit goes to a row below (ref pf:, the box numbers go on)" || bad "no second row: $(printf '%s\n' "$blk" | nc)"
 # a failure that a newer run of the same project and name made good is "resolved", in the small view and in the list
 { printf '%s\n' "$(( t0 - 1 ))${US}Web${US}Backend${US}ok${US}${US}${US}fix/n1${US}u1" "$(( t0 - 2 ))${US}Web${US}Backend${US}failed${US}${US}${US}fix/n2${US}u2" \
     "$(( t0 - 3 ))${US}Web${US}Frontend${US}failed${US}${US}${US}fix/n3${US}u3" "$(( t0 - 4 ))${US}Web${US}Backend${US}running${US}1${US}4${US}fix/n4${US}u4"; } > "$SHARED_DIR/deploys.list"

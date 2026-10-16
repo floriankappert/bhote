@@ -545,13 +545,21 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   agent_dedup; [ "$(topic_get "$o" status)" = finished ] && [ "$(topic_get "$n" status)" = testing ] && [ "$(topic_get "$ot" status)" = now ] || exit 1
   agent_dedup; [ "$(topic_get "$n" status)" = testing ] || exit 2
   exit 0 ) && ok "agent cards: one agent keeps one card on now/testing (the newest)" || bad "agent dedup: step $?"
-# the old ones (ARCHIVE_DAYS) are a section of their own under Done: a caption, the count and the key of the search
-( rm -f "$TOPIC_DIR"/*.topic; NOW=$(date +%s); COLS=50; FIND_KEY_SHOW="Ctrl+T"; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45)
-  topic_new "Fresh" "" ""; topic_new "Ancient" "" ""; af="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$af" status later; topic_set "$af" updated $(( NOW - 30 * 86400 ))
+# the old ones (ARCHIVE_DAYS) count with the done ones, in one section: the last line says "✓ 1 done · ▤ 1 archived"
+( rm -f "$TOPIC_DIR"/*.topic; NOW=$(date +%s); COLS=60; FIND_KEY_SHOW="Ctrl+T"; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55)
+  nc() { LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
+  topic_new "Fresh" "" ""; topic_new "Finished" "" ""; ff="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$ff" status done
+  topic_new "Ancient" "" ""; af="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$af" status later; topic_set "$af" updated $(( NOW - 30 * 86400 ))
   topics_load; [ "$(archived_count)" = 1 ] || exit 1
-  out=$(archived_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); case "$out" in *"Archived"*"1 archived · Ctrl+T search"*) ;; *) exit 2 ;; esac
-  topic_set "$af" updated "$NOW"; topics_load; [ -z "$(archived_block)" ] || exit 3                                      # (nothing archived: no section)
-  exit 0 ) && ok "archived: its own section under Done (caption, count, search key)" || bad "archived section: step $?"
+  out=$(done_block 4 | nc); last=$(printf '%s\n' "$out" | tail -1)
+  case "$last" in *"✓ 1 done · ▤ 1 archived") ;; *) exit 2 ;; esac
+  case "$out" in *"Archived"*) exit 3 ;; esac                                                                               # (no section of its own)
+  [ "$(printf '%s\n' "$out" | grep -c 'Done')" = 1 ] || exit 4
+  section_toggle done; out=$(done_block 4 | nc); [ "$(printf '%s\n' "$out" | wc -l | tr -d ' ')" = 2 ] && case "$out" in *"✓ 1 done · ▤ 1 archived") ;; *) false ;; esac || exit 5   # (small view: caption and the line)
+  section_toggle done; topic_set "$ff" status later; topics_load                                                           # (nothing done: the archived ones alone)
+  out=$(done_block 4 | nc); case "$out" in *"Done"*"▤ 1 archived"*) ;; *) exit 6 ;; esac; case "$out" in *"✓"*) exit 7 ;; esac
+  topic_set "$af" updated "$NOW"; topics_load; [ -z "$(done_block 4)" ] || exit 8                                          # (nothing done, nothing archived: no section)
+  exit 0 ) && ok "done and archived: one section, ✓ done · ▤ archived on its last line" || bad "done/archived: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
 ( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"

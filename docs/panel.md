@@ -1,6 +1,6 @@
 # The panel
 
-`bhote` without arguments is a panel for a herdr pane of about 80 columns (it works from 30 to any width; the list uses up to
+`bhote` without arguments is a panel for a herdr pane of about 56 columns (it works from 30 to any width; the list uses up to
 100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
@@ -8,8 +8,8 @@ The list shows what is on. **Review**, **now** and **testing** topics are cards 
 summary and the button). A topic is in **testing** when its agent stopped while a test suite runs (also one in the background); review follows when the tests are done, now when the agent works again. **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
 dot, the title and the time (waiting: for whom). A group shows ten lines; `+3 more next` below it is a row of its own: select it
 with the arrow keys and press `Enter` or `→` (or click it) to open the group, again to close it (`− show less`). Done, next,
-waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (a line counts
-them), the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
+waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (the last line of the Done section counts them: `✓ 42 done · ▤ 30 archived`),
+the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
 is selected.
 
 **Recently finished** is a group of cards under now and testing: a topic whose agent stopped without a question (nothing to check; with a

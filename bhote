@@ -84,7 +84,7 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
-PANEL_MIN_WIDTH|66|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
+PANEL_MIN_WIDTH|50|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
 PANEL_MAX_WIDTH|100|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
@@ -118,6 +118,9 @@ TEST_STATUS_DIR|~/.cache/bhote/test-status|text|Folder with live test status fil
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends its turn with a question gets a review topic of its own (the question is its description); it goes when the agent works again
+DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monitor (the checkboxes in its caption): their entries are not shown
+TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor (the checkboxes in its caption): their entries and the local runs of their worktrees are not shown
+KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -1850,11 +1853,11 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
     local dn=() used=" " best bu u j sel_in=0                 # newest first: by the last change (checking off is one); builtins only
     for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && ! topic_archived "$i" && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
-    if section_compact done; then                               # counts only: no rows to click
-        [ "$all" -gt 0 ] || return 0
-        dash_caption Done done; printf '  %s✓%s %s%d done%s\n' "$GREEN" "$X" "$D" "$all" "$X"; return 0
+    local arch; arch=$(archived_count)                          # (the old ones count with the done ones: one section, the search finds both)
+    if section_compact done || [ "$max" -le 0 ]; then           # counts only (or no room): no rows to click
+        [ "$all" -gt 0 ] || [ "$arch" -gt 0 ] || return 0
+        dash_caption Done done; done_summary "$all" "$arch"; return 0
     fi
-    [ "$max" -gt 0 ] || return 0
     while [ "$n" -lt "$max" ] && [ "$n" -lt "$all" ]; do
         best=-1; bu=-1
         for j in "${dn[@]}"; do case "$used" in *" $j "*) continue ;; esac; u=${T_UPD[$j]:-0}; [ "$u" -ge "$bu" ] && { bu=$u; best=$j; }; done
@@ -1863,7 +1866,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     if [ "$sel_in" = 0 ] && [ -n "${SEL_ID:-}" ]; then          # a chosen one (just checked off) is there even when older
         for j in ${dn[@]+"${dn[@]}"}; do [ "${T_ID[$j]}" = "$SEL_ID" ] && { idx[$n]=$j; n=$(( n + 1 )); break; }; done
     fi
-    [ "$n" -gt 0 ] || return 0
+    if [ "$n" -le 0 ]; then [ "$arch" -gt 0 ] || return 0; dash_caption Done done; done_summary 0 "$arch"; return 0; fi
     dash_caption Done done
     for (( k = 0; k < n; k++ )); do
         i=${idx[$k]}; ago_set tm "${T_UPD[$i]:-${NOW:-0}}"                  # when it was checked off (its last change), on the right
@@ -1880,6 +1883,7 @@ done_block() {  # done_block <max>: the last done topics (newest first, a green 
     done
     if [ "$all" -gt "$n" ]; then more_row done $(( all - n ))
     else local cap; num_set cap "${U_DONE_MAX:-}" 4; [ "$all" -gt "$cap" ] && more_row done 0; fi
+    done_summary "$all" "$arch"
     return 0
 }
 archived_count() {  # archived_count: the topics that are not shown any more because nobody touched them for ARCHIVE_DAYS (what topics_plan counts as PLAN_ARCH)
@@ -1893,10 +1897,15 @@ archived_count() {  # archived_count: the topics that are not shown any more bec
     done
     printf '%s' "$n"
 }
-archived_block() {  # the Archived section under Done: a caption and how many there are, with the key of the search that finds them
-    local n rest; n=$(archived_count); [ "$n" -gt 0 ] || return 0
-    rest="$n archived"; [ -n "${FIND_KEY_SHOW:-}" ] && rest="$rest · ${FIND_KEY_SHOW} search"
-    dash_caption Archived; printf '  %s▤%s %s%s%s\n' "$D" "$X" "$D" "$(clip "$rest" $(( ${COLS:-44} - 6 )))" "$X"      # (an icon in front, like the ✓ of Done)
+done_summary() {  # done_summary <done> <archived>: the last line of the Done section: ✓ 42 done · ▤ 30 archived
+    local d=$1 a=$2 out=""
+    if [ "$d" -gt 0 ]; then out="${GREEN}✓${X} ${D}$d done${X}"; fi
+    if [ "$a" -gt 0 ]; then
+        [ -n "$out" ] && out="$out ${D}·${X} "
+        out="$out${D}▤ $a archived${X}"
+    fi
+    [ -n "$out" ] && printf '  %s\n' "$out"
+    return 0
 }
 bored_agents() {  # the empty list: two agents with nothing to do, centred under the head rule (narrow or low: one line)
     local art=(".-----.  .-----.  zZ" "| -_- |  | u_u | z" "'--+--'  '--+--'" "  /|\\      /|\\") l in=$(( ${COLS:-44} - 4 ))
@@ -2219,7 +2228,7 @@ find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1
 panel_width_clamp() {
     local p=${HERDR_PANE_ID:-} lo hi w sw want dir amt
     case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
-    cfg_var lo PANEL_MIN_WIDTH 66; cfg_var hi PANEL_MAX_WIDTH 100; num_set lo "$lo" 66; num_set hi "$hi" 100; [ "$hi" -lt "$lo" ] && hi=$lo
+    cfg_var lo PANEL_MIN_WIDTH 50; cfg_var hi PANEL_MAX_WIDTH 100; num_set lo "$lo" 50; num_set hi "$hi" 100; [ "$hi" -lt "$lo" ] && hi=$lo
     read -r w sw <<< "$(herdr pane layout --pane "$p" 2>/dev/null | jq -r --arg p "$p" '
         ([.result.layout.panes[] | select(.pane_id == $p)][0].rect) as $r
         | ([.result.layout.splits[] | select(.direction == "right" and (((.rect.x + .rect.width * .ratio) - $r.x) | fabs) <= 2
@@ -2393,9 +2402,9 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
     else bottom=$(view_bottom); printf '%s\n' "$bkey" > "$RUN_DIR/bottom.key" 2>/dev/null; printf '%s' "$bottom" > "$RUN_DIR/bottom.out" 2>/dev/null; fi
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
-    num_set dn "${U_DONE_MAX:-}" 4; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"; archived_block); [ -n "$dblk" ] && count_lines dh "$dblk"
+    num_set dn "${U_DONE_MAX:-}" 4; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
     while [ "$dh" -gt 0 ] && [ "$dn" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
-        dn=$(( dn - 1 )); dblk=$(done_block "$dn"; archived_block); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
+        dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
     done
     local mblk mh=0; mblk=$(monitors_block); [ -n "$mblk" ] && count_lines mh "$mblk"
     [ "$mh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh - mh )) -lt $(( th < 6 ? th : 6 )) ] && { mblk=""; mh=0; }   # low: no monitors
@@ -4003,6 +4012,15 @@ circleci_jobs() {  # circleci_jobs <workflow id> <workflow status>: the jobs JSO
     [ -n "$f" ] && { mkdir -p "$SHARED_DIR/ccjobs" 2>/dev/null; printf '%s' "$j" > "$f.tmp" && mv "$f.tmp" "$f"; find "$SHARED_DIR/ccjobs" -type f -mmin +2880 -delete 2>/dev/null; }
     printf '%s' "$j"
 }
+mon_shipped() {  # mon_shipped <commit title>: what went live, short: "Merge pull request #12 from acme/feat/x" is "feat/x (#12)", "Merge branch 'x' into main" is
+    # "x"; a squash title ("Add x (#12)") stays as it is
+    local t=$1 n b
+    case "$t" in
+        "Merge pull request #"*" from "*) n=${t#"Merge pull request #"}; n=${n%% *}; b=${t#* from }; b=${b%% *}; b=${b#*/}; printf '%s (#%s)' "$b" "$n" ;;
+        "Merge branch '"*"'"*) b=${t#"Merge branch '"}; printf '%s' "${b%%\'*}" ;;
+        *) printf '%s' "$t" ;;
+    esac
+}
 deploys_circleci() {  # deploys_circleci <project> <slug> <branch=Label,…> <job=Label,… (empty: every job with "deploy" in it, else "approv")>
     # A deployment is a workflow run that contains a deploy job (a workflow of a branch the deploy job is filtered off has none). Its label is the
     # job's (the names map, else the branch's own label, else the last word of the job name: deploy-ecs-backend is Backend), its progress the jobs
@@ -4026,7 +4044,7 @@ deploys_circleci() {  # deploys_circleci <project> <slug> <branch=Label,…> <jo
             [ -n "$l" ] || l=$(mon_job_word "$dj"); [ -n "$l" ] || l=$br        # else the last word of the job name, else the branch
             read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select((.name | test("^notify"; "i") | not) and .status != "not_run")] as $j
                 | "\([$j[] | select(.status | test("^(success|failed|canceled|infrastructure_fail|timedout)$"))] | length) \($j | length)"')
-            mon_line "$(mon_iso "$cr")" "$1" "$l" "$s" "$d" "$tot" "${subj:0:60}" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+            mon_line "$(mon_iso "$cr")" "$1" "$l" "$s" "$d" "$tot" "$(mon_shipped "$subj" | cut -c1-70)" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
         done < <(circleci_workflows "$2" "$b" 4)
     done <<< "$(printf '%s' "$map" | tr ',' '\n')"
 }
@@ -4051,7 +4069,7 @@ tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jo
               (map(select(.status == "completed")) | length), length, (.[0].name | sub(" \\([0-9]+/[0-9]+\\)$"; "")), (map(.startedAt) | min) ] | map(tostring) | join("\u001f")' "$jf" 2>/dev/null)
         [ -n "$j" ] || continue
         IFS=$US read -r s f n p st <<< "$j"
-        mon_line "$(mon_iso "$st")" "$1" "$p" "$s" "$f" "$n" "$br" "$url"
+        mon_line "$(mon_iso "$st")" "$1" "$p" "$s" "$f" "$n" "$br‖" "$url"
     done < <(printf '%s' "$runs" | jq -r '.[] | [.databaseId, .workflowName, .status, .updatedAt, .headBranch, .url] | map(tostring) | join("\u001f")')
     find "$SHARED_DIR/ghjobs" -type f -mmin +1440 -delete 2>/dev/null
 }
@@ -4064,18 +4082,28 @@ tests_circleci() {  # tests_circleci <project> <slug> <job names>: the test jobs
                 elif all(.status == "success") then "ok" else "canceled" end), (map(select(.status | term)) | length), length, .[0].name ] | map(tostring) | join("\u001f")' 2>/dev/null)
         [ -n "$j" ] || continue
         IFS=$US read -r s d tot nm <<< "$j"
-        mon_line "$(mon_iso "$cr")" "$1" "$nm" "$s" "$d" "$tot" "$br" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+        mon_line "$(mon_iso "$cr")" "$1" "$nm" "$s" "$d" "$tot" "$br‖" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
     done < <(circleci_workflows "$2" "" 4)
+}
+tree_branch_set() {  # tree_branch_set <var> <worktree folder name>: the branch that worktree is on now, from the folder of an agent that works in it ("" when no
+    # agent does: the status file names the folder only)
+    local _b="" _p _c _t; if [ -r "${AGENT_CWD:-}" ]; then
+        while IFS=$US read -r _p _c; do
+            [ -n "$_c" ] && [ -d "$_c" ] || continue; _t=$(git -C "$_c" rev-parse --show-toplevel 2>/dev/null) || continue
+            [ "${_t##*/}" = "$2" ] && { _b=$(git -C "$_t" rev-parse --abbrev-ref HEAD 2>/dev/null); break; }
+        done < "$AGENT_CWD"
+    fi
+    printf -v "$1" '%s' "$_b"
 }
 tests_local() {  # the local runs (bhote test run) and the live status files (TEST_STATUS_DIR)
     local f dir now line
     now=$(date +%s)
     for f in "$MON_DIR"/*.run; do
         [ -f "$f" ] || continue
-        local st="" en="" ex="" pj="" nm="" sm="" tr="" pid=""
-        while IFS= read -r line; do case "$line" in started=*) st=${line#*=} ;; ended=*) en=${line#*=} ;; exit=*) ex=${line#*=} ;; project=*) pj=${line#*=} ;; name=*) nm=${line#*=} ;; summary=*) sm=${line#*=} ;; tree=*) tr=${line#*=} ;; pid=*) pid=${line#*=} ;; esac; done < "$f"
+        local st="" en="" ex="" pj="" nm="" sm="" tr="" pid="" bn=""
+        while IFS= read -r line; do case "$line" in started=*) st=${line#*=} ;; branch=*) bn=${line#*=} ;; ended=*) en=${line#*=} ;; exit=*) ex=${line#*=} ;; project=*) pj=${line#*=} ;; name=*) nm=${line#*=} ;; summary=*) sm=${line#*=} ;; tree=*) tr=${line#*=} ;; pid=*) pid=${line#*=} ;; esac; done < "$f"
         local s=running; if [ -n "$en" ]; then [ "$ex" = 0 ] && s=ok || s=failed; elif [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then s=canceled; fi
-        mon_line "$st" "${pj:-$tr}" "$nm" "$s" "" "" "$sm" ""
+        mon_line "$st" "${pj:-$tr}" "$nm" "$s" "" "" "$bn‖$sm" ""
     done
     dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
     for f in "$dir"/*.json; do
@@ -4086,7 +4114,9 @@ tests_local() {  # the local runs (bhote test run) and the live status files (TE
             select(.tree and .suite and .startedAt) | ((.updatedAt // .startedAt) / 1000 | floor) as $up
             | (if .ok == true then "ok" elif .ok == false then "failed" elif ($now - $up) > 30 then "canceled" else "running" end) as $s
             | [(.startedAt / 1000 | floor | tostring), (.tree | c), (.suite | c), $s, (.done | n), (.total | n),
-               (((if (.failed // 0) > 0 then "\(.failed) failed · " else "" end) + "\(.passed // 0) passed") | c), ""] | join("\u001f")' "$f" 2>/dev/null
+               (((if (.failed // 0) > 0 then "\(.failed) failed · " else "" end) + "\(.passed // 0) passed") | c), ""] | join("\u001f")' "$f" 2>/dev/null | while IFS=$US read -r a1 a2 a3 a4 a5 a6 a7 a8; do
+            [ -n "$a1" ] || continue; tree_branch_set bn "$a2"; printf '%s\n' "$a1$US$a2$US$a3$US$a4$US$a5$US$a6$US$bn‖$a7$US$a8"
+        done
     done
 }
 monitor_fetch() {  # monitor_fetch deploys|tests: one round of every project with CI (and the local runs); the list, newest first
@@ -4128,11 +4158,85 @@ cli_test_run() {  # bhote test run [-n <name>] -- <command>: runs it as it is (o
     mkdir -p "$MON_DIR"; chmod 700 "$MON_DIR" 2>/dev/null
     id="$(date +%s)-$$"; f="$MON_DIR/$id.run"; log=$(mktemp "$RUN_DIR/test.XXXXXX")
     tree=${PWD##*/}; git_repo_key_set rk "$PWD"; projects_load; project_for "$rk" "" && tree=$(project_name "$PROJ_ID")
-    printf 'started=%s\nproject=%s\ntree=%s\nname=%s\npid=%s\n' "$(date +%s)" "${tree//[[:cntrl:]]/}" "${PWD##*/}" "${name//[[:cntrl:]]/}" "$$" > "$f"
+    printf 'started=%s\nproject=%s\ntree=%s\nname=%s\npid=%s\nbranch=%s\n' "$(date +%s)" "${tree//[[:cntrl:]]/}" "${PWD##*/}" "${name//[[:cntrl:]]/}" "$$" "$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr -d '[:cntrl:]')" > "$f"
     "$@" 2>&1 | tee "$log"; rc=${PIPESTATUS[0]}
     printf 'ended=%s\nexit=%s\nsummary=%s\n' "$(date +%s)" "$rc" "$(test_summary "$log")" >> "$f"
     rm -f "$log"; ls -t "$MON_DIR"/*.run 2>/dev/null | tail -n +101 | while IFS= read -r f; do rm -f "$f"; done   # the last 100
     poke; return "$rc"
+}
+# ── kharka watch: herdr-kharka (and the kharka daemon) restarted when they stop doing their work. A process can live on while it writes nothing (the Mac's
+# herdr/<node> entry stood still for half an hour with the process running and the daemon online): the check looks at the entry, not at the process.
+KW_LOG=$DATA_DIR/kharka-watch.log
+kw_log() { mkdir -p "$DATA_DIR" 2>/dev/null; printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$KW_LOG"
+    [ "$(wc -l < "$KW_LOG" 2>/dev/null | tr -d ' ')" -gt 400 ] && { tail -n 200 "$KW_LOG" > "$KW_LOG.tmp" && mv "$KW_LOG.tmp" "$KW_LOG"; }; return 0; }
+kw_age_set() {  # kw_age_set <var> <key>: seconds since that entry was written (hlc), -1 when there is none
+    local _e _ms; _e=$(kharka_run get --entry "$2" 2>/dev/null) || { printf -v "$1" '%s' -1; return; }
+    _ms=$(printf '%s' "$_e" | jq -r '(.hlc // "") | split("-")[0]' 2>/dev/null); case "$_ms" in ''|*[!0-9]*) printf -v "$1" '%s' -1 ;; *) printf -v "$1" '%s' $(( $(date +%s) - _ms / 1000 )) ;; esac
+}
+kw_restart() {  # kw_restart <herdr-kharka|daemon>: through launchd (macOS) or systemd (Linux user units); 1 when this machine has no such service
+    local what=$1 label unit
+    case "$(uname -s)" in
+        Darwin) case "$what" in daemon) label=dev.kharka.daemon ;; *) label=dev.kharka.herdr ;; esac
+            launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || return 1; launchctl kickstart -k "gui/$(id -u)/$label" >/dev/null 2>&1 ;;
+        *) case "$what" in daemon) unit=kharka-daemon ;; *) unit=herdr-kharka ;; esac
+            systemctl --user cat "$unit.service" >/dev/null 2>&1 || return 1; systemctl --user restart "$unit.service" >/dev/null 2>&1 ;;
+    esac
+}
+kharka_watch_once() {  # one look: restarts herdr-kharka when its entry is older than KHARKA_WATCH_STALE seconds (90), the daemon when it is offline twice in a row
+    kharka_found || return 0
+    local node st online age stale now last cool=180 offn=0 sf="$DATA_DIR/kharka-watch.state" peers p pa pn
+    node=$(kharka_run whoami 2>/dev/null) || return 0; [ -n "$node" ] || return 0
+    cfg_var stale KHARKA_WATCH_STALE 90; num_set stale "$stale" 90; now=$(date +%s)
+    last=0; offn=0; { read -r last offn < "$sf"; } 2>/dev/null; num_set last "$last" 0; num_set offn "$offn" 0
+    st=$(kharka_run status 2>/dev/null); online=$(printf '%s' "$st" | jq -r '.online // false' 2>/dev/null)
+    if [ "$online" != true ]; then
+        offn=$(( offn + 1 )); printf '%s %s\n' "$last" "$offn" > "$sf"
+        if [ "$offn" -ge 2 ] && [ $(( now - last )) -ge "$cool" ]; then
+            kw_log "the daemon is offline ($offn looks): restarting it and herdr-kharka"; kw_restart daemon; sleep 3; kw_restart herdr-kharka
+            printf '%s 0\n' "$now" > "$sf"
+        fi
+        return 0
+    fi
+    printf '%s 0\n' "$last" > "$sf"
+    kw_age_set age "herdr/$node"
+    if [ "$age" -ge 0 ] && [ "$age" -le "$stale" ]; then return 0; fi
+    [ $(( now - last )) -lt "$cool" ] && return 0                       # (restarted a moment ago: it needs time to write)
+    peers=""; for p in $(kharka_run ls herdr/ 2>/dev/null); do pn=${p#herdr/}; [ "$pn" = "$node" ] && continue; kw_age_set pa "$p"; peers="$peers $pn:${pa}s"; done
+    kw_log "the entry herdr/$node is $( [ "$age" -lt 0 ] && echo missing || echo "$age s old" ) (limit $stale s), daemon online, pending $(printf '%s' "$st" | jq -r '.pending // "?"' 2>/dev/null), peers$peers: restarting herdr-kharka"
+    kw_restart herdr-kharka || { kw_log "no herdr-kharka service on this machine: nothing restarted"; return 0; }
+    printf '%s 0\n' "$now" > "$sf"
+}
+kharka_watch_install() {  # install a timer that runs `bhote kharka watch` every minute (launchd on macOS, a systemd user timer on Linux)
+    local bin; bin=$(command -v bhote 2>/dev/null) || bin="$HOME/.local/bin/bhote"
+    if [ "$(uname -s)" = Darwin ]; then
+        local pl="$HOME/Library/LaunchAgents/dev.bhote.kharka-watch.plist"; mkdir -p "$(dirname "$pl")"
+        printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict>' \
+            '<key>Label</key><string>dev.bhote.kharka-watch</string>' \
+            "<key>ProgramArguments</key><array><string>$bin</string><string>kharka</string><string>watch</string></array>" \
+            "<key>EnvironmentVariables</key><dict><key>PATH</key><string>$HOME/.cargo/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>" \
+            '<key>StartInterval</key><integer>60</integer><key>RunAtLoad</key><true/>' '</dict></plist>' > "$pl"
+        launchctl bootout "gui/$(id -u)/dev.bhote.kharka-watch" >/dev/null 2>&1; launchctl bootstrap "gui/$(id -u)" "$pl" && echo "kharka watch: every minute (launchd dev.bhote.kharka-watch)"
+    else
+        local ud="$HOME/.config/systemd/user"; mkdir -p "$ud"
+        printf '[Unit]\nDescription=bhote kharka watch (restarts herdr-kharka when it stops writing)\n\n[Service]\nType=oneshot\nEnvironment=PATH=%%h/.cargo/bin:%%h/.local/bin:/usr/local/bin:/usr/bin:/bin\nExecStart=%s kharka watch\n' "$bin" > "$ud/bhote-kharka-watch.service"
+        printf '[Unit]\nDescription=bhote kharka watch every minute\n\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nAccuracySec=10s\n\n[Install]\nWantedBy=timers.target\n' > "$ud/bhote-kharka-watch.timer"
+        systemctl --user daemon-reload && systemctl --user enable --now bhote-kharka-watch.timer >/dev/null 2>&1 && echo "kharka watch: every minute (systemd bhote-kharka-watch.timer)"
+    fi
+}
+cli_kharka() {  # bhote kharka watch [install|uninstall|status]
+    [ "${1:-}" = watch ] || { echo "bhote: kharka watch [install|uninstall|status]" >&2; return 1; }; shift
+    case "${1:-}" in
+        '') kharka_watch_once ;;
+        install) kharka_watch_install ;;
+        uninstall) if [ "$(uname -s)" = Darwin ]; then launchctl bootout "gui/$(id -u)/dev.bhote.kharka-watch" >/dev/null 2>&1; rm -f "$HOME/Library/LaunchAgents/dev.bhote.kharka-watch.plist"
+                   else systemctl --user disable --now bhote-kharka-watch.timer >/dev/null 2>&1; rm -f "$HOME/.config/systemd/user/bhote-kharka-watch".service "$HOME/.config/systemd/user/bhote-kharka-watch".timer; fi; echo "kharka watch: removed" ;;
+        status) local n a; kharka_found || { echo "kharka: not found"; return 1; }; n=$(kharka_run whoami 2>/dev/null); kw_age_set a "herdr/$n"
+            printf 'node %s · its herdr entry is %s old (restart after %ss)\n' "${n:-?}" "$( [ "$a" -lt 0 ] && echo "missing" || echo "${a}s")" "$(cfg_get KHARKA_WATCH_STALE 90)"
+            if [ "$(uname -s)" = Darwin ]; then launchctl print "gui/$(id -u)/dev.bhote.kharka-watch" >/dev/null 2>&1 && echo "timer: installed" || echo "timer: not installed (bhote kharka watch install)"
+            else systemctl --user is-enabled bhote-kharka-watch.timer >/dev/null 2>&1 && echo "timer: installed" || echo "timer: not installed (bhote kharka watch install)"; fi
+            [ -f "$KW_LOG" ] && { echo "last actions:"; tail -n 5 "$KW_LOG"; }; return 0 ;;
+        *) echo "bhote: kharka watch [install|uninstall|status]" >&2; return 1 ;;
+    esac
 }
 mon_age() {  # mon_age <seconds ago>: 40s, 5m, 3h, 2d
     local a=$1; [ "$a" -lt 0 ] && a=0
@@ -4171,6 +4275,84 @@ update_command() {  # the command that updates bhote the way it was installed he
     d=$(cd "$(dirname "$p")" 2>/dev/null && pwd)
     if [ -n "$d" ] && git -C "$d" rev-parse --git-dir >/dev/null 2>&1; then echo "git -C ${d/#$HOME/~} pull"; return; fi
     echo "install the new version the way you installed bhote (see the README)"
+}
+mon_off_key() { case "$1" in deploys) echo DEPLOY_PROJECTS_OFF ;; *) echo TEST_PROJECTS_OFF ;; esac; }
+mon_projects_ci() {  # mon_projects_ci: MPC = the names of the projects that have a CI (by name): the checkboxes of the monitor captions
+    local i; MPC=(); projects_load
+    for (( i = 0; i < P_N; i++ )); do [ -n "$(topic_get "${P_FILE[$i]}" ci)" ] && MPC[${#MPC[@]}]=${P_NAME[$i]}; done
+    return 0
+}
+mon_list_in() {  # mon_list_in <list> <name>: 0 when the comma separated list has that name (not case sensitive)
+    local e IFS=, n; n=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+    for e in $1; do [ "$(printf '%s' "$e" | tr '[:upper:]' '[:lower:]')" = "$n" ] && return 0; done
+    return 1
+}
+mon_hidden() {  # mon_hidden <off list> <entry project>: 0 when the entry belongs to a project that is switched off: the project (its name, or a folder
+    # of it: IMS-wt1 is IMS; the project with the longest name that fits wins, so Bilendo-marketing is not Bilendo)
+    local lp ln best="" i; lp=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+    for (( i = 0; i < P_N; i++ )); do
+        ln=$(printf '%s' "${P_NAME[$i]}" | tr '[:upper:]' '[:lower:]')
+        case "$lp" in "$ln"|"$ln"-*|"$ln"_*) [ "${#ln}" -gt "${#best}" ] && best=${P_NAME[$i]} ;; esac
+    done
+    [ -n "$best" ] && mon_list_in "$1" "$best"
+}
+mon_list_shown() {  # mon_list_shown <deploys|tests>: the file the monitor block reads: the list, without the projects that are switched off
+    local kind=$1 off f line rest pj; cfg_var off "$(mon_off_key "$kind")" ""
+    if [ -z "$off" ]; then printf '%s' "$SHARED_DIR/$kind.list"; return; fi
+    f="${RUN_DIR:-$SHARED_DIR}/$kind.shown"; projects_load; : > "$f"
+    while IFS= read -r line; do rest=${line#*$US}; pj=${rest%%$US*}; mon_hidden "$off" "$pj" || printf '%s\n' "$line" >> "$f"; done < "$SHARED_DIR/$kind.list"
+    printf '%s' "$f"
+}
+mon_chip_toggle() {  # mon_chip_toggle <deploys|tests> <n>: switch the n-th project's checkbox in that monitor's caption
+    local kind=$1 n=$2 k off name new="" e found=0 IFS=,
+    mon_projects_ci; name=${MPC[$(( n - 1 ))]:-}; [ -n "$name" ] || return 0
+    name=${name//,/ }; k=$(mon_off_key "$kind"); cfg_var off "$k" ""
+    for e in $off; do [ -n "$e" ] || continue; if [ "$e" = "$name" ]; then found=1; else new="$new${new:+,}$e"; fi; done
+    [ "$found" = 1 ] || new="$new${new:+,}$name"
+    cfg_set "$k" "$new"
+}
+mon_abbr_set() {  # mon_abbr_set <var> <project name> <abbreviations taken, space separated>: at most 3 characters, capitals: the initials of the words
+    # (Bilendo Marketing: BM), the first three letters of a single word longer than 3 (Rails: RAI), a short name as it is (IMS); a clash takes the next
+    # candidate (the first three letters, the first two plus the last initial) and at last a digit (BI2)
+    local n=$2 w words=() ini="" flat c cand=() i k
+    n=$(printf '%s' "$n" | tr '[:lower:]' '[:upper:]'); flat=${n//[!A-Z0-9]/}
+    for w in $(printf '%s' "$n" | tr -c 'A-Z0-9' ' '); do words[${#words[@]}]=$w; ini="$ini${w:0:1}"; done
+    [ -n "$flat" ] || flat=PRJ
+    if [ "${#words[@]}" -gt 1 ]; then cand[0]=${ini:0:3}; else cand[0]=${flat:0:3}; fi
+    cand[1]=${flat:0:3}; cand[2]="${flat:0:2}${ini: -1}"; cand[3]=${flat:0:1}${flat: -2}
+    for c in "${cand[@]}"; do [ -n "$c" ] || continue; case " $3 " in *" $c "*) ;; *) printf -v "$1" '%s' "$c"; return 0 ;; esac; done
+    for (( i = 2; i < 10; i++ )); do c="${flat:0:2}$i"; case " $3 " in *" $c "*) ;; *) printf -v "$1" '%s' "$c"; return 0 ;; esac; done
+    printf -v "$1" '%s' "${flat:0:3}"
+}
+mon_caption() {  # mon_caption <deploys|tests> <text>: the caption row of a monitor, with a checkbox for each project that has a CI (☑ shown, ☐ switched
+    # off), as many as fit on the row, the rest in rows below. A click on a checkbox switches that project; the ref carries each checkbox's columns
+    # (<ref>!from!to!from!to…: the button numbers of mouse_event), the rest of the row still toggles the small view.
+    local kind=$1 text=$2 W=$(( ${#RULE_LINE} + 2 )) n i k name cw gw off ck gap need from cur limit empty=1 rown=0 row="" ranges="" end0=-1 dn lead
+    local rows=() rranges=() taken=""
+    mon_projects_ci; n=${#MPC[@]}
+    if [ "$n" -eq 0 ] || section_compact "$kind"; then dash_caption "$text" "$kind"; return; fi
+    cfg_var off "$(mon_off_key "$kind")" ""; dw_set gw "☑"
+    cur=$(( 6 + ${#text} )); limit=$(( W - 5 ))
+    for (( i = 0; i < n; i++ )); do
+        mon_abbr_set name "${MPC[$i]}" "$taken"; taken="$taken $name"; dw_set cw "$name"; cw=$(( gw + 1 + cw ))
+        if mon_list_in "$off" "${MPC[$i]//,/ }"; then ck="${D}☐ ${name}${X}"; else ck="${GREEN}☑${X} ${L}${name}${X}"; fi
+        gap=""; need=$cw; [ "$empty" = 0 ] && { gap="  "; need=$(( cw + 2 )); }
+        if [ $(( cur + need )) -gt "$limit" ] && { [ "$empty" = 0 ] || [ "$rown" = 0 ]; }; then   # does not fit: this row ends here, the next one starts indented
+            [ "$rown" = 0 ] && end0=$cur
+            rows[$rown]=$row; rranges[$rown]=$ranges; rown=$(( rown + 1 ))
+            row=""; ranges=""; cur=4; limit=$(( W - 2 )); empty=1; gap=""; need=$cw
+            for (( k = 0; k < i; k++ )); do ranges="$ranges!0!0"; done            # (the checkboxes before keep their numbers)
+        fi
+        from=$(( cur + ${#gap} + 1 )); row="$row$gap$ck"; cur=$(( cur + need )); empty=0; ranges="$ranges!$from!$(( from + cw - 1 ))"
+    done
+    rows[$rown]=$row; rranges[$rown]=$ranges; [ "$rown" = 0 ] && end0=$cur
+    lead=""; [ -n "${rows[0]}" ] && lead=" ${rows[0]}"
+    dn=$(( W - end0 - 3 )); [ "$dn" -lt 1 ] && dn=1
+    printf '\035cap:%s%s\035  %s┈┈%s %s%s%s%s %s%s%s %s↕%s\n' "$kind" "${rranges[0]}" "$MUTED" "$X" "$D" "$text" "$X" "$lead" "$MUTED" "${DASH_LINE:0:$dn}" "$X" "$D" "$X"
+    for (( i = 1; i <= rown; i++ )); do
+        [ -n "${rows[$i]}" ] && printf '\035pf:%s%s\035    %s\n' "$kind" "${rranges[$i]}" "${rows[$i]}"
+    done
+    return 0
 }
 dash_caption() {  # dash_caption <text> [done|deploys|tests|agents]: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests, Agents); with a section the row has a ↕ at the
     # right end: on done, deploys and tests a click anywhere on the row switches the section to counts only and back (ref cap:<section>); on agents only the
@@ -4430,18 +4612,20 @@ deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, an
     return 0
 }
 monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last entries (nothing when the monitor is off or has none)
-    local kind=$1 max=$2 cap t pj lb st d tot note url n=0 more=0 ic tx right rightc bar barc pct lw rw left lbl pad age w=$(( ${COLS:-44} - 4 ))
+    local kind=$1 max=$2 cap t pj lb st d tot note url br shown n=0 more=0 ic tx right rightc bar barc pct lw rw left lbl pad age w=$(( ${COLS:-44} - 4 ))
     case "$kind" in deploys) cap="Deployments" ;; *) cap="Tests" ;; esac
     [ -s "$SHARED_DIR/$kind.list" ] || return 0
     [ -n "${NOW:-}" ] || NOW=$(date +%s)
-    dash_caption "$cap" "$kind"
+    local lst; lst=$(mon_list_shown "$kind")
+    mon_caption "$kind" "$cap"
+    [ -s "$lst" ] || return 0                                  # (every project of it is switched off: only the caption with its checkboxes)
     if section_compact "$kind"; then                            # counts only: what runs now, and how many of the last 10 failed
         local run=0 bad=0 fixed=0 seen=0 okk=$'\n'
         while IFS=$US read -r t pj lb st _; do               # (newest first: a failure is resolved when a newer run of the same project and name went through)
             seen=$(( seen + 1 )); [ "$st" = running ] && run=$(( run + 1 ))
             [ "$st" = ok ] && okk="$okk$pj|$lb"$'\n'
             if [ "$st" = failed ] && [ "$seen" -le 10 ]; then case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fixed=$(( fixed + 1 )) ;; *) bad=$(( bad + 1 )) ;; esac; fi
-        done < "$SHARED_DIR/$kind.list"
+        done < "$lst"
         local rc=$ORANGE rb="$BOLD$ORANGE"; [ "$run" -gt 0 ] || { rc=$D; rb=$D; }            # (nothing runs: no colour)
         printf '  %s✶%s %s%d running%s %s·%s ' "$rc" "$X" "$rb" "$run" "$X" "$D" "$X"
         if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s' "$D" "$X"; fi
@@ -4460,18 +4644,18 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
             queued) ic="${D}◌"; tx="queued" ;; approval) ic="${Y}⏸"; tx="approval" ;; ok) ic="${GREEN}✓"; tx="" ;;
             failed) if [ "$fx" = 1 ]; then ic="${D}✗"; tx="failed · resolved"; else ic="${NN}✗"; tx="failed"; fi ;; *) ic="${D}⊘"; tx="canceled" ;;
         esac
+        br=""; case "$note" in *‖*) br=${note%%‖*}; note=${note#*‖} ;; esac           # tests: the branch that was tested, then the result (an old list: the result only)
         [ "$kind" = tests ] && [ -n "$note" ] && [ "$st" != running ] && tx=$note
         [ "$fx" = 1 ] && [ "$kind" = tests ] && tx="$tx · resolved"
-        [ -z "$tx" ] && [ -n "$note" ] && tx=${note:0:18}           # a deployment that went through: where it came from
         [ -n "$bar" ] || clip_set tx "$tx" $(( w / 2 )); mon_age_set age "$t"
         right="${tx:+$tx · }$age"; dw_set rw "$right"; rightc=$right
         [ -n "$bar" ] && { barc="${ORANGE}${MB_ON}${MUTED}${MB_OFF}${D}"; rightc=${right/"$bar"/"$barc"}; }   # (the bar in colour, the width counted without it)
-        lbl="$pj · $lb"; [ "$st" = running ] && [ -n "$note" ] && lbl="$lbl ($note)"                 # what is going live, in brackets behind the name
+        lbl="$pj · $lb"; shown=$br; [ "$kind" = deploys ] && shown=$note; [ -n "$shown" ] && lbl="$lbl ($shown)"   # what went (or goes) live, the branch that is tested: in brackets behind the name
         clip_set left "$lbl" $(( w - rw - 3 )); dw_set lw "$left"
         pad=$(( w - 2 - lw - rw )); [ "$pad" -lt 1 ] && pad=1
         printf '  %s%s %s%s%*s%s%s%s\n' "$ic" "$X" "$L" "$left" "$pad" "" "$D" "$rightc" "$X"
         n=$(( n + 1 ))
-    done < "$SHARED_DIR/$kind.list"
+    done < "$lst"
     [ "$more" -gt 0 ] && printf '  %s+%d more %s%s\n' "$D" "$more" "$( [ "$kind" = deploys ] && echo deployments || echo tests)" "$X"
     return 0
 }
@@ -4575,6 +4759,7 @@ cli_monitor_list() {  # bhote deploys|tests [--json]: the entries (a round now w
     [ $(( $(date +%s) - at )) -ge "$every" ] && monitor_fetch "$kind"
     [ -n "$json" ] && printf '['
     while IFS=$US read -r t pj lb st d tot note url; do
+        note=${note//‖/ · }; note=${note# · }; note=${note% · }                          # (a test's branch and result, one text)
         [ -n "$t" ] || continue
         case "$t" in *[!0-9]*) continue ;; esac; case "$d" in ''|*[!0-9]*) d="" ;; esac; case "$tot" in ''|*[!0-9]*) tot="" ;; esac
         if [ -n "$json" ]; then [ "$first" = 1 ] || printf ','; first=0
@@ -5544,12 +5729,12 @@ bhote_main() {
             case "$key" in
                 "") ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; if topic_is_card "$CLICK_T"; then topic_jump click || { view=menu; MENU_IDX=0; }; else view=menu; MENU_IDX=0; fi ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
-                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*) ;; *) SEL_ID=$CLICK_T; view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # the right button: the topic's page
+                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in pf:*) ;; cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; if topic_is_card "$CLICK_T"; then topic_jump click || { view=menu; MENU_IDX=0; }; else view=menu; MENU_IDX=0; fi ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
+                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*|pf:*) ;; *) SEL_ID=$CLICK_T; view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # the right button: the topic's page
                 AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ↕ on the divider: counts only, and back
-                ACT) [ "$view" = main ] && { SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}"; redraw=1; } ;;   # a click on the button of a review card
+                ACT) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) mon_chip_toggle "${CLICK_T#*:}" "${CLICK_N:-1}" ;; *) SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}" ;; esac; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
-                OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
+                OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*|pf:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;
@@ -5861,8 +6046,63 @@ current_progress() {  # current_progress <topic file>: JSON {"tests": [{suite, d
     fi
     printf '{"tests":%s,"deploy":%s}' "$tests" "$dep"
 }
-cli_current() {
-    local i f hit=""; topics_load
+branch_pr_info() {  # branch_pr_info <owner/repo> <branch>: JSON of the newest pull request of that branch {number, title, state, draft, url, checks: {total, success,
+    # failed, pending}}, or null; kept for 60 seconds (gh answers in about a second)
+    local f="$SHARED_DIR/prinfo/${1//[^A-Za-z0-9._-]/_}__${2//[^A-Za-z0-9._-]/_}" j
+    if [ -f "$f" ] && [ $(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0) )) -lt 60 ]; then cat "$f"; return 0; fi
+    gh_ok || { printf 'null'; return 0; }
+    j=$(gh_t pr list -R "$1" --head "$2" --state all --limit 1 --json number,title,state,isDraft,url,statusCheckRollup --jq '.[0] | select(.) | {
+        number, title: (.title | tostring | gsub("[\u0000-\u001f]"; " ")), state: (.state | ascii_downcase), draft: .isDraft, url,
+        checks: ((.statusCheckRollup // []) as $c | {total: ($c | length),
+            success: ([$c[] | select((.conclusion // .state // "") == "SUCCESS")] | length),
+            failed: ([$c[] | select((.conclusion // .state // "") | IN("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"))] | length),
+            pending: ([$c[] | select(((.status // "") | IN("IN_PROGRESS", "QUEUED", "PENDING", "WAITING")) or ((.state // "") == "PENDING"))] | length)})}' 2>/dev/null)
+    [ -n "$j" ] || j=null
+    mkdir -p "$SHARED_DIR/prinfo" 2>/dev/null; printf '%s' "$j" > "$f"; printf '%s' "$j"
+}
+current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "siblings": [...], "lists": {review, now, testing, deploying, finished: {total, items}}} (bhote current --json --full): the pull request of the
+    # agent's branch, and the other topics of the same project that are open (what the agent might do next); topics_load first
+    local f=$1 pj br slug="" pr=null i lines="" sib id; id=$(topic_id "$f")
+    br=$(topic_get "$f" agent_branch); [ -n "$br" ] || br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    pj=$(topic_get "$f" project)
+    [ -n "$pj" ] && { projects_load; slug=$(project_gh_slug "$pj") || slug=""; }
+    [ -n "$slug" ] || slug=$(git remote get-url origin 2>/dev/null | sed -n 's#.*github\.com[:/]\(.*\)#\1#p' | sed 's#\.git$##')
+    [ -n "$slug" ] && [ -n "$br" ] && [ "$br" != HEAD ] && pr=$(branch_pr_info "$slug" "$br")
+    if [ -n "$pj" ]; then
+        for st in review now testing next waiting later; do
+            for (( i = 0; i < T_N; i++ )); do
+                [ "${T_PJ[$i]}" = "$pj" ] && [ "${T_ID[$i]}" != "$id" ] && [ "${T_STATUS[$i]}" = "$st" ] || continue
+                [ "$st" = later ] && [ "${T_DM[$i]:-}" = 1 ] && continue
+                lines="$lines$(topic_n "${T_FILE[$i]}")$US${T_TITLE[$i]//[[:cntrl:]]/ }$US$st"$'\n'
+            done
+        done
+    fi
+    sib=$(printf '%s' "$lines" | jq -R -s -c 'split("\n") | map(select(length > 0) | split("\u001f") | {n: (.[0] | tonumber? // 0), title: .[1], status: .[2]}) | .[:8]' 2>/dev/null) || sib="[]"
+    [ -n "$sib" ] || sib="[]"
+    # the cards of the panel: what waits for you (review), what runs (now, testing), what waits for a deployment, what was finished lately; each list newest
+    # first, with its total (next, waiting, later, done and the archived ones are not part of it; a topic of another project when TOPICS_SCOPE is project stays out)
+    local Lr="" Ln="" Lt="" Ld="" Lf="" g row cd
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_ID[$i]}" != "$id" ] || continue
+        in_scope "$i" || continue
+        g=${T_STATUS[$i]}
+        [ "$g" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && g=deploying
+        agent_code_set cd "${T_AM[$i]:-$HOST}" "${T_AG[$i]}"                    # (MAC4, OMR3: the agent, on any machine kharka reaches, as in the panel)
+        row="${T_UPD[$i]:-0}$US$(topic_n "${T_FILE[$i]}")$US${T_TITLE[$i]//[[:cntrl:]]/ }$US${T_AG[$i]//[[:cntrl:]]/ }$US${cd//[[:cntrl:]]/ }"$'\n'
+        case "$g" in
+            review) Lr="$Lr$row" ;; now) Ln="$Ln$row" ;; testing) Lt="$Lt$row" ;; deploying) Ld="$Ld$row" ;; finished) Lf="$Lf$row" ;;
+        esac
+    done
+    local lists
+    lists=$(jq -n -c --arg review "$Lr" --arg now "$Ln" --arg testing "$Lt" --arg deploying "$Ld" --arg finished "$Lf" '
+        def p($s; $l): ($s | split("\n") | map(select(length > 0) | split("\u001f") | {updated: (.[0] | tonumber? // 0), n: (.[1] | tonumber? // 0), title: .[2], agent: (.[3] // ""), code: (.[4] // "")}) | sort_by(-.updated)) as $a
+            | {total: ($a | length), items: $a[0:$l]};
+        {review: p($review; 8), now: p($now; 6), testing: p($testing; 6), deploying: p($deploying; 6), finished: p($finished; 5)}' 2>/dev/null) || lists="{}"
+    [ -n "$lists" ] || lists="{}"
+    printf '{"pr":%s,"siblings":%s,"lists":%s}' "$pr" "$sib" "$lists"
+}
+cli_current() {  # bhote current [--json [--full]]
+    local i f hit="" full=""; [ "${1:-}" = --full ] && full=1; topics_load
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in now|testing|finished|review|waiting) ;; *) continue ;; esac
         if { [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ "${T_AS[$i]}" = "${CLAUDE_CODE_SESSION_ID//[!A-Za-z0-9-]/}" ]; } \
@@ -5870,7 +6110,11 @@ cli_current() {
                 && { [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -z "${T_AS[$i]}" ]; }; }; then hit=${T_FILE[$i]}; break; fi
     done
     if [ -z "$hit" ]; then [ -n "$json" ] && printf 'null\n'; return 0; fi
-    if [ -n "$json" ]; then topic_json "$hit" | jq -c --argjson p "$(current_progress "$hit")" '. + {progress: $p}' 2>/dev/null || topic_json "$hit"; return 0; fi
+    if [ -n "$json" ]; then
+        if [ -n "$full" ]; then topic_json "$hit" | jq -c --argjson p "$(current_progress "$hit")" --argjson c "$(current_context "$hit")" '. + {progress: $p, context: $c}' 2>/dev/null || topic_json "$hit"
+        else topic_json "$hit" | jq -c --argjson p "$(current_progress "$hit")" '. + {progress: $p}' 2>/dev/null || topic_json "$hit"; fi
+        return 0
+    fi
     printf 'Your bhote topic: %s\n' "$(delegation_text "$hit")"
 }
 # ── the agents for the command line: fresh lists (this machine, and the others when REMOTE_AGENTS is on), numbered
@@ -6302,6 +6546,7 @@ bhote — topics and agents next to herdr.
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
   bhote skills [install]             put the Claude Code skills bhote and bhote-install into every Claude profile (then /bhote-install)
+  bhote kharka watch [install|uninstall|status]  restart herdr-kharka when its entry stops being written (one look; install: a timer every minute)
   bhote mod [install|remove|status]  the Claude Code mod bhote-topic (your topic above the prompt, /topic) in every Claude profile
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
@@ -6333,12 +6578,13 @@ bhote_cli() {
         event) bhote_info; cli_event ;;
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
-        current) bhote_info; cli_current ;;
+        current) bhote_info; cli_current "$@" ;;
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;
         skills) cli_skills "$@" ;;
         mod) cli_mod "$@" ;;
+        kharka) bhote_info; cli_kharka "$@" ;;
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;

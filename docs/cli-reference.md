@@ -235,7 +235,7 @@ names another agent than the transfer, or with a second topic word (quote `--to`
 
 The topic of the agent that asks: matched by its Claude session (`CLAUDE_CODE_SESSION_ID`), else by its herdr pane
 (`HERDR_PANE_ID`). Prints one line with the topic, its id and how to report back (`--json`: the topic object, or `null`);
-nothing when there is none. `--json` adds `progress` (the [Claude Code mod](claude-mod.md) draws it): `tests`, the suites running in the worktree it is called from (`{suite, done, total}`, the live status files, three at most) and `deploy`, the deployment its topic waits for (`{project, label, state, done, total, url}`, or null). Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
+nothing when there is none. `--json` adds `progress` (the [Claude Code mod](claude-mod.md) draws it): `tests`, the suites running in the worktree it is called from (`{suite, done, total}`, the live status files, three at most) and `deploy`, the deployment its topic waits for (`{project, label, state, done, total, url}`, or null). `--json --full` adds `context` for the mod's pane: `pr` (the newest pull request of the agent's branch: `number`, `title`, `state`, `draft`, `url`, `checks` with `total`/`success`/`failed`/`pending`; read through `gh`, kept for a minute) `siblings` (the other open topics of the same project, at most 8: `n`, `title`, `status`), and `lists`: the cards of the panel (`review`, `now`, `testing`, `deploying` = waiting for a deployment, `finished`), each `{total, items}` with the other topics of that status, newest first (at most 6, review 8, finished 5), `updated`, `n`, `title`, the `agent` and its `code` (`MAC4`). The topics are those of every machine the store reaches (kharka, herdr), as in the panel. Next, waiting, later, done and archived topics are not in it. Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
 
 ```json
 {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bhote current"}]}]}}
@@ -288,6 +288,16 @@ the text and `build` say the local build, `0.9.1.3 Preview`); also `--version`, 
 Puts the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`,
 `~/.claude*`) and says to continue with `/bhote-install`. From a git checkout each skill is a link into it (it stays current
 with every `git pull`; an earlier copy that holds only `SKILL.md` becomes a link), from a package a copy.
+
+### `bhote kharka watch [install|uninstall|status]`
+
+For machines with [kharka](data-and-sync.md#through-kharka) and `herdr-kharka`. One look (`bhote kharka watch`, no argument): when the machine's entry
+`herdr/<node>` in kharka was not written for `KHARKA_WATCH_STALE` seconds (90) while the kharka daemon is online, `herdr-kharka` is restarted (launchd
+`dev.kharka.herdr` on macOS, the systemd user unit `herdr-kharka` on Linux); when the daemon itself is offline twice in a row, it is restarted too. A
+restart happens at most once in three minutes, and each one is written with its reasons (age of the entry, `pending`, the age of the other machines'
+entries) to `kharka-watch.log` in the data folder. `install` sets up a timer that does this look every minute (launchd `dev.bhote.kharka-watch`, or a
+systemd user timer `bhote-kharka-watch.timer`), `uninstall` removes it, `status` says how old the entry is and whether the timer is there. Why: a
+`herdr-kharka` that lives on while it writes nothing is not noticed by the service manager, nor by a check that only asks the daemon whether it is online.
 
 ### `bhote mod [install|remove|status]`
 
