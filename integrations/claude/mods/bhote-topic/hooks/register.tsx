@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Topic } from '../types'
+import type { Progress, Topic } from '../types'
 
 const topic = atom({ plugin: 'bhote-topic', key: 'topic' } as const, null)
 const isHidden = atom({ plugin: 'bhote-topic', key: 'isHidden' } as const, false)
@@ -28,19 +28,35 @@ const ago = (seconds: number) => {
   return h < 24 ? `${h}h ago` : `${Math.floor(h / 24)}d ago`
 }
 
+const BAR = 5 // ■■■■■ as in the bhote panel and the Claude status line
+const bar = (done: number, total: number) => {
+  const full = total > 0 ? Math.min(BAR, Math.round((done / total) * BAR)) : 0
+  return { full, rest: BAR - full, pct: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0 }
+}
+const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1)
+const DEPLOY_STATE: Record<string, string> = { queued: 'queued', approval: 'needs approval', ok: 'deployed', failed: 'failed', canceled: 'canceled' }
+const isBusy = (p: Progress) => p.tests.length > 0 || (p.deploy !== null && ['running', 'queued', 'approval'].includes(p.deploy.state))
+
 const parse = (stdout: string): Topic | null => {
   try {
     const t = JSON.parse(stdout)
-    return t && t.id ? { id: t.id, n: t.n, title: t.title, description: t.description ?? null, status: t.status, updated: t.updated ?? 0, waitingFor: t.waiting_for ?? null } : null
+    return t && t.id ? { id: t.id, n: t.n, title: t.title, description: t.description ?? null, status: t.status, updated: t.updated ?? 0, waitingFor: t.waiting_for ?? null, progress: t.progress ?? { tests: [], deploy: null } } : null
   } catch {
     return null
   }
 }
 
+// a turn runs, or tests or a deployment: the topic is read every few seconds
+let isWorking = false
+let isBusyNow = false
+let tick = 0
+
 async function refresh($: EngineInterface) {
   try {
     const ran = await $.process.run(['bhote', 'current', '--json'], { timeoutMs: 5000 })
-    await update($, topic, () => (ran.exitCode === 0 ? parse(ran.stdout) : null))
+    const next = ran.exitCode === 0 ? parse(ran.stdout) : null
+    isBusyNow = next !== null && isBusy(next.progress)
+    await update($, topic, () => next)
   } catch {
     await update($, topic, () => null)
   }
@@ -54,12 +70,24 @@ export const register: Register = on => {
     })
     await refresh($)
     // the "3min ago" runs on between turns
-    $.clock.every(60000, () => $.ui.invalidate('ui.render'))
+    // and a running suite or deployment moves its bar: every 5 s while a turn runs or something is under way, else once a minute
+    $.clock.every(5000, async () => {
+      tick += 1
+      if (isWorking || isBusyNow || tick % 12 === 0) await refresh($)
+      $.ui.invalidate('ui.render')
+    })
+
+    return next(e)
+  })
+
+  on('prompt.submit', async ($, e, next) => {
+    isWorking = true
 
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
+    isWorking = false
     await refresh($)
 
     return next(e)
@@ -107,24 +135,64 @@ export const register: Register = on => {
     const color = colorOf(current)
     const label = current.waitingFor ? `waiting for ${current.waitingFor}` : current.status
 
-    return (
-      <Box borderStyle="round" borderColor={color} paddingX={1} justifyContent="space-between">
-        <Box flexDirection="column">
-          <Text bold>
-            🐕 {current.title}
-          </Text>
-          {current.description && (
-            <Box paddingLeft={3}>
-              <Text dimColor>{current.description}</Text>
-            </Box>
+    const { tests, deploy } = current.progress
+    const deployUnder = deploy !== null && ['running', 'queued', 'approval'].includes(deploy.state)
+    const rows = []
+    for (const t of tests) {
+      const b = bar(t.done, t.total)
+      rows.push(
+        <Text key={'t-' + t.suite}>
+          <Text dimColor>{cap(t.suite) + ' '}</Text>
+          <Text color="permission">{'■'.repeat(b.full)}</Text>
+          <Text dimColor>{'■'.repeat(b.rest)}</Text>
+          <Text bold>{` ${b.pct}%`}</Text>
+          <Text dimColor>{` (${t.done}/${t.total})`}</Text>
+        </Text>,
+      )
+    }
+    if (deploy !== null && (deployUnder || deploy.state === 'failed')) {
+      const b = bar(deploy.done ?? 0, deploy.total ?? 0)
+      const known = deploy.total !== null && deploy.total > 0
+      rows.push(
+        <Text key="deploy">
+          <Text dimColor>{deploy.project + ' · ' + deploy.label + ' '}</Text>
+          {known && deploy.state === 'running' ? (
+            <Text>
+              <Text color="claude">{'■'.repeat(b.full)}</Text>
+              <Text dimColor>{'■'.repeat(b.rest)}</Text>
+              <Text bold>{` ${b.pct}%`}</Text>
+              <Text dimColor>{` (${deploy.done}/${deploy.total})`}</Text>
+            </Text>
+          ) : (
+            <Text bold color={deploy.state === 'failed' ? 'error' : 'warning'}>
+              {DEPLOY_STATE[deploy.state] ?? 'deploying'}
+            </Text>
           )}
+        </Text>,
+      )
+    }
+
+    return (
+      <Box borderStyle="round" borderColor={color} paddingX={1} flexDirection="column">
+        <Box justifyContent="space-between">
+          <Box flexDirection="column">
+            <Text bold>
+              🐕 {current.title}
+            </Text>
+            {current.description && (
+              <Box paddingLeft={3}>
+                <Text dimColor>{current.description}</Text>
+              </Box>
+            )}
+          </Box>
+          <Box flexDirection="column" alignItems="flex-end">
+            <Text bold inverse color={color}>
+              {` ${label.toUpperCase()} `}
+            </Text>
+            {since !== '' && <Text dimColor>{since}</Text>}
+          </Box>
         </Box>
-        <Box flexDirection="column" alignItems="flex-end">
-          <Text bold inverse color={color}>
-            {` ${label.toUpperCase()} `}
-          </Text>
-          {since !== '' && <Text dimColor>{since}</Text>}
-        </Box>
+        {rows.length > 0 && <Box flexDirection="column" paddingLeft={3}>{rows}</Box>}
       </Box>
     )
   })

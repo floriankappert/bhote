@@ -242,6 +242,91 @@
         "null"
       ],
       "description": "Unix time (seconds) of the last change; the newer one wins when replicas are merged."
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only in `bhote current --json`, never in the other commands: what runs for the agent that asks. `tests`: the suites running in its worktree (live status files, three at most); `deploy`: the deployment its topic waits for, or null.",
+      "required": [
+        "tests",
+        "deploy"
+      ],
+      "properties": {
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "suite",
+              "done",
+              "total"
+            ],
+            "properties": {
+              "suite": {
+                "type": "string"
+              },
+              "done": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "deploy": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "project",
+            "label",
+            "state",
+            "done",
+            "total",
+            "url"
+          ],
+          "properties": {
+            "project": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "running",
+                "queued",
+                "approval",
+                "ok",
+                "failed",
+                "canceled"
+              ]
+            },
+            "done": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }

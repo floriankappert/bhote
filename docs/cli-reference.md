@@ -235,7 +235,7 @@ names another agent than the transfer, or with a second topic word (quote `--to`
 
 The topic of the agent that asks: matched by its Claude session (`CLAUDE_CODE_SESSION_ID`), else by its herdr pane
 (`HERDR_PANE_ID`). Prints one line with the topic, its id and how to report back (`--json`: the topic object, or `null`);
-nothing when there is none. Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
+nothing when there is none. `--json` adds `progress` (the [Claude Code mod](claude-mod.md) draws it): `tests`, the suites running in the worktree it is called from (`{suite, done, total}`, the live status files, three at most) and `deploy`, the deployment its topic waits for (`{project, label, state, done, total, url}`, or null). Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
 
 ```json
 {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bhote current"}]}]}}

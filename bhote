@@ -5773,6 +5773,24 @@ cli_bar() {  # bhote bar: one line for a status bar (Waybar-style JSON: text, to
     printf '{"text":%s,"tooltip":%s,"class":%s,"review":%d,"blocked":%d,"busy":%d,"now":%d,"waiting":%d,"finished":%d}\n' \
         "$(json_str "$text")" "$(json_str "$head$tip")" "$(json_str "$cls")" "$rv" "$blk" "$busy" "$nw" "$wt" "$fin"
 }
+current_progress() {  # current_progress <topic file>: JSON {"tests": [{suite, done, total}], "deploy": {...}|null} for the agent of the topic that asks
+    # (bhote current --json): the suites running in the worktree it is in (the live status files, as the testing card reads them), and the
+    # deployment its topic waits for (the one deploy_sync bound to the branch it pushed, or bhote wait --deploy)
+    local f=$1 top tree dir j tests="[]" dep=null
+    top=$(git rev-parse --show-toplevel 2>/dev/null) || top=$PWD; tree=${top##*/}
+    dir=$(cfg_get TEST_STATUS_DIR "~/.cache/bhote/test-status"); dir=${dir/#\~/$HOME}
+    if [ -d "$dir" ]; then
+        tests=$(for j in "$dir/$tree".*.json; do [ -f "$j" ] && cat "$j"; echo; done 2>/dev/null | jq -cs '[ .[] | objects
+            | select((.finished != true) and (.ok == null) and ((.total // 0) > 0) and (((.updatedAt // 0) / 1000) > (now - 30)))
+            | {suite: (.suite | tostring | gsub("[\u0000-\u001f\u007f]"; " ")), done: (.done // 0), total: (.total // 0)} ] | sort_by(.suite) | .[:3]' 2>/dev/null) || tests="[]"
+        [ -n "$tests" ] || tests="[]"
+    fi
+    if [ "$(topic_get "$f" deploy_wait)" = 1 ] && deploy_lookup "$f"; then
+        dep=$(jq -cn --arg pj "$DL_PJ" --arg lb "$DL_LB" --arg st "$DL_STATE" --arg d "$DL_D" --arg t "$DL_T" --arg u "$DL_URL" \
+            '{project: $pj, label: $lb, state: $st, done: (if $d == "" then null else ($d | tonumber? // null) end), total: (if $t == "" then null else ($t | tonumber? // null) end), url: (if $u == "" then null else $u end)}')
+    fi
+    printf '{"tests":%s,"deploy":%s}' "$tests" "$dep"
+}
 cli_current() {
     local i f hit=""; topics_load
     for (( i = 0; i < T_N; i++ )); do
@@ -5782,7 +5800,7 @@ cli_current() {
                 && { [ -z "${CLAUDE_CODE_SESSION_ID:-}" ] || [ -z "${T_AS[$i]}" ]; }; }; then hit=${T_FILE[$i]}; break; fi
     done
     if [ -z "$hit" ]; then [ -n "$json" ] && printf 'null\n'; return 0; fi
-    if [ -n "$json" ]; then topic_json "$hit"; printf '\n'; return 0; fi
+    if [ -n "$json" ]; then topic_json "$hit" | jq -c --argjson p "$(current_progress "$hit")" '. + {progress: $p}' 2>/dev/null || topic_json "$hit"; return 0; fi
     printf 'Your bhote topic: %s\n' "$(delegation_text "$hit")"
 }
 # ── the agents for the command line: fresh lists (this machine, and the others when REMOTE_AGENTS is on), numbered

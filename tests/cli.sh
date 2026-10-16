@@ -209,6 +209,21 @@ HOME=$SH CLAUDE_CONFIG_DIR= bash "$P/bin/bhote" skills install >/dev/null 2>&1
 [ ! -L "$SH/.claude/skills/bhote" ] && cmp -s "$SH/.claude/skills/bhote/SKILL.md" integrations/claude/skills/bhote/SKILL.md \
     && ok "skills from a package: a copy, the link from before is gone" || bad "skills package: $(ls -la "$SH/.claude/skills")"
 
+# current --json: progress of the suites running in the agent's worktree and of the deployment its topic waits for (the mod draws the bars)
+US=$'\037'; PG=$(basename "$(git rev-parse --show-toplevel)"); mkdir -p "$T/ts"; B config set TEST_STATUS_DIR "$T/ts" >/dev/null
+B add "Progress topic" -s next >/dev/null; CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B now "Progress topic" >/dev/null
+printf '{"tree":"%s","suite":"server","done":5,"total":10,"startedAt":1,"updatedAt":%s,"ok":null}\n' "$PG" "$(( $(date +%s) * 1000 ))" > "$T/ts/$PG.server.json"
+printf '{"tree":"%s","suite":"old","done":1,"total":9,"startedAt":1,"updatedAt":1000,"ok":null}\n' "$PG" > "$T/ts/$PG.old.json"
+pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
+[ "$(printf '%s' "$pr" | jq -c '.tests')" = '[{"suite":"server","done":5,"total":10}]' ] && [ "$(printf '%s' "$pr" | jq -c .deploy)" = null ] \
+    && ok "current --json: a running suite with its progress (a stale status file is left out)" || bad "current progress tests: $pr"
+rm -f "$T/ts/$PG".*.json; B wait "Progress topic" --deploy=Backend >/dev/null
+mkdir -p "$T/shared"; printf '%s\n' "$(date +%s)${US}Web${US}Backend${US}running${US}1${US}4${US}fix/p${US}https://ci/1" > "$T/shared/deploys.list"
+pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
+[ "$(printf '%s' "$pr" | jq -c '[.tests, .deploy.label, .deploy.state, .deploy.done, .deploy.total]')" = '[[],"Backend","running",1,4]' ] \
+    && ok "current --json: the deployment its topic waits for, with done and total" || bad "current progress deploy: $pr"
+CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -e 'del(.progress) | keys | length == 13' >/dev/null && ok "current --json: the topic object is unchanged next to progress" || bad "current --json keys"
+
 # mod: bhote-topic goes into every Claude profile as a plugin of the marketplace "bhote" (a fake claude logs each call)
 cat > "$T/bin/claude" <<'SH'
 #!/bin/sh

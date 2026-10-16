@@ -7,6 +7,10 @@ session itself, so you see it without looking at the panel. It needs Claude Code
   as a badge on the right (`NOW`, `TESTING`, `NEXT`, `REVIEW`, `LATER`, `DONE`, or `WAITING FOR <name>`) with its age (`3min ago`)
   under it. The age moves on by itself every minute. The colours are theme colours: now orange, testing purple, next blue,
   review red, waiting yellow, later grey, done green. `[-]` (or `ctrl+x ctrl+a`) collapses the band, as it does for any band.
+- **Progress bars** under the title: a bar for each test suite that runs in the agent's worktree (`Server ■■■□□ 50% (5/10)`, from the live
+  status files, see [monitors](monitors.md)), and one for the deployment its topic waits for (`IMS · Backend ■■■□□ 60% (3/5)`; `queued`,
+  `needs approval` and `failed` as words). A deployment the agent starts by pushing its branch is bound to the topic by bhote, so it shows up
+  without anyone asking. The topic is read every 5 s while a turn runs or something is under way, else once a minute.
 - **`/topic`** changes the topic of the agent without a Claude turn (also while Claude works, no tokens):
   `/topic` shows it, `/topic review|done|now|next|later|testing|dismiss` sets the status, `/topic wait <Name>` waits for a name,
   `/topic hide` and `/topic show` hide and show the band.
