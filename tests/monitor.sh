@@ -189,7 +189,7 @@ echo '{"items":[{"name":"release-and-deploy-frontend","status":"success"}]}' > "
 echo '{"items":[{"name":"path-filtering/filter","status":"success"}]}' > "$FAKE_DIR/jobs-iw3.json"
 d=$(deploys_circleci IMS gh/acme/ims "main=main" "deploy-ecs-backend=Backend,release-and-deploy-frontend=Frontend")
 echo "$d" | grep -q "IMS${US}Backend${US}running${US}1${US}3${US}Add credits (#123)${US}https://app.circleci.com/pipelines/gh/acme/ims/77/workflows/iw1" \
-  && echo "$d" | grep -q "IMS${US}Frontend${US}ok${US}1${US}1${US}" && [ "$(printf '%s\n' "$d" | wc -l)" = 2 ] \
+  && echo "$d" | grep -q "IMS${US}Frontend${US}ok${US}1${US}1${US}" && [ "$(printf '%s\n' "$d" | awk 'END { print NR }')" = 2 ] \
   && ok "circleci: one deployment per workflow with a deploy job (labelled by it), no notify job in the progress, the setup workflow is none" || bad "circleci ims: $d"
 d=$(deploys_circleci IMS gh/acme/ims "main=main" "")
 echo "$d" | grep -q "IMS${US}Backend${US}running" && echo "$d" | grep -q "IMS${US}Frontend${US}ok" && ok "circleci: without a names map the label is the last word of the deploy job" || bad "circleci ims labels: $d"
