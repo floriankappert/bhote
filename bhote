@@ -434,7 +434,8 @@ bhoted_block() {  # bhoted_block <block>: the block of the frame drawn by the da
     local bin off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1; cfg_var off BHOTED_FRAME auto; [ "$off" = off ] && return 1
     [ -s "$RUN_DIR/colors.env" ] || return 1                                          # (the colours of this run: ui_load writes them)
     bin=${BHOTED_BIN_CACHE:-}; [ -n "$bin" ] || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
-    "$bin" block "$1" --cols "${COLS:-44}" --now "${NOW:-$(date +%s)}" --config "$CONFIG_FILE" --shared "$SHARED_DIR" --topics "$TOPIC_DIR" --colors "$RUN_DIR/colors.env" 2>/dev/null
+    local view=""; case "$1" in cards|lists) view_dump "$RUN_DIR/view.env"; view="$RUN_DIR/view.env" ;; esac
+    "$bin" block "$1" --cols "${COLS:-44}" --now "${NOW:-$(date +%s)}" --config "$CONFIG_FILE" --shared "$SHARED_DIR" --topics "$TOPIC_DIR" --colors "$RUN_DIR/colors.env" ${view:+--view "$view"} 2>/dev/null
 }
 bhoted_agents() { [ -e "$SHARED_DIR/bhoted.pid.agents" ] && bhoted_alive; }   # the daemon collects this machine's agents (no collect_local in the collector)
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
@@ -851,6 +852,11 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     done
     MUTED=${MUTED:-$B}; TEAL=$S; ORANGE=${ORANGE:-$C}; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
     TITLE=${TITLE:-$L}; TITLESEL=${TITLESEL:-$LSEL}
+}
+view_dump() {  # view_dump <file>: what the daemon needs of the screen's own state to draw the cards (ui.rs, cards.rs)
+    local _t="$1.tmp.$$" _mc; machine_fg_set _mc
+    { printf 'SEL_ID=%s\nHOVER_ID=%s\nEXPANDED=%s\nU_SCOPE=%s\nCUR_PROJ=%s\nSPIN_CH=%s\nBORED_SMALL=%s\nU_ARCHIVE_DAYS=%s\nU_GITHUB=%s\nHOST=%s\nMACH_FG=%s\nLINE_MAX=%s\n' \
+        "${SEL_ID:-}" "${HOVER_ID:-}" "${EXPANDED:-}" "${U_SCOPE:-all}" "${CUR_PROJ:-}" "${SPIN_CH:-}" "${BORED_SMALL:-}" "${U_ARCHIVE_DAYS:-7}" "${U_GITHUB:-on}" "$HOST" "$_mc" "${LINE_MAX:-10}"; } > "$_t" && mv -f "$_t" "$1"
 }
 colors_dump() {  # colors_dump <file>: the colour variables of this run as NAME=value lines (the daemon draws with them: ui.rs)
     local _v _t; _t="$1.tmp.$$"
@@ -1865,6 +1871,7 @@ topic_line() {  # topic_line <topic index>: a next, waiting or parked topic as o
 topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by status (review, now, next, waiting); parked ones only counted, done ones below.
     # cards: the cards (review, now, testing, deploying, finished), lists: the lines (next, waiting, later) and the archive note; the frame puts the
     # cards on top and the lists at the bottom, above Done. Without an argument: both, in order (the tests).
+    case "${1:-all}" in cards|lists) bhoted_block "$1" && return 0 ;; esac   # (the daemon draws it: the same bytes, much faster)
     local mode=${1:-all} i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done

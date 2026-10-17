@@ -54,7 +54,7 @@ fn chars_to(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 // ── the projects ────────────────────────────────────────────────────────────────────────────────────────────
 extern "C" { fn setlocale(cat: i32, loc: *const std::os::raw::c_char) -> *mut std::os::raw::c_char; fn strcoll(a: *const std::os::raw::c_char, b: *const std::os::raw::c_char) -> i32; }
 pub fn init_locale() { unsafe { setlocale(6, b"\0".as_ptr() as *const _); } }   // LC_ALL: the collation of the user's locale, as bash compares
-fn coll(a: &str, b: &str) -> std::cmp::Ordering {
+pub fn coll(a: &str, b: &str) -> std::cmp::Ordering {
     match (std::ffi::CString::new(a), std::ffi::CString::new(b)) { (Ok(x), Ok(y)) => unsafe { strcoll(x.as_ptr(), y.as_ptr()) }.cmp(&0), _ => a.cmp(b) }
 }
 pub struct Project { pub name: String, pub ci: bool }
@@ -109,6 +109,7 @@ fn age(now: u64, t: &str) -> String {
     if a < 60 { format!("{}s", a) } else if a < 3600 { format!("{}m", a / 60) } else if a < 86400 { format!("{}h", a / 3600) } else { format!("{}d", a / 86400) }
 }
 
+pub fn dash_caption_pub(c: &Ctx, text: &str) -> String { dash_caption(c, text, "", false) }
 fn dash_caption(c: &Ctx, text: &str, section: &str, hover_btn: bool) -> String {
     let (mut rest, mut rf, mut btn) = (c.rule_len() - 4 - text.chars().count() as i64, String::new(), String::new());
     if !section.is_empty() {

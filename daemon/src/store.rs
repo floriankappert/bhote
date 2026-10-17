@@ -33,7 +33,7 @@ pub fn topic_get(file: &Path, key: &str) -> String { fs::read_to_string(file).ok
 /// topics_load: every topic, the order of the screen (review, now, testing, deploying, finished, next, waiting, later, done; in a group by file name).
 pub fn load(topics: &Path) -> Vec<Topic> {
     let mut files: Vec<PathBuf> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect()).unwrap_or_default();
-    files.sort();
+    files.sort_by(|a, b| crate::ui::coll(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy()));   // (the shell's glob order: the locale's collation)
     let mut all = Vec::new();
     for f in files {
         let text = fs::read_to_string(&f).unwrap_or_default();

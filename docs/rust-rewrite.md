@@ -33,7 +33,8 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 3 | monitors: CircleCI (API, `ureq`), GitHub Actions (`gh`), local test runs and status files into `deploys.list` / `tests.list` | panel reads the lists as before | same lists as `monitor_fetch` (live and `tests/monitor.sh`) |
 | 4a | ten follow-ups of the collector (cards, dedup, review, finished, gone, question, branches, numbers, reminders), through a Sink: `BHOTED_FOLLOW=off\|shadow\|on` | the other follow-ups (tests, deploys, auto-assign, projects), the stores' sync, Slack, updates, kharka watch | decisions identical in `tests/follow.sh` (logged and written), shadow soak with `tools/shadow-report.sh` |
 | 4b | the rest of the collector | CLI | collector no longer runs in bash |
-| 5 | the frame: the panel draws from the snapshot in Rust (CLI and wizard stay bash or follow) | wizard | frame under 5 ms |
+| 5a | blocks of the main view, one at a time, as `bhoted block <name>` (the panel calls it once per block): monitors, cards, lists; then done, agents, head, bottom | key and mouse handling, click maps, the other views | `tests/frame.sh`: the same bytes as the bash function, with and without colour, three widths |
+| 5b | the whole frame and its maps in one call | the input loop | frame under 5 ms |
 
 Each step names its measurement (CPU of panels + collector, frame time) before and after in the commit message.
 Distribution (Homebrew, PKGBUILD, CI for Linux and macOS arm64/x86) comes with step 1, when the daemon first matters to users.
@@ -81,3 +82,14 @@ daemon's own state files live in `shadow/`, so it never moves the real ones), `o
 that come out, with the real writes; a test that fails on purpose (a changed threshold) was seen to fail. `tools/shadow-report.sh`
 compares the two logs of a real run. A round of all ten takes 26 ms in the daemon; the topics are read once and again only
 after a write.
+
+## Step 5a: blocks of the frame
+
+`bhoted block monitors|cards|lists` draws a block with the same bytes as `monitors_block` and `topics_block cards|lists`
+(204 golden cases in `tests/frame.sh`: every card kind, selection, hover, open groups, project scope, narrow and wide, colour
+and none; a changed rule in the code was seen to fail them). The colours come as the script's own variables
+(`colors_dump`, written when the theme is applied), the screen's own state (selection, hover, open groups, the dancing star's
+character) as `view_dump` writes it; everything else is read from the same files. Differences that are on purpose: the daemon
+reads the topic files itself, so a frame of navigation shows a topic that was made a moment ago one frame sooner than the
+arrays of bash would; the order of topics follows the locale's collation of the file names, like the shell's glob.
+Measured: monitors 40 ms -> 2.8 ms, a frame after a reload 126 -> 78 ms, a frame of navigation 99 -> 44 ms.

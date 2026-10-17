@@ -5,6 +5,7 @@ mod agents;
 mod monitor;
 mod store;
 mod ui;
+mod cards;
 mod follow;
 use std::collections::HashMap;
 use std::fs;
@@ -151,6 +152,7 @@ fn alive(pid: i32) -> bool { unsafe { kill(pid, 0) == 0 } }
 
 /// bhoted run <topic dir> <out> [--parent <pid>] [--pid-file <file>]: ends when the parent (the lead collector) is gone.
 fn main() {
+    ui::init_locale();
     let a: Vec<String> = std::env::args().collect();
     if a.len() < 4 { eprintln!("usage: bhoted index|run <topic dir> <out> [--parent <pid>] [--pid-file <file>]"); std::process::exit(2); }
     let opt = |name: &str| a.iter().position(|x| x == name).and_then(|i| a.get(i + 1)).cloned();
@@ -177,7 +179,8 @@ fn main() {
             let ctx = ui::Ctx { cols: opt("--cols").and_then(|v| v.parse().ok()).unwrap_or(44), now: opt("--now").and_then(|v| v.parse().ok()).unwrap_or_else(store::now),
                 shared: PathBuf::from(opt("--shared").unwrap_or_default()), topics: PathBuf::from(opt("--topics").unwrap_or_default()),
                 cfg: opt("--config").map(|c| config_read(&c)).unwrap_or_default(), c: ui::Colors::read(&opt("--colors").unwrap_or_default()) };
-            let out = match a[2].as_str() { "monitors" => ui::monitors(&ctx), _ => { eprintln!("bhoted: no block {}", a[2]); std::process::exit(2) } };
+            let view = cards::View::read(&opt("--view").unwrap_or_default());
+            let out = match a[2].as_str() { "monitors" => ui::monitors(&ctx), "cards" => cards::Cards::new(&ctx, &view).block("cards"), "lists" => cards::Cards::new(&ctx, &view).block("lists"), _ => { eprintln!("bhoted: no block {}", a[2]); std::process::exit(2) } };
             use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes());
         }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
