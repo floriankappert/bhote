@@ -79,6 +79,7 @@ SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it 
 STORE|local|enum:local:remote:kharka|Where the topics are kept: local, a replica on STORE_MACHINE, or kharka (a local-first store on every machine)
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
 BHOTED_FOLLOW|off|enum:off:shadow:on|The daemon also does the follow-ups of the collector (cards, review, finished, gone, branches, numbers, reminders): off = bash does them, shadow = bash does them and both sides log what they decide (shadow/bash.log and shadow/rust.log), on = the daemon does them
+BHOTED_FRAME|auto|enum:auto:off|Blocks of the frame drawn by the daemon (the same bytes as bash, much faster): auto = when the daemon binary is found, off = bash draws them all
 BHOTED|auto|enum:auto:off|The Rust daemon bhoted keeps the topic index current for every panel (auto: when the binary is found, next to this script in daemon/target/release or on the PATH; off: bash only)
 KHARKA||text|The kharka binary for STORE=kharka and AGENTS_VIA=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
@@ -428,6 +429,12 @@ follow_do() {  # follow_do <function>: a follow-up of the collector. BHOTED_FOLL
         shadow) if bhoted_agents; then mkdir -p "$SHARED_DIR/shadow" 2>/dev/null; BHOTE_INTENT_LOG="$SHARED_DIR/shadow/bash.log" "$1"; return 0; fi ;;
     esac
     "$1"
+}
+bhoted_block() {  # bhoted_block <block>: the block of the frame drawn by the daemon (ui.rs: the same bytes as the bash function); 1 = draw it in bash
+    local bin off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1; cfg_var off BHOTED_FRAME auto; [ "$off" = off ] && return 1
+    [ -s "$RUN_DIR/colors.env" ] || return 1                                          # (the colours of this run: ui_load writes them)
+    bin=${BHOTED_BIN_CACHE:-}; [ -n "$bin" ] || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
+    "$bin" block "$1" --cols "${COLS:-44}" --now "${NOW:-$(date +%s)}" --config "$CONFIG_FILE" --shared "$SHARED_DIR" --topics "$TOPIC_DIR" --colors "$RUN_DIR/colors.env" 2>/dev/null
 }
 bhoted_agents() { [ -e "$SHARED_DIR/bhoted.pid.agents" ] && bhoted_alive; }   # the daemon collects this machine's agents (no collect_local in the collector)
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
@@ -845,6 +852,10 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     MUTED=${MUTED:-$B}; TEAL=$S; ORANGE=${ORANGE:-$C}; HEAD_GRAD=""; LSEL=${LSEL:-$L}; DSEL=${DSEL:-$D}; DESC=${DESC:-$D}; DESCSEL=${DESCSEL:-$DSEL}
     TITLE=${TITLE:-$L}; TITLESEL=${TITLESEL:-$LSEL}
 }
+colors_dump() {  # colors_dump <file>: the colour variables of this run as NAME=value lines (the daemon draws with them: ui.rs)
+    local _v _t; _t="$1.tmp.$$"
+    for _v in X R NN S C L D BOLD B Y GREEN BLUE ORANGE MUTED PINK TEAL SELBG CARDBG CARDSEL CARDHOV CARDSUB CARDBTN LSEL DSEL DESC DESCSEL TITLE TITLESEL; do printf '%s=%s\n' "$_v" "${!_v}"; done > "$_t" && mv -f "$_t" "$1"
+}
 theme_sig() {  # theme_sig <var>: the settings the colours come from, as one string (a change re-applies the theme)
     local _l _sig=""
     [ -r "$CONFIG_FILE" ] && while IFS= read -r _l; do case "$_l" in THEME=*|COLOR_*) _sig="$_sig|$_l" ;; esac; done < "$CONFIG_FILE"
@@ -1073,6 +1084,7 @@ ui_load() {
     local line st="" f sig; UI_GEN=$(( UI_GEN + 1 )); UI_LOAD_AT=$SECONDS
     [ -n "${VERSION_LABEL:-}" ] || version_label_set
     theme_sig sig; [ "$sig" = "$THEME_SIG" ] || { theme_apply; THEME_SIG=$sig; }   # THEME / COLOR_* changed: new colours now
+    [ -s "$RUN_DIR/colors.env" ] && [ "${COLORS_SIG:-}" = "$THEME_SIG" ] || { colors_dump "$RUN_DIR/colors.env"; COLORS_SIG=$THEME_SIG; }   # (the daemon draws blocks with them)
     if [ -z "${HEAD_GRAD:-}" ]; then                         # once: one colour per character costs a process each
         HEAD_GRAD=$(gradient "Bhote v$VERSION_LABEL"); [ "$color" = 1 ] && HEAD_GRAD="${esc}[1m$HEAD_GRAD"
     fi
@@ -4757,6 +4769,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     return 0
 }
 monitors_block() {  # both monitors (when on), above the agents
+    bhoted_block monitors && return 0
     local r dm tm; cfg_var r MONITOR_ROWS 4; num_set r "$r" 4; cfg_var dm DEPLOY_MONITOR off; cfg_var tm TEST_MONITOR off
     [ "$dm" = on ] && monitor_block deploys "$r"
     [ "$tm" = on ] && monitor_block tests "$r"

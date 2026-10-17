@@ -4,6 +4,7 @@
 mod agents;
 mod monitor;
 mod store;
+mod ui;
 mod follow;
 use std::collections::HashMap;
 use std::fs;
@@ -170,6 +171,14 @@ fn main() {
             let only = opt("--only");
             if shadow { let mut s = store::Shadow::new(&env); follow::round(&c, &mut s, only.as_deref()); for l in s.log { println!("{}", l); } }
             else { let mut s = store::Live { env: &env, notify_on: cfg.get("NOTIFY").map_or(true, |v| v == "on"), n: 0 }; follow::round(&c, &mut s, only.as_deref()); }
+        }
+        "block" => { // bhoted block <name> --cols N --now T --config F --shared S --topics T --colors F: one block of the frame, as the script draws it
+            ui::init_locale();
+            let ctx = ui::Ctx { cols: opt("--cols").and_then(|v| v.parse().ok()).unwrap_or(44), now: opt("--now").and_then(|v| v.parse().ok()).unwrap_or_else(store::now),
+                shared: PathBuf::from(opt("--shared").unwrap_or_default()), topics: PathBuf::from(opt("--topics").unwrap_or_default()),
+                cfg: opt("--config").map(|c| config_read(&c)).unwrap_or_default(), c: ui::Colors::read(&opt("--colors").unwrap_or_default()) };
+            let out = match a[2].as_str() { "monitors" => ui::monitors(&ctx), _ => { eprintln!("bhoted: no block {}", a[2]); std::process::exit(2) } };
+            use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes());
         }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
