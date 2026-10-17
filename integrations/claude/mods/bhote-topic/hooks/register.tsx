@@ -168,7 +168,11 @@ export const register: Register = (on, options) => {
     }
     if (sub === 'hide' || sub === 'show') {
       await update($, isHidden, () => sub === 'hide')
-      return { text: sub === 'hide' ? 'Topic band hidden.' : 'Topic band shown.' }
+      if (sub === 'hide') {
+        isPaneOpen = false
+        await $.ui.close({ id: PANE }) // the pane goes with the band, also after a reload reset the flag
+      }
+      return { text: sub === 'hide' ? 'Topic band and pane hidden.' : 'Topic band shown.' }
     }
     if (current === null) {
       return { text: 'No bhote topic for this agent.' }
@@ -439,7 +443,7 @@ export const register: Register = (on, options) => {
                     </Text>
                   </Button>
                   <Button key={'a-' + x.n + x.title} plain onPress={jump(x)}>
-                    <Text color="inactive">{'  ∟ ' + [x.code || x.agent, ago(now - x.updated)].filter(Boolean).join('  ')}</Text>
+                    <Text color="inactive">{'  └ ' + [x.code || x.agent, ago(now - x.updated)].filter(Boolean).join('  ')}</Text>
                   </Button>
                 </Box>
               ))}

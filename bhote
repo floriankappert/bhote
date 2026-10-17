@@ -84,8 +84,8 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
-PANEL_MIN_WIDTH|50|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
-PANEL_MAX_WIDTH|100|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
+PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
+PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|on|bool|An agent whose workspace runs tests counts as busy (testing): it is not free, and its topic does not go to review until the tests are done
@@ -2256,7 +2256,7 @@ find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1
 panel_width_clamp() {
     local p=${HERDR_PANE_ID:-} lo hi w sw want dir amt
     case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
-    cfg_var lo PANEL_MIN_WIDTH 50; cfg_var hi PANEL_MAX_WIDTH 100; num_set lo "$lo" 50; num_set hi "$hi" 100; [ "$hi" -lt "$lo" ] && hi=$lo
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
     read -r w sw <<< "$(herdr pane layout --pane "$p" 2>/dev/null | jq -r --arg p "$p" '
         ([.result.layout.panes[] | select(.pane_id == $p)][0].rect) as $r
         | ([.result.layout.splits[] | select(.direction == "right" and (((.rect.x + .rect.width * .ratio) - $r.x) | fabs) <= 2
@@ -4832,7 +4832,7 @@ cli_monitor() {  # bhote monitor [detect [<project>] | check]
 # The panel works between MIN and MAX columns: wider than MAX it uses only the left MAX columns, narrower than MIN (or shorter
 # than MIN_ROWS) it shows a hint instead of a broken picture. The start screen is a fixed picture (WIDTH x SPLASH_ROWS):
 # where it does not fit, the list is shown instead.
-MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-$(num_or "$(cfg_get PANEL_MAX_WIDTH 100)" 100)}; MIN_ROWS=${BHOTE_MIN_ROWS:-20}; SPLASH_ROWS=39; TOO_SMALL=0
+MIN_COLS=${BHOTE_MIN_COLS:-30}; MAX_COLS=${BHOTE_MAX_COLS:-$(num_or "$(cfg_get PANEL_MAX_WIDTH 64)" 64)}; MIN_ROWS=${BHOTE_MIN_ROWS:-20}; SPLASH_ROWS=39; TOO_SMALL=0
 splash_fits() { [ "${REAL_COLS:-44}" -ge "$SPLASH_W" ] && [ "${REAL_ROWS:-40}" -ge "$SPLASH_ROWS" ]; }
 # The start screen fills the pane: the frame is as wide and as high as the pane; the extra width centres the content, the extra
 # height becomes space between the sections (all of it above the prompt, so the keys stay on the bottom edge).
