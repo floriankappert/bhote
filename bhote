@@ -4566,13 +4566,23 @@ deploy_wait_set() {  # deploy_wait_set <topic file> [label]: the topic waits for
     topic_set "$f" deploy_wait 1; topic_set "$f" deploy_match "${2:-}"; topic_set "$f" deploy_url ""; topic_set "$f" deploy_since "$now"
     poke
 }
+deploy_branch_ok() {  # deploy_branch_ok <the deployment's note> <the topic's branch>: 0 unless both name a branch and they differ (the note is cut with …;
+    # a branch that says nothing (main, develop, wip/…) or a note that is no branch (empty, main, @name) matches everything): a topic waits for ITS deployment
+    local n=$1 b=$2
+    case "$b" in ''|main|master|develop|wip/*) return 0 ;; esac
+    case "$n" in ''|main|master|develop|@*) return 0 ;; esac
+    case "$n" in *…) n=${n%…}; case "$b" in "$n"*) return 0 ;; esac; return 1 ;; esac
+    [ "$n" = "$b" ]
+}
 deploy_lookup() {  # deploy_lookup <topic file>: 0 and DL_* (state, done, total, note, url, project, label, time) of its deployment; 1: none (yet)
-    local f=$1 url match pn since pj t p lb st d tot note u
+    local f=$1 url match pn since pj t p lb st d tot note u br
     DL_STATE=""; DL_D=""; DL_T=""; DL_NOTE=""; DL_URL=""; DL_PJ=""; DL_LB=""; DL_TIME=""
     [ -s "$SHARED_DIR/deploys.list" ] || return 1
     url=$(topic_get "$f" deploy_url); match=$(topic_get "$f" deploy_match); since=$(num_or "$(topic_get "$f" deploy_since)" 0)
     pj=$(topic_get "$f" project); pn=""; [ -n "$pj" ] && { projects_load; pn=$(project_name "$pj"); }
+    br=$(topic_get "$f" agent_branch)
     while IFS=$US read -r t p lb st d tot note u; do
+        deploy_branch_ok "$note" "$br" || continue                  # (also a binding made before: a deployment of another branch is not this topic's)
         if [ -n "$url" ]; then [ "$u" = "$url" ] || continue
         else
             [ -z "$pn" ] || [ "$p" = "$pn" ] || continue

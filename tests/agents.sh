@@ -699,5 +699,12 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}fix/z${US}https://ci/3" > "$SHARED_DIR/deploys.list"
   deploy_sync; [ "$(topic_get "$bf" status)" = waiting ] && [ "$(topic_get "$bf" deploy_wait)" = 1 ] || exit 13
   topic_set "$bf" status now; [ -z "$(topic_get "$bf" deploy_wait)" ] || exit 14                                  # leaving the wait ends it
+  # a topic with a branch waits for the deployment of that branch, not for the newest one of the project (also when it was bound to another one before)
+  topic_new "Mine" "" ""; mf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mf" project "$pid"; topic_set "$mf" agent_branch fix/cancellation-service-until-end; deploy_wait_set "$mf"; now=$(date +%s)
+  printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}64${US}70${US}feat/contract-sheet-catalogue-g…${US}https://ci/7" > "$SHARED_DIR/deploys.list"
+  deploy_lookup "$mf" && exit 15                                                                                      # (another branch: no deployment seen yet)
+  topic_set "$mf" deploy_url https://ci/7; deploy_lookup "$mf" && exit 16                                               # (bound wrongly before: ignored)
+  printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}70${US}fix/cancellation-service-un…${US}https://ci/8" "$now${US}IMS${US}Backend${US}running${US}64${US}70${US}feat/contract-sheet-catalogue-g…${US}https://ci/7" > "$SHARED_DIR/deploys.list"
+  topic_set "$mf" deploy_url ""; deploy_lookup "$mf" && [ "$DL_URL" = https://ci/8 ] || exit 17                        # (the cut note matches by its start)
   exit 0 ) && ok "deployment wait: own group with the progress, review when the deployment is over, an agent's branch finds it" || bad "deployment wait: step $?"
 rm -rf "$T"; exit $fail
