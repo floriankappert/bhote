@@ -4320,7 +4320,7 @@ mon_projects_ci() {  # mon_projects_ci: MPC = the names of the projects that hav
 }
 uc_set() {  # uc_set <var> <text>: upper case without a process (bash 3.2 has no ${x^^}); non-letters, also bytes of other scripts, stay as they are
     local _s=$2 _o="" _c _i _p _l=abcdefghijklmnopqrstuvwxyz _u=ABCDEFGHIJKLMNOPQRSTUVWXYZ
-    for (( _i = 0; _i < ${#_s}; _i++ )); do _c=${_s:_i:1}; case "$_c" in [a-z]) _p=${_l%%"$_c"*}; _o="$_o${_u:${#_p}:1}" ;; *) _o="$_o$_c" ;; esac; done
+    for (( _i = 0; _i < ${#_s}; _i++ )); do _c=${_s:_i:1}; case "$_l" in *"$_c"*) _p=${_l%%"$_c"*}; _o="$_o${_u:${#_p}:1}" ;; *) _o="$_o$_c" ;; esac; done   # not [a-z]: in macOS locales that range also takes capitals
     printf -v "$1" '%s' "$_o"
 }
 mon_list_in() {  # mon_list_in <list> <name>: 0 when the comma separated list has that name (not case sensitive; nocasematch, no process: this runs for every entry of every frame)
