@@ -92,7 +92,7 @@ card_case() {  # card_case <name> <colour 0|1> <cols> <view lines…>
                 COLS=$1; NOW=$2; ROWS=60; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 )))
                 ui_load >/dev/null 2>&1; NOW=$2
                 while IFS== read -r k v; do [ -n "$k" ] && printf -v "$k" %s "$v"; done < "$4"
-                [ "${EXPANDED:-}" = "" ] && EXPANDED=" "
+                [ "${EXPANDED:-}" = "" ] && EXPANDED=" "; [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ] && topics_projects
                 CUR_PROJ=${CUR_PROJ:-}; U_SCOPE=${U_SCOPE:-all}
                 colors_dump "$3"; view_dump "$5"; case "$6" in done) done_block "${DONE_N:-4}" ;; *) topics_block "$6" ;; esac; printf @' _ "$cols" "$NOW" "$T/colors.env" "$T/view.in" "$T/view.env" "$mode" 2>/dev/null )
         r=$( "$BD" block "$mode" --cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$data/topics" --colors "$T/colors.env" --view "$T/view.env" --max "${DONE_N:-4}"; printf @ )
@@ -137,7 +137,7 @@ whole_case() {  # whole_case <name> <colour 0|1> <cols> <rows> <view lines…> -
             RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 )))
             ui_load >/dev/null 2>&1; NOW=$FIXNOW; step=0
             while IFS== read -r k v; do [ -n "$k" ] && printf -v "$k" %s "$v"; done < "$T/view.in"
-            [ "${EXPANDED:-}" = "" ] && EXPANDED=" "
+            [ "${EXPANDED:-}" = "" ] && EXPANDED=" "; [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ] && topics_projects
             for s in "$@"; do
                 SEL_ID=$s; step=$(( step + 1 ))
                 bhote_view > "$T/out-$side/frame.$step" 2>/dev/null
