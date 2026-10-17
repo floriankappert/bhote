@@ -11,7 +11,7 @@ pub enum Ev {
 }
 
 extern "C" {
-    fn poll(fds: *mut PollFd, n: u64, timeout: i32) -> i32;
+    fn select(nfds: i32, r: *mut [u8; 128], w: *mut [u8; 128], e: *mut [u8; 128], tv: *mut TimeVal) -> i32;
     fn read(fd: i32, buf: *mut u8, n: usize) -> isize;
     fn ioctl(fd: i32, req: u64, ...) -> i32;
     fn signal(sig: i32, handler: usize) -> usize;
@@ -19,7 +19,15 @@ extern "C" {
     fn write(fd: i32, buf: *const u8, n: usize) -> isize;
     fn isatty(fd: i32) -> i32;
 }
-#[repr(C)] struct PollFd { fd: i32, events: i16, revents: i16 }
+#[repr(C)] struct TimeVal { sec: i64, usec: i64 }
+/// Waits until one of the descriptors can be read (select: poll is not reliable on terminals on macOS); the bitmap is the same bytes on both systems
+fn wait_read(fds: &[i32], ms: i32) -> Vec<bool> {
+    let mut set = [0u8; 128]; let mut max = 0;
+    for &fd in fds { if fd >= 0 && fd < 1024 { set[(fd / 8) as usize] |= 1 << (fd % 8); max = max.max(fd + 1); } }
+    let mut tv = TimeVal { sec: (ms / 1000) as i64, usec: ((ms % 1000) * 1000) as i64 };
+    let n = unsafe { select(max, &mut set, std::ptr::null_mut(), std::ptr::null_mut(), if ms < 0 { std::ptr::null_mut() } else { &mut tv }) };
+    fds.iter().map(|&fd| n > 0 && fd >= 0 && fd < 1024 && set[(fd / 8) as usize] & (1 << (fd % 8)) != 0).collect()
+}
 #[repr(C)] #[derive(Default)] struct Winsize { rows: u16, cols: u16, x: u16, y: u16 }
 
 #[cfg(target_os = "linux")] const TIOCGWINSZ: u64 = 0x5413;
@@ -78,12 +86,11 @@ impl Term {
         if quit_requested() { return Ev::Eof; }
         if let Some(e) = parse(&mut self.buf, false) { return e; }
         loop {
-            let mut fds = [PollFd { fd: 0, events: 1, revents: 0 }, PollFd { fd: self.wake_r, events: 1, revents: 0 }];
-            let n = unsafe { poll(fds.as_mut_ptr(), if self.wake_r >= 0 { 2 } else { 1 }, if self.buf.is_empty() { ms } else { 50 }) };
+            let ready = wait_read(&[0, self.wake_r], if self.buf.is_empty() { ms } else { 50 });
+            let n = ready.iter().filter(|r| **r).count();
             if n == 0 { if self.buf.is_empty() { return Ev::Timeout; } if let Some(e) = parse(&mut self.buf, true) { return e; } continue; }
-            if n < 0 { return Ev::Timeout; }
-            if fds[1].revents & 1 != 0 { let mut b = [0u8; 16]; unsafe { read(self.wake_r, b.as_mut_ptr(), 16); } if QUIT.load(std::sync::atomic::Ordering::SeqCst) { return Ev::Eof; } return Ev::Resize; }
-            if fds[0].revents != 0 {
+            if self.wake_r >= 0 && ready[1] { let mut b = [0u8; 16]; unsafe { read(self.wake_r, b.as_mut_ptr(), 16); } if QUIT.load(std::sync::atomic::Ordering::SeqCst) { return Ev::Eof; } return Ev::Resize; }
+            if ready[0] {
                 let mut b = [0u8; 4096];
                 let r = unsafe { read(0, b.as_mut_ptr(), b.len()) };
                 if r <= 0 { return Ev::Eof; }
@@ -95,8 +102,7 @@ impl Term {
     /// 0 when more input is waiting right now (key repeat, a drag): handle it first, draw once
     pub fn pending(&self) -> bool {
         if !self.buf.is_empty() { return true; }
-        let mut fds = [PollFd { fd: 0, events: 1, revents: 0 }];
-        unsafe { poll(fds.as_mut_ptr(), 1, 0) > 0 }
+        wait_read(&[0], 0)[0]
     }
 }
 
