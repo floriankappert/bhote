@@ -3,6 +3,8 @@
 //!   bhoted run   <topic dir> <out>      keep it current: rebuild when a topic file is added, removed or changed
 mod agents;
 mod monitor;
+mod store;
+mod follow;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -50,6 +52,26 @@ fn signature(dir: &Path) -> Vec<(PathBuf, u128, u64)> {
         let t = m.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
         (p, t, m.map_or(0, |m| m.len()))
     }).collect()
+}
+
+/// One round of the follow-ups. Shadow: only logged (shared/shadow/rust.log: "round|<time>" and one line per action); on: done.
+fn follow_round(shared: &Path, data: &Path, topics: &Path, host: &str, cfg: &HashMap<String, String>, shadow: bool) {
+    let env = store::Env { topics: topics.to_path_buf(), shared: shared.to_path_buf(), data: data.to_path_buf() };
+    let c = follow::context(&env, host, cfg.clone(), shadow);
+    if shadow {
+        let mut s = store::Shadow::new(&env);
+        follow::round(&c, &mut s, None);
+        if s.log.is_empty() { return; }
+        let dir = shared.join("shadow"); let _ = fs::create_dir_all(&dir);
+        let f = dir.join("rust.log");
+        if fs::metadata(&f).map_or(false, |m| m.len() > 1_000_000) { let _ = fs::rename(&f, dir.join("rust.log.1")); }
+        let ts = store::now(); let mut body = String::new();
+        for l in &s.log { body.push_str(&format!("{}|@{}\n", l, ts)); }
+        if let Ok(mut o) = fs::OpenOptions::new().append(true).create(true).open(&f) { let _ = o.write_all(body.as_bytes()); }
+    } else {
+        let mut s = store::Live { env: &env, notify_on: cfg.get("NOTIFY").map_or(true, |v| v == "on"), n: 0 };
+        follow::round(&c, &mut s, None);
+    }
 }
 
 /// The settings file: KEY=value lines, the last value of a key counts (cfg_var in the script).
@@ -140,6 +162,15 @@ fn main() {
             let ctx = monitor::Ctx { shared: PathBuf::from(&a[2]), data: PathBuf::from(&a[3]), topics: PathBuf::from(&a[3]).join("topics"), cfg: opt("--config").map(|c| config_read(&c)).unwrap_or_default() };
             monitor::fetch(&ctx, &opt("--kind").unwrap_or_else(|| "deploys".into()));
         }
+        "follow" => { // bhoted follow <topic dir> --shared S --data D --host H --config C [--shadow] [--only <function>]: one round of the follow-ups
+            let env = store::Env { topics: PathBuf::from(&a[2]), shared: PathBuf::from(opt("--shared").unwrap_or_default()), data: PathBuf::from(opt("--data").unwrap_or_default()) };
+            let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
+            let shadow = a.iter().any(|x| x == "--shadow");
+            let c = follow::context(&env, &opt("--host").unwrap_or_default(), cfg.clone(), shadow);
+            let only = opt("--only");
+            if shadow { let mut s = store::Shadow::new(&env); follow::round(&c, &mut s, only.as_deref()); for l in s.log { println!("{}", l); } }
+            else { let mut s = store::Live { env: &env, notify_on: cfg.get("NOTIFY").map_or(true, |v| v == "on"), n: 0 }; follow::round(&c, &mut s, only.as_deref()); }
+        }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
             let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
@@ -179,6 +210,10 @@ fn main() {
                     let tests_busy = cfg.get("TESTS_BUSY").map_or(true, |v| v != "off");
                     agents::collect_local(&shared, &host, tests_busy);
                     next_collect = Instant::now() + Duration::from_secs(every);
+                    if a.iter().any(|x| x == "--follow") {                       // the follow-ups of the collector, behind the fresh agent list
+                        let mode = cfg.get("BHOTED_FOLLOW").map(|s| s.as_str()).unwrap_or("off");
+                        if mode == "shadow" || mode == "on" { follow_round(&shared, &data, dir, &host, &cfg, mode == "shadow"); }
+                    }
                 }
                 if remote_duty && Instant::now() >= next_remote && !remote_running.load(Ordering::SeqCst) {
                     let cfg = config.as_deref().map(config_read).unwrap_or_default();

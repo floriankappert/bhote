@@ -31,7 +31,8 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 2a | this machine's agents: `pane list` + `workspace list` into `agents.local`, `.meta.local`, `.now.local`, `agents.cwd`, `focus.pane` (Linux; macOS keeps bash until kqueue) | panel reads the files as before | byte-identical files, `tests/agents.sh` |
 | 2b | the other machines through kharka (`AGENTS_VIA=kharka`): `herdr/<node>` and `_nodes/` into `agents.remote`, `.meta.remote`, `.now.remote`, `agents.nodes`, `machines.offline` (the ssh way stays bash) | agent names, cards, the ssh path | byte-identical files (live and `tests/agents.sh`) |
 | 3 | monitors: CircleCI (API, `ureq`), GitHub Actions (`gh`), local test runs and status files into `deploys.list` / `tests.list` | panel reads the lists as before | same lists as `monitor_fetch` (live and `tests/monitor.sh`) |
-| 4 | follow-ups, auto-assign, reminders, Slack pins, update check, kharka watch | CLI | collector no longer runs in bash |
+| 4a | ten follow-ups of the collector (cards, dedup, review, finished, gone, question, branches, numbers, reminders), through a Sink: `BHOTED_FOLLOW=off\|shadow\|on` | the other follow-ups (tests, deploys, auto-assign, projects), the stores' sync, Slack, updates, kharka watch | decisions identical in `tests/follow.sh` (logged and written), shadow soak with `tools/shadow-report.sh` |
+| 4b | the rest of the collector | CLI | collector no longer runs in bash |
 | 5 | the frame: the panel draws from the snapshot in Rust (CLI and wizard stay bash or follow) | wizard | frame under 5 ms |
 
 Each step names its measurement (CPU of panels + collector, frame time) before and after in the commit message.
@@ -70,3 +71,13 @@ once when kharka's watch creates `remote.due`), and writes the five files byte f
 (live, and in `tests/agents.sh` with a fake kharka: a fresh machine, a stale one, an offline node, a machine switched off,
 control characters, a running test; and the case that kharka does not answer: the agents stay, muted). The collector skips
 its own look while the daemon has the duty (`bhoted.pid.remote`). Agent names and cards stay in bash for step 4/5.
+
+## Step 4a: shadow first
+
+The follow-ups change topics that kharka copies to every machine, so they go over in three stages (`BHOTED_FOLLOW`):
+`off` (bash), `shadow` (bash acts; bash and daemon both log every decision, `shadow/bash.log` and `shadow/rust.log`; the
+daemon's own state files live in `shadow/`, so it never moves the real ones), `on` (the daemon acts, bash skips them).
+`tests/follow.sh` runs every function on the same fixture (bash and Rust) and compares the decisions, then the topic files
+that come out, with the real writes; a test that fails on purpose (a changed threshold) was seen to fail. `tools/shadow-report.sh`
+compares the two logs of a real run. A round of all ten takes 26 ms in the daemon; the topics are read once and again only
+after a write.
