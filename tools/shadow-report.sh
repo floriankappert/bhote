@@ -7,7 +7,8 @@ w=${1:-6}
 awk -F'|@' -v w="$w" '
     function norm(s) { gsub(/\|(shadow-new-[0-9]+|[0-9]{9,}-[0-9]+)\|/, "|NEW|", s); gsub(/(created|updated)=[0-9]+/, "&", s); return s }
     FILENAME ~ /bash.log$/ { nb++; bt[nb] = $2 + 0; bl[nb] = norm($1); next }
-    { nr++; rt[nr] = $2 + 0; rl[nr] = norm($1) }
+    { x = norm($1); t = $2 + 0; if ((x in lastr) && t - lastr[x] <= w) { lastr[x] = t; next }   # (a shadow round that repeats within seconds: nothing was changed in between)
+      lastr[x] = t; nr++; rt[nr] = t; rl[nr] = x }
     END {
         for (i = 1; i <= nr; i++) { hit = 0
             for (j = 1; j <= nb; j++) if (!used[j] && bl[j] == rl[i] && (bt[j] - rt[i] <= w) && (rt[i] - bt[j] <= w)) { used[j] = 1; hit = 1; break }
