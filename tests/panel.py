@@ -7,16 +7,21 @@ BIN = os.path.join(ROOT, "daemon", "target", "release", "bhoted")
 if not os.path.exists(BIN):
     print("skipped: no bhoted binary"); sys.exit(0)
 import signal
+CUR = [None]
 LIVE = []
 def _timeout(*_):   # a test that hangs must not hold the build: end it, and the panels it started
-    print("FAIL the panel test ran out of time (240 s)")
+    print("FAIL the panel test ran out of time (240 s)", flush=True)
+    p = CUR[0]
+    if p is not None:
+        tail = p.out[-900:].decode("utf8", "replace").replace("\x1b", "<E>")
+        print("  last output (%d bytes, alive=%s): %s" % (len(p.out), p.alive, tail), flush=True)
+    import traceback; traceback.print_stack(file=sys.stdout); sys.stdout.flush()
     for pid in LIVE:
         try: os.killpg(pid, 9)
         except OSError: pass
     os._exit(1)
 signal.signal(signal.SIGALRM, _timeout); signal.alarm(240)
 fails = 0
-CUR = [None]
 def ok(m): print("ok   " + m, flush=True)
 def bad(m):
     global fails; fails += 1; print("FAIL " + m, flush=True)
