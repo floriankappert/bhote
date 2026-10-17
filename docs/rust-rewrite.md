@@ -34,7 +34,7 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 4a | ten follow-ups of the collector (cards, dedup, review, finished, gone, question, branches, numbers, reminders), through a Sink: `BHOTED_FOLLOW=off\|shadow\|on` | the other follow-ups (tests, deploys, auto-assign, projects), the stores' sync, Slack, updates, kharka watch | decisions identical in `tests/follow.sh` (logged and written), shadow soak with `tools/shadow-report.sh` |
 | 4b | the rest of the collector | CLI | collector no longer runs in bash |
 | 5a | blocks of the main view, one at a time, as `bhoted block <name>` (the panel calls it once per block): monitors, cards, lists; then done, agents, head, bottom | key and mouse handling, click maps, the other views | `tests/frame.sh`: the same bytes as the bash function, with and without colour, three widths |
-| 5b | the whole frame and its maps in one call | the input loop | frame under 5 ms |
+| 5b | the whole main view and its maps in one call (`bhoted block frame`), and the screen made of it (`bhoted paint`) | key and mouse handling, `ui_load`, the other views (menu, settings, pick, wizard) | `tests/frame.sh`: the same frame, screen and click maps, step by step |
 
 Each step names its measurement (CPU of panels + collector, frame time) before and after in the commit message.
 Distribution (Homebrew, PKGBUILD, CI for Linux and macOS arm64/x86) comes with step 1, when the daemon first matters to users.
@@ -93,3 +93,15 @@ character) as `view_dump` writes it; everything else is read from the same files
 reads the topic files itself, so a frame of navigation shows a topic that was made a moment ago one frame sooner than the
 arrays of bash would; the order of topics follows the locale's collation of the file names, like the shell's glob.
 Measured: monitors 40 ms -> 2.8 ms, a frame after a reload 126 -> 78 ms, a frame of navigation 99 -> 44 ms.
+
+## Step 5b: the whole main view
+
+`bhoted block frame` is `bhote_view`: it gets the head and the bottom (agents, keys) as the script made them, draws the cards,
+lines, done area and monitors itself, cuts and windows them to the rows (`toff`), and writes the maps for the clicks (`tmap`,
+`spinrows`, `divrow`). `bhoted paint` is `bhote_paint`'s second half: the markers out, the line ends, `pmap`. Together 368
+golden cases step by step (a walk of the selection through the list at 11 sizes, with colour and without, with open groups,
+with the project scope, empty), plus the live state of this machine byte for byte. A redraw: 130 ms at the start of the work,
+now 29 ms (`ui_load` 12, frame 9, screen 8); a frame of navigation 99 -> about 17 ms. `ui_load` got 15 ms faster by not
+computing each topic's project unless the project scope is on.
+What stays in bash on purpose: the keys and the mouse (they need the arrays), `ui_load`, and the views that are not the main
+view. A Rust panel would have to take those over as well; that is a different, bigger step (the whole of step 6, if wanted).

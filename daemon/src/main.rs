@@ -188,6 +188,31 @@ fn main() {
             let out = match a[2].as_str() { "monitors" => ui::monitors(&ctx), "cards" => cards::Cards::new(&ctx, &view).block("cards"), "lists" => cards::Cards::new(&ctx, &view).block("lists"), "done" => cards::Cards::new(&ctx, &view).done_block(opt("--max").and_then(|v| v.parse().ok()).unwrap_or(4)), _ => { eprintln!("bhoted: no block {}", a[2]); std::process::exit(2) } };
             use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes());
         }
+        "paint" => { // bhoted paint --rows N --run DIR <frame on stdin>: what bhote_paint makes of a frame (the markers out, the line ends, the map of the clickable rows); status 3: an edit field (bash does it)
+            use std::io::{Read, Write};
+            let mut text = String::new(); let _ = std::io::stdin().read_to_string(&mut text);
+            let rows: usize = opt("--rows").and_then(|v| v.parse().ok()).unwrap_or(40);
+            let text = text.trim_end_matches('\n');
+            let (mut fl, mut fr): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new()); let mut sel: i64 = -1;
+            for (n, l0) in text.split('\n').enumerate() {
+                let mut line = l0.to_string(); let mut rf = String::new();
+                if let Some(r) = line.strip_prefix('\u{1d}') { let i = r.find('\u{1d}').unwrap_or(r.len()); rf = r[..i].to_string(); line = r[(i + 1).min(r.len())..].to_string(); }
+                if let Some(r) = line.strip_prefix('\u{1}') { sel = n as i64; line = r.to_string(); }
+                if line.starts_with('\u{2}') { std::process::exit(3); }
+                fl.push(line); fr.push(rf);
+            }
+            let n = fl.len();
+            let mut off = 0usize;
+            if n > rows && sel >= 0 { let mut o = sel - (rows as i64) / 2; if o > n as i64 - rows as i64 { o = n as i64 - rows as i64; } if o < 0 { o = 0; } off = o as usize; }
+            let (mut out, mut map) = (String::new(), String::new());
+            for i in off..n.min(off + rows) {
+                if i > off { out.push('\n'); }
+                out.push_str(&fl[i]); out.push_str("\u{1b}[K");
+                if !fr[i].is_empty() { map.push_str(&format!("{}\u{1e}{}\n", i - off + 1, fr[i])); }
+            }
+            let _ = fs::write(PathBuf::from(opt("--run").unwrap_or_default()).join("pmap"), map);
+            let _ = std::io::stdout().write_all(format!("\u{1b}[H{}\u{1b}[J", out).as_bytes());
+        }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
             let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());

@@ -141,11 +141,12 @@ whole_case() {  # whole_case <name> <colour 0|1> <cols> <rows> <view lines…> -
             for s in "$@"; do
                 SEL_ID=$s; step=$(( step + 1 ))
                 bhote_view > "$T/out-$side/frame.$step" 2>/dev/null
-                for f in tmap spinrows divrow toff; do [ -e "$RUN_DIR/$f" ] && cp "$RUN_DIR/$f" "$T/out-$side/$f.$step" || : > "$T/out-$side/$f.$step.none"; done
+                NAV_ONLY=1; UI_LOAD_AT=$SECONDS; TOO_SMALL=0; bhote_paint main > "$T/out-$side/paint.$step" 2>/dev/null
+                for f in pmap tmap spinrows divrow toff; do [ -e "$RUN_DIR/$f" ] && cp "$RUN_DIR/$f" "$T/out-$side/$f.$step" || : > "$T/out-$side/$f.$step.none"; done
             done' _ "$side" "$cols" "$rows" "${sels[@]}" ) 2>/dev/null
     done
     i=0; for s in "${sels[@]}"; do i=$(( i + 1 ))
-        for f in frame tmap spinrows divrow toff; do
+        for f in frame paint pmap tmap spinrows divrow toff; do
             if [ -e "$T/out-bash/$f.$i.none" ] || [ -e "$T/out-rust/$f.$i.none" ]; then [ -e "$T/out-bash/$f.$i.none" ] && [ -e "$T/out-rust/$f.$i.none" ] || { okc=0; echo "  $f step $i: one side has no file"; }; continue; fi
             cmp -s "$T/out-bash/$f.$i" "$T/out-rust/$f.$i" || { okc=0; echo "  differs: $f (step $i, selected $s)"; diff <(command cat -v "$T/out-bash/$f.$i") <(command cat -v "$T/out-rust/$f.$i") | head -6; }
         done

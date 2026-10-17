@@ -450,6 +450,14 @@ bhoted_frame() {  # bhoted_frame <head> <bottom>: the whole main view from the d
     [ -n "$out" ] || return 1
     printf '%s' "$out"
 }
+bhoted_paint() {  # bhoted_paint <frame>: the screen of a frame (what bhote_paint makes of it), printed; 1 = bash does it (an edit field, no daemon)
+    local bin off out; cfg_var off BHOTED auto; [ "$off" = off ] && return 1; cfg_var off BHOTED_FRAME auto; [ "$off" = off ] && return 1
+    bin=${BHOTED_BIN_CACHE:-}; [ -n "$bin" ] || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
+    [ "$bin" != none ] || return 1
+    out=$(printf '%s' "$1" | "$bin" paint --rows "${ROWS:-40}" --run "$RUN_DIR" 2>/dev/null) || return 1
+    [ -n "$out" ] || return 1
+    printf '%s' "$out"
+}
 bhoted_agents() { [ -e "$SHARED_DIR/bhoted.pid.agents" ] && bhoted_alive; }   # the daemon collects this machine's agents (no collect_local in the collector)
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
     local f hdr stale=0 files; TOPICS_IDX="$SHARED_DIR/topics.idx"; files=("$TOPIC_DIR"/*.topic); [ -f "${files[0]}" ] || files=()
@@ -1129,7 +1137,8 @@ ui_load() {
     done
     AGENTS=$AG_N
     topics_load
-    projects_load; current_project; topics_projects; cfg_var U_SCOPE TOPICS_SCOPE all
+    projects_load; current_project; cfg_var U_SCOPE TOPICS_SCOPE all
+    if [ "$U_SCOPE" = project ] && [ -n "${CUR_PROJ:-}" ]; then topics_projects; else T_EPJ=(); fi   # (each topic's project: only the project scope asks for it, and it takes 15 ms)
 }
 
 # ── the agents of every machine: this one and every enabled saved machine (herdr --machine <label>). Collected in the
@@ -5946,6 +5955,7 @@ bhote_paint() {  # one write per frame; ui_load first (in THIS shell), the frame
     # a key that only moves the selection (NAV_ONLY) draws from what is loaded (not older than 2 s: the idle check reloads), the agents' area is kept
     if [ "${NAV_ONLY:-}" = 1 ] && [ $(( SECONDS - ${UI_LOAD_AT:-0} )) -lt 2 ]; then :; else ui_load; fi; NAV_ONLY=""
     frame=$(bhote_draw "$1")
+    bhoted_paint "$frame" && return 0                           # (the daemon makes the screen of it: the markers out, the line ends, the map of the clicks)
     local fl=() fr=() n=0 sel=-1 off=0 rows=${ROWS:-40} i map=""
     while IFS= read -r line; do
         fr[$n]=""; case "$line" in $'\035'*) line=${line#$'\035'}; fr[$n]=${line%%$'\035'*}; line=${line#*$'\035'} ;; esac   # a clickable line (an action)
