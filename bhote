@@ -2474,7 +2474,11 @@ bhote_view() {  # head on top, topics below it (scrolling with the selection), a
     while [ "$dh" -gt 0 ] && [ "$dn" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room
         dn=$(( dn - 1 )); dblk=$(done_block "$dn"); dh=0; [ -n "$dblk" ] && count_lines dh "$dblk"
     done
-    local mblk mh=0; mblk=$(monitors_block); [ -n "$mblk" ] && count_lines mh "$mblk"
+    local mblk mh=0 mkey="$UI_GEN|${COLS:-}|${ROWS:-}|${EXPANDED:-}" mck=""   # (the monitors do not depend on the selection or the hover: a frame of navigation takes them from the last one)
+    { IFS= read -r mck < "$RUN_DIR/monitors.key"; } 2>/dev/null
+    if [ "$mck" = "$mkey" ] && [ -e "$RUN_DIR/monitors.out" ]; then mblk=$(< "$RUN_DIR/monitors.out")
+    else mblk=$(monitors_block); printf '%s\n' "$mkey" > "$RUN_DIR/monitors.key" 2>/dev/null; printf '%s' "$mblk" > "$RUN_DIR/monitors.out" 2>/dev/null; fi
+    [ -n "$mblk" ] && count_lines mh "$mblk"
     [ "$mh" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh - mh )) -lt $(( th < 6 ? th : 6 )) ] && { mblk=""; mh=0; }   # low: no monitors
     [ -n "$lists" ] && count_lines lh "$lists"
     local lcut=$lh need=$(( th < 6 ? th : 6 ))                  # the lines (next, waiting, later) sit at the bottom above Done; low: they lose their last rows, the cards keep room
