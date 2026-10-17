@@ -6050,6 +6050,31 @@ act_agent_jump() { agent_jump "$1" "$2"; sleep 0.3; }                           
 act_topic_jump() { ui_load; SEL_ID=$1; topic_jump click; sleep 0.3; }                       # <topic id>: the agent of a card, shown
 act_review() { ui_load; review_act "$(topic_file_of "$1")" "${2:-1}"; sleep 0.2; }       # <topic id> <button>
 act_dismiss() { ui_load; review_dismiss "$(topic_file_of "$1")"; }                        # <topic id>
+act_resume() { ui_load; topic_resume "$(topic_file_of "$1")"; sleep 0.2; }                              # <topic id>: the wait is over, the agent goes on
+act_deploy() { ui_load; deploy_wait_set "$(topic_file_of "$1")"; }                                      # <topic id>
+act_pickstart() {                                                                                      # <topic id> <machine> <pane> <name>: hand the topic to that free agent
+    ui_load; local f st sess m=$2 id=$3 name=$4; f=$(topic_file_of "$1"); [ -f "$f" ] || return 0
+    agent_state_set st "$m" "$id"; case "$st" in idle|done) ;; *) return 0 ;; esac
+    agent_live "$m" "$id"; sess=$LIVE_SESS; case "$LIVE_ST" in idle|done) ;; *) return 0 ;; esac
+    topic_set "$f" status now; topic_set "$f" waiting_for ""
+    topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"
+    topic_set "$f" agent_session "$sess"; topic_set "$f" delegated "$(date +%s)"
+    agent_send "$m" "$id" "Your bhote topic: $(delegation_text "$f")"; : > "$STORE_DIRTY"; sleep 0.3
+}
+act_transfer() {                                                                                       # <topic id> <machine> <pane> <name> [force]
+    ui_load; local f; f=$(topic_file_of "$1"); [ -f "$f" ] || return 0; [ "${5:-}" = force ] && TRANSFER_FORCE=1
+    transfer_start "$f" "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)" "$(topic_get "$f" agent agent)" "$2" "$3" "$4" 2>/dev/null; TRANSFER_FORCE=""; sleep 0.3
+}
+act_slack() {                                                                                          # <topic id> <off | what to pin>: the note about it
+    ui_load; local f perr; f=$(topic_file_of "$1")
+    if [ "$2" = off ]; then slack_pin "$f" off; return 0; fi
+    perr=$(slack_pin "$f" "$2" 2>&1 >/dev/null)
+    if [ -z "$perr" ] || [ -n "$(topic_get "$f" slack_channel)" ]; then
+        FLASH_MSG="✓ pinned $(topic_get "$f" slack_label)$( [ "$(topic_get "$f" status)" = waiting ] && echo ': watched while it waits' || echo ': watched once it waits')"
+        [ "$(cfg_get SLACK_WATCH off)" = on ] || FLASH_MSG="$FLASH_MSG (Slack monitor is off here: settings › Connections)"
+    else FLASH_MSG="✗ ${perr#bhote: }"; fi
+    printf '%s' "$FLASH_MSG"
+}
 act_clamp() { panel_width_clamp; }                                                         # (the width of the panel pane is kept between the two settings)
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
@@ -6797,7 +6822,7 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
-        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
+        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;

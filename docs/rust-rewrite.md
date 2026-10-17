@@ -34,7 +34,7 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 4a | ten follow-ups of the collector (cards, dedup, review, finished, gone, question, branches, numbers, reminders), through a Sink: `BHOTED_FOLLOW=off\|shadow\|on` | the other follow-ups (tests, deploys, auto-assign, projects), the stores' sync, Slack, updates, kharka watch | decisions identical in `tests/follow.sh` (logged and written), shadow soak with `tools/shadow-report.sh` |
 | 4b | the rest of the collector | CLI | collector no longer runs in bash |
 | 5a | blocks of the main view, one at a time, as `bhoted block <name>` (the panel calls it once per block): monitors, cards, lists; then done, agents, head, bottom | key and mouse handling, click maps, the other views | `tests/frame.sh`: the same bytes as the bash function, with and without colour, three widths |
-| 6a | the panel itself (`bhoted panel`, `BHOTED_PANEL=on`): terminal, keys, mouse, hover, the main view, its actions, a line to type into; menu, settings, wizard and the choosers are still the script's views, run as a child on the same terminal | the collector (as a child of the panel), the views listed | `tests/panel.py`: a pty, the real binary, clicks and keys |
+| 6a | the panel itself (`bhoted panel`, `BHOTED_PANEL=on`): terminal, keys, mouse, hover, the main view, its actions, a line to type into; the topic's page (menu) and the chooser of free agents are the panel's own (68 golden cases); settings, wizard and the suggestions are still the script's views, run as a child on the same terminal | the collector (as a child of the panel), the views listed | `tests/panel.py`: a pty, the real binary, clicks and keys |
 | 5b | the whole main view and its maps in one call (`bhoted block frame`), and the screen made of it (`bhoted paint`) | key and mouse handling, `ui_load`, the other views (menu, settings, pick, wizard) | `tests/frame.sh`: the same frame, screen and click maps, step by step |
 
 Each step names its measurement (CPU of panels + collector, frame time) before and after in the commit message.
@@ -120,3 +120,12 @@ first start), the suggestions (a) and the choosers (s, t) run as `bhote` in a ch
 panel takes over again when it ends. The collector runs as a child of the panel (`BHOTE_COLLECTOR_ONLY`).
 Not there yet: the welcome screen with the dog, and the views above (each is a candidate for the next steps, with the rest of the collector).
 Measured: the panel idles at 0.2 % CPU and 5 MB; a hover or a click redraws in a few milliseconds.
+
+## Step 6b: the topic's page and the chooser
+
+`bhote_menu`, `menu_build`, `bhote_pick` and `pick_build` are in `menuui.rs` (the same bytes as the script, markers for the clicks and the
+selected line included: 68 cases in `tests/frame.sh`), with every action of `menu_do` (the status changes, wait, project, rename,
+describe, delete, jump, start, transfer, resume, deployment wait, Slack pin) and the keys of the page (arrows, numbers, Enter, Esc) and
+a click on a line. What talks to herdr, kharka or Slack runs as `bhote __act …`. A topic with a Slack pin or answer on it still gets
+the script's page (its text goes through `slack_marks`). **Settings, the wizard and the suggestions stay the script's views on purpose:**
+they are used rarely, nothing in them is time critical, and a port would be some 2,000 lines for no gain a user would see.

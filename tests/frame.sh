@@ -203,6 +203,39 @@ done
 printf 'AGENTS_COMPACT=on\n' > "$T/config"; bottom_case "agents compact" 1 66 60 "VERSION_LABEL=0.9"
 : > "$T/config"; rm -f "$T/shared/machines.offline"
 
+# ── the topic's page (menu) and the chooser of free agents (pick): the same bytes, markers for the clicks and the selected line included ──
+page_case() {  # page_case <menu|pick> <name> <colour 0|1> <cols> <topic id> <idx> [flash] [mode]
+    local kind=$1 name=$2 col=$3 cols=$4 id=$5 idx=$6 flash=${7:-} mode=${8:-start} b r
+    printf 'SEL_ID=%s\n' "$id" > "$T/view.in"
+    b=$( [ "$col" = 1 ] && export BHOTE_FORCE_COLOR=1; [ "$col" = 0 ] && export NO_COLOR=1
+         bash -c '
+            BHOTE_SOURCE_ONLY=1; . ./bhote; bhote_info >/dev/null 2>&1; theme_apply
+            COLS=$1; ROWS=60; NOW=$FIXNOW; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 )))
+            ui_load >/dev/null 2>&1; NOW=$FIXNOW; SEL_ID=$2; MENU_IDX=$3; PICK_IDX=$3; PICK_MODE=$6; FLASH_MSG=$5; [ -n "$5" ] && FLASH_UNTIL=99999999
+            colors_dump $T/colors.env; view_dump $T/view.env
+            if [ "$4" = menu ]; then bhote_menu; else bhote_pick; fi; printf @' _ "$cols" "$id" "$idx" "$kind" "$flash" "$mode" 2>/dev/null )
+    local args=(--cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$T/data/topics" --colors "$T/colors.env" --view "$T/view.env" --idx "$idx")
+    if [ "$kind" = menu ]; then r=$( "$BD" block menu "${args[@]}" --file "$T/data/topics/$id.topic" --flash "$flash"; printf @ )
+    else r=$( "$BD" block pick "${args[@]}" --file "$T/data/topics/$id.topic" --title "$(grep -m1 '^title=' "$T/data/topics/$id.topic" | cut -d= -f2-)" --mode "$mode"; printf @ ); fi
+    if [ "$b" = "$r" ] && [ "${#b}" -gt 40 ]; then ok "page: $kind, $name (colour $col, $cols columns)"
+    else bad "page: $kind, $name (colour $col, $cols columns)"; diff <(printf '%s' "$b" | command cat -v) <(printf '%s' "$r" | command cat -v) | head -10; fi
+}
+tp 3000-1 $((NOW-300)) title="Waits for an answer, with a very long title so that the page has to wrap it over more than one line" status=waiting waiting_for="Katharina and Florian" waiting_since=$((NOW-7200)) description="A description that is long enough to wrap as well, so we see the field block with several lines" agent=a1 agent_machine=$H agent_pane=w1:p1 agent_branch=feat/a-long-branch-name-for-the-page project=proj-ims
+tp 3001-1 $((NOW-300)) title="Transfer pending" status=now agent=a3 agent_machine=$H agent_pane=w2:p1 transfer_to=Mac/w4:p1 transfer_to_name=a8
+tp 3002-1 $((NOW-300)) title="Plain done" status=done project=proj-bm
+tp 3003-1 $((NOW-300)) title="Deploy wait" status=waiting deploy_wait=1 waiting_for=Deployment
+for col in 1 0; do for cols in 44 66; do
+    for spec in "3000-1 -2" "3000-1 -1" "3000-1 0" "3000-1 5" "3001-1 2" "3002-1 1" "3003-1 0" "1002-1 3" "1000-1 1" "1007-1 0" "2301-1 2"; do set -- $spec
+        page_case menu "$1 at $2" $col $cols $1 $2
+    done
+    page_case menu "with a note" $col $cols 1002-1 1 "✓ pinned #team: watched while it waits"
+    page_case menu "with a failure" $col $cols 1002-1 1 "✗ no such channel"
+    page_case pick "start" $col $cols 1002-1 0 "" start
+    page_case pick "start, second" $col $cols 1002-1 2 "" start
+    page_case pick "transfer" $col $cols 1002-1 1 "" transfer
+    page_case pick "transfer from an agent" $col $cols 1002-1 1 "" transfer
+done; done
+
 [ -n "${KEEP:-}" ] && echo "kept $T" || rm -rf "$T"; exit $fail
 
 

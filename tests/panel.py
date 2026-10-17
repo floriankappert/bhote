@@ -152,5 +152,29 @@ os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
 menu = p.expect("ACTIONS", 8)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("right button: the topic's menu") if (menu and back) else bad(f"right button menu (menu={menu}, back={back})")
+# 10) the page is the panel's own: keys move, a number runs an action ("Park for later" on a now topic), Esc leaves
+p.out = b""; y = p.row("Working topic") or 16
+os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
+shown = p.expect("ACTIONS", 5)
+lines = p.screen(); later = [l for l in lines if "Park for later" in l]
+num = None
+for l in lines:
+    m = re.search(r"(\d+)\s+Park for later", l)
+    if m: num = m.group(1)
+if shown and num and int(num) < 10:
+    p.send(num, 1.2)
+    st = p.get("1001-1", "status")
+    ok("the page: a number key runs the action (Park for later)") if st == "later" else bad(f"page action: status is {st}")
+else: bad(f"the page did not show (shown={shown}, num={num})")
+
+# 11) the chooser (s): no free agent here, so only "Just mark as started": Enter takes it
+p.send(b"\x1b", 0.8)
+y = p.row("A next topic") or p.row("Brand new topic") or p.row("Waiting for Anna"); p.click(10, y)
+p.send("s", 1.0)
+sc = "\n".join(p.screen())
+if "Who takes it?" in sc and "Just mark as started" in sc:
+    p.send("\r", 1.2)
+    ok("s: the chooser; Enter on 'Just mark as started'")
+else: bad("s: the chooser did not show")
 p.close()
 sys.exit(1 if fails else 0)

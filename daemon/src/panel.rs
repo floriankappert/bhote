@@ -20,6 +20,9 @@ const FEATURE_LEVEL: u64 = 4;
 
 fn envs(k: &str) -> String { std::env::var(k).unwrap_or_default() }
 
+#[derive(Clone, PartialEq)]
+enum Screen { Main, Menu(i64), Pick(String, i64) }
+
 struct Pending { child: Child, out: Option<PathBuf>, kind: &'static str }
 
 pub struct Panel {
@@ -32,6 +35,7 @@ pub struct Panel {
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
     click_last: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>,
+    screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>,
 }
 
 fn mtime(p: &std::path::Path) -> u128 { fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos()) }
@@ -45,7 +49,7 @@ impl Panel {
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
             flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
-            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)) }
+            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), screen: Screen::Main, pmap: Vec::new(), menu_flash: None }
     }
     fn reload_cfg(&mut self) {
         self.cfg = crate::config_read(&self.cfg_path.to_string_lossy());
@@ -112,6 +116,7 @@ impl Panel {
     }
     /// One frame: the screen text; the maps for the mouse are kept.
     fn frame(&mut self) -> String {
+        if self.screen != Screen::Main { if let Some(s) = self.other_frame() { return s; } self.screen = Screen::Main; }
         if self.real_cols < MIN_COLS || self.real_rows < MIN_ROWS { return format!("\u{1b}[H\u{1b}[J{}", ui::clip(&format!("Too small (min {}x{})", MIN_COLS, MIN_ROWS), self.real_cols as i64 - 1)); }
         let ctx = Ctx { cols: self.cols as i64, now: store::now(), shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(self.theme.vars.clone()) };
         let agents: Vec<String> = { let mut m = Vec::new(); for f in ["agents.local", "agents.remote"] { for l in fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines() { if let Some(x) = l.split(US).next() { if !x.is_empty() { m.push(x.to_string()); } } } } m };
@@ -132,6 +137,40 @@ impl Panel {
         for (i, l) in o.frame.split('\n').take(self.rows as usize).enumerate() { if i > 0 { out.push('\n'); } out.push_str(l); out.push_str("\u{1b}[K"); }
         out.push_str("\u{1b}[J");
         out
+    }
+    fn ctx(&self) -> Ctx { Ctx { cols: self.cols as i64, now: store::now(), shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(self.theme.vars.clone()) } }
+    fn project_name(&self, id: &str) -> Option<String> {
+        let t = fs::read_to_string(self.topics.join(format!("{}.topic", id))).ok()?; let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
+        for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } }
+        if kd == "project" && del != "1" { Some(name) } else { None }
+    }
+    fn agent_rows_all(&self) -> Vec<crate::cards::Row> {
+        ["agents.local", "agents.remote"].iter().flat_map(|f| fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split(US).map(|x| x.to_string()); crate::cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect()
+    }
+    fn menu_list(&self, file: &std::path::Path) -> Vec<(String, String)> { let ctx = self.ctx(); let ps = ui::projects(&ctx); crate::menuui::menu_items(file, &ps, &|id| self.project_name(id)) }
+    /// The topic's page or the chooser: the text with its markers made into a screen; the map of the clickable rows is kept
+    fn other_frame(&mut self) -> Option<String> {
+        if self.real_cols < MIN_COLS || self.real_rows < MIN_ROWS { return Some(format!("\u{1b}[H\u{1b}[J{}", ui::clip(&format!("Too small (min {}x{})", MIN_COLS, MIN_ROWS), self.real_cols as i64 - 1))); }
+        let ctx = self.ctx();
+        let text = match self.screen.clone() {
+            Screen::Menu(idx) => {
+                let (_, f, ..) = self.sel_topic()?;
+                let items = self.menu_list(&f);
+                let flash = self.menu_flash.as_ref().filter(|(_, u)| Instant::now() < *u).map(|(m, _)| m.clone()).unwrap_or_default();
+                crate::menuui::render_menu(&crate::menuui::MenuIn { c: &ctx, file: &f, idx, items: &items, project_name: &|id| self.project_name(id), github: self.c("GITHUB_BRANCHES", "on") != "off", flash: &flash, now: ctx.now })
+            }
+            Screen::Pick(mode, idx) => {
+                let (_, f, _, _, title) = self.sel_topic()?;
+                let rows = self.agent_rows_all(); let ts = store::load_fast(&self.topics, &self.shared);
+                let src = (store::topic_get(&f, "agent_machine"), store::topic_get(&f, "agent_pane"));
+                let map = crate::menuui::pick_map(&rows, &ts, &mode, if mode == "transfer" { Some((src.0.as_str(), src.1.as_str())) } else { None });
+                crate::menuui::render_pick(&ctx, &title, &mode, &map, idx)
+            }
+            Screen::Main => return None,
+        };
+        let (s, map) = crate::menuui::paint_marked(&text, self.rows as usize);
+        self.pmap = map; self.spin_any = false;
+        Some(s)
     }
     fn paint(&mut self) {
         let s = self.frame();
@@ -183,7 +222,8 @@ impl Panel {
         for (i, p) in self.pending.iter_mut().enumerate() { if let Ok(Some(_)) = p.child.try_wait() { done.push(i); } }
         for i in done.into_iter().rev() {
             let p = self.pending.remove(i);
-            if let Some(f) = &p.out { let t = fs::read_to_string(f).unwrap_or_default(); let _ = fs::remove_file(f); if p.kind == "flash" && !t.trim().is_empty() { self.flash = Some((t.trim().to_string(), Instant::now() + Duration::from_secs(10))); } }
+            if let Some(f) = &p.out { let t = fs::read_to_string(f).unwrap_or_default(); let _ = fs::remove_file(f); if p.kind == "menuflash" && !t.trim().is_empty() { self.menu_flash = Some((t.trim().to_string(), Instant::now() + Duration::from_secs(8))); }
+            if p.kind == "flash" && !t.trim().is_empty() { self.flash = Some((t.trim().to_string(), Instant::now() + Duration::from_secs(10))); } }
             self.redraw = true;
         }
     }
@@ -248,7 +288,7 @@ impl Panel {
         }
         if !press { return; }
         if b == 2 {   // the right button: the topic's menu
-            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id; self.delegate(term, "menu", ""); } }
+            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id; self.open_menu(term); } }
             return;
         }
         if b != 0 { return; }
@@ -272,7 +312,7 @@ impl Panel {
                 let twice = self.click_twice(&id);
                 if twice { // a double click: the topic's page
                     if !(id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id.clone(); }
-                    if !(id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.delegate(term, "menu", ""); }
+                    if !(id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.open_menu(term); }
                     self.redraw = true; return;
                 }
                 if id.starts_with("pf:") {}
@@ -314,8 +354,8 @@ impl Panel {
             ',' => self.delegate(term, "settings", ""),
             'w' | 'W' => { let nf = (!self.c("SETUP_DONE", "").is_empty() && self.c("WIZARD_LEVEL", "1").parse::<u64>().unwrap_or(1) < FEATURE_LEVEL) as u8; self.delegate(term, "setup", &nf.to_string()); }
             'a' | 'A' => self.delegate(term, "suggest", ""),
-            's' => { if self.sel_topic().is_some() { self.delegate(term, "pick", "start"); } }
-            't' | 'T' => { if self.sel_topic().map_or(false, |t| !t.3.is_empty()) { self.delegate(term, "pick", "transfer"); } }
+            's' => { if self.sel_topic().is_some() { self.screen = Screen::Pick("start".into(), 0); self.redraw = true; } }
+            't' | 'T' => { if self.sel_topic().map_or(false, |t| !t.3.is_empty()) { self.screen = Screen::Pick("transfer".into(), 1); self.redraw = true; } }
             'x' | 'X' => { if let Some((_, f, ..)) = self.sel_topic() { self.sel_leave(); let env = self.env(); Live { env: &env, notify_on: false, n: 0 }.set(&f, "status", "done"); } self.redraw = true; }
             'c' | 'C' => { if let Some((id, _, st, ..)) = self.sel_topic() { if st == "review" || st == "finished" { self.sel_leave(); self.act(&["dismiss", &id], "dismiss", false); } } self.redraw = true; }
             'e' | 'E' => { if let Some((_, f, _, _, title)) = self.sel_topic() { if let Some(a) = self.ask(term, "Title: ", &title, 500) { if !a.is_empty() { let env = self.env(); Live { env: &env, notify_on: false, n: 0 }.set(&f, "title", &a); } } } self.redraw = true; }
@@ -385,9 +425,10 @@ pub fn run() -> i32 {
             Ev::Timeout => { if p.spin_any && p.tab_visible { p.spin_tick += 1; p.redraw = true; } }
             Ev::Eof => break,
             Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + Duration::from_secs(1)); }
-            Ev::Mouse { b, x, y, press } => p.mouse(&mut term, b, x, y, press),
+            Ev::Mouse { b, x, y, press } => { if p.screen == Screen::Main { p.mouse(&mut term, b, x, y, press) } else { p.screen_mouse(&mut term, b, y, press) } }
+            e if p.screen != Screen::Main => { if !p.screen_key(&mut term, &e) { break; } }
             Ev::Key(c) => { if !p.key(&mut term, c) { break; } }
-            Ev::Right => { if p.sel_id.starts_with("more:") { let s = p.sel_id[5..].to_string(); p.toggle_expand(&s); p.redraw = true; } else if p.sel_topic().is_some() { p.delegate(&mut term, "menu", ""); } }
+            Ev::Right => { if p.sel_id.starts_with("more:") { let s = p.sel_id[5..].to_string(); p.toggle_expand(&s); p.redraw = true; } else if p.sel_topic().is_some() { p.open_menu(&mut term); } }
             _ => {}
         }
         p.poll_pending(); p.tick();
@@ -395,4 +436,138 @@ pub fn run() -> i32 {
     term.leave();
     if let Some(mut c) = p.collector.take() { let _ = c.kill(); }
     0
+}
+
+// ── the topic's page and the chooser ─────────────────────────────────────────────────────────────────────────
+impl Panel {
+    fn live(&self) -> Live<'static> { let env: &'static Env = Box::leak(Box::new(self.env())); Live { env, notify_on: false, n: 0 } }
+    fn set(&self, f: &std::path::Path, k: &str, v: &str) { self.live().set(f, k, v); }
+    fn poke(&self) { let _ = fs::write(self.shared.join("poke"), ""); }
+    /// The page of the selected topic (the script draws it when a Slack pin or answer is on it)
+    fn open_menu(&mut self, term: &mut Term) {
+        let Some((_, f, ..)) = self.sel_topic() else { return };
+        if crate::menuui::needs_script(&f) { self.delegate(term, "menu", ""); } else { self.screen = Screen::Menu(0); self.menu_flash = None; self.redraw = true; }
+    }
+    fn menu_do(&mut self, term: &mut Term, idx: usize) {
+        let Some((id, f, ..)) = self.sel_topic() else { self.screen = Screen::Main; self.redraw = true; return };
+        let items = self.menu_list(&f);
+        let Some((key, _)) = items.get(idx).cloned() else { return };
+        let mut stay = false;
+        let now = store::now().to_string();
+        match key.as_str() {
+            "start" => { self.screen = Screen::Pick("start".into(), 0); self.redraw = true; return; }
+            "transfer" => { self.screen = Screen::Pick("transfer".into(), 1); self.redraw = true; return; }
+            "resume" => self.act(&["resume", &id], "resume", false),
+            "jump" => { let (m, p) = (store::topic_get(&f, "agent_machine"), store::topic_get(&f, "agent_pane")); self.agent_jump(&m, &p); stay = true; }
+            "now" => { self.set(&f, "status", "now"); self.set(&f, "waiting_for", ""); self.set(&f, "auto_back", ""); self.poke(); }
+            "review" => { self.set(&f, "status", "review"); self.set(&f, "auto_back", ""); self.poke(); }
+            "wait" => {
+                let cur = store::topic_get(&f, "waiting_for");
+                match self.ask(term, "Waiting for: ", &cur, 500) {
+                    Some(a) if !a.is_empty() => { self.set(&f, "status", "waiting"); self.set(&f, "waiting_for", &a); self.set(&f, "waiting_since", &now); self.set(&f, "deploy_wait", ""); self.set(&f, "slack_msg", ""); }
+                    _ => stay = true,
+                }
+            }
+            "deploy" => self.act(&["deploy", &id], "deploy", false),
+            "dismiss" => { self.sel_leave(); self.act(&["dismiss", &id], "dismiss", false); }
+            "project" => {
+                let cur = store::topic_get(&f, "project"); let ctx = self.ctx(); let ps = ui::projects(&ctx);
+                let nx = if cur.is_empty() { ps.first().map(|p| p.id.clone()).unwrap_or_default() } else { ps.iter().position(|p| p.id == cur).and_then(|i| ps.get(i + 1)).map(|p| p.id.clone()).unwrap_or_default() };
+                self.set(&f, "project", &nx); stay = true;
+            }
+            "slack" => {
+                if !store::topic_get(&f, "slack_channel").is_empty() { self.act(&["slack", &id, "off"], "flash", true); stay = true; }
+                else {
+                    match self.ask(term, "Slack: a link, #channel, @person or a name: ", "", 500) {
+                        Some(a) if !a.is_empty() => { self.menu_flash = Some((format!("… asking Claude for {} (a few seconds)", a), Instant::now() + Duration::from_secs(120))); self.act(&["slack", &id, &a], "menuflash", true); }
+                        _ => {}
+                    }
+                    stay = true;
+                }
+            }
+            "cancelxfer" => { self.set(&f, "transfer_to", ""); self.set(&f, "transfer_to_name", ""); self.set(&f, "transfer_from", ""); }
+            "reopen" => { self.set(&f, "status", "now"); self.set(&f, "waiting_for", ""); }
+            "next" => self.set(&f, "status", "next"), "later" => self.set(&f, "status", "later"), "done" => self.set(&f, "status", "done"),
+            "rename" => { let cur = store::topic_get(&f, "title"); match self.ask(term, "Title: ", &cur, 500) { Some(a) if !a.is_empty() => self.set(&f, "title", &a), _ => stay = true } }
+            "describe" => { let cur = store::topic_get(&f, "description"); match self.ask(term, "Description: ", &cur, 140) { Some(a) => self.set(&f, "description", &a), None => stay = true } }
+            "delete" => {
+                let t = store::topic_get(&f, "title");
+                match self.ask(term, &format!("Delete \"{}\"? y/N: ", t), "", 5) { Some(a) if a == "y" || a == "Y" => { self.set(&f, "deleted", "1"); self.sel_id.clear(); } _ => stay = true }
+            }
+            _ => {}
+        }
+        if !stay { self.screen = Screen::Main; }
+        self.redraw = true;
+    }
+    fn menu_edit_field(&mut self, term: &mut Term, idx: i64) {
+        let Some((_, f, ..)) = self.sel_topic() else { return };
+        if idx == -2 { let cur = store::topic_get(&f, "title"); if let Some(a) = self.ask(term, "", &cur, 500) { if !a.is_empty() { self.set(&f, "title", &a); } } }
+        else { let cur = store::topic_get(&f, "description"); if let Some(a) = self.ask(term, "", &cur, 140) { self.set(&f, "description", &a); } }
+        self.redraw = true;
+    }
+    fn menu_run(&mut self, term: &mut Term, idx: i64) { if idx == -2 || idx == -1 { self.menu_edit_field(term, idx); } else if idx >= 0 { self.menu_do(term, idx as usize); } }
+    /// Keys on the page and in the chooser. Returns false to leave the panel.
+    fn screen_key(&mut self, term: &mut Term, ev: &Ev) -> bool {
+        match self.screen.clone() {
+            Screen::Menu(idx) => {
+                let n = self.sel_topic().map(|t| self.menu_list(&t.1).len() as i64).unwrap_or(0);
+                match ev {
+                    Ev::Up | Ev::Key('k') => { let mut i = idx - 1; if i < -2 { i = n - 1; } self.screen = Screen::Menu(i); self.redraw = true; }
+                    Ev::Down | Ev::Key('j') => { let mut i = idx + 1; if i >= n { i = -2; } self.screen = Screen::Menu(i); self.redraw = true; }
+                    Ev::Enter | Ev::Right => { self.menu_run(term, idx); }
+                    Ev::Key(c) if c.is_ascii_digit() && *c != '0' => { let k = c.to_digit(10).unwrap_or(0) as i64; if k <= n { self.screen = Screen::Menu(k - 1); self.menu_do(term, (k - 1) as usize); } self.redraw = true; }
+                    Ev::Esc | Ev::Backspace | Ev::Left | Ev::Key('q') | Ev::Key('Q') | Ev::Key('h') => { self.screen = Screen::Main; self.redraw = true; }
+                    _ => {}
+                }
+            }
+            Screen::Pick(mode, idx) => {
+                let (n, first) = { let m = self.pick_agents(&mode); (m.len() as i64, if mode == "transfer" { 1 } else { 0 }) };
+                match ev {
+                    Ev::Up | Ev::Key('k') => { let mut i = idx - 1; if i < first { i = n; } self.screen = Screen::Pick(mode, i); self.redraw = true; }
+                    Ev::Down | Ev::Key('j') => { let mut i = idx + 1; if i > n { i = first; } self.screen = Screen::Pick(mode, i); self.redraw = true; }
+                    Ev::Enter | Ev::Right => { self.pick_do(term, &mode, idx); self.screen = Screen::Main; self.redraw = true; }
+                    Ev::Esc | Ev::Backspace | Ev::Left | Ev::Key('q') | Ev::Key('Q') | Ev::Key('h') => { self.screen = Screen::Main; self.redraw = true; }
+                    _ => {}
+                }
+            }
+            Screen::Main => {}
+        }
+        true
+    }
+    fn pick_agents(&self, mode: &str) -> Vec<crate::cards::Row> {
+        let Some((_, f, ..)) = self.sel_topic() else { return Vec::new() };
+        let rows = self.agent_rows_all(); let ts = store::load_fast(&self.topics, &self.shared);
+        let src = (store::topic_get(&f, "agent_machine"), store::topic_get(&f, "agent_pane"));
+        crate::menuui::pick_map(&rows, &ts, mode, if mode == "transfer" { Some((src.0.as_str(), src.1.as_str())) } else { None }).into_iter().map(|r| crate::cards::Row { m: r.m.clone(), id: r.id.clone(), st: r.st.clone(), name: r.name.clone(), task: r.task.clone() }).collect()
+    }
+    fn pick_do(&mut self, term: &mut Term, mode: &str, idx: i64) {
+        let Some((id, f, ..)) = self.sel_topic() else { return };
+        let map = self.pick_agents(mode);
+        if mode == "transfer" {
+            if idx < 1 { return; }
+            let Some(a) = map.get((idx - 1) as usize).cloned() else { return };
+            let tpj = store::topic_get(&f, "project"); let mut warn = String::new();
+            if !tpj.is_empty() {
+                let metas = fs::read_to_string(self.shared.join("agents.meta.local")).unwrap_or_default() + &fs::read_to_string(self.shared.join("agents.meta.remote")).unwrap_or_default();
+                let proj = metas.lines().find_map(|l| { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 && p[0] == a.m && p[1] == a.id { Some(p[5].to_string()) } else { None } }).unwrap_or_default();
+                if proj != tpj { warn = " (NOT an agent of this topic's project!)".into(); }
+            }
+            let from = { let g = store::topic_get(&f, "agent"); if g.is_empty() { "agent".to_string() } else { g } };
+            let label = format!("Hand \"{}\" over from {} to {}{}? The source agent commits and stops. y/N: ", store::topic_get(&f, "title"), from, a.name, warn);
+            match self.ask(term, &label, "", 5) { Some(x) if x == "y" || x == "Y" => {} _ => return }
+            let mut args = vec!["transfer", id.as_str(), a.m.as_str(), a.id.as_str(), a.name.as_str()]; if !warn.is_empty() { args.push("force"); }
+            self.act(&args, "transfer", false);
+            return;
+        }
+        if idx > 0 {
+            let Some(a) = map.get((idx - 1) as usize).cloned() else { return };
+            self.act(&["pickstart", &id, &a.m, &a.id, &a.name], "pickstart", false);
+        } else {
+            self.set(&f, "status", "now"); self.set(&f, "waiting_for", "");
+            for k in ["agent", "agent_machine", "agent_pane", "agent_session", "delegated"] { self.set(&f, k, ""); }
+        }
+    }
+    fn screen_mouse(&mut self, term: &mut Term, b: u32, y: u32, press: bool) {
+        if let Screen::Menu(_) = self.screen { if press && b == 0 { if let Some((_, r)) = self.pmap.iter().find(|(row, _)| *row == y as i64).cloned() { if let Ok(i) = r.parse::<i64>() { self.screen = Screen::Menu(i); self.menu_run(term, i); } } } }
+    }
 }

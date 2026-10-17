@@ -7,6 +7,7 @@ mod store;
 mod ui;
 mod term;
 mod panel;
+mod menuui;
 mod agentsui;
 mod theme;
 mod cards;
@@ -185,6 +186,23 @@ fn main() {
                 shared: PathBuf::from(opt("--shared").unwrap_or_default()), topics: PathBuf::from(opt("--topics").unwrap_or_default()),
                 cfg: opt("--config").map(|c| config_read(&c)).unwrap_or_default(), c: ui::Colors::read(&opt("--colors").unwrap_or_default()) };
             let view = cards::View::read(&opt("--view").unwrap_or_default());
+            if a[2] == "menu" || a[2] == "pick" {   // bhoted block menu|pick --file F | --title T --mode M --idx N [--flash S]: the page, with its markers (for the golden tests)
+                let idx: i64 = opt("--idx").and_then(|v| v.parse().ok()).unwrap_or(0);
+                let projects = ui::projects(&ctx);
+                let pname = |id: &str| -> Option<String> { let f = ctx.topics.join(format!("{}.topic", id)); let t = fs::read_to_string(f).ok()?; let mut name = String::new(); let (mut del, mut kd) = ("0".to_string(), String::new()); for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } } if kd == "project" && del != "1" { Some(name) } else { None } };
+                let out = if a[2] == "menu" {
+                    let file = PathBuf::from(opt("--file").unwrap_or_default());
+                    let items = menuui::menu_items(&file, &projects, &pname);
+                    menuui::render_menu(&menuui::MenuIn { c: &ctx, file: &file, idx, items: &items, project_name: &pname, github: view.github, flash: &opt("--flash").unwrap_or_default(), now: ctx.now })
+                } else {
+                    let rows: Vec<cards::Row> = ["agents.local", "agents.remote"].iter().flat_map(|f| fs::read_to_string(ctx.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split('\u{1f}').map(|x| x.to_string()); cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect();
+                    let ts = store::load(&ctx.topics); let mode = opt("--mode").unwrap_or_else(|| "start".into());
+                    let src = opt("--file").map(|f| (store::topic_get(Path::new(&f), "agent_machine"), store::topic_get(Path::new(&f), "agent_pane")));
+                    let map = menuui::pick_map(&rows, &ts, &mode, if mode == "transfer" { src.as_ref().map(|(a, b)| (a.as_str(), b.as_str())) } else { None });
+                    menuui::render_pick(&ctx, &opt("--title").unwrap_or_default(), &mode, &map, idx)
+                };
+                use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes()); return;
+            }
             if a[2] == "head" { let out = agentsui::head(&ctx, &view.head_view()); use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes()); return; }
             if a[2] == "bottom" {   // bhoted block bottom --run DIR: the agents, the dash line and the keys; agrows and agmap into the run folder
                 let mut cards = cards::Cards::new(&ctx, &view); cards.rows_total = view.rows;

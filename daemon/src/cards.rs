@@ -32,6 +32,7 @@ impl View {
     }
 }
 
+#[derive(Clone)]
 pub struct Row { pub m: String, pub id: String, pub st: String, pub name: String, pub task: String }
 fn rows(p: &std::path::Path) -> Vec<Row> {
     fs::read_to_string(p).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut f = l.split(US).map(|x| x.to_string()); Row { m: f.next().unwrap_or_default(), id: f.next().unwrap_or_default(), st: f.next().unwrap_or_default(), name: f.next().unwrap_or_default(), task: f.next().unwrap_or_default() } }).collect()
