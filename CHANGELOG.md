@@ -8,6 +8,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ### Added
 - Rust daemon `bhoted` (step 1 of docs/rust-rewrite.md): keeps the topic index current for every panel (inotify on Linux), started by the lead collector, setting `BHOTED=auto|off`; on Linux it also collects this machine's agents (same files as before), looks at the other machines' agents through kharka (`AGENTS_VIA=kharka`) and fetches the deployment and test lists (same lists as before, four to ten times faster) and, with `BHOTED_FOLLOW=shadow|on`, ten follow-ups of the collector (shadow only compares; `tools/shadow-report.sh`), and draws the main view of the panel (`BHOTED_FRAME`: cards, lines, done area, monitors, the windows and the click maps, and the screen made of it; the same bytes as before, a redraw 130 ms -> 29 ms, a frame of navigation 99 ms -> about 17 ms); without the binary bhote works as before. The collector's and the dog's pauses no longer start a process (`nap`).
 
+### Added (continued)
+- `BHOTED_PANEL=on`: the panel runs in the Rust daemon binary (`bhoted panel`): keys, mouse and the main view without bash. The topic's menu, settings, the wizard and the choosers still run as the script's views on the same terminal; the welcome screen with the dog is not in it yet. Off by default.
+
 ### Changed
 - A redraw of the panel is faster in bash as well: `ui_load` no longer works out each topic's project unless the project scope is on (15 ms), the monitor block is kept for the frames of navigation, the daemon's blocks are found once per load.
 - An agent is named by herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (`MAC/w3:a1` on another machine), in the panel, behind done topics, in `bhote agents`, in `bhote transfer` and in the mod's pane; the old code (`MAC4`, a machine code and a number) stays a ref and is the `alias` in `bhote agents --json`.

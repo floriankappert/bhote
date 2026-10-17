@@ -4890,7 +4890,7 @@ cli_reload() {  # bhote reload: restarts every bhote panel of this machine (afte
         [ -n "$pane" ] || continue
         read -r pgid cl <<< "$(herdr pane process-info --pane "$pane" 2>/dev/null | jq -r '.result.process_info as $i | ($i.foreground_process_group_id // "") as $g | ([$i.foreground_processes[]? | select(.pid == $g) | (.cmdline // "")][0] // "") | "\($g) \(.)"' 2>/dev/null)"
         case "$pgid" in ''|*[!0-9]*) continue ;; esac
-        case "$cl" in *bhote) ;; *) continue ;; esac              # the leader of the foreground group must be the bhote script itself
+        case "$cl" in *bhote|*"bhoted panel") ;; *) continue ;; esac   # the leader of the foreground group must be the bhote script itself (or the daemon's panel)
         [ -n "${BHOTE_DRY:-}" ] && { echo "would restart $pane (group $pgid: $cl)"; continue; }
         kill -TERM "$pgid" 2>/dev/null
         for (( k = 0; k < 20; k++ )); do                            # up to 5 s for it to end (it restores the terminal)
@@ -5739,14 +5739,14 @@ panel_setup() {  # the wizard from inside the panel: a normal terminal for it, t
 bhote_main() {
     local f pf chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
     harden_perms; bhote_info
+    if [ -n "${BHOTE_COLLECTOR_ONLY:-}" ]; then               # the collector alone (the Rust panel runs it for itself): until that panel is gone
+        trap 'rm -rf "$RUN_DIR"; exit 0' TERM INT HUP
+        collector "$BHOTE_COLLECTOR_ONLY"; rm -rf "$RUN_DIR"; exit 0
+    fi
     if [ -n "${BHOTE_ONCE:-}" ] || [ ! -t 0 ]; then
         AGENT_LOCAL=$RUN_DIR/agents.local; AGENT_REMOTE=$RUN_DIR/agents.remote
         collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
         COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 ))); ui_load; bhote_draw "$view" | tr -d '\001'; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
-    fi
-    if [ -n "${BHOTE_COLLECTOR_ONLY:-}" ]; then               # the collector alone (the Rust panel runs it for itself): until that panel is gone
-        trap 'rm -rf "$RUN_DIR"; exit 0' TERM INT HUP
-        collector "$BHOTE_COLLECTOR_ONLY"; rm -rf "$RUN_DIR"; exit 0
     fi
     if [ -z "${BHOTE_DELEGATE:-}" ] && [ -t 0 ] && [ "$(cfg_get BHOTED_PANEL off)" = on ] && bhoted_rust_panel; then :; fi   # (execs when it can: the daemon's panel takes over)
     printf '\033]2;Bhote\007'

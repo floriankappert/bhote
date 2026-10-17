@@ -34,6 +34,7 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 4a | ten follow-ups of the collector (cards, dedup, review, finished, gone, question, branches, numbers, reminders), through a Sink: `BHOTED_FOLLOW=off\|shadow\|on` | the other follow-ups (tests, deploys, auto-assign, projects), the stores' sync, Slack, updates, kharka watch | decisions identical in `tests/follow.sh` (logged and written), shadow soak with `tools/shadow-report.sh` |
 | 4b | the rest of the collector | CLI | collector no longer runs in bash |
 | 5a | blocks of the main view, one at a time, as `bhoted block <name>` (the panel calls it once per block): monitors, cards, lists; then done, agents, head, bottom | key and mouse handling, click maps, the other views | `tests/frame.sh`: the same bytes as the bash function, with and without colour, three widths |
+| 6a | the panel itself (`bhoted panel`, `BHOTED_PANEL=on`): terminal, keys, mouse, hover, the main view, its actions, a line to type into; menu, settings, wizard and the choosers are still the script's views, run as a child on the same terminal | the collector (as a child of the panel), the views listed | `tests/panel.py`: a pty, the real binary, clicks and keys |
 | 5b | the whole main view and its maps in one call (`bhoted block frame`), and the screen made of it (`bhoted paint`) | key and mouse handling, `ui_load`, the other views (menu, settings, pick, wizard) | `tests/frame.sh`: the same frame, screen and click maps, step by step |
 
 Each step names its measurement (CPU of panels + collector, frame time) before and after in the commit message.
@@ -105,3 +106,17 @@ now 29 ms (`ui_load` 12, frame 9, screen 8); a frame of navigation 99 -> about 1
 computing each topic's project unless the project scope is on.
 What stays in bash on purpose: the keys and the mouse (they need the arrays), `ui_load`, and the views that are not the main
 view. A Rust panel would have to take those over as well; that is a different, bigger step (the whole of step 6, if wanted).
+
+## Step 6a: the panel in Rust
+
+`BHOTED_PANEL=on` (off by default) makes `bhote` replace itself with `bhoted panel`. The Rust panel owns the terminal (raw mode, the
+alternate screen, SGR mouse with motion, the resize signal, Ctrl-C and a closed terminal clean up, also after a panic), reads
+keys and mouse reports into events, draws the main view in-process (no process per block, no files for the maps), and does what
+a click or a key does: select, expand "+N more", the section toggles and project checkboxes, the review card's buttons, jump
+to an agent, check off (x), dismiss (c), edit title or description (e, d), new topic (n), with a small line editor on the last
+row. What still needs the script is run through `bhote __act <name>` (jump to an agent or a topic's agent, answer a review: the
+herdr and kharka calls) or as a view: the topic's menu (double click, right button, →), settings (,), the wizard (w and the
+first start), the suggestions (a) and the choosers (s, t) run as `bhote` in a child on the same terminal (`BHOTE_DELEGATE`), the
+panel takes over again when it ends. The collector runs as a child of the panel (`BHOTE_COLLECTOR_ONLY`).
+Not there yet: the welcome screen with the dog, and the views above (each is a candidate for the next steps, with the rest of the collector).
+Measured: the panel idles at 0.2 % CPU and 5 MB; a hover or a click redraws in a few milliseconds.

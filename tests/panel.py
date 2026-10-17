@@ -95,6 +95,11 @@ for want in ("Bhote v", "REVIEW", "First review", "NOW", "Working topic", "A nex
 else:
     if all(w in sc for w in ("REVIEW", "NOW", "Agents")): ok("the main view comes up in the Rust panel (cards, lines, done, agents)")
 
+# 1b) the collector runs for the panel (it holds the lead lock, and ends with the panel)
+lock = os.path.join(p.T, "shared", "collector.lock"); t0 = time.time()
+while not os.path.islink(lock) and time.time() - t0 < 6: time.sleep(0.2)
+ok("the collector runs for the Rust panel (the lead lock is held)") if os.path.islink(lock) else bad("no collector lock: the collector is not running")
+
 # 2) a click selects, x checks it off
 y = p.row("A next topic")
 p.click(10, y)
