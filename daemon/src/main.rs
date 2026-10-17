@@ -54,17 +54,76 @@ fn token() -> String {
     format!("{}{}", std::process::id(), n)
 }
 
+extern "C" { fn kill(pid: i32, sig: i32) -> i32; }
+
+/// Waits until something in `dir` changed (inotify, no process, no polling), at most `ms`; true when it may have changed.
+/// Without inotify (macOS here) it sleeps a short step and says "maybe" (the caller compares the file list).
+#[cfg(target_os = "linux")]
+mod watch {
+    use std::os::unix::io::RawFd;
+    extern "C" {
+        fn inotify_init1(flags: i32) -> i32;
+        fn inotify_add_watch(fd: i32, path: *const std::os::raw::c_char, mask: u32) -> i32;
+        fn poll(fds: *mut PollFd, n: u64, timeout: i32) -> i32;
+        fn close(fd: i32) -> i32;
+    }
+    #[repr(C)] struct PollFd { fd: i32, events: i16, revents: i16 }
+    pub struct Watch(RawFd);
+    pub fn open(dir: &std::path::Path) -> Option<Watch> {
+        let fd = unsafe { inotify_init1(0o2000000 | 0o4000) }; // IN_CLOEXEC | IN_NONBLOCK
+        if fd < 0 { return None; }
+        let c = std::ffi::CString::new(dir.to_string_lossy().as_bytes()).ok()?;
+        // IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
+        let wd = unsafe { inotify_add_watch(fd, c.as_ptr(), 0x2 | 0x4 | 0x8 | 0x40 | 0x80 | 0x100 | 0x200) };
+        if wd < 0 { unsafe { close(fd); } return None; }
+        Some(Watch(fd))
+    }
+    impl Watch {
+        pub fn wait(&self, ms: i32) -> bool {
+            let mut p = PollFd { fd: self.0, events: 1, revents: 0 };
+            let n = unsafe { poll(&mut p, 1, ms) };
+            if n <= 0 { return false; }
+            let mut buf = [0u8; 8192];
+            {
+                use std::io::Read; use std::os::unix::io::FromRawFd;
+                let mut f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(self.0) });
+                while matches!(f.read(&mut buf), Ok(n) if n > 0) {}
+            }   // drain: many events are one change
+            true
+        }
+    }
+    impl Drop for Watch { fn drop(&mut self) { unsafe { close(self.0); } } }
+}
+fn alive(pid: i32) -> bool { unsafe { kill(pid, 0) == 0 } }
+
+/// bhoted run <topic dir> <out> [--parent <pid>] [--pid-file <file>]: ends when the parent (the lead collector) is gone.
 fn main() {
     let a: Vec<String> = std::env::args().collect();
-    if a.len() != 4 { eprintln!("usage: bhoted index|run <topic dir> <out>"); std::process::exit(2); }
+    if a.len() < 4 { eprintln!("usage: bhoted index|run <topic dir> <out> [--parent <pid>] [--pid-file <file>]"); std::process::exit(2); }
+    let opt = |name: &str| a.iter().position(|x| x == name).and_then(|i| a.get(i + 1)).cloned();
+    let parent: Option<i32> = opt("--parent").and_then(|v| v.parse().ok());
+    let pid_file = opt("--pid-file");
     let (dir, out) = (Path::new(&a[2]), Path::new(&a[3]));
     match a[1].as_str() {
         "index" => build(dir, out, &token()).unwrap_or_else(|e| { eprintln!("bhoted: {e}"); std::process::exit(1) }),
         "run" => {
             let mut last = Vec::new();
+            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); }
+            #[cfg(target_os = "linux")]
+            let w = watch::open(dir);
             loop {
+                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); } return; } }
                 let sig = signature(dir);
                 if sig != last || !out.exists() { if build(dir, out, &token()).is_ok() { last = sig; } }
+                #[cfg(target_os = "linux")]
+                {
+                    if let Some(w) = &w {
+                        if w.wait(1000) { std::thread::sleep(Duration::from_millis(15)); } // a burst of writes: one rebuild
+                        let _ = w.wait(0);
+                        // the signature check below still decides (a change that left no event costs one look per second)
+                        continue;
+                    }
+                }
                 std::thread::sleep(Duration::from_millis(100));
             }
         }

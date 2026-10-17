@@ -78,6 +78,7 @@ cfg_set() {  # cfg_set KEY value [KEY value ...]: one rewrite, one mv (a value n
 SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it opens at the next start)
 STORE|local|enum:local:remote:kharka|Where the topics are kept: local, a replica on STORE_MACHINE, or kharka (a local-first store on every machine)
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
+BHOTED|auto|enum:auto:off|The Rust daemon bhoted keeps the topic index current for every panel (auto: when the binary is found, next to this script in daemon/target/release or on the PATH; off: bash only)
 KHARKA||text|The kharka binary for STORE=kharka and AGENTS_VIA=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
 PUSH_STATES|on|bool|When an agent here changes its state, tell the other machines at once (through herdr), so that their panels show it within a second (only with REMOTE_AGENTS on and AGENTS_VIA=herdr)
@@ -364,7 +365,7 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
     fi
     [ "$locked" = 1 ] && topic_unlock "$f"
     [ "$rc" = 0 ] || return 1
-    : > "$STORE_DIRTY"
+    : > "$STORE_DIRTY"; rmf "$SHARED_DIR/topics.idx"          # (the next reader gets a current index at once, not after the daemon's next look)
 }
 topic_new() {  # topic_new <title> [waiting for] [description]
     mkdir -p "$TOPIC_DIR"
@@ -376,7 +377,7 @@ topic_new() {  # topic_new <title> [waiting for] [description]
     printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\n' \
         "$id" "$title" "$status" "$2" "$since" "$now" "$now" "${3:-}" > "$TOPIC_DIR/$id.topic"
     NEW_TOPIC_ID=$id
-    : > "$STORE_DIRTY"
+    : > "$STORE_DIRTY"; rmf "$SHARED_DIR/topics.idx"
 }
 store_tag() {  # the note after the topic count: offline, or (kharka) a hub that is away
     STORE_TAG_OUT=""
@@ -397,9 +398,27 @@ topics_index_build() {  # topics_index_build <files>: ONE awk reads every topic 
         { k = $0; sub(/=.*/, "", k); if (!(k in seen)) { seen[k] = 1; if (k in want) { val = $0; sub(/^[^=]*=/, "", val); v[k] = val } } }
         END { flush() }' "$@"; fi; } > "$tmp" 2>/dev/null && mv -f "$tmp" "$TOPICS_IDX" 2>/dev/null; rm -f "$tmp" 2>/dev/null; return 0
 }
+bhoted_bin_set() {  # bhoted_bin_set <var>: the daemon binary (the environment BHOTED_BIN, next to this script, the PATH), or empty
+    local _b=${BHOTED_BIN:-} _d; _d=$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "$0")")
+    [ -n "$_b" ] || for _b in "$_d/daemon/target/release/bhoted" "$_d/bhoted" "$(command -v bhoted 2>/dev/null)"; do [ -x "$_b" ] && break; _b=""; done
+    printf -v "$1" '%s' "$_b"
+}
+bhoted_alive() {  # 0 when the daemon runs for THIS topic folder (its pid file says which; a builtin check, no process)
+    local pid dir off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1
+    [ -r "$SHARED_DIR/bhoted.pid" ] || return 1
+    { read -r pid dir; } < "$SHARED_DIR/bhoted.pid" 2>/dev/null || return 1
+    [ "$dir" = "$TOPIC_DIR" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+bhoted_keep() {  # bhoted_keep <collector pid>: the lead collector keeps the daemon running (it ends when the collector does)
+    local bin off; bhoted_alive && return 0; cfg_var off BHOTED auto; [ "$off" = off ] && return 0
+    bhoted_bin_set bin; [ -n "$bin" ] || return 0
+    mkdir -p "$SHARED_DIR" 2>/dev/null; rmf "$SHARED_DIR/bhoted.pid"
+    ( "$bin" run "$TOPIC_DIR" "$SHARED_DIR/topics.idx" --parent "$1" --pid-file "$SHARED_DIR/bhoted.pid" >/dev/null 2>&1 & )
+}
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
     local f hdr stale=0 files; TOPICS_IDX="$SHARED_DIR/topics.idx"; files=("$TOPIC_DIR"/*.topic); [ -f "${files[0]}" ] || files=()
     if [ ! -f "$TOPICS_IDX" ]; then stale=1
+    elif bhoted_alive && { read -r hdr; } < "$TOPICS_IDX" 2>/dev/null && case "$hdr" in "#"*" $TOPIC_DIR "*) true ;; *) false ;; esac; then :   # the daemon keeps it current
     else
         { read -r hdr; } < "$TOPICS_IDX" 2>/dev/null; case "$hdr" in "#${#files[@]} $TOPIC_DIR "*) ;; *) stale=1 ;; esac
         if [ "$stale" = 0 ]; then for f in "${files[@]}"; do [ "$TOPICS_IDX" -nt "$f" ] || { stale=1; break; }; done; fi
@@ -1482,6 +1501,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
         case "$every_l" in ''|*[!0-9]*|0) every_l=3 ;; esac; case "$every_r" in ''|*[!0-9]*|0) every_r=5 ;; esac
         lead=0
         if collector_lead "$1"; then
+            bhoted_keep "$1"
             lead=1; local remote_due=0; [ $(( SECONDS - last_r )) -ge "$every_r" ] && { remote_due=1; last_r=$SECONDS; }
             [ -e "$SHARED_DIR/remote.due" ] && ! { [ -n "$rem_pid" ] && kill -0 "$rem_pid" 2>/dev/null; } && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine (kept while a round still runs)
             collect_local                                       # first what the panels show; the merge can take a moment

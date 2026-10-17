@@ -14,12 +14,20 @@ and the collector together about 9 % of a core. Aim: the daemon under 1 %, a fra
   output with the bash function's on the same data (the prototype's index is compared that way).
 - Standard library first; a crate only where it is the difference (inotify, JSON, sockets).
 
+## Interface: files, not a socket
+
+bash cannot talk to a Unix socket without starting a process (`nc`, `socat`), and a process per read is exactly what made
+bhote slow. So the daemon and the bash clients meet where they already do: in files. The daemon writes snapshots (the
+topic index, the agent and monitor lists) that panels read with builtins; changes a user makes still go through the CLI
+or the bash functions, which invalidate the snapshot (`topic_set` removes `topics.idx`, the next reader gets a current
+one). From step 4 on the daemon writes topics itself, in-process.
+
 ## Steps
 
 | # | Daemon takes over | Bash keeps | Done when |
 |---|---|---|---|
 | 0 | topic index (prototype in `daemon/`, same file as `topics_index_build`) | everything | index identical on 414 real topics |
-| 1 | the topic store: parse, `topic_set`/`topic_new`, locks, events (inotify) | panel, CLI call it over a socket | `tests/cli.sh`, `store.sh` pass in both modes |
+| 1 | the topic index, kept current by inotify (Linux; macOS: a look every 100 ms) | writers (`topic_set`, CLI) | `tests/store.sh` passes with the daemon on and off; measured below |
 | 2 | agents of every machine (herdr, kharka), agent names, cards | panel reads a snapshot | `tests/agents.sh` in both modes |
 | 3 | monitors: CircleCI, GitHub Actions, local test runs | panel reads a snapshot | `tests/monitor.sh` in both modes |
 | 4 | follow-ups, auto-assign, reminders, Slack pins, update check, kharka watch | CLI | collector no longer runs in bash |
@@ -27,3 +35,10 @@ and the collector together about 9 % of a core. Aim: the daemon under 1 %, a fra
 
 Each step names its measurement (CPU of panels + collector, frame time) before and after in the commit message.
 Distribution (Homebrew, PKGBUILD, CI for Linux and macOS arm64/x86) comes with step 1, when the daemon first matters to users.
+
+## Step 1, measured
+
+`bhoted run` (setting `BHOTED=auto`, started by the lead collector, ends with it): 0.1 % CPU idle, 2.7 MB, an index
+rebuild 4 ms (awk: 20 ms), a new file is in the index within a moment. The panel's "is the index current?" check no
+longer looks at 414 files: about 4 ms before, 1.6 ms per call now (mostly the setting read). The gain of this step alone
+is small, as predicted; it is the foundation: the daemon exists, is started, found and tested.

@@ -145,4 +145,23 @@ pm=""; self_pid_set pm; [ "$pm" = "$$" ] || bad "self_pid_set: the main shell is
   ( p1=""; self_pid_set p1; [ "$p1" != "$p0" ] && kill -0 "$p1" 2>/dev/null && lock_take "$SHARED_DIR/t.lock" "$p1" && sleep 1 ) &
   sleep 0.5; lock_take "$SHARED_DIR/t.lock" "$p0" && exit 2; wait; lock_take "$SHARED_DIR/t.lock" "$p0" || exit 3
   lock_drop "$SHARED_DIR/t.lock" "$p0"; exit 0 ) && ok "sync lock: a background sync in a subshell holds it against the panel" || bad "sync lock shared with a subshell: step $?"
+
+# 9) the daemon (bhoted, Rust) keeps the topic index; skipped when the binary is not built (cargo build --release in daemon/)
+BD=""; bhoted_bin_set BD
+if [ -n "$BD" ]; then
+  ( mkdir -p "$SHARED_DIR"; export BHOTED_BIN=$BD
+    mk "$TOPIC_DIR" dm1 "Daemon one" 99990; mk "$TOPIC_DIR" dm2 "Daemon two" 99991
+    topics_index_build "$TOPIC_DIR"/*.topic; LC_ALL=C sort "$TOPICS_IDX" | tail -n +1 | grep -v '^#' > "$T/idx.awk"
+    "$BD" index "$TOPIC_DIR" "$T/idx.rust" || exit 1; grep -v '^#' "$T/idx.rust" | LC_ALL=C sort > "$T/idx.rust.s"
+    cmp -s "$T/idx.awk" "$T/idx.rust.s" || exit 2                                  # the same index as the awk makes
+    bhoted_keep $$; for i in $(seq 1 20); do bhoted_alive && break; sleep 0.1; done; bhoted_alive || exit 3
+    topics_index_ensure; n0=$(head -1 "$TOPICS_IDX" | cut -d' ' -f1)
+    mk "$TOPIC_DIR" dm3 "Daemon three" 99992
+    for i in $(seq 1 30); do [ "$(head -1 "$SHARED_DIR/topics.idx" | cut -d' ' -f1)" != "$n0" ] && break; sleep 0.1; done
+    topics_index_ensure; grep -q 'Daemon three' "$TOPICS_IDX" || exit 4              # a new file is in the index within a moment
+    topic_set "$TOPIC_DIR/dm3.topic" title "Daemon three, renamed"; topics_index_ensure
+    grep -q 'renamed' "$TOPICS_IDX" || exit 5                                      # a write through topic_set is seen at once
+    kill "$(cut -d' ' -f1 "$SHARED_DIR/bhoted.pid")" 2>/dev/null; exit 0 ) \
+    && ok "bhoted: same index as the awk, new files and writes are in it" || bad "bhoted: step $?"
+fi
 rm -rf "$T"; exit $fail

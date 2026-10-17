@@ -5,6 +5,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- Rust daemon `bhoted` (step 1 of docs/rust-rewrite.md): keeps the topic index current for every panel (inotify on Linux), started by the lead collector, setting `BHOTED=auto|off`; without the binary bhote works as before. The collector's and the dog's pauses no longer start a process (`nap`).
+
 ### Changed
 - An agent is named by herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (`MAC/w3:a1` on another machine), in the panel, behind done topics, in `bhote agents`, in `bhote transfer` and in the mod's pane; the old code (`MAC4`, a machine code and a number) stays a ref and is the `alias` in `bhote agents --json`.
 - Deployments say what went live behind their name, also when they went through (the branch of a merged pull request with its number, instead of `Merge pull request`), and test runs say which branch was tested (CI: its branch; local runs: the branch of the worktree). The result of a test run stays on the right.
