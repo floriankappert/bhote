@@ -91,6 +91,11 @@ class Panel:
         for i, l in enumerate(self.screen()):
             if text in l: return i + 1
         return None
+    def fresh_row(self, text, timeout=6.0):
+        """The row of a text in a frame that is drawn now (a resize signal forces a redraw)."""
+        self.out = b""; os.kill(self.pid, signal.SIGWINCH)
+        self.expect(text, timeout)
+        return self.row(text)
     def click(self, x, y, b=0):
         self.send(f"\x1b[<{b};{x};{y}M\x1b[<{b};{x};{y}m")
     def close(self):
@@ -184,13 +189,13 @@ p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("comma: the settings (the script's view), Esc: back") if (sets and back) else bad(f"settings round trip (settings={sets}, back={back})")
 
 # 9) the right button opens the menu as well; a click on the Done line selects it
-y = Y_WORKING   # (the list has the same layout after the page: the row seen at the start)
+y = p.fresh_row("Working topic") or Y_WORKING
 os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
 menu = p.expect("ACTIONS", 8)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("right button: the topic's menu") if (menu and back) else bad(f"right button menu (menu={menu}, back={back})")
 # 10) the page is the panel's own: keys move, a number runs an action ("Park for later" on a now topic), Esc leaves
-y = Y_WORKING   # (the list has the same layout after the page: the row seen at the start)
+y = p.fresh_row("Working topic") or Y_WORKING
 os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
 shown = p.expect("ACTIONS", 5)
 lines = p.screen(); later = [l for l in lines if "Park for later" in l]
