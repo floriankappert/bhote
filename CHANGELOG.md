@@ -5,7 +5,16 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- Rust daemon `bhoted` (step 1 of docs/rust-rewrite.md): keeps the topic index current for every panel (inotify on Linux), started by the lead collector, setting `BHOTED=auto|off`; on Linux it also collects this machine's agents (same files as before), looks at the other machines' agents through kharka (`AGENTS_VIA=kharka`) and fetches the deployment and test lists (same lists as before, four to ten times faster) and, with `BHOTED_FOLLOW=shadow|on`, ten follow-ups of the collector (shadow only compares; `tools/shadow-report.sh`), and draws the main view of the panel (`BHOTED_FRAME`: cards, lines, done area, monitors, the windows and the click maps, and the screen made of it; the same bytes as before, a redraw 130 ms -> 29 ms, a frame of navigation 99 ms -> about 17 ms); without the binary bhote works as before. The collector's and the dog's pauses no longer start a process (`nap`).
+
+### Added (continued)
+- Hardening of the daemon and the Rust panel: a fuzz test (`tests/fuzz.py`), guarded parts that survive a panic, time limits for every child process, restart of the collector and the daemon, a check of the shared folder, 0600 settings, size caps, `cargo audit` and clippy in the CI.
+- The daemon merges the topics with kharka (`STORE=kharka`) and does the follow-ups `project_sync`, `tests_sync` and `deploy_sync` (`BHOTED_FOLLOW`); the topic's page and the chooser of free agents are drawn by the Rust panel.
+- `BHOTED_PANEL=on`: the panel runs in the Rust daemon binary (`bhoted panel`): keys, mouse and the main view without bash. The topic's menu, settings, the wizard and the choosers still run as the script's views on the same terminal; the welcome screen with the dog is not in it yet. Off by default.
+
 ### Changed
+- A redraw of the panel is faster in bash as well: `ui_load` no longer works out each topic's project unless the project scope is on (15 ms), the monitor block is kept for the frames of navigation, the daemon's blocks are found once per load.
 - An agent is named by herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (`MAC/w3:a1` on another machine), in the panel, behind done topics, in `bhote agents`, in `bhote transfer` and in the mod's pane; the old code (`MAC4`, a machine code and a number) stays a ref and is the `alias` in `bhote agents --json`.
 - Deployments say what went live behind their name, also when they went through (the branch of a merged pull request with its number, instead of `Merge pull request`), and test runs say which branch was tested (CI: its branch; local runs: the branch of the worktree). The result of a test run stays on the right.
 - The panel is wider by default: 56 columns when the plugin opens it (was 44), the pane stays between 50 and 100 columns (`PANEL_MIN_WIDTH` 50, was 36; `PANEL_MAX_WIDTH` 100, was 60), and the list uses up to 100 columns. Open panels that are narrower are widened to the minimum; set `BHOTE_PANEL_WIDTH` (the plugin) or the two settings to go back.

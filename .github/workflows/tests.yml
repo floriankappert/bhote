@@ -32,6 +32,10 @@ jobs:
           jq --version && python3 --version && git --version
           git config --global user.name "bhote CI" && git config --global user.email "ci@example.invalid"
           git config --global init.defaultBranch main
+      - name: Build the daemon (its parity tests run when the binary is there, and it must compile on both systems)
+        run: cargo build --release --manifest-path daemon/Cargo.toml
+      - name: Unit tests of the daemon (input parser, child processes, guards)
+        run: cargo test --release --manifest-path daemon/Cargo.toml
       - name: Test suites
         run: bash tests/run.sh
 
@@ -43,3 +47,13 @@ jobs:
         run: |
           shellcheck --version | sed -n 2p
           shellcheck -S error bhote install.sh tests/*.sh tools/*.sh herdr-plugin/*.sh omarchy-plugin/*.sh
+
+  daemon-checks:
+    name: daemon (clippy, advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: clippy (what is wrong, not what is style)
+        run: cargo clippy --release --manifest-path daemon/Cargo.toml -- -A clippy::all -D clippy::correctness
+      - name: known vulnerabilities in the dependencies
+        run: cargo install cargo-audit --locked && cargo audit --file daemon/Cargo.lock
