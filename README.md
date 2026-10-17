@@ -8,7 +8,7 @@
 
 A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you work on, who you wait for) next to your
 **agents** (who is free, who is busy), on every machine you work on. herdr is a terminal multiplexer for coding agents
-such as Claude Code and Codex; bhote sits in a narrow pane next to them. It is a single bash script, about 44 columns
+such as Claude Code and Codex; bhote sits in a narrow pane next to them. It is a single bash script, about 56 columns
 wide, with a small sheepdog that guards the herd.
 
 <p align="center"><img src="docs/screenshot.svg" width="380" alt="The bhote panel: topics in review, now, next and waiting, the last done topics, and the agents grouped by project"></p>
@@ -18,7 +18,7 @@ wide, with a small sheepdog that guards the herd.
 - **Topics** move through `now`, `next`, `waiting` (for a name, with a date), `review`, `later` and `done`, each with an optional description.
   The panel shows review and now as cards, next, waiting and parked ones as lines grouped by status; the last done topics sit in their own area, with the agent that did them.
 - **Agents of all machines** in one list, grouped by project: working ones in Claude orange, ones that need you in red, idle ones grey,
-  with the topic each works on. Every agent has a fixed number on its machine (`MAC4`, `OMR1`), also a ref for the CLI.
+  with the topic each works on. Every agent has a name of its own, herdr's workspace and pane number (`w3:a1`, `MAC/w3:a1` on another machine), also a ref for the CLI.
 - **Start a topic on a free agent** (`s`): bhote sends title and description to its pane. With `AUTO_ASSIGN` a `now` topic is started by itself on the next free agent of its project.
 - **Review topics by themselves:** an agent that asks you a question or waits for an answer gets a review topic (`Question from <agent>`); it goes when the agent works again (`AUTO_REVIEW`).
 - **Waiting:** agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on. A waiting topic can carry a **Slack pin** (channel, DM or thread); when someone writes there, it goes to review. Claude Code and its Slack connector do the reading, so bhote needs no Slack token.
@@ -27,6 +27,7 @@ wide, with a small sheepdog that guards the herd.
 - **Deployment and test monitor:** the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test jobs, local runs through `bhote test run`, live status files) of your projects, seven each, with progress bars, above the agents.
 - **Search from anywhere in herdr** (the find key, e.g. `ctrl+alt+t`): all agents and topics, `⏎` jumps there, `ctrl+n` adds a topic.
 - **Topics are plain files**, kept in sync with a second machine through herdr's own connection, or with every machine through [kharka](https://github.com/jakobbeyer/kharka) (opt-in); **update notice** when a newer version is out.
+- **Claude Code mod:** the agent's topic as a coloured band above the prompt (status, description, age) and `/topic review|done|…` to change it without a turn ([how](docs/claude-mod.md); `bhote mod install`).
 - **Omarchy bar widget**, themes (terminal colours, Catppuccin or Dracula, each role overridable), a **setup wizard** and the Claude skill `/bhote-install`.
 - A **CLI** (every command with `--json`) to create and close topics from scripts and agents.
 
@@ -34,7 +35,7 @@ wide, with a small sheepdog that guards the herd.
 
 - macOS or Linux, bash 3.2 or newer (the bash that ships with macOS is enough)
 - [herdr](https://herdr.dev) and `jq`
-- optional: Claude Code (skills, the SessionStart hook, the Slack watch), `gh` or a CircleCI token (the monitors), Omarchy (the bar widget)
+- optional: Claude Code (skills, the SessionStart hook, the Slack watch, the 2.1.287+ topic mod), `gh` or a CircleCI token (the monitors), Omarchy (the bar widget)
 
 ## Install
 
@@ -84,7 +85,7 @@ After an update, `bhote reload` restarts the panels of the machine (never type i
 Start herdr; the panel opens next to the agent pane of each tab (or run `bhote` in any pane). The first start shows the
 setup wizard. Then:
 
-- `n` adds a topic (`Fix the login redirect; users land on /home`), `↑↓` choose one, `s` starts it on a free agent.
+- `n` adds a topic (`Fix the login redirect; users land on /home`), click one, `s` starts it on a free agent.
 - `x` checks it off, `→` opens its page with every action, `,` opens the settings.
 - From a script or an agent:
 
@@ -97,8 +98,7 @@ setup wizard. Then:
 
 | key | does |
 |---|---|
-| `↑↓` / `jk` | move |
-| `⏎` | jump to the topic's agent in herdr (in another tab the focus goes to the bhote panel there; no agent: the topic's page) |
+| click | a card: show its agent in herdr; a double click, and a click on a line (next, waiting, later, done): the topic's page |
 | `→`, `←` / `esc` | the topic's page / go back |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `s` | start the topic on a free agent |
@@ -157,7 +157,7 @@ rm ~/.config/omarchy/plugins/bhote.bar                # Omarchy bar widget (inst
 ```
 
 Your topics and settings stay until you remove them: `~/.config/bhote` and `${XDG_DATA_HOME:-~/.local/share}/bhote`.
-Claude Code: delete `skills/bhote` and `skills/bhote-install` in each Claude profile (`~/.claude`, …) and the
+Claude Code: `bhote mod remove` (the mod), delete `skills/bhote` and `skills/bhote-install` in each Claude profile (`~/.claude`, …) and the
 `bhote current` entry under `hooks.SessionStart` in its `settings.json`.
 
 ## Contributing

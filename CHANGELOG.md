@@ -5,13 +5,33 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Changed
+- An agent is named by herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (`MAC/w3:a1` on another machine), in the panel, behind done topics, in `bhote agents`, in `bhote transfer` and in the mod's pane; the old code (`MAC4`, a machine code and a number) stays a ref and is the `alias` in `bhote agents --json`.
+- Deployments say what went live behind their name, also when they went through (the branch of a merged pull request with its number, instead of `Merge pull request`), and test runs say which branch was tested (CI: its branch; local runs: the branch of the worktree). The result of a test run stays on the right.
+- The panel is wider by default: 56 columns when the plugin opens it (was 44), the pane stays between 50 and 100 columns (`PANEL_MIN_WIDTH` 50, was 36; `PANEL_MAX_WIDTH` 100, was 60), and the list uses up to 100 columns. Open panels that are narrower are widened to the minimum; set `BHOTE_PANEL_WIDTH` (the plugin) or the two settings to go back.
+- The list is for the mouse: a click on a card shows its agent, a double click opens its page (no `›` button, no ⋮ menu), a click on a line (next, waiting, later, done) opens its page. The arrow keys, `⏎`, `m` and the right-button menu are gone from the list.
+- Done and Archived are one section: its last line says `✓ 42 done · ▤ 30 archived` (like `✶ 0 active · ○ 13 inactive` for the agents). The Archived section is gone; the small view of Done shows the same line.
+- The lines (Next, Waiting, Later) sit at the bottom, docked above Done; the cards (review, now, testing, deploying, finished) are on top. The agent divider and the rule above the keys are dotted like the captions; the jump key at the bottom right is gone.
+- The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
+
 ### Fixed
+- One agent, one card on now/testing: when an agent had several topics there (a card for each piece of work, one session), the list showed two cards for it. Now the newest stays and the older ones are recently finished.
+- An agent with several recently finished cards no longer reopens all of them when it works again: only the newest comes back on now (two cards for one agent in NOW).
+- A topic that waits for a deployment and has a branch (its agent's) follows the deployment of that branch, no longer the newest one of the project; a binding made to another branch's deployment is ignored.
 - macOS: the progress bars in the Deployments and Tests lists showed `��` where the shell counts bytes (no UTF-8 locale): the bar is no longer cut with `${bar:0:n}`.
 - A panel whose terminal is gone (pane closed, process still alive) no longer spins at full CPU: input reads tell the end of input (`in_fill`/`in_get` return 2) from a timeout (1), and the panel cleans up and exits on it. New suite `tests/input.sh`.
 - A working agent whose topics are all waiting gets a card on now (it works on something that has no topic); it goes when a topic of the agent is on now, testing, review or next.
 - A "Question from …" review card now goes by itself when the question is settled without the agent working again (e.g. `/clear`, an empty prompt): the agent is idle and its pane no longer ends with a question. A pane on another machine: after `FINISHED_MINUTES`.
 
 ### Added
+- Setting `CLAUDE_MOD` (default on; settings › *Claude Code mod*): off, the Claude Code mod draws neither the band nor the pane and asks bhote for nothing (`bhote current --json --mod` answers `{"disabled":true}`).
+- `bhote jump <machine> <pane> | <agent>` shows an agent in herdr (a pane's item in the Claude Code mod presses it): this machine's agent is focused, another machine's through kharka or herdr. In the mod's pane every item has two lines (title; `∟` address and time) and is pressable; the card has a line above it, `This agent w3:a1`.
+- `bhote kharka watch [install|uninstall|status]`: a watcher for `herdr-kharka`. When a machine's entry `herdr/<node>` in kharka is not written for 90 s (`KHARKA_WATCH_STALE`) while the daemon is online, it restarts `herdr-kharka` (the process can live on while it writes nothing, as on the Mac: its agents showed as `off-…`), and the daemon when it is offline twice in a row; at most once in three minutes, each time with its reasons in `kharka-watch.log`. `install` sets up a timer that looks every minute (launchd on macOS, a systemd user timer on Linux).
+- The Claude Code mod can show the topic in a pane beside the chat (`/topic pane`): description, project, agent and branch, waiting and Slack pin, the pull request of the branch with its checks, the test and deployment bars, the review card with its buttons, the other topics of the panel's cards (review, now, testing, deploying, recently finished), and buttons for Review, Done, Next and Later. `bhote current --json --full` has a new `context` (`pr`, `siblings`, `lists`) for it.
+- Projects can be switched off in the Deployments and Tests blocks: a checkbox for each project with a CI in the block's caption (`☑ IMS  ☑ BIL  ☐ BM`, names of at most 3 characters; what does not fit goes to a row below). A click switches the project off or on; its entries and the local test runs of its worktrees are not shown. Settings `DEPLOY_PROJECTS_OFF` and `TEST_PROJECTS_OFF`.
+- Deployments follow CircleCI's logic: a deployment is a workflow run with a deploy job (one entry per workflow, labelled by the job: `IMS · Backend`), its progress bar counts the jobs of the workflow that are over (not `notify-*` jobs, not jobs that did not run), a dynamic config (`setup: true` + `continue.yml`) is detected through its continuation, and the jobs of a finished workflow are cached. An agent whose branch has the merged pull request waits for the deployment of `main` that carries it (`(#123)` in the commit title). `deploy_names` takes `job=Label` for CircleCI.
+- **Claude Code mod `bhote-topic`** ([docs](docs/claude-mod.md)): a band above the Claude Code prompt with the agent's topic (title, description, status badge in the status colour, age that moves on) and `/topic review|done|now|next|later|testing|dismiss|wait <Name>|hide|show` without a Claude turn. `bhote mod [install|remove|status]` puts it into every Claude profile (`integrations/claude` is the marketplace `bhote`); the setup wizard and `/bhote-install` offer it. Needs Claude Code 2.1.287+. The band shows a progress bar for each test suite running in the agent's worktree and for the deployment its topic waits for; `bhote current --json` has a new `progress` field (`tests`, `deploy`) for it.
+- Done, Deployments and Tests can be switched to a small view like the agents: the ↕ at the end of the caption (or a click on it) shows only `14 done`, or `x running · y failed` (failures among the last 10; a failure that a newer run of the same project and name made good counts as `✓ resolved`, and says so in the list, too). Settings `DONE_COMPACT`, `DEPLOYS_COMPACT`, `TESTS_COMPACT`.
 - The testing card shows a progress bar for each running suite (two at most, the suite's name in front), like the deployment card, from the live status files of the agent's worktree.
 - The panel shows whether it is the pane you are in: a green dot at the right of the head, and the head dimmed while another pane has
   the focus (read from herdr once a second when idle).
@@ -59,7 +79,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
   description and the branch. The card keeps its coloured bar and block edges.
   What the icon does not say (handing over, needs you, offline, tests running) stays in one extra line.
 - Run from a git checkout that is past the tag of its version (local work), the panel and `bhote version` call it by its local build number,
-  `0.9.1.2 Preview` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
+  `0.9.1.3 Preview` (`LOCAL_BUILD`; the fourth number counts the builds on); a release install says its version.
 - After `/clear` (a new session in the pane) the topic of the pane follows the new session when it starts working; an event without a
   session id no longer hands the old session's topic over.
 - A click on a topic selects it and shows its agent in herdr, like a click on the agent, and leaves the focus on the agent (its grey

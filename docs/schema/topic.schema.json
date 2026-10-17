@@ -242,6 +242,418 @@
         "null"
       ],
       "description": "Unix time (seconds) of the last change; the newer one wins when replicas are merged."
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only in `bhote current --json`, never in the other commands: what runs for the agent that asks. `tests`: the suites running in its worktree (live status files, three at most); `deploy`: the deployment its topic waits for, or null.",
+      "required": [
+        "tests",
+        "deploy"
+      ],
+      "properties": {
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "suite",
+              "done",
+              "total"
+            ],
+            "properties": {
+              "suite": {
+                "type": "string"
+              },
+              "done": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "deploy": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "project",
+            "label",
+            "state",
+            "done",
+            "total",
+            "url"
+          ],
+          "properties": {
+            "project": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "running",
+                "queued",
+                "approval",
+                "ok",
+                "failed",
+                "canceled"
+              ]
+            },
+            "done": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only in `bhote current --json --full`: the pull request of the agent's branch and the other open topics of the same project (the Claude Code mod's pane shows them).",
+      "required": [
+        "pr",
+        "siblings"
+      ],
+      "properties": {
+        "pr": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "number",
+            "title",
+            "state",
+            "draft",
+            "url",
+            "checks"
+          ],
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "open",
+                "closed",
+                "merged"
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            },
+            "checks": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "success",
+                "failed",
+                "pending"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "success": {
+                  "type": "integer"
+                },
+                "failed": {
+                  "type": "integer"
+                },
+                "pending": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "siblings": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "n",
+              "title",
+              "status"
+            ],
+            "properties": {
+              "n": {
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "lists": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The cards of the panel: the other topics of each status, newest first (at most 8 in review, 5 finished, 6 of the others), with the total of that status. deploying is a topic that waits for a deployment; next, waiting, later, done and the archived ones are not part of it.",
+          "properties": {
+            "review": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "now": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "testing": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "deploying": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "finished": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

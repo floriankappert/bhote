@@ -5,7 +5,7 @@
 
 | Hook | When | Does |
 |---|---|---|
-| `[[startup]]` | herdr starts (and on server handoff) | In every tab: split the agent pane (or the first pane) to the right, about 44 columns, and run `bhote` in the new pane. |
+| `[[startup]]` | herdr starts (and on server handoff) | In every tab: split the agent pane (or the first pane) to the right, about 56 columns, and run `bhote` in the new pane. |
 | `[[events]] worktree.created` | a worktree was created | the same, for tabs that have no panel yet |
 | `[[events]] pane.agent_status_changed` | an agent's status changed | `bhote event`: a finished agent moves its topic to review (with a notification); all panels refresh at once |
 | action `changed` | another machine's `bhote event` | That machine's agents changed: bhote asks it again at once (`PUSH_STATES`; not with `AGENTS_VIA=kharka`, where kharka carries the change). |
@@ -27,8 +27,8 @@ Rules the plugin follows:
 - A tab that already shows a pane titled `Bhote` is left alone.
 - It labels the panes it creates `bhote`. A pane with that label that does not run bhote any more (restored after a restart)
   gets `bhote` started in it. A pane is never typed into because of its title alone, and never when it runs an agent.
-- It splits only when the agent keeps at least 64 columns (`BHOTE_AGENT_MIN_WIDTH`); the panel width is `BHOTE_PANEL_WIDTH`
-  (44).
+- It splits only when the agent keeps at least 64 columns (`BHOTE_AGENT_MIN_WIDTH`); the panel width is `BHOTE_PANEL_WIDTH`, kept between the settings `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH`
+  (56).
 - `AUTOSTART=off` in the settings switches the startup and event hooks off.
 - `BHOTE_DRY=1 sh open_panel.sh startup` prints what it would do and changes nothing.
 

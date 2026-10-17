@@ -1,0 +1,18 @@
+{
+  "name": "bhote-topic",
+  "version": "0.1.0",
+  "description": "Shows this agent's bhote topic above the prompt (status colour, description, age) and adds /topic to change its status",
+  "author": {
+    "name": "Florian Kappert"
+  },
+  "license": "MIT",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "background": {
+      "type": "string",
+      "title": "Pane background",
+      "description": "The colour behind the topic pane, as a hex value: the background of your terminal, so that the pane looks like the transcript beside it (Claude Code paints its own grey otherwise)",
+      "default": "#11111a"
+    }
+  }
+}

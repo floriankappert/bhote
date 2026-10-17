@@ -214,14 +214,20 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 
 The agents herdr knows (this machine, and the other machines when `REMOTE_AGENTS=on`: herdr's saved ones, or the ones in
 kharka with `AGENTS_VIA=kharka`), numbered. Every agent also has a
-code of its own: its machine's code and a number (`MAC4`, `OMR1`), handed out by the agent's machine and kept for good (it is
-shown in the agent list and behind done topics). The numbers and the codes are agent refs for `transfer`. `--json`: an array
-of `{"n", "code", "machine", "pane", "status", "name", "task", "free", "topic"}`.
+name of its own: herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (with the machine's code in front on another machine,
+`MAC/w3:a1`; it is shown in the agent list and behind done topics). The older code, a machine code and a number kept for good (`MAC4`, `OMR1`),
+still works as a ref and is the `alias` in `--json`. The numbers, the names and the codes are agent refs for `transfer` and `jump`; a name that two
+machines have (`w3:a1`) asks for the machine (`MAC/w3:a1`). `--json`: an array of `{"n", "code", "alias", "machine", "pane", "status", "name", "task", "free", "topic"}`.
+
+### `bhote jump <machine> <pane> | <agent>`
+
+Shows that agent in herdr: an agent of this machine is focused, one of another machine is focused there (through kharka or herdr; to go there is
+up to you, as with a click in the panel). The [Claude Code mod's](claude-mod.md) pane calls it when you press one of its items.
 
 ### `bhote transfer <from> <to> [--topic <ref>] [--force]`
 
 [Steal & Transfer](steal-and-transfer.md): `<from>` commits its work on its branch with a handover and hands it to `<to>`
-(a free agent). Agent refs: a number or a code (`MAC4`) from `bhote agents`, `machine/pane`, a pane id, or a part of the name
+(a free agent). Agent refs: a number, a name (`w3:a1`) or a code (`MAC4`) from `bhote agents`, `machine/pane`, a pane id, or a part of the name
 (exit `2` when that matches several). A target that belongs to another project than the topic is refused; `--force` does it anyway. The source must not wait for an answer, the target must be free. Prints the topic. Exit `1` when
 herdr cannot send the prompt; nothing changes then.
 
@@ -235,7 +241,7 @@ names another agent than the transfer, or with a second topic word (quote `--to`
 
 The topic of the agent that asks: matched by its Claude session (`CLAUDE_CODE_SESSION_ID`), else by its herdr pane
 (`HERDR_PANE_ID`). Prints one line with the topic, its id and how to report back (`--json`: the topic object, or `null`);
-nothing when there is none. Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
+nothing when there is none. `--json` adds `progress` (the [Claude Code mod](claude-mod.md) draws it): `tests`, the suites running in the worktree it is called from (`{suite, done, total}`, the live status files, three at most) and `deploy`, the deployment its topic waits for (`{project, label, state, done, total, url}`, or null). `--json --full` adds `context` for the mod's pane: `pr` (the newest pull request of the agent's branch: `number`, `title`, `state`, `draft`, `url`, `checks` with `total`/`success`/`failed`/`pending`; read through `gh`, kept for a minute) `siblings` (the other open topics of the same project, at most 8: `n`, `title`, `status`), and `lists`: the cards of the panel (`review`, `now`, `testing`, `deploying` = waiting for a deployment, `finished`), each `{total, items}` with the other topics of that status, newest first (at most 6, review 8, finished 5), `updated`, `n`, `title`, the `agent` and its `code` (`MAC4`). The topics are those of every machine the store reaches (kharka, herdr), as in the panel. Next, waiting, later, done and archived topics are not in it. Meant for a Claude Code `SessionStart` hook, so that an agent knows what it works on:
 
 ```json
 {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bhote current"}]}]}}
@@ -280,7 +286,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0","build":"0.6.0"}`; from a checkout past the release tag both
-the text and `build` say the local build, `0.9.1.2 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
+the text and `build` say the local build, `0.9.1.3 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`
@@ -288,6 +294,23 @@ the text and `build` say the local build, `0.9.1.2 Preview`); also `--version`, 
 Puts the Claude Code skills `bhote` and `bhote-install` into every Claude profile (`CLAUDE_CONFIG_DIR`, `~/.claude`,
 `~/.claude*`) and says to continue with `/bhote-install`. From a git checkout each skill is a link into it (it stays current
 with every `git pull`; an earlier copy that holds only `SKILL.md` becomes a link), from a package a copy.
+
+### `bhote kharka watch [install|uninstall|status]`
+
+For machines with [kharka](data-and-sync.md#through-kharka) and `herdr-kharka`. One look (`bhote kharka watch`, no argument): when the machine's entry
+`herdr/<node>` in kharka was not written for `KHARKA_WATCH_STALE` seconds (90) while the kharka daemon is online, `herdr-kharka` is restarted (launchd
+`dev.kharka.herdr` on macOS, the systemd user unit `herdr-kharka` on Linux); when the daemon itself is offline twice in a row, it is restarted too. A
+restart happens at most once in three minutes, and each one is written with its reasons (age of the entry, `pending`, the age of the other machines'
+entries) to `kharka-watch.log` in the data folder. `install` sets up a timer that does this look every minute (launchd `dev.bhote.kharka-watch`, or a
+systemd user timer `bhote-kharka-watch.timer`), `uninstall` removes it, `status` says how old the entry is and whether the timer is there. Why: a
+`herdr-kharka` that lives on while it writes nothing is not noticed by the service manager, nor by a check that only asks the daemon whether it is online.
+
+### `bhote mod [install|remove|status]`
+
+The [Claude Code mod](claude-mod.md) `bhote-topic` (the topic as a band above the prompt, `/topic`) in every Claude profile:
+`install` (the default; again after a bhote update) adds `integrations/claude` as the marketplace `bhote` and installs the plugin,
+`remove` takes both away, `status` says where it is installed. Needs `claude` (Claude Code 2.1.287+) on the PATH; exit 1 when
+a profile failed.
 
 ### `bhote update`
 

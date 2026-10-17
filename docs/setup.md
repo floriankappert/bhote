@@ -12,7 +12,7 @@ in place and changes nothing (it asks a machine over ssh only when herdr reaches
 
 | Step | |
 |---|---|
-| 1 Checks | jq, herdr and its server, `bhote` on the PATH, gzip/base64/perl, ssh into this machine, Tailscale (also the macOS app), the herdr plugin (can link it, also from a Homebrew or Arch package), the Claude Code `SessionStart` hook and the bhote skill (can add them). |
+| 1 Checks | jq, herdr and its server, `bhote` on the PATH, gzip/base64/perl, ssh into this machine, Tailscale (also the macOS app), the herdr plugin (can link it, also from a Homebrew or Arch package), the Claude Code `SessionStart` hook, the bhote skill and the [bhote-topic mod](claude-mod.md) (can add them). |
 | 2 This machine | Its name in the agent lists (`HOST_LABEL`); other machines must know it by the same name. A rename moves the agent links of the topics along; rename it in herdr on the other machines, too. |
 | 3 Other machines | The machines saved in herdr, with a reachability test; finds new ones (your own Tailscale devices, Bonjour/Avahi in the local network, `~/.ssh/config`) and adds them with `herdr machine add`. The scan does not remember any host key; only the machine you pick is. |
 | 4 The other way round | Makes the other machines know this one, so that they see its agents and topics travel both ways (below). |

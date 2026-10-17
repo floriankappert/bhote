@@ -28,7 +28,7 @@ B done 1 >/dev/null; B list --all | grep -q "done .*Release notes" && ok "done b
 B done "price list" >/dev/null; B list --all | grep -q "done .*Price list" && ok "done by part of the title" || bad "done by title"
 id=$(B list --json --all | python3 -c "import sys,json; print([t for t in json.load(sys.stdin) if 'Kafka' in t['title']][0]['id'])")
 B show "$id" | grep -q "Kafka role" && ok "show by the full id" || bad "show by id"
-B show "${id:0:8}" >/dev/null 2>&1; [ "$?" = 2 ] && ok "an id start shared by several topics is reported as ambiguous" || bad "shared id prefix"
+B show "${id:0:4}" >/dev/null 2>&1; [ "$?" = 2 ] && ok "an id start shared by several topics is reported as ambiguous" || bad "shared id prefix"
 
 # ambiguity and misses
 B add "Kafka monitoring" >/dev/null
@@ -147,11 +147,11 @@ case "$frame" in *"Later"*"Parked one"*) ok "panel: parked topics are lines unde
 for k in 1 2 3 4 5 6 7 8 9 10; do B add "Parked extra $k" -s later >/dev/null; done
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
 echo "$frame" | grep -q "+1 more parked" && ok "panel: parked lines are capped, the rest counted" || bad "panel: no parked count"
-case "$frame" in *"Up soon"*Done*"Closed one"*"═══"*) ok "panel: done topics in their own area above the agents" ;; *) bad "panel: no done area" ;; esac
+case "$frame" in *"Up soon"*Done*"Closed one"*"↕"*) ok "panel: done topics in their own area above the agents" ;; *) bad "panel: no done area" ;; esac
 for i in 1 2 3; do B add "Old done $i" -s done >/dev/null; done; sleep 1; B add "Old done 4" -s done >/dev/null; B config set DONE_MAX 3 >/dev/null
 frame=$(BHOTE_ONCE=1 BHOTE_VIEW=main BHOTE_COLS=44 BHOTE_ROWS=80 bash ./bhote </dev/null)
-sect=$(echo "$frame" | sed -n '/┈┈ Done/,/═══/p')
-[ "$(echo "$sect" | grep -c '✓')" = 3 ] && echo "$sect" | grep -q '^  +[0-9]* more done' \
+sect=$(echo "$frame" | sed -n '/┈┈ Done/,/↕/p')
+[ "$(echo "$sect" | grep -c '✓ [A-Za-z]')" = 3 ] && echo "$sect" | grep -q '^  +[0-9]* more done' \
   && echo "$sect" | grep -q "✓ Old done 4" && ok "panel: only the last DONE_MAX done ones (a check each, newest first), +n more done" || bad "panel: DONE_MAX not kept: $sect"
 # an agent takes over a topic it did not create: take, or now run by an agent
 B add "Foreign topic" >/dev/null; out=$(CLAUDECODE=1 HERDR_PANE_ID=w9:p1 CLAUDE_CODE_SESSION_ID=abc-1 B take "Foreign topic" --json)
@@ -208,5 +208,74 @@ P=$T/pkg; mkdir -p "$P/bin" "$P/share/bhote"; cp bhote "$P/bin/"; cp -R integrat
 HOME=$SH CLAUDE_CONFIG_DIR= bash "$P/bin/bhote" skills install >/dev/null 2>&1
 [ ! -L "$SH/.claude/skills/bhote" ] && cmp -s "$SH/.claude/skills/bhote/SKILL.md" integrations/claude/skills/bhote/SKILL.md \
     && ok "skills from a package: a copy, the link from before is gone" || bad "skills package: $(ls -la "$SH/.claude/skills")"
+
+# current --json: progress of the suites running in the agent's worktree and of the deployment its topic waits for (the mod draws the bars)
+US=$'\037'; PG=$(basename "$(git rev-parse --show-toplevel)"); mkdir -p "$T/ts"; B config set TEST_STATUS_DIR "$T/ts" >/dev/null
+B add "Progress topic" -s next >/dev/null; CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B now "Progress topic" >/dev/null
+printf '{"tree":"%s","suite":"server","done":5,"total":10,"startedAt":1,"updatedAt":%s,"ok":null}\n' "$PG" "$(( $(date +%s) * 1000 ))" > "$T/ts/$PG.server.json"
+printf '{"tree":"%s","suite":"old","done":1,"total":9,"startedAt":1,"updatedAt":1000,"ok":null}\n' "$PG" > "$T/ts/$PG.old.json"
+pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
+[ "$(printf '%s' "$pr" | jq -c '.tests')" = '[{"suite":"server","done":5,"total":10}]' ] && [ "$(printf '%s' "$pr" | jq -c .deploy)" = null ] \
+    && ok "current --json: a running suite with its progress (a stale status file is left out)" || bad "current progress tests: $pr"
+rm -f "$T/ts/$PG".*.json; B wait "Progress topic" --deploy=Backend >/dev/null
+mkdir -p "$T/shared"; printf '%s\n' "$(date +%s)${US}Web${US}Backend${US}running${US}1${US}4${US}fix/p${US}https://ci/1" > "$T/shared/deploys.list"
+pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
+[ "$(printf '%s' "$pr" | jq -c '[.tests, .deploy.label, .deploy.state, .deploy.done, .deploy.total]')" = '[[],"Backend","running",1,4]' ] \
+    && ok "current --json: the deployment its topic waits for, with done and total" || bad "current progress deploy: $pr"
+CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -e 'del(.progress) | keys | length == 13' >/dev/null && ok "current --json: the topic object is unchanged next to progress" || bad "current --json keys"
+
+# jump: shows an agent in herdr (a pane of this machine: herdr agent focus <pane>), by <machine> <pane> or by an agent's name
+: > "$FAKE_LOG"; B jump w1:a1 >/dev/null 2>&1; for _i in 1 2 3 4 5 6 7 8 9 10; do grep -q 'agent focus w1:p1' "$FAKE_LOG" && break; sleep 0.2; done
+grep -q 'agent focus w1:p1' "$FAKE_LOG" && ok "jump: an agent by its name (w1:a1) is focused in herdr" || bad "jump by name: $(cat "$FAKE_LOG")"
+B jump >/dev/null 2>&1 && bad "jump without an agent was accepted" || ok "jump: no agent is exit 1"
+
+# kharka watch: herdr-kharka is restarted when its entry in kharka stops being written (the process may live on), the daemon when it is offline twice in a row
+cat > "$T/bin/kharka" <<'SH'
+#!/bin/sh
+age() { echo $(( ($(date +%s) - $1) * 1000 )); }
+case "$*" in
+    whoami) echo testnode ;;
+    status) echo "{\"online\":${FAKE_ONLINE:-true},\"pending\":0}" ;;
+    "get --entry herdr/testnode") echo "{\"hlc\":\"$(age ${FAKE_AGE:-5})-0-testnode\",\"value\":{}}" ;;
+    "get --entry herdr/peer") echo "{\"hlc\":\"$(age 3)-0-peer\",\"value\":{}}" ;;
+    "ls herdr/") printf 'herdr/peer\nherdr/testnode\n' ;;
+    *) exit 1 ;;
+esac
+SH
+for c in systemctl launchctl; do printf '#!/bin/sh\necho "$0 $*" >> "$FAKE_SVC"\nexit 0\n' > "$T/bin/$c"; done
+chmod +x "$T/bin/kharka" "$T/bin/systemctl" "$T/bin/launchctl"; export FAKE_SVC=$T/svc.log; : > "$FAKE_SVC"; rm -f "$T/data/kharka-watch."*
+FAKE_AGE=5 B kharka watch; [ ! -s "$T/data/kharka-watch.log" ] && ! grep -qE 'restart|kickstart' "$FAKE_SVC" && ok "kharka watch: a fresh entry, nothing is restarted" || bad "kharka watch fresh: $(cat "$FAKE_SVC")"
+FAKE_AGE=500 B kharka watch
+grep -qE 'restart herdr-kharka.service|kickstart -k .*dev.kharka.herdr' "$FAKE_SVC" && grep -q "herdr/testnode is 500 s old" "$T/data/kharka-watch.log" && grep -q "peers peer:3s" "$T/data/kharka-watch.log" \
+    && ok "kharka watch: a stale entry restarts herdr-kharka and the log says why (age, peers)" || bad "kharka watch stale: $(cat "$FAKE_SVC") / $(cat "$T/data/kharka-watch.log" 2>&1)"
+n0=$(grep -cE 'restart|kickstart' "$FAKE_SVC"); FAKE_AGE=500 B kharka watch; [ "$(grep -cE 'restart|kickstart' "$FAKE_SVC")" = "$n0" ] && ok "kharka watch: not twice in three minutes" || bad "kharka watch cooldown"
+rm -f "$T/data/kharka-watch.state"; : > "$FAKE_SVC"; FAKE_ONLINE=false B kharka watch; ! grep -qE 'restart|kickstart' "$FAKE_SVC" && ok "kharka watch: a daemon offline once is waited for" || bad "kharka watch offline once"
+FAKE_ONLINE=false B kharka watch; grep -qE 'kharka-daemon|dev.kharka.daemon' "$FAKE_SVC" && grep -q "daemon is offline" "$T/data/kharka-watch.log" && ok "kharka watch: offline twice in a row restarts the daemon, too" || bad "kharka watch offline twice: $(cat "$FAKE_SVC")"
+B kharka watch status | grep -q "herdr entry is" && ok "kharka watch status" || bad "kharka watch status"
+B kharka nope >/dev/null 2>&1 && bad "kharka accepted an unknown command" || ok "kharka: an unknown command is exit 1"
+rm -f "$T/bin/kharka"
+
+# CLAUDE_MOD: off, the Claude Code mod (it asks with --mod) gets {"disabled":true} and draws nothing; the plain `current` and --json without --mod stay as they are
+[ "$(B current --json --mod)" = null ] && ok "current --mod: on (the default), an agent without a topic gets null" || bad "current --mod on: $(B current --json --mod)"
+B config set CLAUDE_MOD off >/dev/null; [ "$(B current --json --mod)" = '{"disabled":true}' ] && [ "$(B current --json)" = null ] \
+    && ok "current --mod: CLAUDE_MOD off says disabled to the mod only" || bad "current --mod off: $(B current --json --mod) / $(B current --json)"
+B config set CLAUDE_MOD on >/dev/null; [ "$(B current --json --mod)" = null ] && ok "current --mod: on again" || bad "current --mod on again"
+
+# mod: bhote-topic goes into every Claude profile as a plugin of the marketplace "bhote" (a fake claude logs each call)
+cat > "$T/bin/claude" <<'SH'
+#!/bin/sh
+echo "$CLAUDE_CONFIG_DIR: $*" >> "$FAKE_CLAUDE_LOG"
+case "$*" in "plugin list"*) grep -q 'install bhote-topic' "$FAKE_CLAUDE_LOG" && echo "bhote-topic@bhote" ;; esac
+exit 0
+SH
+chmod +x "$T/bin/claude"; export FAKE_CLAUDE_LOG=$T/claude.log; : > "$FAKE_CLAUDE_LOG"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod install >"$T/out" 2>&1
+grep -q "^$SH/.claude: plugin marketplace add $PWD/integrations/claude" "$FAKE_CLAUDE_LOG" && grep -q "^$SH/.claude2: plugin install bhote-topic@bhote" "$FAKE_CLAUDE_LOG" \
+    && ok "mod install: the marketplace and the plugin in every profile" || bad "mod install: $(cat "$FAKE_CLAUDE_LOG")"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod status 2>&1 | grep -q "installed in .*\.claude$" && ok "mod status" || bad "mod status: $(HOME=$SH CLAUDE_CONFIG_DIR= B mod status 2>&1)"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod remove >/dev/null 2>&1; grep -q "plugin uninstall bhote-topic@bhote" "$FAKE_CLAUDE_LOG" && ok "mod remove" || bad "mod remove"
+HOME=$SH CLAUDE_CONFIG_DIR= B mod nope >/dev/null 2>&1 && bad "mod accepted an unknown action" || ok "mod: an unknown action is exit 1"
+[ -f integrations/claude/mods/bhote-topic/.claude-plugin/plugin.json ] && [ -f integrations/claude/.claude-plugin/marketplace.json ] \
+    && jq -e '.plugins[0].name == "bhote-topic"' integrations/claude/.claude-plugin/marketplace.json >/dev/null && ok "the mod and its marketplace are in the repository" || bad "mod files missing"
 
 rm -rf "$T"; exit $fail

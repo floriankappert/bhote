@@ -11,7 +11,7 @@ class Bhote < Formula
   def install
     bin.install "bhote"
     (pkgshare/"herdr-plugin").install Dir["herdr-plugin/*"]
-    (pkgshare/"integrations").install Dir["integrations/*"]
+    (pkgshare/"integrations/claude").install "integrations/claude/skills", "integrations/claude/mods", "integrations/claude/.claude-plugin"
     (pkgshare/"omarchy-plugin").install Dir["omarchy-plugin/*"]
     doc.install Dir["docs/*"]
   end

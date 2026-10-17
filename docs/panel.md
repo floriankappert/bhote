@@ -1,15 +1,15 @@
 # The panel
 
-`bhote` without arguments is a panel for a herdr pane of about 44 columns (it works from 30 to any width; the list uses up to
-60 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
+`bhote` without arguments is a panel for a herdr pane of about 56 columns (it works from 30 to any width; the list uses up to
+100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
 The list shows what is on. **Review**, **now** and **testing** topics are cards (title, description, agent, branch; a review card has its
 summary and the button). A topic is in **testing** when its agent stopped while a test suite runs (also one in the background); review follows when the tests are done, now when the agent works again. **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
 dot, the title and the time (waiting: for whom). A group shows ten lines; `+3 more next` below it is a row of its own: select it
 with the arrow keys and press `Enter` or `→` (or click it) to open the group, again to close it (`− show less`). Done, next,
-waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (a line counts
-them), the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
+waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (the last line of the Done section counts them: `✓ 42 done · ▤ 30 archived`),
+the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
 is selected.
 
 **Recently finished** is a group of cards under now and testing: a topic whose agent stopped without a question (nothing to check; with a
@@ -22,11 +22,11 @@ progress as a bar with a percentage, taken from the deployment monitor. When the
 
 ## Keys
 
+The list is for the mouse: **click a card** to show its agent in herdr (on another machine: selected there; in another tab the focus goes to the bhote panel there), **double-click it** to open its page, **click a line** (next, waiting, later, done) to open its page. There are no arrow keys or `⏎` on the list, and no context menu (the page has the actions).
+
 | Key | List |
 |---|---|
-| `↑` `↓` `j` `k` | move |
-| `⏎` | jump to the topic's agent in herdr, as a click on it does (on another machine: selected there). In another tab the focus goes to the bhote panel there, with the topic selected; in the panel's own tab the agent gets the focus. Without an agent that herdr knows now (none, gone, or its machine reconnecting) it opens the topic's page |
-| `→` | the topic's page: title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
+| `→` | the topic's page (also a double click on a card, or a click on a line: next, waiting, later, done): title, description, status and the actions (start with agent, up next, waiting for, park, done, rename, describe, delete). `↑↓` also reach the title and the description; `⏎` edits them right there (`⏎` keeps, `Esc` throws away) |
 | `n` | new topic: `Title`, `Title; description`, optionally ending in `@Name` or `> Name` (= waiting for Name) |
 | `e` / `d` | edit the title / the description |
 | `x` | mark done |
@@ -73,14 +73,14 @@ Agents are listed by project (the panel's own project first, those without one l
 state as in the herdr sidebar (`✶` busy, `◉` needs you, `✓` done, `○` idle). Inside a project the working agents come first
 (in Claude orange as a whole name), then those that need you (red), then idle ones (grey); the project captions are coloured
 by `PROJECT_COLORS`. Behind an agent's name stands the topic it works on (seven characters at most; not a parked one).
-Every agent has a number of its own on its machine (`MAC4`, `OMR1`, kept for good; shown in the list, behind done topics and
-as a ref in `bhote agents` and `bhote transfer`). When the agents of more than one machine are
-listed, each name carries its machine's **code** in front: `MAC|Shop (main)`, `OMR|root` (a session in the home folder,
-named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
+Every agent has a name of its own: herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (shown in the list, behind done topics and
+as a ref in `bhote agents` and `bhote transfer`; the older code `MAC4`, a machine code and a number, still works as a ref). When the agents of
+more than one machine are listed, the name is shown in front of each agent, and an agent of another machine carries its machine's **code** in
+front of it: `w3:a1|Shop (main)`, `MAC/w3:a1|root` (a session in the home folder, named `<machine> / root`, keeps only `root`). A code is three capitals made from the machine's name (Mac `MAC`, Omarchy
 `OMR`, MacBook Pro `MBP`), unique over all machines; settings › *Connections* › *Code of …* and the setup wizard set one by
 hand (empty: made from the name again). A code set by hand is a record in the topic store, so every machine shows the same.
-A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. Drag the `═══`
-divider to give the agent area more or fewer rows. A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
+A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. The ↕ at the end of the rule above the agents
+switches the agent overview to counts only (there is no drag handle; `AGENT_ROWS` sets the area's height). A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
 `finished · x = done`, `gone`).
 
 ## Handing a topic to an agent

@@ -42,7 +42,8 @@ For each profile directory `<dir>` (`${CLAUDE_CONFIG_DIR:-~/.claude}` and every 
 - the hook: `<dir>/settings.json` needs a SessionStart command `command -v bhote >/dev/null 2>&1 && bhote current 2>/dev/null; true`
   (`grep -q 'bhote current' <dir>/settings.json`). `settings.json` may be a symlink into a config repo: write THROUGH it
   (`cat new > file`), never replace it with `mv`.
-- the skills: copy or link `integrations/claude/skills/bhote` (and `bhote-install`) to `<dir>/skills/<name>/`.
+- the skills: copy or link `integrations/claude/skills/bhote` (and `bhote-install`) to `<dir>/skills/<name>/` (`bhote skills install` does it for every profile).
+- the mod (optional, Claude Code 2.1.287+): `bhote mod install` puts `bhote-topic` (the topic as a band above the prompt, `/topic`) into every profile; `bhote mod status` checks it. Tell the user to restart Claude Code or run `/reload-plugins`.
 
 ## 5. Settings (all through `bhote config`, nothing by hand)
 
