@@ -303,8 +303,8 @@ pub fn agentnum_assign(c: &Ctx, s: &mut dyn Sink) {
 /// review_follow, now_idle_follow, agent_gone_follow, finished_expire, auto_question_follow); every function reads the topics anew.
 pub fn round(c: &Ctx, s: &mut dyn Sink, only: Option<&str>) {
     let want = |n: &str| only.map_or(true, |o| o == n);
-    let mut ts = store::load(&c.env.topics); let mut seen = s.writes();
-    macro_rules! step { ($name:expr, $call:expr) => { if want($name) { $call; if s.writes() != seen { ts = store::load(&c.env.topics); seen = s.writes(); } } } }
+    let mut ts = store::load_fast(&c.env.topics, &c.env.shared); let mut seen = s.writes();
+    macro_rules! step { ($name:expr, $call:expr) => { if want($name) { $call; if s.writes() != seen { ts = store::load_fast(&c.env.topics, &c.env.shared); seen = s.writes(); } } } }
     step!("agentnum_assign", agentnum_assign(c, s));
     step!("branch_sync", branch_sync(c, &ts, s));
     step!("remind_waiting", remind_waiting(c, &ts, s));

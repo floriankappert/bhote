@@ -50,7 +50,7 @@ struct Plan { vis: Vec<bool>, before: Vec<String>, after: Vec<String>, n_next: i
 
 impl<'a> Cards<'a> {
     pub fn new(c: &'a Ctx, v: &'a View) -> Cards<'a> {
-        let ts = store::load(&c.topics);
+        let ts = store::load_fast(&c.topics, &c.shared);
         let shared = c.shared.clone();
         let mut ag = rows(&shared.join("agents.local")); ag.extend(rows(&shared.join("agents.remote")));
         // topics_projects: a topic's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)

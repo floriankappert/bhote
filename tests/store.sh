@@ -150,10 +150,11 @@ pm=""; self_pid_set pm; [ "$pm" = "$$" ] || bad "self_pid_set: the main shell is
 BD=""; bhoted_bin_set BD
 if [ -n "$BD" ]; then
   ( mkdir -p "$SHARED_DIR"; export BHOTED_BIN=$BD
-    mk "$TOPIC_DIR" dm1 "Daemon one" 99990; mk "$TOPIC_DIR" dm2 "Daemon two" 99991
+    mk "$TOPIC_DIR" dm1 "Daemon one" 99990; mk "$TOPIC_DIR" dm2 "Daemon two" 99991; mk "$TOPIC_DIR" 3000-1 "Order one" 99989; mk "$TOPIC_DIR" 3000-10 "Order ten" 99988
     topics_index_build "$TOPIC_DIR"/*.topic; LC_ALL=C sort "$TOPICS_IDX" | tail -n +1 | grep -v '^#' > "$T/idx.awk"
     "$BD" index "$TOPIC_DIR" "$T/idx.rust" || exit 1; grep -v '^#' "$T/idx.rust" | LC_ALL=C sort > "$T/idx.rust.s"
     cmp -s "$T/idx.awk" "$T/idx.rust.s" || exit 2                                  # the same index as the awk makes
+    grep -v '^#' "$TOPICS_IDX" | cut -d"$US" -f1 > "$T/order.awk"; grep -v '^#' "$T/idx.rust" | cut -d"$US" -f1 > "$T/order.rust"; cmp -s "$T/order.awk" "$T/order.rust" || exit 6   # (in the same order: the shell's glob, by the locale)
     bhoted_keep $$; for i in $(seq 1 20); do bhoted_alive && break; sleep 0.1; done; bhoted_alive || exit 3
     topics_index_ensure; n0=$(head -1 "$TOPICS_IDX" | cut -d' ' -f1)
     mk "$TOPIC_DIR" dm3 "Daemon three" 99992

@@ -21,7 +21,7 @@ fn topic_files(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = fs::read_dir(dir)
         .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect())
         .unwrap_or_default();
-    v.sort(); // the shell glob sorts by name
+    v.sort_by(|a, b| ui::coll(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy())); // the shell glob sorts by name, in the locale's collation
     v
 }
 

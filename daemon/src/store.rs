@@ -31,13 +31,49 @@ pub fn first_value(text: &str, key: &str) -> Option<String> {
 pub fn topic_get(file: &Path, key: &str) -> String { fs::read_to_string(file).ok().and_then(|t| first_value(&t, key)).map(|v| nocntrl(&v)).unwrap_or_default() }
 
 /// topics_load: every topic, the order of the screen (review, now, testing, deploying, finished, next, waiting, later, done; in a group by file name).
-pub fn load(topics: &Path) -> Vec<Topic> {
+pub fn load(topics: &Path) -> Vec<Topic> { load_files(topics) }
+
+/// The same from the index of the daemon when it is current (shared/topics.idx), else from the files.
+pub fn load_fast(topics: &Path, shared: &Path) -> Vec<Topic> {
+    if let Some(v) = load_index(topics, shared) { return v; }
+    load_files(topics)
+}
+
+/// The topics from the index the daemon keeps (topics.idx next to the other shared files): one file instead of hundreds. Only when it
+/// is for this folder and no topic file is newer than it (a writer removes it, the daemon rebuilds it within moments).
+fn load_index(topics: &Path, shared: &Path) -> Option<Vec<Topic>> {
+    let idx = shared.join("topics.idx");
+    let text = fs::read_to_string(&idx).ok()?;
+    let mut lines = text.split('\n');
+    let head = lines.next()?;
+    if !head.starts_with('#') || !head.contains(&format!(" {} ", topics.display())) { return None; }
+    let imt = fs::metadata(&idx).ok()?.modified().ok()?;
+    if let Ok(rd) = fs::read_dir(topics) { for e in rd.flatten() { if e.path().extension().map_or(false, |x| x == "topic") && e.metadata().ok()?.modified().ok()? >= imt { return None; } } }
+    const KEYS: [&str; 23] = ["title", "status", "waiting_for", "waiting_since", "updated", "deleted", "description", "agent", "agent_machine", "agent_pane", "agent_session", "delegated", "transfer_to_name", "slack_label", "slack_msg", "agent_branch", "project", "kind", "deploy_wait", "dismissed", "auto_now", "auto", "review_src"];
+    let mut all = Vec::new();
+    for l in lines {
+        if l.is_empty() { continue; }
+        let mut f = l.split('\u{1f}'); let file = PathBuf::from(f.next()?);
+        let v: HashMap<&str, String> = KEYS.iter().map(|k| (*k, f.next().unwrap_or("").to_string())).collect();
+        all.push((file, v));
+    }
+    Some(build(all.into_iter().map(|(f, v)| (f, Box::new(move |k: &str| v.get(k).cloned().unwrap_or_default()) as Box<dyn Fn(&str) -> String>)).collect()))
+}
+
+fn load_files(topics: &Path) -> Vec<Topic> {
     let mut files: Vec<PathBuf> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect()).unwrap_or_default();
     files.sort_by(|a, b| crate::ui::coll(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy()));   // (the shell's glob order: the locale's collation)
-    let mut all = Vec::new();
+    let mut items: Vec<(PathBuf, Box<dyn Fn(&str) -> String>)> = Vec::new();
     for f in files {
         let text = fs::read_to_string(&f).unwrap_or_default();
-        let g = |k: &str| first_value(&text, k).unwrap_or_default();
+        items.push((f, Box::new(move |k: &str| first_value(&text, k).unwrap_or_default())));
+    }
+    build(items)
+}
+
+fn build(items: Vec<(PathBuf, Box<dyn Fn(&str) -> String>)>) -> Vec<Topic> {
+    let mut all = Vec::new();
+    for (f, g) in items {
         if g("deleted") == "1" || !g("kind").is_empty() { continue; }
         let mut st = g("status"); if st.is_empty() { st = "now".into(); }
         let st = nocntrl(&st);
