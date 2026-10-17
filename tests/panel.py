@@ -16,9 +16,14 @@ def _timeout(*_):   # a test that hangs must not hold the build: end it, and the
     os._exit(1)
 signal.signal(signal.SIGALRM, _timeout); signal.alarm(240)
 fails = 0
-def ok(m): print("ok   " + m)
+CUR = [None]
+def ok(m): print("ok   " + m, flush=True)
 def bad(m):
-    global fails; fails += 1; print("FAIL " + m)
+    global fails; fails += 1; print("FAIL " + m, flush=True)
+    p = CUR[0]
+    if p is not None:   # what the terminal showed last (escape codes made visible), to see why
+        tail = p.out[-700:].decode("utf8", "replace").replace("\x1b", "<E>")
+        print("  last output (%d bytes, alive=%s): %s" % (len(p.out), p.alive, tail), flush=True)
 
 class Panel:
     def __init__(self, cols=70, rows=40, cfg="", topics=None):
@@ -35,8 +40,11 @@ class Panel:
         if self.pid == 0:
             os.chdir(ROOT); os.execvpe("bash", ["bash", "./bhote"], env)
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-        self.out = b""; self.alive = True
+        self.out = b""; self.alive = True; CUR[0] = self
         self.drain(2.5)
+        if b"Bhote v" not in self.out:
+            tail = self.out[-900:].decode("utf8", "replace").replace("\x1b", "<E>")
+            print("  DIAG: no main view after start (%d bytes, alive=%s): %s" % (len(self.out), self.alive, tail), flush=True)
     def topic(self, id, **kw):
         d = {"id": id, "updated": self.now, "deleted": 0}; d.update(kw)
         open(f"{self.T}/data/topics/{id}.topic", "w").write("".join(f"{k}={v}\n" for k, v in d.items()))
