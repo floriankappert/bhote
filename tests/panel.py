@@ -171,7 +171,7 @@ p.close()
 
 # 7) the menu of a topic is the script's view: a double click opens it, Esc comes back
 p = Panel()
-y = p.row("Working topic"); p.out = b""
+y = p.row("Working topic"); Y_WORKING = y; p.out = b""
 os.write(p.fd, (f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m" * 2).encode())   # a double click: both in one write (a slow machine must not stretch it past 500 ms)
 menu = p.expect("ACTIONS", 10)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
@@ -183,13 +183,13 @@ p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("comma: the settings (the script's view), Esc: back") if (sets and back) else bad(f"settings round trip (settings={sets}, back={back})")
 
 # 9) the right button opens the menu as well; a click on the Done line selects it
-p.out = b""; y = p.row("Working topic") or 16
+y = Y_WORKING   # (the list has the same layout after the page: the row seen at the start)
 os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
 menu = p.expect("ACTIONS", 8)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("right button: the topic's menu") if (menu and back) else bad(f"right button menu (menu={menu}, back={back})")
 # 10) the page is the panel's own: keys move, a number runs an action ("Park for later" on a now topic), Esc leaves
-p.out = b""; y = p.row("Working topic") or 16
+y = Y_WORKING   # (the list has the same layout after the page: the row seen at the start)
 os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
 shown = p.expect("ACTIONS", 5)
 lines = p.screen(); later = [l for l in lines if "Park for later" in l]
