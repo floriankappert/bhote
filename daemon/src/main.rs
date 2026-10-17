@@ -1,11 +1,12 @@
 //! bhoted prototype: the topic index of bhote (`topics.idx`), same format as `topics_index_build` in the bash script.
 //!   bhoted index <topic dir> <out>      build once
 //!   bhoted run   <topic dir> <out>      keep it current: rebuild when a topic file is added, removed or changed
+mod agents;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const US: char = '\u{1f}';
 const KEYS: &str = "title status waiting_for waiting_since updated deleted description agent agent_machine agent_pane agent_session delegated transfer_to_name slack_label slack_msg agent_branch project kind deploy_wait dismissed auto_now auto review_src";
@@ -49,6 +50,15 @@ fn signature(dir: &Path) -> Vec<(PathBuf, u128, u64)> {
     }).collect()
 }
 
+/// The settings file: KEY=value lines, the last value of a key counts (cfg_var in the script).
+fn config_read(file: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for line in fs::read_to_string(file).unwrap_or_default().lines() {
+        if let Some(i) = line.find('=') { m.insert(line[..i].to_string(), line[i + 1..].to_string()); }
+    }
+    m
+}
+
 fn token() -> String {
     let n = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     format!("{}{}", std::process::id(), n)
@@ -68,32 +78,50 @@ mod watch {
         fn close(fd: i32) -> i32;
     }
     #[repr(C)] struct PollFd { fd: i32, events: i16, revents: i16 }
-    pub struct Watch(RawFd);
-    pub fn open(dir: &std::path::Path) -> Option<Watch> {
+    /// One inotify descriptor over several folders; `wait` says which folders changed and which names appeared in them.
+    pub struct Watch { fd: RawFd, wds: Vec<(i32, usize)> }
+    pub fn open(dirs: &[(&std::path::Path, u32)]) -> Option<Watch> {
         let fd = unsafe { inotify_init1(0o2000000 | 0o4000) }; // IN_CLOEXEC | IN_NONBLOCK
         if fd < 0 { return None; }
-        let c = std::ffi::CString::new(dir.to_string_lossy().as_bytes()).ok()?;
-        // IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
-        let wd = unsafe { inotify_add_watch(fd, c.as_ptr(), 0x2 | 0x4 | 0x8 | 0x40 | 0x80 | 0x100 | 0x200) };
-        if wd < 0 { unsafe { close(fd); } return None; }
-        Some(Watch(fd))
+        let mut wds = Vec::new();
+        for (i, (dir, mask)) in dirs.iter().enumerate() {
+            let c = std::ffi::CString::new(dir.to_string_lossy().as_bytes()).ok()?;
+            let wd = unsafe { inotify_add_watch(fd, c.as_ptr(), *mask) };
+            if wd < 0 { unsafe { close(fd); } return None; }
+            wds.push((wd, i));
+        }
+        Some(Watch { fd, wds })
     }
+    /// IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREATE | IN_DELETE
+    pub const TOPICS: u32 = 0x2 | 0x4 | 0x8 | 0x40 | 0x80 | 0x100 | 0x200;
+    /// IN_CREATE | IN_MOVED_TO (a poke is a file that appears)
+    pub const APPEAR: u32 = 0x100 | 0x80;
     impl Watch {
-        pub fn wait(&self, ms: i32) -> bool {
-            let mut p = PollFd { fd: self.0, events: 1, revents: 0 };
-            let n = unsafe { poll(&mut p, 1, ms) };
-            if n <= 0 { return false; }
-            let mut buf = [0u8; 8192];
-            {
-                use std::io::Read; use std::os::unix::io::FromRawFd;
-                let mut f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(self.0) });
-                while matches!(f.read(&mut buf), Ok(n) if n > 0) {}
-            }   // drain: many events are one change
-            true
+        /// (index of the folder, name) of every event; empty after the timeout.
+        pub fn wait(&self, ms: i32) -> Vec<(usize, String)> {
+            let mut p = PollFd { fd: self.fd, events: 1, revents: 0 };
+            let mut out = Vec::new();
+            if unsafe { poll(&mut p, 1, ms) } <= 0 { return out; }
+            use std::io::Read; use std::os::unix::io::FromRawFd;
+            let mut f = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(self.fd) });
+            let mut buf = [0u8; 16384];
+            while let Ok(n) = f.read(&mut buf) {
+                if n == 0 { break; }
+                let mut o = 0;
+                while o + 16 <= n {
+                    let wd = i32::from_ne_bytes(buf[o..o + 4].try_into().unwrap());
+                    let len = u32::from_ne_bytes(buf[o + 12..o + 16].try_into().unwrap()) as usize;
+                    let name = buf[o + 16..(o + 16 + len).min(n)].split(|b| *b == 0).next().map(|b| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+                    if let Some((_, i)) = self.wds.iter().find(|(w, _)| *w == wd) { out.push((*i, name)); }
+                    o += 16 + len;
+                }
+            }
+            out
         }
     }
-    impl Drop for Watch { fn drop(&mut self) { unsafe { close(self.0); } } }
+    impl Drop for Watch { fn drop(&mut self) { unsafe { close(self.fd); } } }
 }
+
 fn alive(pid: i32) -> bool { unsafe { kill(pid, 0) == 0 } }
 
 /// bhoted run <topic dir> <out> [--parent <pid>] [--pid-file <file>]: ends when the parent (the lead collector) is gone.
@@ -106,21 +134,40 @@ fn main() {
     let (dir, out) = (Path::new(&a[2]), Path::new(&a[3]));
     match a[1].as_str() {
         "index" => build(dir, out, &token()).unwrap_or_else(|e| { eprintln!("bhoted: {e}"); std::process::exit(1) }),
+        "collect" => { // bhoted collect <shared dir> <host>: one collection of this machine (for the parity test)
+            let tests_busy = opt("--config").map(|c| config_read(&c)).and_then(|c| c.get("TESTS_BUSY").cloned()).map_or(true, |v| v != "off");
+            let ok = agents::collect_local(Path::new(&a[2]), &a[3], tests_busy);
+            std::process::exit(if ok { 0 } else { 1 })
+        }
         "run" => {
+            let shared = out.parent().unwrap_or(Path::new(".")).to_path_buf();
+            let host = opt("--host").unwrap_or_default();
+            let config = opt("--config");
+            // the agents duty needs inotify (the poke file wakes it): Linux only for now, bash keeps it on macOS
+            let duty = a.iter().any(|x| x == "--agents") && cfg!(target_os = "linux") && !host.is_empty();
             let mut last = Vec::new();
-            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); }
+            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); if duty { let _ = fs::write(format!("{}.agents", f), "agents\n"); } }
             #[cfg(target_os = "linux")]
-            let w = watch::open(dir);
+            let w = watch::open(&[(dir, watch::TOPICS), (&shared, watch::APPEAR)]);
+            let mut next_collect = Instant::now();
             loop {
-                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); } return; } }
+                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); } return; } }
                 let sig = signature(dir);
                 if sig != last || !out.exists() { if build(dir, out, &token()).is_ok() { last = sig; } }
+                if duty && Instant::now() >= next_collect {
+                    let cfg = config.as_deref().map(config_read).unwrap_or_default();
+                    let every: u64 = cfg.get("LOCAL_EVERY").and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(3);
+                    let tests_busy = cfg.get("TESTS_BUSY").map_or(true, |v| v != "off");
+                    agents::collect_local(&shared, &host, tests_busy);
+                    next_collect = Instant::now() + Duration::from_secs(every);
+                }
                 #[cfg(target_os = "linux")]
                 {
                     if let Some(w) = &w {
-                        if w.wait(1000) { std::thread::sleep(Duration::from_millis(15)); } // a burst of writes: one rebuild
-                        let _ = w.wait(0);
-                        // the signature check below still decides (a change that left no event costs one look per second)
+                        let ms = if duty { next_collect.saturating_duration_since(Instant::now()).as_millis().min(1000) as i32 } else { 1000 };
+                        let events = w.wait(ms);
+                        if events.iter().any(|(i, n)| *i == 1 && n == "poke") { next_collect = Instant::now(); }   // a poke: look at once
+                        if events.iter().any(|(i, _)| *i == 0) { std::thread::sleep(Duration::from_millis(15)); let _ = w.wait(0); } // a burst of writes: one rebuild
                         continue;
                     }
                 }

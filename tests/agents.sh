@@ -707,4 +707,18 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}70${US}fix/cancellation-service-un…${US}https://ci/8" "$now${US}IMS${US}Backend${US}running${US}64${US}70${US}feat/contract-sheet-catalogue-g…${US}https://ci/7" > "$SHARED_DIR/deploys.list"
   topic_set "$mf" deploy_url ""; deploy_lookup "$mf" && [ "$DL_URL" = https://ci/8 ] || exit 17                        # (the cut note matches by its start)
   exit 0 ) && ok "deployment wait: own group with the progress, review when the deployment is over, an agent's branch finds it" || bad "deployment wait: step $?"
+# the Rust daemon writes the same agent files as collect_local (fake herdr, escape codes, a running test); skipped without the binary
+BD=""; bhoted_bin_set BD
+if [ -n "$BD" ]; then
+  for tb in on off; do
+    cfg_set TESTS_BUSY $tb; PS=$T/par-$tb; rm -rf "$PS"; mkdir -p "$PS/b" "$PS/r"
+    ( SHARED_DIR=$PS/b; AGENT_LOCAL=$SHARED_DIR/agents.local; AGENT_META_L=$SHARED_DIR/agents.meta.local; AGENT_NOW_L=$SHARED_DIR/agents.now.local; AGENT_CWD=$SHARED_DIR/agents.cwd
+      collect_local ) >/dev/null 2>&1
+    "$BD" collect "$PS/r" "$HOST" --config "$CONFIG_FILE" || bad "bhoted collect failed"
+    pf=1; for f in agents.local agents.meta.local agents.now.local agents.cwd focus.pane; do cmp -s "$PS/b/$f" "$PS/r/$f" || { pf=0; echo "  differs: $f"; command diff <(command cat -v "$PS/b/$f") <(command cat -v "$PS/r/$f") | head -3; }; done
+    [ "$pf" = 1 ] && ok "bhoted: the same agent files as collect_local (TESTS_BUSY=$tb)" || bad "bhoted agent files differ (TESTS_BUSY=$tb)"
+  done
+  cfg_set TESTS_BUSY on
+fi
+
 rm -rf "$T"; exit $fail
