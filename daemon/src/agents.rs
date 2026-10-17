@@ -112,3 +112,106 @@ pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
     }
     true
 }
+
+// ── the other machines through kharka (step 2b): collect_remote_kharka ───────────────────────────────────────
+
+fn kharka_ls(bin: &str, prefix: &str) -> Option<Vec<Value>> {
+    let mut child = Command::new(bin).args(["ls", prefix, "--entries"]).stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null()).spawn().ok()?;
+    let mut out = child.stdout.take()?;
+    let reader = std::thread::spawn(move || { let mut b = Vec::new(); let _ = out.read_to_end(&mut b); String::from_utf8_lossy(&b).into_owned() });
+    let t0 = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => { let s = reader.join().ok()?; if !st.success() { return None; } return Some(s.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()); }
+            Ok(None) if t0.elapsed() < Duration::from_secs(10) => std::thread::sleep(Duration::from_millis(5)),
+            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+        }
+    }
+}
+
+pub struct Remote { pub nodes: String, pub offline: String, pub meta: String, pub now: String, pub agents: String }
+
+fn ctl_strip(s: &str) -> String { clean(s) }
+
+/// The five outputs from the herdr/<node> and _nodes/ entries. `me` is this machine's node, `host` its label.
+pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &str, tests_busy: bool, now_s: f64) -> Remote {
+    let mut on = std::collections::HashMap::new();
+    for e in n { if let Some(k) = e["key"].as_str() { on.insert(k.trim_start_matches("_nodes/").to_string(), !matches!(e.pointer("/value/online"), Some(Value::Bool(false)))); } }
+    let off = format!(",{},", off_list);
+    let (mut nodes, mut offline, mut meta, mut now, mut agents) = (String::new(), String::new(), String::new(), String::new(), String::new());
+    let us = US.to_string();
+    for e in h {
+        let key = e["key"].as_str().unwrap_or("");
+        let v = &e["value"]; if !v.is_object() { continue; }
+        let Some(node) = key.strip_prefix("herdr/") else { continue };
+        if node.is_empty() || !node.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-') { continue; }
+        let lbl: String = tostr(&or_empty(v.get("label"))).chars().filter(|c| c.is_ascii_alphanumeric() || " ._-".contains(*c)).take(40).collect();
+        let m = if lbl.is_empty() { node.to_string() } else { lbl };
+        if node == me || m == host || off.contains(&format!(",{},", m)) { continue; }
+        let stamp: f64 = e["hlc"].as_str().unwrap_or("0").split('-').next().and_then(|x| x.parse().ok()).unwrap_or(0.0);
+        let down = tostr(&or_empty(v.get("herdr"))) != "online" || on.get(node) == Some(&false) || now_s - stamp / 1000.0 > 60.0;
+        let mut ws: std::collections::HashMap<String, &Value> = std::collections::HashMap::new();
+        for w in v.get("workspaces").and_then(|x| x.as_array()).into_iter().flatten() { if w.is_object() { ws.insert(tostr(w.get("id").unwrap_or(&Value::Null)), w); } }
+        let cmds: Vec<String> = v.get("commands").and_then(|x| x.as_array()).into_iter().flatten().map(|c| tostr(c).chars().filter(|c| c.is_ascii_lowercase() || *c == '.' || *c == '_').collect()).collect();
+        nodes.push_str(&[m.clone(), node.to_string(), (if down { "1" } else { "0" }).to_string(), cmds.join(",")].join(&us)); nodes.push('\n');
+        if down { offline.push_str(&m); offline.push('\n'); }
+        for a in v.get("agents").and_then(|x| x.as_array()).into_iter().flatten() {
+            if !a.is_object() { continue; }
+            let pane = tostr(&or_empty(a.get("pane")));
+            if pane.is_empty() || !pane.chars().all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_' || c == '-') { continue; }
+            let wk = tostr(&or_empty(a.get("workspace")));
+            let w = ws.get(&wk);
+            let mut st = ctl_strip(&tostr(&or_empty(a.get("status"))));
+            let wtests = w.map(|w| tostr(&or_empty(w.pointer("/tokens/tests")))).unwrap_or_default();
+            if tests_busy && wtests.starts_with('\u{25cc}') && st != "working" { st = "testing".into(); }
+            let st_out = if down { format!("off-{}", st) } else { st };
+            let wname = ctl_strip(&tostr(&match w.and_then(|w| w.get("label")).filter(|l| !matches!(l, Value::Null | Value::Bool(false))) { Some(l) => l.clone(), None => or_empty(a.get("workspace")) }));
+            let task = ctl_strip(&tostr(&or_empty(a.pointer("/tokens/task"))));
+            let task = task.strip_prefix("\u{221f} ").unwrap_or(&task).to_string();
+            agents.push_str(&[m.clone(), pane.clone(), st_out, wname, task].join(&us)); agents.push('\n');
+            meta.push_str(&[m.clone(), pane.clone(), ctl_strip(&tostr(&or_empty(a.get("tab")))), "a".into(), ctl_strip(&tostr(&or_empty(a.pointer("/tokens/repo")))), ctl_strip(&tostr(&or_empty(a.pointer("/tokens/project")))), ctl_strip(&tostr(&or_empty(a.get("cwd"))))].join(&us)); meta.push('\n');
+            let tn = tostr(&or_empty(a.pointer("/tokens/now")));
+            if !tn.is_empty() { now.push_str(&[m.clone(), pane.clone(), ctl_strip(&tn)].join(&us)); now.push('\n'); }
+        }
+    }
+    Remote { nodes, offline, meta, now, agents }
+}
+
+fn kharka_self(shared: &Path, bin: &str) -> String {
+    let f = shared.join("kharka.self");
+    let fresh = fs::metadata(&f).ok().and_then(|m| m.modified().ok()).and_then(|m| m.elapsed().ok()).map_or(false, |a| a < Duration::from_secs(600));
+    if let Ok(t) = fs::read_to_string(&f) { let t = t.trim().to_string(); if !t.is_empty() && fresh { return t; } }
+    let o = Command::new(bin).arg("whoami").stdin(Stdio::null()).stderr(Stdio::null()).output().ok().filter(|o| o.status.success());
+    let n: String = o.map(|o| String::from_utf8_lossy(&o.stdout).trim().chars().filter(|c| c.is_ascii_alphanumeric() || ".-_".contains(*c)).collect()).unwrap_or_default();
+    if !n.is_empty() { let _ = fs::write(&f, format!("{}\n", n)); }
+    n
+}
+
+/// collect_remote_kharka: false when the daemon of kharka did not answer (the machines keep their last agents, muted).
+pub fn collect_remote_kharka(shared: &Path, host: &str, bin: &str, off_list: &str, tests_busy: bool) -> bool {
+    let me = kharka_self(shared, bin);
+    let (h, n) = (kharka_ls(bin, "herdr/"), kharka_ls(bin, "_nodes/"));
+    let remote = shared.join("agents.remote");
+    let (Some(h), Some(n)) = (h, n) else {
+        if let Ok(t) = fs::read_to_string(shared.join("agents.nodes")) {
+            let off: String = t.lines().filter_map(|l| l.split('\u{1f}').next()).map(|l| format!("{}\n", l)).collect(); let _ = put_tmp(&shared.join("machines.offline"), &off);
+        }
+        if let Ok(old) = fs::read_to_string(&remote) {
+            let body: String = old.lines().map(|l| { let mut p: Vec<String> = l.split('\u{1f}').map(|x| x.to_string()).collect(); if p.len() >= 3 && !p[2].starts_with("off-") { p[2] = format!("off-{}", p[2]); } format!("{}\n", p.join(&US.to_string())) }).collect();
+            put_list(&remote, &body);
+        }
+        return false;
+    };
+    let now_s = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+    let r = build_remote(&h, &n, &me, host, off_list, tests_busy, now_s);
+    let _ = put_tmp(&shared.join("agents.nodes"), &r.nodes);
+    let _ = put_tmp(&shared.join("machines.offline"), &r.offline);
+    let _ = put_tmp(&shared.join("agents.meta.remote"), &r.meta);
+    let a = put_list(&shared.join("agents.now.remote"), &r.now);
+    let b = put_list(&remote, &r.agents);
+    if a || b {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));
+    }
+    true
+}

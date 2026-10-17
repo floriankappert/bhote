@@ -721,4 +721,41 @@ if [ -n "$BD" ]; then
   cfg_set TESTS_BUSY on
 fi
 
+# the other machines through kharka: bhoted writes the same files as collect_remote_kharka (a fake kharka: a fresh machine, a stale one,
+# a node the hub says is offline, control characters, a running test in a workspace); skipped without the binary
+if [ -n "$BD" ]; then
+  cat > "$T/bin/kharka" <<'SH'
+#!/bin/sh
+nowms=$(( $(date +%s) * 1000 ))
+case "$*" in
+  whoami) echo thisnode ;;
+  "ls herdr/ --entries")
+    printf '%s\n' "{\"key\":\"herdr/thisnode\",\"hlc\":\"$nowms-0-thisnode\",\"value\":{\"label\":\"Linux\",\"herdr\":\"online\",\"agents\":[{\"pane\":\"w1:p1\",\"status\":\"idle\"}]}}"
+    printf '%s\n' "{\"key\":\"herdr/macnode\",\"hlc\":\"$nowms-0-macnode\",\"value\":{\"label\":\"Mac Book\",\"herdr\":\"online\",\"commands\":[\"agent.prompt\",\"agent.read\"],\"workspaces\":[{\"id\":\"w1\",\"label\":\"IMS (main)\",\"tokens\":{\"tests\":\"◌ running\"}},{\"id\":\"w2\",\"label\":\"Other\"}],\"agents\":[{\"pane\":\"w1:p1\",\"workspace\":\"w1\",\"status\":\"idle\",\"tab\":\"w1:t1\",\"cwd\":\"/Users/x\",\"tokens\":{\"task\":\"∟ Do a\\u001b[2Jthing\",\"repo\":\"github.com/a/b\",\"project\":\"proj-ims\",\"now\":\"✳ working here\"}},{\"pane\":\"w2:p1\",\"workspace\":\"w2\",\"status\":\"working\",\"tokens\":{}},{\"pane\":\"bad pane\",\"status\":\"idle\"}]}}"
+    printf '%s\n' "{\"key\":\"herdr/oldnode\",\"hlc\":\"$(( nowms - 200000 ))-0-oldnode\",\"value\":{\"label\":\"Old\",\"herdr\":\"online\",\"agents\":[{\"pane\":\"w9:p1\",\"workspace\":\"w9\",\"status\":\"done\"}]}}"
+    printf '%s\n' "{\"key\":\"herdr/downnode\",\"hlc\":\"$nowms-0-downnode\",\"value\":{\"label\":\"Down\",\"herdr\":\"online\",\"agents\":[{\"pane\":\"w3:p1\",\"status\":\"idle\"}]}}"
+    printf '%s\n' "{\"key\":\"herdr/hidden\",\"hlc\":\"$nowms-0-hidden\",\"value\":{\"label\":\"Hidden\",\"herdr\":\"online\",\"agents\":[{\"pane\":\"w4:p1\",\"status\":\"idle\"}]}}" ;;
+  "ls _nodes/ --entries")
+    printf '%s\n' '{"key":"_nodes/macnode","value":{"online":true}}' '{"key":"_nodes/downnode","value":{"online":false}}' ;;
+  *) exit 1 ;;
+esac
+SH
+  chmod +x "$T/bin/kharka"
+  for tb in on off; do
+    cfg_set TESTS_BUSY $tb; cfg_set MACHINES_OFF Hidden; PS=$T/rem-$tb; rm -rf "$PS"; mkdir -p "$PS/b" "$PS/r"
+    ( SHARED_DIR=$PS/b; AGENT_REMOTE=$SHARED_DIR/agents.remote; AGENT_META_R=$SHARED_DIR/agents.meta.remote; AGENT_NOW_R=$SHARED_DIR/agents.now.remote; AGENT_NODES=$SHARED_DIR/agents.nodes
+      printf 'thisnode\n' > "$SHARED_DIR/kharka.self"; collect_remote_kharka ) >/dev/null 2>&1
+    printf 'thisnode\n' > "$PS/r/kharka.self"
+    "$BD" collect-remote "$PS/r" "$HOST" --config "$CONFIG_FILE" || bad "bhoted collect-remote failed"
+    pf=1; for f in agents.remote agents.meta.remote agents.now.remote agents.nodes machines.offline; do cmp -s "$PS/b/$f" "$PS/r/$f" || { pf=0; echo "  differs: $f"; command diff <(command cat -v "$PS/b/$f") <(command cat -v "$PS/r/$f") | head -3; }; done
+    [ "$pf" = 1 ] && [ -s "$PS/r/agents.remote" ] && ok "bhoted: the same remote agent files as collect_remote_kharka (TESTS_BUSY=$tb)" || bad "bhoted remote agent files differ (TESTS_BUSY=$tb)"
+  done
+  # the daemon of kharka does not answer: every machine keeps its agents, muted
+  printf '#!/bin/sh\nexit 1\n' > "$T/bin/kharka"; PS=$T/rem-off
+  ( SHARED_DIR=$PS/b; AGENT_REMOTE=$SHARED_DIR/agents.remote; AGENT_META_R=$SHARED_DIR/agents.meta.remote; AGENT_NOW_R=$SHARED_DIR/agents.now.remote; AGENT_NODES=$SHARED_DIR/agents.nodes; collect_remote_kharka ) >/dev/null 2>&1
+  "$BD" collect-remote "$PS/r" "$HOST" --config "$CONFIG_FILE"
+  cmp -s "$PS/b/agents.remote" "$PS/r/agents.remote" && cmp -s "$PS/b/machines.offline" "$PS/r/machines.offline" && grep -q "off-" "$PS/r/agents.remote" && ok "bhoted: no answer from kharka keeps the agents, muted, as the script does" || bad "bhoted: the muted list differs"
+  rm -f "$T/bin/kharka"; cfg_set TESTS_BUSY on; cfg_set MACHINES_OFF ""
+fi
+
 rm -rf "$T"; exit $fail

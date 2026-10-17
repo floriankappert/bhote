@@ -29,7 +29,7 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 0 | topic index (prototype in `daemon/`, same file as `topics_index_build`) | everything | index identical on 414 real topics |
 | 1 | the topic index, kept current by inotify (Linux; macOS: a look every 100 ms) | writers (`topic_set`, CLI) | `tests/store.sh` passes with the daemon on and off; measured below |
 | 2a | this machine's agents: `pane list` + `workspace list` into `agents.local`, `.meta.local`, `.now.local`, `agents.cwd`, `focus.pane` (Linux; macOS keeps bash until kqueue) | panel reads the files as before | byte-identical files, `tests/agents.sh` |
-| 2b | the other machines (ssh, kharka), agent names, cards | panel | `tests/agents.sh` in both modes |
+| 2b | the other machines through kharka (`AGENTS_VIA=kharka`): `herdr/<node>` and `_nodes/` into `agents.remote`, `.meta.remote`, `.now.remote`, `agents.nodes`, `machines.offline` (the ssh way stays bash) | agent names, cards, the ssh path | byte-identical files (live and `tests/agents.sh`) |
 | 3 | monitors: CircleCI (API, `ureq`), GitHub Actions (`gh`), local test runs and status files into `deploys.list` / `tests.list` | panel reads the lists as before | same lists as `monitor_fetch` (live and `tests/monitor.sh`) |
 | 4 | follow-ups, auto-assign, reminders, Slack pins, update check, kharka watch | CLI | collector no longer runs in bash |
 | 5 | the frame: the panel draws from the snapshot in Rust (CLI and wizard stay bash or follow) | wizard | frame under 5 ms |
@@ -62,3 +62,11 @@ same fake `gh` and `curl`; `BHOTED_HTTP=curl` makes the daemon use the fake curl
 deployments 7.1 s -> 1.3 s, tests 6 to 14 s -> 1.3 s. Most of the time was waiting for the network one call after the
 other; the daemon asks for the independent calls side by side and asks git once per folder, not once per status file
 (that alone was 3 s). The rounds run in the background of the daemon, never in a panel.
+
+## Step 2b, measured
+
+With `AGENTS_VIA=kharka` the daemon reads the other machines' `herdr/<node>` entries (every `REMOTE_EVERY` s, and at
+once when kharka's watch creates `remote.due`), and writes the five files byte for byte as `collect_remote_kharka` does
+(live, and in `tests/agents.sh` with a fake kharka: a fresh machine, a stale one, an offline node, a machine switched off,
+control characters, a running test; and the case that kharka does not answer: the agents stay, muted). The collector skips
+its own look while the daemon has the duty (`bhoted.pid.remote`). Agent names and cards stay in bash for step 4/5.
