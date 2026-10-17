@@ -1,0 +1,10 @@
+[package]
+name = "bhoted"
+version = "0.0.1"
+edition = "2021"
+description = "Prototype: bhote's topic index, built by a daemon instead of awk (same file format, std only)"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
