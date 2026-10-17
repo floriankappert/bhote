@@ -32,6 +32,8 @@ jobs:
           jq --version && python3 --version && git --version
           git config --global user.name "bhote CI" && git config --global user.email "ci@example.invalid"
           git config --global init.defaultBranch main
+      - name: Build the daemon (bhoted: its tests run when the binary is there, and it must compile on both systems)
+        run: cargo build --release --manifest-path daemon/Cargo.toml
       - name: Test suites
         run: bash tests/run.sh
 
