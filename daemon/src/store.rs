@@ -102,6 +102,8 @@ pub trait Sink {
     fn new_topic(&mut self, title: &str, wfor: &str, desc: &str) -> Option<PathBuf>;
     fn write_file(&mut self, file: &Path, content: &str);
     fn notify(&mut self, title: &str, body: &str, sound: &str);
+    /// a call of herdr that changes something (report-metadata)
+    fn herdr(&mut self, args: &[String]);
     fn is_shadow(&self) -> bool;
     /// how many writes were done so far (a round reloads the topics only after a write)
     fn writes(&self) -> usize;
@@ -190,6 +192,7 @@ impl<'a> Sink for Live<'a> {
         if !self.notify_on { return; }
         let _ = Command::new("herdr").args(["notification", "show", &nocntrl(title), "--body", &nocntrl(body), "--sound", sound]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
     }
+    fn herdr(&mut self, args: &[String]) { self.n += 1; let _ = Command::new("herdr").args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status(); }
     fn is_shadow(&self) -> bool { false }
     fn writes(&self) -> usize { self.n }
 }
@@ -209,6 +212,7 @@ impl<'a> Sink for Shadow<'a> {
     }
     fn write_file(&mut self, file: &Path, content: &str) { self.log.push(format!("file|{}|{}", file.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), content.replace('\n', "~"))); }
     fn notify(&mut self, title: &str, body: &str, sound: &str) { self.log.push(format!("notify|{}|{}|{}", nocntrl(title), nocntrl(body), sound)); }
+    fn herdr(&mut self, args: &[String]) { self.log.push(format!("herdr|{}", args.join(" "))); }
     fn is_shadow(&self) -> bool { true }
     fn writes(&self) -> usize { 0 }
 }

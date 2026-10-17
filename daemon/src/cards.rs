@@ -583,6 +583,29 @@ impl<'a> Cards<'a> {
 #[derive(Default)]
 struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool, agmeta: bool }
 
+/// deploy_lookup for the sync: the deployment a waiting topic is bound to or waits for
+pub fn deploy_lookup_pub(shared: &std::path::Path, topics: &std::path::Path, names: &HashMap<String, String>, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {
+    let list = fs::read_to_string(shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
+    let get = |k: &str| store::topic_get(&t.file, k);
+    let (url, matchl) = (get("deploy_url"), get("deploy_match"));
+    let since = store::num_or(&get("deploy_since"), 0);
+    let pj = get("project"); let br = get("agent_branch");
+    let pn = if pj.is_empty() { String::new() } else { names.get(&pj).cloned().unwrap_or_default() };
+    let _ = topics;
+    for l in list.lines() {
+        let f: Vec<&str> = l.split(US).collect(); let at = |i: usize| f.get(i).copied().unwrap_or("");
+        let (tm, p, lb, st, d, tot, note, u) = (at(0), at(1), at(2), at(3), at(4), at(5), at(6), at(7));
+        if !deploy_branch_ok(note, &br) { continue; }
+        if !url.is_empty() { if u != url { continue; } }
+        else {
+            if !pn.is_empty() && p != pn { continue; }
+            if !matchl.is_empty() && lb != matchl { continue; }
+            if !matches!(st, "running" | "queued" | "approval") { let tt = if tm.is_empty() { 0 } else { tm.parse::<u64>().unwrap_or(u64::MAX) }; if tt < since { continue; } }
+        }
+        return Some((st.into(), d.into(), tot.into(), note.into(), u.into(), p.into(), lb.into()));
+    }
+    None
+}
 fn deploy_branch_ok(n: &str, b: &str) -> bool {
     if b.is_empty() || b == "main" || b == "master" || b == "develop" || b.starts_with("wip/") { return true; }
     if n.is_empty() || n == "main" || n == "master" || n == "develop" || n.starts_with('@') { return true; }

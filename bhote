@@ -1227,6 +1227,7 @@ project_sync() {  # this machine's agents carry their repository and project as 
         ws=""; while IFS=$US read -r _m _id _st name _tk; do [ "$_id" = "$p" ] && { ws=$name; break; }; done < "$AGENT_LOCAL"
         project_for "$key" "$ws" || PROJ_ID=""
         [ "$key" = "$r" ] && [ "$PROJ_ID" = "$j" ] && continue
+        [ -n "${BHOTE_INTENT_LOG:-}" ] && printf 'herdr|pane report-metadata %s --source bhote %s %s|@%s\n' "$p" "$( [ -n "$key" ] && echo "--token repo=$key" || echo "--clear-token repo" )" "$( [ -n "$PROJ_ID" ] && echo "--token project=$PROJ_ID" || echo "--clear-token project" )" "$(date +%s)" >> "$BHOTE_INTENT_LOG"
         herdr pane report-metadata "$p" --source bhote $( [ -n "$key" ] && echo "--token repo=$key" || echo "--clear-token repo" ) \
             $( [ -n "$PROJ_ID" ] && echo "--token project=$PROJ_ID" || echo "--clear-token project" ) >/dev/null 2>&1   # (the pane first: herdr wants it so)
     done < "$AGENT_META_L"
@@ -1575,7 +1576,7 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             [ -e "$SHARED_DIR/remote.due" ] && ! { [ -n "$rem_pid" ] && kill -0 "$rem_pid" 2>/dev/null; } && { rm -f "$SHARED_DIR/remote.due"; remote_due=1; last_r=$SECONDS; }   # pushed by the other machine (kept while a round still runs)
             bhoted_agents || collect_local                      # first what the panels show; the merge can take a moment (the daemon does it when it runs)
             follow_do agentnum_assign
-            follow_do branch_sync; project_sync
+            follow_do branch_sync; follow_do project_sync
             if [ "$(cfg_get REMOTE_AGENTS off)" = on ]; then
                 # in the background (a slow machine must not hold up the local agents, auto-assign and the reminders); one at a time
                 if [ "$remote_due" = 1 ] && ! bhoted_remote && ! { [ -n "$rem_pid" ] && kill -0 "$rem_pid" 2>/dev/null; }; then ( collect_remote ) & rem_pid=$!; fi
@@ -1617,8 +1618,8 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             auto_assign
             follow_do agent_cards
             follow_do agent_dedup
-            tests_sync
-            deploy_sync
+            follow_do tests_sync
+            follow_do deploy_sync
             follow_do review_follow
             follow_do now_idle_follow
             follow_do agent_gone_follow

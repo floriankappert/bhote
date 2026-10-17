@@ -252,6 +252,7 @@ fn main() {
             println!("HEAD_GRAD={}", t.head_grad);
         }
         "panel" => { std::process::exit(panel::run()); }
+        "branch" => { println!("{}", follow::git_branch(&a[2]).unwrap_or_default()); }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
             let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
