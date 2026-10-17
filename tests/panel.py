@@ -21,6 +21,15 @@ def _timeout(*_):   # a test that hangs must not hold the build: end it, and the
         except OSError: pass
     os._exit(1)
 signal.signal(signal.SIGALRM, _timeout); signal.alarm(240)
+def _excepthook(tp, val, tb):   # an error in the test itself is a failure, with what the terminal showed last
+    import traceback; print("FAIL the test broke: %s: %s" % (tp.__name__, val), flush=True); traceback.print_tb(tb, file=sys.stdout)
+    p = CUR[0]
+    if p is not None: print("  last output: " + p.out[-600:].decode("utf8", "replace").replace("\x1b", "<E>"), flush=True)
+    for pid in LIVE:
+        try: os.killpg(pid, 9)
+        except OSError: pass
+    os._exit(1)
+sys.excepthook = _excepthook
 fails = 0
 def ok(m): print("ok   " + m, flush=True)
 def bad(m):
@@ -144,14 +153,14 @@ while not os.path.islink(lock) and time.time() - t0 < 6: time.sleep(0.2)
 ok("the collector runs for the Rust panel (the lead lock is held)") if os.path.islink(lock) else bad("no collector lock: the collector is not running")
 
 # 2) a click selects, x checks it off
-y = p.row("A next topic")
+y = p.fresh_row("A next topic")
 p.click(10, y)
 p.send("x")
 st = p.get("1002-1", "status")
 ok("click on a line, x: the topic is done") if st == "done" else bad(f"x: status of 1002-1 is {st}")
 
 # 3) a button of a review card (no agent: the topic goes on now)
-y = p.row("[1] Ok"); line = p.screen()[y - 1]; x = line.index("[1] Ok") + 2
+y = p.fresh_row("[1] Ok"); line = p.screen()[y - 1]; x = line.index("[1] Ok") + 2
 p.click(x, y)
 time.sleep(1.0)
 st = p.get("1000-1", "status")
@@ -165,7 +174,7 @@ if files and "description=with a note" in open(files[0]).read(): ok("n: a topic 
 else: bad("n: no new topic")
 
 # 5) edit the title of the selected topic (e), Esc keeps the old one
-y = p.row("Brand new topic"); p.click(10, y)
+y = p.fresh_row("Brand new topic"); p.click(10, y)
 p.send("e", 0.5); p.send("\x1b", 0.8)
 ok("e then Esc: no change") if "Brand new topic" in open(files[0]).read() else bad("e then Esc changed the topic")
 
@@ -177,7 +186,7 @@ p.close()
 
 # 7) the menu of a topic is the script's view: a double click opens it, Esc comes back
 p = Panel()
-y = p.row("Working topic"); Y_WORKING = y; p.out = b""
+y = p.fresh_row("Working topic"); Y_WORKING = y; p.out = b""
 os.write(p.fd, (f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m" * 2).encode())   # a double click: both in one write (a slow machine must not stretch it past 500 ms)
 menu = p.expect("ACTIONS", 10)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
@@ -213,7 +222,7 @@ else: bad(f"the page did not show (shown={shown}, num={num})")
 p.send(b"\x1b", 0.8)
 p.topic(id="1500-1", title="Chooser candidate", status="next")
 p.out = b""; p.expect("Chooser candidate", 8)
-y = p.row("Chooser candidate")
+y = p.fresh_row("Chooser candidate")
 if y:
     p.click(10, y); p.send("s", 1.0)
     sc = "\n".join(p.screen())
