@@ -51,7 +51,7 @@ fn ago(now: u64, v: &str) -> String {
 
 pub struct Cards<'a> { pub c: &'a Ctx, pub v: &'a View, ts: Vec<Topic>, epj: Vec<String>, ag: Vec<Row>, now_l: Vec<Row>, now_r: Vec<Row>, pub projects: Vec<crate::ui::Project>, shared: PathBuf, pub host: String, pub rows_total: i64 }
 
-struct Plan { vis: Vec<bool>, before: Vec<String>, after: Vec<String>, n_next: i64, n_waiting: i64, n_later: i64 }
+pub struct Plan { pub vis: Vec<bool>, pub before: Vec<String>, pub after: Vec<String>, pub n_next: i64, pub n_waiting: i64, pub n_later: i64, pub sel_list: Vec<String> }
 
 impl<'a> Cards<'a> {
     pub fn new(c: &'a Ctx, v: &'a View) -> Cards<'a> {
@@ -78,45 +78,46 @@ impl<'a> Cards<'a> {
         for f in ["agents.meta.local", "agents.meta.remote"] { for l in fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines() { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 { v.push((p[0].to_string(), p[1].to_string(), p[5].to_string())); } } }
         v
     }
-    fn in_scope(&self, i: usize) -> bool { if !(self.v.scope_project && !self.v.cur_proj.is_empty()) { return true; } self.epj[i].is_empty() || self.epj[i] == self.v.cur_proj }
+    pub fn in_scope(&self, i: usize) -> bool { if !(self.v.scope_project && !self.v.cur_proj.is_empty()) { return true; } self.epj[i].is_empty() || self.epj[i] == self.v.cur_proj }
     fn archived(&self, i: usize) -> bool {
         let d = self.v.archive_days; let t = &self.ts[i];
         d > 0 && t.upd > 0 && t.id != self.v.sel_id && (self.c.now as i64 - t.upd as i64) >= d * 86400
     }
     fn shows(st: &str) -> bool { matches!(st, "now" | "testing" | "finished" | "next" | "review" | "waiting") }
-    fn sel_index(&self) -> i64 {
+    pub fn sel_index(&self) -> i64 {
         if self.v.sel_id.starts_with("more:") { return -1; }
         for (i, t) in self.ts.iter().enumerate() { if t.id == self.v.sel_id { return i as i64; } }
         for (i, t) in self.ts.iter().enumerate() { if Self::shows(&t.status) && self.in_scope(i) { return i as i64; } }
         0
     }
-    fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }
-    fn expanded(&self, st: &str) -> bool { self.v.expanded.contains(&format!(" {} ", st)) }
+    pub fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }
+    pub fn expanded(&self, st: &str) -> bool { self.v.expanded.contains(&format!(" {} ", st)) }
 
-    fn plan(&self) -> Plan {
+    pub fn plan(&self) -> Plan {
         let n = self.ts.len(); let lim = self.v.line_max;
-        let mut p = Plan { vis: vec![false; n], before: vec![String::new(); n], after: vec![String::new(); n], n_next: 0, n_waiting: 0, n_later: 0 };
+        let mut p = Plan { vis: vec![false; n], before: vec![String::new(); n], after: vec![String::new(); n], n_next: 0, n_waiting: 0, n_later: 0, sel_list: Vec::new() };
         let (mut g, mut gl) = (String::new(), -1i64);
         let (mut cn_next, mut cn_waiting, mut cn_later) = (0i64, 0i64, 0i64);
         for i in 0..n {
             let t = &self.ts[i]; let st = t.status.as_str();
             if st == "later" && t.dm == "1" { continue; }
             if !self.in_scope(i) { continue; }
-            match st { "review" | "now" | "testing" | "finished" => { p.vis[i] = true; continue; } "waiting" => if t.dep == "1" { p.vis[i] = true; continue; }, _ => {} }
+            match st { "review" | "now" | "testing" | "finished" => { p.vis[i] = true; p.sel_list.push(t.id.clone()); continue; } "waiting" => if t.dep == "1" { p.vis[i] = true; p.sel_list.push(t.id.clone()); continue; }, _ => {} }
             if self.archived(i) { continue; }
             if st != g {
                 let c = match g.as_str() { "next" => cn_next, "waiting" => cn_waiting, "later" => cn_later, _ => 0 };
-                if c > lim && self.expanded(&g) && gl >= 0 { p.after[gl as usize] = g.clone(); }
+                if c > lim && self.expanded(&g) && gl >= 0 { p.after[gl as usize] = g.clone(); p.sel_list.push(format!("more:{}", g)); }
                 g = st.to_string();
             }
             let c;
             match st { "next" => { cn_next += 1; c = cn_next; } "waiting" => { cn_waiting += 1; c = cn_waiting; } "later" => { cn_later += 1; c = cn_later; } "done" => { continue; } _ => { c = 0; } }
             let exp = self.expanded(st);
-            if c <= lim || exp || t.id == self.v.sel_id { p.vis[i] = true; gl = i as i64; }
-            else if c == lim + 1 { p.before[i] = st.to_string(); }
+            if c <= lim || exp || t.id == self.v.sel_id { p.vis[i] = true; gl = i as i64; p.sel_list.push(t.id.clone()); }
+            else if c == lim + 1 { p.before[i] = st.to_string(); p.sel_list.push(format!("more:{}", st)); }
         }
         let c = match g.as_str() { "next" => cn_next, "waiting" => cn_waiting, "later" => cn_later, _ => 0 };
-        if c > lim && self.expanded(&g) && gl >= 0 { p.after[gl as usize] = g.clone(); }
+        if c > lim && self.expanded(&g) && gl >= 0 { p.after[gl as usize] = g.clone(); p.sel_list.push(format!("more:{}", g)); }
+        let dm = self.v.done_max; if dm > 0 && self.done_total() > dm { p.sel_list.push("more:done".into()); }
         p.n_next = cn_next; p.n_waiting = cn_waiting; p.n_later = cn_later;
         p
     }
@@ -611,11 +612,22 @@ fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
 }
 
 struct Vp { row: i64, map: String, spin: String }
-pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf }
+pub struct Out { pub frame: String, pub tmap: String, pub spin: String, pub divrow: i64, pub toff: Option<i64> }
+pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64> }
 impl<'a> Layout<'a> {
     /// bhote_view: head on top, the topics below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
     /// the run folder (tmap, spinrows, divrow, toff), as the script writes them.
+    /// The same, written to the run folder as the script does (tmap, spinrows, divrow, toff)
     pub fn view(&self) -> String {
+        let o = self.view_out();
+        let toff = self.run_dir.join("toff");
+        match o.toff { Some(n) => { let _ = fs::write(&toff, format!("{}\n", n)); } None => { let _ = fs::remove_file(&toff); } }
+        let _ = fs::write(self.run_dir.join("tmap"), &o.tmap);
+        let _ = fs::write(self.run_dir.join("spinrows"), &o.spin);
+        let _ = fs::write(self.run_dir.join("divrow"), format!("{}\n", o.divrow));
+        o.frame
+    }
+    pub fn view_out(&self) -> Out {
         let c = self.cards; let g = |k: &str| c.g(k).to_string();
         let rows = self.rows;
         let trim = |s: String| s.trim_end_matches('\n').to_string();
@@ -642,22 +654,23 @@ impl<'a> Layout<'a> {
                 if !l.spin.is_empty() { vp.spin.push_str(&format!(" {}:3:{}", vp.row, l.spin)); }
             } else { out.push('\n'); vp.row += 1; } i += 1; }
         }
-        let toff = self.run_dir.join("toff");
         let (tl, mut sel) = parse_lines(&topics); let n = tl.len() as i64;
-        let mut pad = 0;
-        if th <= avail { put(&mut vp, &tl, 0, n, &mut out); pad = avail - th; let _ = fs::remove_file(&toff); }
+        let mut pad = 0; let mut toff_out: Option<i64> = None;
+        let prev_file: Option<i64> = fs::read_to_string(self.run_dir.join("toff")).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).and_then(|v| v.parse().ok());
+        let prev_state = if self.run_dir.as_os_str().is_empty() { self.prev_toff } else { prev_file };
+        if th <= avail { put(&mut vp, &tl, 0, n, &mut out); pad = avail - th; }
         else if avail >= 4 {
             let content = avail - 1;
             if sel == -1 { sel = 0; }
             let mut sh = 1; while sh < 4 && sel + sh < n && !tl.get((sel + sh) as usize).map_or(true, |p| p.line.is_empty()) { sh += 1; }
-            let prev: i64 = fs::read_to_string(&toff).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).and_then(|v| v.parse().ok()).unwrap_or(-1);
+            let prev: i64 = prev_state.unwrap_or(-1);
             let mut off;
             if prev < 0 { off = sel + sh - content; }
             else if sel < prev { off = sel; while off > 0 && tl.get((off - 1) as usize).map_or(false, |p| p.ref_.is_empty()) { off -= 1; } }
             else if sel + sh > prev + content { off = sel + sh - content; }
             else { off = prev; }
             if off > sel { off = sel; } if off < 0 { off = 0; } if off > th - content { off = th - content; }
-            let _ = fs::write(&toff, format!("{}\n", off));
+            toff_out = Some(off);
             put(&mut vp, &tl, off, off + content, &mut out);
             out.push_str(&format!(" {}↑↓ {} more lines{}\n", g("D"), th - content, g("X"))); vp.row += 1;
         } else { put(&mut vp, &tl, 0, n.min(avail), &mut out); }
@@ -665,11 +678,8 @@ impl<'a> Layout<'a> {
         if lcut > 0 { let (p, _) = parse_lines(&lists); put(&mut vp, &p, 0, lcut, &mut out); }
         if dh > 0 { let (p, _) = parse_lines(&dblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
         if mh > 0 { let (p, _) = parse_lines(&mblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
-        let _ = fs::write(self.run_dir.join("tmap"), vp.map);
-        let _ = fs::write(self.run_dir.join("spinrows"), vp.spin);
-        let _ = fs::write(self.run_dir.join("divrow"), format!("{}\n", rows - bh + 1));
         out.push_str(&bottom);
-        out
+        Out { frame: out, tmap: vp.map, spin: vp.spin, divrow: rows - bh + 1, toff: toff_out }
     }
 }
 

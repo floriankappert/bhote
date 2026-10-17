@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""The Rust panel in a real terminal (a pty): the main view, the mouse, the keys, a line to type into, and the views that bash still draws.
+Skipped without the daemon binary. Usage: python3 tests/panel.py"""
+import os, pty, sys, time, select, fcntl, termios, struct, re, tempfile, shutil, glob, subprocess
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+BIN = os.path.join(ROOT, "daemon", "target", "release", "bhoted")
+if not os.path.exists(BIN):
+    print("skipped: no bhoted binary"); sys.exit(0)
+fails = 0
+def ok(m): print("ok   " + m)
+def bad(m):
+    global fails; fails += 1; print("FAIL " + m)
+
+class Panel:
+    def __init__(self, cols=70, rows=40, cfg="", topics=None):
+        self.T = tempfile.mkdtemp(); T = self.T
+        for d in ("data/topics", "shared", "home"): os.makedirs(f"{T}/{d}")
+        open(f"{T}/config", "w").write("BHOTED_PANEL=on\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
+        self.now = int(time.time())
+        for t in (topics or DEFAULT):
+            self.topic(**t)
+        env = dict(os.environ, BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
+        for k in ("NO_COLOR", "HERDR_PANE_ID", "HERDR_TAB_ID", "CLAUDECODE"): env.pop(k, None)
+        self.pid, self.fd = pty.fork()
+        if self.pid == 0:
+            os.chdir(ROOT); os.execvpe("bash", ["bash", "./bhote"], env)
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        self.out = b""; self.alive = True
+        self.drain(2.5)
+    def topic(self, id, **kw):
+        d = {"id": id, "updated": self.now, "deleted": 0}; d.update(kw)
+        open(f"{self.T}/data/topics/{id}.topic", "w").write("".join(f"{k}={v}\n" for k, v in d.items()))
+    def file(self, id): return open(f"{self.T}/data/topics/{id}.topic").read()
+    def get(self, id, key):
+        for l in self.file(id).splitlines():
+            if l.startswith(key + "="): return l[len(key) + 1:]
+        return None
+    def drain(self, t=0.8):
+        end = time.time() + t
+        while time.time() < end:
+            r, _, _ = select.select([self.fd], [], [], 0.05)
+            if r:
+                try: d = os.read(self.fd, 65536)
+                except OSError: self.alive = False; return
+                if not d: self.alive = False; return
+                self.out += d
+    def send(self, s, wait=0.9):
+        self.out = b""
+        os.write(self.fd, s.encode() if isinstance(s, str) else s)
+        self.drain(wait)
+    def expect(self, text, timeout=6.0):
+        """Waits (the output is kept) until the text has been drawn; the screen is then the last frame."""
+        end = time.time() + timeout
+        while time.time() < end:
+            if text in re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", self.out.decode("utf8", "replace")): return True
+            self.drain(0.2)
+        return False
+    def screen(self):
+        """The last full frame as lines of text (a frame starts with ESC [ H)."""
+        s = self.out.decode("utf8", "replace")
+        i = s.rfind("\x1b[H")
+        s = s[i:] if i >= 0 else s
+        s = re.sub(r"\x1b\][^\x07]*\x07", "", s)
+        s = re.sub(r"\x1b\[[0-9;?]*[a-zA-Z]", "", s)
+        return s.split("\n")
+    def row(self, text):
+        for i, l in enumerate(self.screen()):
+            if text in l: return i + 1
+        return None
+    def click(self, x, y, b=0):
+        self.send(f"\x1b[<{b};{x};{y}M\x1b[<{b};{x};{y}m")
+    def close(self):
+        try: os.write(self.fd, b"q")
+        except OSError: pass
+        time.sleep(0.4)
+        try: os.kill(self.pid, 15)
+        except OSError: pass
+        try: os.waitpid(self.pid, 0)
+        except OSError: pass
+        shutil.rmtree(self.T, ignore_errors=True)
+
+DEFAULT = [
+    dict(id="1000-1", title="First review", status="review", review_note="Check it", review_ask="Ok¦Stop"),
+    dict(id="1001-1", title="Working topic", status="now"),
+    dict(id="1002-1", title="A next topic", status="next"),
+    dict(id="1003-1", title="Waiting for Anna", status="waiting", waiting_for="Anna", waiting_since=int(time.time()) - 100),
+    dict(id="1004-1", title="Done thing", status="done"),
+]
+
+# 1) the main view comes up
+p = Panel()
+sc = "\n".join(p.screen())
+for want in ("Bhote v", "REVIEW", "First review", "NOW", "Working topic", "A next topic", "Waiting for Anna", "Done thing", "Agents"):
+    if want not in sc: bad(f"the main view shows {want!r}")
+else:
+    if all(w in sc for w in ("REVIEW", "NOW", "Agents")): ok("the main view comes up in the Rust panel (cards, lines, done, agents)")
+
+# 2) a click selects, x checks it off
+y = p.row("A next topic")
+p.click(10, y)
+p.send("x")
+st = p.get("1002-1", "status")
+ok("click on a line, x: the topic is done") if st == "done" else bad(f"x: status of 1002-1 is {st}")
+
+# 3) a button of a review card (no agent: the topic goes on now)
+y = p.row("[1] Ok"); line = p.screen()[y - 1]; x = line.index("[1] Ok") + 2
+p.click(x, y)
+time.sleep(1.0)
+st = p.get("1000-1", "status")
+ok("click on a review button: the topic goes on") if st == "now" else bad(f"review button: status is {st}")
+
+# 4) a line to type into: n, then a title
+p.send("n", 0.5)
+p.send("Brand new topic; with a note\r", 1.0)
+files = [f for f in glob.glob(p.T + "/data/topics/*.topic") if "Brand new topic" in open(f).read()]
+if files and "description=with a note" in open(files[0]).read(): ok("n: a topic made from the typed line (title; description)")
+else: bad("n: no new topic")
+
+# 5) edit the title of the selected topic (e), Esc keeps the old one
+y = p.row("Brand new topic"); p.click(10, y)
+p.send("e", 0.5); p.send("\x1b", 0.8)
+ok("e then Esc: no change") if "Brand new topic" in open(files[0]).read() else bad("e then Esc changed the topic")
+
+# 6) the wheel and the hover must not break anything; q ends the panel
+p.send("\x1b[<64;10;10M\x1b[<35;12;12M\x1b[<35;13;14M", 0.6)
+sc = "\n".join(p.screen())
+ok("hover and wheel: the panel still draws") if ("REVIEW" in sc or "NOW" in sc) else bad("hover/wheel: the screen is gone")
+p.close()
+
+# 7) the menu of a topic is the script's view: a double click opens it, Esc comes back
+p = Panel()
+y = p.row("Working topic"); p.out = b""
+os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode()); p.drain(0.3)
+os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode())
+menu = p.expect("ACTIONS", 8)
+p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
+ok("double click: the topic's menu (the script's view), Esc: back on the list") if (menu and back) else bad(f"menu round trip (menu={menu}, back={back})")
+
+# 8) settings (the script's view) and back
+p.out = b""; os.write(p.fd, b","); sets = p.expect("ettings", 8) or p.expect("SETTINGS", 1)
+p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
+ok("comma: the settings (the script's view), Esc: back") if (sets and back) else bad(f"settings round trip (settings={sets}, back={back})")
+
+# 9) the right button opens the menu as well; a click on the Done line selects it
+p.out = b""; y = p.row("Working topic") or 16
+os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())
+menu = p.expect("ACTIONS", 8)
+p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
+ok("right button: the topic's menu") if (menu and back) else bad(f"right button menu (menu={menu}, back={back})")
+p.close()
+sys.exit(1 if fails else 0)

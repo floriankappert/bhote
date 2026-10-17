@@ -79,6 +79,7 @@ SETTINGS='SETUP_DONE||text|When the setup wizard ran on this machine (empty: it 
 STORE|local|enum:local:remote:kharka|Where the topics are kept: local, a replica on STORE_MACHINE, or kharka (a local-first store on every machine)
 STORE_MACHINE||text|The saved herdr machine that holds the replica (herdr machine list)
 BHOTED_FOLLOW|off|enum:off:shadow:on|The daemon also does the follow-ups of the collector (cards, review, finished, gone, branches, numbers, reminders): off = bash does them, shadow = bash does them and both sides log what they decide (shadow/bash.log and shadow/rust.log), on = the daemon does them
+BHOTED_PANEL|off|bool|The panel of the daemon (Rust: keys, mouse and the main view without bash; menu, settings and the wizard still open the bash views): off = the bash panel (the default for now), on = the Rust panel
 BHOTED_FRAME|auto|enum:auto:off|Blocks of the frame drawn by the daemon (the same bytes as bash, much faster): auto = when the daemon binary is found, off = bash draws them all
 BHOTED|auto|enum:auto:off|The Rust daemon bhoted keeps the topic index current for every panel (auto: when the binary is found, next to this script in daemon/target/release or on the PATH; off: bash only)
 KHARKA||text|The kharka binary for STORE=kharka and AGENTS_VIA=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
@@ -457,6 +458,14 @@ bhoted_paint() {  # bhoted_paint <frame>: the screen of a frame (what bhote_pain
     out=$(printf '%s' "$1" | "$bin" paint --rows "${ROWS:-40}" --run "$RUN_DIR" 2>/dev/null) || return 1
     [ -n "$out" ] || return 1
     printf '%s' "$out"
+}
+bhoted_rust_panel() {  # the panel of the daemon (panel.rs) instead of this loop: exec when the binary is there (BHOTED_PANEL=on); 1 = stay in bash
+    local bin off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1
+    bhoted_bin_set bin; [ -n "$bin" ] || return 1
+    local sc; sc=$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null) || return 1
+    [ -n "${VERSION_LABEL:-}" ] || version_label_set
+    export BHOTE_HOST="$HOST" BHOTE_VER="$VERSION" BHOTE_SCRIPT="$sc" BHOTE_VLABEL="${VERSION_LABEL:-$VERSION}" BHOTE_HAS_MACHINES="${HAS_MACHINES:-0}" BHOTE_SHARED="$SHARED_DIR" BHOTE_CONFIG="$CONFIG_FILE" BHOTE_DATA="$DATA_DIR"
+    rm -rf "$RUN_DIR"; exec "$bin" panel
 }
 bhoted_agents() { [ -e "$SHARED_DIR/bhoted.pid.agents" ] && bhoted_alive; }   # the daemon collects this machine's agents (no collect_local in the collector)
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
@@ -5735,6 +5744,11 @@ bhote_main() {
         collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
         COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 ))); ui_load; bhote_draw "$view" | tr -d '\001'; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
     fi
+    if [ -n "${BHOTE_COLLECTOR_ONLY:-}" ]; then               # the collector alone (the Rust panel runs it for itself): until that panel is gone
+        trap 'rm -rf "$RUN_DIR"; exit 0' TERM INT HUP
+        collector "$BHOTE_COLLECTOR_ONLY"; rm -rf "$RUN_DIR"; exit 0
+    fi
+    if [ -z "${BHOTE_DELEGATE:-}" ] && [ -t 0 ] && [ "$(cfg_get BHOTED_PANEL off)" = on ] && bhoted_rust_panel; then :; fi   # (execs when it can: the daemon's panel takes over)
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
     # never set up on this machine: the wizard opens once, in the first panel only (herdr may start several at a time)
@@ -5765,11 +5779,22 @@ bhote_main() {
     trap 'anim=1' USR1
     printf '\033[?1049h\033[?25l%s' "$MOUSE_ON"          # alternate screen, hidden cursor, mouse reports (wheel, divider)
     splash_fits || view=main
-    collector "$$" & pids="$!"
-    echo "0 on" > "$ANIM_FILE"; : > "$RUN_DIR/anim.want"; dog_ticker $$ & pids="$pids $!"
+    if [ -n "${BHOTE_DELEGATE:-}" ]; then                     # one view for the Rust panel: it draws everything else; back on the list this process ends
+        ui_load; SEL_ID=${BHOTE_SEL_ID:-}; view=main
+        case "$BHOTE_DELEGATE" in
+            setup) panel_setup "${BHOTE_ARG:-0}"; exit 0 ;;
+            menu) view=menu; MENU_IDX=0 ;; settings) view=settings; SET_PAGE=main; SET_IDX=0 ;; hotkeys) view=hotkeys ;; suggest) view=suggest; SUG_IDX=0 ;;
+            pick) PICK_MODE=${BHOTE_ARG:-start}; view=pick; PICK_IDX=0; [ "$PICK_MODE" = transfer ] && PICK_IDX=1 ;;
+            *) exit 0 ;;
+        esac
+    else
+        collector "$$" & pids="$!"
+        echo "0 on" > "$ANIM_FILE"; : > "$RUN_DIR/anim.want"; dog_ticker $$ & pids="$pids $!"
+    fi
     local back=main
     redraw=1
     while true; do
+        [ -n "${BHOTE_DELEGATE:-}" ] && [ "$view" = main ] && exit 0     # (the one view is done: the Rust panel goes on)
         if [ "$redraw" = 1 ] && [ -z "$key" ] && [ "${TAB_VISIBLE:-1}" = 0 ] && [ "$view" = main ]; then redraw=0; DIRTY=1   # (its tab is not shown: it draws when it is; DIRTY says there is something to draw)
         elif [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
         elif [ "$redraw" = 1 ]; then
@@ -6019,7 +6044,14 @@ notify() {  # notify <title> <body> [sound: done|request|none]: a herdr notifica
     ( herdr notification show "${1//[[:cntrl:]]/}" --body "${2//[[:cntrl:]]/}" --sound "${3:-done}" >/dev/null 2>&1 & ) 2>/dev/null
     return 0
 }
-poke() { : > "$SHARED_DIR/poke" 2>/dev/null; return 0; }   # the collector looks at once instead of after its interval
+poke() { : > "$SHARED_DIR/poke" 2>/dev/null; return 0; }
+# What the Rust panel asks the script for (bhote __act <name> …): the actions that talk to herdr, kharka and the agents. Each loads what it needs.
+act_agent_jump() { agent_jump "$1" "$2"; sleep 0.3; }                                     # <machine> <pane>
+act_topic_jump() { ui_load; SEL_ID=$1; topic_jump click; sleep 0.3; }                       # <topic id>: the agent of a card, shown
+act_review() { ui_load; review_act "$(topic_file_of "$1")" "${2:-1}"; sleep 0.2; }       # <topic id> <button>
+act_dismiss() { ui_load; review_dismiss "$(topic_file_of "$1")"; }                        # <topic id>
+act_clamp() { panel_width_clamp; }                                                         # (the width of the panel pane is kept between the two settings)
+act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
     [ -n "${CLAUDECODE:-}" ] && return 0
     [ -n "${HERDR_PANE_ID:-}" ] || return 1
@@ -6765,6 +6797,7 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
+        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;

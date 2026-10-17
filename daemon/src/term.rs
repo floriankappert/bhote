@@ -26,6 +26,9 @@ extern "C" {
 #[cfg(not(target_os = "linux"))] const TIOCGWINSZ: u64 = 0x40087468;
 
 static mut WAKE_W: i32 = -1;
+static QUIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SAVED: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+extern "C" fn on_quit(_: i32) { QUIT.store(true, std::sync::atomic::Ordering::SeqCst); unsafe { if WAKE_W >= 0 { let b = [2u8]; write(WAKE_W, b.as_ptr(), 1); } } }
 extern "C" fn on_winch(_: i32) { unsafe { if WAKE_W >= 0 { let b = [1u8]; write(WAKE_W, b.as_ptr(), 1); } } }
 
 pub struct Term { saved: String, wake_r: i32, buf: Vec<u8> }
@@ -40,13 +43,23 @@ impl Term {
         c.output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     }
     pub fn enter(mouse: bool) -> Term {
-        let saved = Term::stty(&["-g"]);
+        // the settings of the shell's terminal are taken once: after a child (a view of the script) the terminal is raw already
+        let saved = { let mut s = SAVED.lock().unwrap_or_else(|e| e.into_inner()); if s.is_empty() { *s = Term::stty(&["-g"]); } s.clone() };
         Term::stty(&["-echo", "-icanon", "min", "1", "time", "0"]);
         let mut fds = [0i32; 2];
-        let wake_r = unsafe { if pipe(fds.as_mut_ptr()) == 0 { WAKE_W = fds[1]; signal(28, on_winch as usize); fds[0] } else { -1 } };
+        let wake_r = unsafe { if pipe(fds.as_mut_ptr()) == 0 { WAKE_W = fds[1]; signal(28, on_winch as usize); signal(2, on_quit as usize); signal(15, on_quit as usize); signal(1, on_quit as usize); fds[0] } else { -1 } };
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |i| { Term::restore_terminal(); prev(i); }));
         let mut o = std::io::stdout();
         let _ = o.write_all(format!("\x1b[?1049h\x1b[?25l{}", if mouse { "\x1b[?1003h\x1b[?1006h" } else { "" }).as_bytes()); let _ = o.flush();
         Term { saved, wake_r, buf: Vec::new() }
+    }
+    /// Back to the shell's terminal: mouse off, cursor on, the normal screen, the saved settings (also after a panic)
+    pub fn restore_terminal() {
+        let mut o = std::io::stdout();
+        let _ = o.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l\x1b]2;\x07"); let _ = o.flush();
+        let s = SAVED.lock().map(|s| s.clone()).unwrap_or_default();
+        if !s.is_empty() { Term::stty(&[&s]); }
     }
     pub fn leave(&self) {
         let mut o = std::io::stdout();
@@ -66,7 +79,7 @@ impl Term {
             let n = unsafe { poll(fds.as_mut_ptr(), if self.wake_r >= 0 { 2 } else { 1 }, if self.buf.is_empty() { ms } else { 50 }) };
             if n == 0 { if self.buf.is_empty() { return Ev::Timeout; } if let Some(e) = parse(&mut self.buf, true) { return e; } continue; }
             if n < 0 { return Ev::Timeout; }
-            if fds[1].revents & 1 != 0 { let mut b = [0u8; 16]; unsafe { read(self.wake_r, b.as_mut_ptr(), 16); } return Ev::Resize; }
+            if fds[1].revents & 1 != 0 { let mut b = [0u8; 16]; unsafe { read(self.wake_r, b.as_mut_ptr(), 16); } if QUIT.load(std::sync::atomic::Ordering::SeqCst) { return Ev::Eof; } return Ev::Resize; }
             if fds[0].revents != 0 {
                 let mut b = [0u8; 4096];
                 let r = unsafe { read(0, b.as_mut_ptr(), b.len()) };
