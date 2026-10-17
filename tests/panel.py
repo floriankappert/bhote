@@ -233,7 +233,7 @@ d1 = int(open(pidf).read().split()[0]) if os.path.exists(pidf) else 0
 if d1:
     os.kill(d1, 9); t0 = time.time(); d2 = d1
     while time.time() - t0 < 14:
-        time.sleep(0.5)
+        p.drain(0.5)   # (the terminal is read meanwhile: a panel that cannot write its screen waits)
         try: d2 = int(open(pidf).read().split()[0])
         except (OSError, ValueError): continue
         if d2 != d1 and alive_pid(d2): break
@@ -246,7 +246,7 @@ if kids:
         except OSError: pass
     t0 = time.time(); back = []
     while time.time() - t0 < 12:
-        time.sleep(0.5); back = [k for k in children(p.pid) if k not in kids]
+        p.drain(0.5); back = [k for k in children(p.pid) if k not in kids]
         if back: break
     ok("the collector is started again after a kill") if back else bad("the collector did not come back")
 else: bad("the panel has no collector child")

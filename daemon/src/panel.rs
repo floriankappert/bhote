@@ -397,6 +397,7 @@ impl Panel {
         let wait = Duration::from_secs((1u64 << self.collector_tries.min(5)).min(30));
         if self.collector_at.elapsed() < wait { return; }
         self.collector_tries += 1; self.collector = None; self.start_collector();
+        crate::proc::note(&self.shared, &format!("the collector ended: started again (try {})", self.collector_tries));
     }
     fn tick(&mut self) {
         self.keep_collector();

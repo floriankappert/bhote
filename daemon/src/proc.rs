@@ -52,6 +52,14 @@ pub fn guarded<R>(what: &str, shared: &Path, f: impl FnOnce() -> R) -> Option<R>
     }
 }
 
+/// A line in the daemon's log (shared/bhoted.log, kept small)
+pub fn note(shared: &Path, msg: &str) {
+    let log = shared.join("bhoted.log");
+    if fs::metadata(&log).map_or(false, |m| m.len() > 200_000) { let _ = fs::rename(&log, shared.join("bhoted.log.1")); }
+    use std::io::Write;
+    if let Ok(mut o) = fs::OpenOptions::new().append(true).create(true).open(&log) { let _ = writeln!(o, "{} {}", crate::store::now(), msg); }
+}
+
 /// fs::read_to_string with a cap (a file of the data folder or the shared folder that is absurdly big is read as empty)
 pub fn read_cap<P: AsRef<Path>>(p: P) -> std::io::Result<String> {
     let p = p.as_ref();
