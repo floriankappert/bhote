@@ -6,6 +6,7 @@ mod monitor;
 mod store;
 mod ui;
 mod term;
+mod agentsui;
 mod theme;
 mod cards;
 mod follow;
@@ -182,6 +183,15 @@ fn main() {
                 shared: PathBuf::from(opt("--shared").unwrap_or_default()), topics: PathBuf::from(opt("--topics").unwrap_or_default()),
                 cfg: opt("--config").map(|c| config_read(&c)).unwrap_or_default(), c: ui::Colors::read(&opt("--colors").unwrap_or_default()) };
             let view = cards::View::read(&opt("--view").unwrap_or_default());
+            if a[2] == "head" { let out = agentsui::head(&ctx, &view.head_view()); use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes()); return; }
+            if a[2] == "bottom" {   // bhoted block bottom --run DIR: the agents, the dash line and the keys; agrows and agmap into the run folder
+                let mut cards = cards::Cards::new(&ctx, &view); cards.rows_total = view.rows;
+                let mc = agentsui::machine_codes(&ctx.topics, &view.host, &cards.agent_rows().iter().map(|r| r.m.clone()).collect::<Vec<_>>());
+                let b = agentsui::bottom(&cards, &agentsui::agent_view(&view, &ctx.cfg, &ctx.shared), if cards.agent_rows().iter().map(|r| r.m.clone()).collect::<std::collections::HashSet<_>>().len() > 1 || true { &mc } else { &mc });
+                let run = PathBuf::from(opt("--run").unwrap_or_default());
+                let _ = fs::write(run.join("agrows"), &b.agrows); let _ = fs::write(run.join("agmap"), &b.agmap);
+                use std::io::Write; let _ = std::io::stdout().write_all(b.text.as_bytes()); return;
+            }
             if a[2] == "frame" {   // the whole main view: bhoted block frame --head F --bottom F --rows N --run DIR
                 let cards = cards::Cards::new(&ctx, &view);
                 let lay = cards::Layout { cards: &cards, rows: opt("--rows").and_then(|v| v.parse().ok()).unwrap_or(40), head: fs::read_to_string(opt("--head").unwrap_or_default()).unwrap_or_default(), bottom: fs::read_to_string(opt("--bottom").unwrap_or_default()).unwrap_or_default(), run_dir: PathBuf::from(opt("--run").unwrap_or_default()) };

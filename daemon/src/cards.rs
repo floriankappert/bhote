@@ -15,6 +15,7 @@ const SELMARK: char = '\u{1}'; // \001
 pub struct View {
     pub sel_id: String, pub hover_id: String, pub expanded: String, pub scope_project: bool, pub cur_proj: String, pub spin_ch: String,
     pub bored_small: bool, pub archive_days: i64, pub github: bool, pub host: String, pub mach_fg: String, pub line_max: i64, pub done_max: i64, pub mcodes: Vec<(String, String)>,
+    pub rows: i64, pub head_rows: i64, pub hover_btn: bool, pub flash: String, pub remote_on: bool, pub has_machines: bool, pub agent_rows: Option<i64>, pub pane_focus: Option<bool>, pub head_note: String, pub newfeat: bool, pub version_label: String, pub head_grad: String,
 }
 impl View {
     pub fn read(path: &str) -> View {
@@ -24,11 +25,14 @@ impl View {
         let num = |k: &str, d: i64| { let v = g(k); if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) { v.parse().unwrap_or(d) } else { d } };
         View { sel_id: g("SEL_ID"), hover_id: g("HOVER_ID"), expanded: g("EXPANDED"), scope_project: g("U_SCOPE") == "project", cur_proj: g("CUR_PROJ"), spin_ch: if g("SPIN_CH").is_empty() { "✶".into() } else { g("SPIN_CH") },
             bored_small: g("BORED_SMALL") == "1", archive_days: num("U_ARCHIVE_DAYS", 7), github: g("U_GITHUB") != "off", host: g("HOST"), mach_fg: g("MACH_FG"), line_max: num("LINE_MAX", 10), done_max: num("U_DONE_MAX", 4),
+            rows: num("ROWS", 40), head_rows: num("HEAD_ROWS", 0), hover_btn: g("HOVER_BTN") == "1", flash: g("FLASH"), remote_on: g("U_REMOTE") == "on", has_machines: g("HAS_MACHINES") == "1",
+            agent_rows: { let v = g("U_AGENT_ROWS"); if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) { v.parse().ok() } else { None } },
+            pane_focus: match g("PANE_FOCUS").as_str() { "true" => Some(true), "false" => Some(false), _ => None }, head_note: g("HEAD_NOTE"), newfeat: g("NEWFEAT") == "1", version_label: g("VERSION_LABEL"), head_grad: g("HEAD_GRAD"),
             mcodes: g("MCODES").split('\u{1e}').filter(|p| !p.is_empty()).map(|p| { let mut f = p.splitn(2, US); (f.next().unwrap_or("").to_string(), f.next().unwrap_or("").to_string()) }).collect() }
     }
 }
 
-struct Row { m: String, id: String, st: String, name: String, task: String }
+pub struct Row { pub m: String, pub id: String, pub st: String, pub name: String, pub task: String }
 fn rows(p: &std::path::Path) -> Vec<Row> {
     fs::read_to_string(p).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut f = l.split(US).map(|x| x.to_string()); Row { m: f.next().unwrap_or_default(), id: f.next().unwrap_or_default(), st: f.next().unwrap_or_default(), name: f.next().unwrap_or_default(), task: f.next().unwrap_or_default() } }).collect()
 }
@@ -45,7 +49,7 @@ fn ago(now: u64, v: &str) -> String {
     if d < 60 { "just now".into() } else if d < 3600 { format!("{}m ago", d / 60) } else if d < 172800 { format!("{}h ago", d / 3600) } else { format!("{}d ago", d / 86400) }
 }
 
-pub struct Cards<'a> { c: &'a Ctx, v: &'a View, ts: Vec<Topic>, epj: Vec<String>, ag: Vec<Row>, now_l: Vec<Row>, now_r: Vec<Row>, projects: Vec<crate::ui::Project>, shared: PathBuf, host: String }
+pub struct Cards<'a> { pub c: &'a Ctx, pub v: &'a View, ts: Vec<Topic>, epj: Vec<String>, ag: Vec<Row>, now_l: Vec<Row>, now_r: Vec<Row>, pub projects: Vec<crate::ui::Project>, shared: PathBuf, pub host: String, pub rows_total: i64 }
 
 struct Plan { vis: Vec<bool>, before: Vec<String>, after: Vec<String>, n_next: i64, n_waiting: i64, n_later: i64 }
 
@@ -63,9 +67,17 @@ impl<'a> Cards<'a> {
             for l in metas.lines() { let f: Vec<&str> = l.split(US).collect(); if f.len() >= 6 && f[0] == t.am && f[1] == t.ap { return f[5].to_string(); } }
             String::new()
         }).collect();
-        Cards { c, v, ts, epj, ag, now_l: rows(&shared.join("agents.now.local")), now_r: rows(&shared.join("agents.now.remote")), projects: crate::ui::projects(c), shared, host: v.host.clone() }
+        Cards { c, v, ts, epj, ag, now_l: rows(&shared.join("agents.now.local")), now_r: rows(&shared.join("agents.now.remote")), projects: crate::ui::projects(c), shared, host: v.host.clone(), rows_total: v.rows }
     }
     fn g(&self, k: &str) -> &str { self.c.c.g(k) }
+    pub fn agent_rows(&self) -> &[Row] { &self.ag }
+    pub fn ts(&self) -> &[Topic] { &self.ts }
+    /// the pane meta lists of both machines: (machine, pane, project)
+    pub fn metas(&self) -> Vec<(String, String, String)> {
+        let mut v = Vec::new();
+        for f in ["agents.meta.local", "agents.meta.remote"] { for l in fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines() { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 { v.push((p[0].to_string(), p[1].to_string(), p[5].to_string())); } } }
+        v
+    }
     fn in_scope(&self, i: usize) -> bool { if !(self.v.scope_project && !self.v.cur_proj.is_empty()) { return true; } self.epj[i].is_empty() || self.epj[i] == self.v.cur_proj }
     fn archived(&self, i: usize) -> bool {
         let d = self.v.archive_days; let t = &self.ts[i];
@@ -666,8 +678,9 @@ impl<'a> Cards<'a> {
     pub fn block_with(&self, mode: &str, bored_small: bool) -> String {
         if !bored_small { return self.block(mode); }
         let v2 = View { sel_id: self.v.sel_id.clone(), hover_id: self.v.hover_id.clone(), expanded: self.v.expanded.clone(), scope_project: self.v.scope_project, cur_proj: self.v.cur_proj.clone(), spin_ch: self.v.spin_ch.clone(),
-            bored_small: true, archive_days: self.v.archive_days, github: self.v.github, host: self.v.host.clone(), mach_fg: self.v.mach_fg.clone(), line_max: self.v.line_max, done_max: self.v.done_max, mcodes: self.v.mcodes.clone() };
-        let c2 = Cards { c: self.c, v: &v2, ts: self.ts.clone(), epj: self.epj.clone(), ag: rows(&self.shared.join("agents.local")).into_iter().chain(rows(&self.shared.join("agents.remote"))).collect(), now_l: rows(&self.shared.join("agents.now.local")), now_r: rows(&self.shared.join("agents.now.remote")), projects: Vec::new(), shared: self.shared.clone(), host: self.host.clone() };
+            bored_small: true, archive_days: self.v.archive_days, github: self.v.github, host: self.v.host.clone(), mach_fg: self.v.mach_fg.clone(), line_max: self.v.line_max, done_max: self.v.done_max, mcodes: self.v.mcodes.clone(),
+            rows: self.v.rows, head_rows: self.v.head_rows, hover_btn: self.v.hover_btn, flash: self.v.flash.clone(), remote_on: self.v.remote_on, has_machines: self.v.has_machines, agent_rows: self.v.agent_rows, pane_focus: self.v.pane_focus, head_note: self.v.head_note.clone(), newfeat: self.v.newfeat, version_label: self.v.version_label.clone(), head_grad: self.v.head_grad.clone() };
+        let c2 = Cards { c: self.c, v: &v2, ts: self.ts.clone(), epj: self.epj.clone(), ag: rows(&self.shared.join("agents.local")).into_iter().chain(rows(&self.shared.join("agents.remote"))).collect(), now_l: rows(&self.shared.join("agents.now.local")), now_r: rows(&self.shared.join("agents.now.remote")), projects: Vec::new(), shared: self.shared.clone(), host: self.host.clone(), rows_total: self.rows_total };
         c2.block(mode)
     }
 }

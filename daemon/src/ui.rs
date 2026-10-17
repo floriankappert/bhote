@@ -58,7 +58,7 @@ pub fn init_locale() { unsafe { setlocale(6, b"\0".as_ptr() as *const _); } }   
 pub fn coll(a: &str, b: &str) -> std::cmp::Ordering {
     match (std::ffi::CString::new(a), std::ffi::CString::new(b)) { (Ok(x), Ok(y)) => unsafe { strcoll(x.as_ptr(), y.as_ptr()) }.cmp(&0), _ => a.cmp(b) }
 }
-pub struct Project { pub name: String, pub ci: bool }
+pub struct Project { pub id: String, pub name: String, pub ci: bool }
 /// projects_load (the names, by name) with whether the record has a CI (mon_projects_ci)
 pub fn projects(c: &Ctx) -> Vec<Project> {
     let mut v = Vec::new();
@@ -69,7 +69,7 @@ pub fn projects(c: &Ctx) -> Vec<Project> {
         let txt = fs::read_to_string(&p).unwrap_or_default();
         let (mut name, mut del, mut kd, mut ci) = (String::new(), "0".to_string(), String::new(), None::<String>);
         for l in txt.lines() { if let Some(i) = l.find('=') { let (k, val) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = val.to_string(), "deleted" => del = val.to_string(), "kind" => kd = val.to_string(), "ci" if ci.is_none() => ci = Some(val.chars().filter(|c| !c.is_control()).collect()), _ => {} } } }
-        if kd == "project" && del != "1" && !name.is_empty() { v.push(Project { name: name.chars().filter(|c| !c.is_control()).collect(), ci: ci.map_or(false, |x| !x.is_empty()) }); }
+        if kd == "project" && del != "1" && !name.is_empty() { v.push(Project { id: p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), name: name.chars().filter(|c| !c.is_control()).collect(), ci: ci.map_or(false, |x| !x.is_empty()) }); }
     }
     v.sort_by(|a, b| coll(&a.name, &b.name));
     v
@@ -111,6 +111,7 @@ fn age(now: u64, t: &str) -> String {
 }
 
 pub fn dash_caption_pub(c: &Ctx, text: &str) -> String { dash_caption(c, text, "", false) }
+pub fn dash_caption_agents(c: &Ctx, hover: bool) -> String { dash_caption(c, "Agents", "agents", hover) }
 pub fn dash_caption_section(c: &Ctx, text: &str, section: &str) -> String { dash_caption(c, text, section, false) }
 fn dash_caption(c: &Ctx, text: &str, section: &str, hover_btn: bool) -> String {
     let (mut rest, mut rf, mut btn) = (c.rule_len() - 4 - text.chars().count() as i64, String::new(), String::new());

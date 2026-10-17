@@ -877,7 +877,10 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
 view_dump() {  # view_dump <file>: what the daemon needs of the screen's own state to draw the cards (ui.rs, cards.rs)
     local _t="$1.tmp.$$" _mc _i _mp=""; machine_fg_set _mc
     [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; for (( _i = 0; _i < ${MC_N:-0}; _i++ )); do _mp="$_mp${MC_NAME[$_i]}$US${MC_CODE[$_i]}"$'\036'; done
-    { printf 'MCODES=%s\nU_DONE_MAX=%s\n' "$_mp" "${U_DONE_MAX:-4}"; printf 'SEL_ID=%s\nHOVER_ID=%s\nEXPANDED=%s\nU_SCOPE=%s\nCUR_PROJ=%s\nSPIN_CH=%s\nBORED_SMALL=%s\nU_ARCHIVE_DAYS=%s\nU_GITHUB=%s\nHOST=%s\nMACH_FG=%s\nLINE_MAX=%s\n' \
+    { printf 'MCODES=%s\nU_DONE_MAX=%s\n' "$_mp" "${U_DONE_MAX:-4}"
+      printf 'ROWS=%s\nHEAD_ROWS=%s\nHOVER_BTN=%s\nFLASH=%s\nU_REMOTE=%s\nHAS_MACHINES=%s\nU_AGENT_ROWS=%s\nPANE_FOCUS=%s\nHEAD_NOTE=%s\nNEWFEAT=%s\nVERSION_LABEL=%s\nHEAD_GRAD=%s\n' \
+        "${ROWS:-40}" "${HEAD_ROWS:-0}" "${HOVER_BTN:-0}" "$( [ -n "${FLASH_MSG:-}" ] && [ "$SECONDS" -lt "${FLASH_UNTIL:-0}" ] && printf '%s' "$FLASH_MSG")" "${U_REMOTE:-off}" "${HAS_MACHINES:-0}" "${U_AGENT_ROWS:-}" "${PANE_FOCUS:-}" "${HEAD_NOTE:-}" "${NEWFEAT:-0}" "${VERSION_LABEL:-$VERSION}" "${HEAD_GRAD:-}"
+      printf 'SEL_ID=%s\nHOVER_ID=%s\nEXPANDED=%s\nU_SCOPE=%s\nCUR_PROJ=%s\nSPIN_CH=%s\nBORED_SMALL=%s\nU_ARCHIVE_DAYS=%s\nU_GITHUB=%s\nHOST=%s\nMACH_FG=%s\nLINE_MAX=%s\n' \
         "${SEL_ID:-}" "${HOVER_ID:-}" "${EXPANDED:-}" "${U_SCOPE:-all}" "${CUR_PROJ:-}" "${SPIN_CH:-}" "${BORED_SMALL:-}" "${U_ARCHIVE_DAYS:-7}" "${U_GITHUB:-on}" "$HOST" "$_mc" "${LINE_MAX:-10}"; } > "$_t" && mv -f "$_t" "$1"
 }
 colors_dump() {  # colors_dump <file>: the colour variables of this run as NAME=value lines (the daemon draws with them: ui.rs)

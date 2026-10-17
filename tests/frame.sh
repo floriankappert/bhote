@@ -169,6 +169,40 @@ for tcase in "" "THEME=catppuccin" "THEME=dracula" "THEME=dracula;COLOR_TEXT=#ff
     [ "$b" = "$r" ] && [ "${#b}" -gt 200 ] && ok "theme: the colours and the head gradient (${tcase:-the terminal palette})" || { bad "theme: ${tcase:-terminal}"; diff <(printf '%s' "$b" | command cat -v) <(printf '%s' "$r" | command cat -v) | head -4; }
 done
 
+# ── the head, the agents and the keys (view_head, view_bottom) and the agent maps ───────────────────────────────────────────────────
+bottom_case() {  # bottom_case <name> <colour 0|1> <cols> <rows> <view lines…>
+    local name=$1 col=$2 cols=$3 rows=$4; shift 4
+    printf '%s\n' "$@" > "$T/view.in"; local b r hb hr; rm -rf "$T/rb" "$T/rr"; mkdir -p "$T/rb" "$T/rr"
+    b=$( [ "$col" = 1 ] && export BHOTE_FORCE_COLOR=1; [ "$col" = 0 ] && export NO_COLOR=1
+         bash -c '
+            BHOTE_SOURCE_ONLY=1; . ./bhote; bhote_info >/dev/null 2>&1; theme_apply
+            COLS=$1; ROWS=$2; NOW=$FIXNOW; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 ))); HEAD_ROWS=0
+            ui_load >/dev/null 2>&1; NOW=$FIXNOW
+            while IFS== read -r k v; do [ -n "$k" ] && printf -v "$k" %s "$v"; done < "$T/view.in"
+            RUN_DIR=$T/rb; HAS_MACHINES=${HAS_MACHINES:-1}
+            [ -n "${NEWFEAT:-}" ] || NEWFEAT=0; [ "$NEWFEAT" = 1 ] && HEAD_ROWS=1
+            colors_dump $T/colors.env; view_dump $T/view.env
+            view_head; printf "=====\n"; view_bottom; for f in agrows agmap; do cp "$RUN_DIR/$f" "$T/rb-$f" 2>/dev/null; done; printf @' _ "$cols" "$rows" 2>/dev/null )
+    r=$( "$BD" block head --cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$T/data/topics" --colors "$T/colors.env" --view "$T/view.env"; printf '=====\n'
+         "$BD" block bottom --cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$T/data/topics" --colors "$T/colors.env" --view "$T/view.env" --run "$T/rr"; printf @ )
+    local same=1; [ "$b" = "$r" ] || same=0
+    for f in agrows agmap; do cmp -s "$T/rb-$f" "$T/rr/$f" || { same=0; echo "  differs: $f"; diff <(command cat -v "$T/rb-$f") <(command cat -v "$T/rr/$f") | head -4; }; done
+    if [ "$same" = 1 ] && [ "${#b}" -gt 40 ]; then ok "frame: head and bottom, $name (colour $col, $cols x $rows)"
+    else bad "frame: head and bottom, $name (colour $col, $cols x $rows)"; diff <(printf '%s' "$b" | command cat -v) <(printf '%s' "$r" | command cat -v) | head -10; fi
+}
+printf 'Mac%sw4:p2%sworking%sa9%sMac task\n' "$US" "$US" "$US" "$US" >> "$T/shared/agents.remote"
+printf 'Mac\n' > "$T/shared/machines.offline"
+printf 'PROJECT_COLORS=ims=teal,marketing=peach\nNAME_COLORS=a1=red\n' > "$T/config"
+for spec in "1 44 60" "1 66 60" "1 66 30" "1 100 60" "0 66 60" "0 44 24"; do set -- $spec
+    bottom_case "agents" $1 $2 $3 "PANE_FOCUS=true" "VERSION_LABEL=0.9.1.3 Preview" "HEAD_GRAD=$(printf '\033[1mBhote')"
+    bottom_case "other pane has the focus" $1 $2 $3 "PANE_FOCUS=false" "VERSION_LABEL=0.9.1.3 Preview"
+    bottom_case "notes, no focus info" $1 $2 $3 "HEAD_NOTE=⬆ Update available v9.9.9 · , settings" "NEWFEAT=1" "VERSION_LABEL=0.9.1.3 Preview"
+    bottom_case "flash, hover" $1 $2 $3 "FLASH_MSG=focused on Mac · go there" "FLASH_UNTIL=99999999" "HOVER_BTN=1" "VERSION_LABEL=0.9"
+    bottom_case "agent rows fixed" $1 $2 $3 "U_AGENT_ROWS=4" "VERSION_LABEL=0.9"
+done
+printf 'AGENTS_COMPACT=on\n' > "$T/config"; bottom_case "agents compact" 1 66 60 "VERSION_LABEL=0.9"
+: > "$T/config"; rm -f "$T/shared/machines.offline"
+
 [ -n "${KEEP:-}" ] && echo "kept $T" || rm -rf "$T"; exit $fail
 
 
