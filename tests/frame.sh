@@ -3,14 +3,14 @@
 # three widths, with the settings that change the picture. Skipped without the binary (cargo build --release in daemon/). Usage: bash tests/frame.sh
 cd "$(dirname "$0")/.." || exit 1
 unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID NO_COLOR
-T=$(mktemp -d); export BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data BHOTE_SHARED=$T/shared
+T=$(mktemp -d); export T; export BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data BHOTE_SHARED=$T/shared
 mkdir -p "$T/data/topics" "$T/shared"
 # shellcheck disable=SC1091
 . ./bhote
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
 BD=""; bhoted_bin_set BD
 [ -n "$BD" ] || { echo "skipped: no bhoted binary"; rm -rf "$T"; exit 0; }
-NOW=$(date +%s); US=$'\037'
+NOW=$(date +%s); export FIXNOW=$NOW; US=$'\037'
 proj() { printf 'id=proj-%s\nkind=project\ntitle=%s\nci=%s\ndeleted=0\nupdated=1\n' "$1" "$2" "$3" > "$T/data/topics/proj-$1.topic"; }
 proj ims IMS circleci:gh/acme/ims; proj bilendo Bilendo circleci:gh/acme/bilendo; proj bm "Bilendo Marketing" circleci:gh/acme/bm; proj cli "Bhote CLI" github:me/bhote
 proj plain Plain ""; proj rails Rails github:acme/rails; proj ab "Alpha Beta" github:acme/ab; proj om "Omega 9" github:acme/om; proj ima "Ima Zed" github:acme/ima; proj dup "Imaginary Zoo" github:acme/dup
@@ -69,7 +69,8 @@ tp 2102-1 $((NOW-100)) title="Slack watch" status=waiting waiting_for=Anna slack
 for i in 1 2 3; do tp 2200-$i $((NOW-5000*i)) title="Later topic $i" status=later; done
 tp 2201-1 $((NOW-9000)) title="Dismissed card" status=later dismissed=1
 tp 2300-1 $((NOW-9*86400)) title="Archived next" status=next
-tp 2301-1 $((NOW-500)) title="A done one" status=done
+for i in 1 2 3 4 5 6; do tp 2301-$i $((NOW-500*i)) title="A done one number $i" status=done agent_machine=$([ $((i%2)) = 0 ] && echo Mac || echo $H) agent_pane=w$i:p1; done
+tp 2302-1 $((NOW-40*86400)) title="An old done one" status=done
 US=$'\037'
 printf '%s\n' "$H${US}w1:p1${US}idle${US}a1${US}Credit lines" "$H${US}w1:p2${US}done${US}a2${US}" "$H${US}w2:p1${US}working${US}a3${US}Do the rounding" "$H${US}w2:p2${US}idle${US}a4${US}" \
     "$H${US}w2:p3${US}working${US}a5${US}" "$H${US}w3:p1${US}testing${US}a6${US}" "$H${US}w3:p2${US}idle${US}a7${US}" > "$T/shared/agents.local"
@@ -84,7 +85,7 @@ card_case() {  # card_case <name> <colour 0|1> <cols> <view lines…>
     local b r
     printf '%s\n' "$@" > "$T/view.in"
     local data=${CASE_DATA:-$T/data}
-    for mode in cards lists; do
+    for mode in cards lists done; do
         b=$( export BHOTE_DATA=$data; [ "$col" = 1 ] && export BHOTE_FORCE_COLOR=1; [ "$col" = 0 ] && export NO_COLOR=1
              bash -c '
                 BHOTE_SOURCE_ONLY=1; . ./bhote; bhote_info >/dev/null 2>&1; theme_apply
@@ -93,8 +94,8 @@ card_case() {  # card_case <name> <colour 0|1> <cols> <view lines…>
                 while IFS== read -r k v; do [ -n "$k" ] && printf -v "$k" %s "$v"; done < "$4"
                 [ "${EXPANDED:-}" = "" ] && EXPANDED=" "
                 CUR_PROJ=${CUR_PROJ:-}; U_SCOPE=${U_SCOPE:-all}
-                colors_dump "$3"; view_dump "$5"; topics_block "$6"; printf @' _ "$cols" "$NOW" "$T/colors.env" "$T/view.in" "$T/view.env" "$mode" 2>/dev/null )
-        r=$( "$BD" block "$mode" --cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$data/topics" --colors "$T/colors.env" --view "$T/view.env"; printf @ )
+                colors_dump "$3"; view_dump "$5"; case "$6" in done) done_block "${DONE_N:-4}" ;; *) topics_block "$6" ;; esac; printf @' _ "$cols" "$NOW" "$T/colors.env" "$T/view.in" "$T/view.env" "$mode" 2>/dev/null )
+        r=$( "$BD" block "$mode" --cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$data/topics" --colors "$T/colors.env" --view "$T/view.env" --max "${DONE_N:-4}"; printf @ )
         if [ "$b" = "$r" ] && { [ "${#b}" -gt 20 ] || [ -n "${CASE_DATA:-}" ]; }; then ok "frame: $mode, $name (colour $col, $cols columns)"
         else bad "frame: $mode, $name (colour $col, $cols columns)"; diff <(printf '%s' "$b" | command cat -v) <(printf '%s' "$r" | command cat -v) | head -10; fi
     done
@@ -110,11 +111,55 @@ for col in 1 0; do for cols in 44 66 100; do
     card_case "hover a line" $col $cols "SEL_ID=1002-1" "HOVER_ID=2100-2"
     card_case "hover the selected" $col $cols "SEL_ID=1002-1" "HOVER_ID=1002-1"
     card_case "three lines a group" $col $cols "SEL_ID=2000-2" "LINE_MAX=3" "EXPANDED= later "
+    DONE_N=2 card_case "two done" $col $cols "SEL_ID=2301-3" "U_DONE_MAX=2"
+    DONE_N=0 card_case "no done rows" $col $cols "SEL_ID=1002-1"
+    card_case "hover a done" $col $cols "SEL_ID=1002-1" "HOVER_ID=2301-2"
     card_case "no archive" $col $cols "SEL_ID=1002-1" "U_ARCHIVE_DAYS=0"
     card_case "project scope" $col $cols "SEL_ID=1002-1" "U_SCOPE=project" "CUR_PROJ=proj-ims"
     card_case "no branches" $col $cols "SEL_ID=1002-1" "U_GITHUB=off"
     mkdir -p "$T/empty/topics"; CASE_DATA=$T/empty card_case "empty: the bored agents" $col $cols "SEL_ID=x"
     CASE_DATA=$T/empty card_case "empty, small" $col $cols "SEL_ID=x" "BORED_SMALL=1"
 done; done
-rm -rf "$T"; exit $fail
+
+# ── the whole main view (bhote_view): the frame and the maps it leaves for the clicks, step by step (the window of the list follows the selection) ──
+whole_case() {  # whole_case <name> <colour 0|1> <cols> <rows> <view lines…> -- <selected ids, one frame each>
+    local name=$1 col=$2 cols=$3 rows=$4; shift 4
+    local view=(); while [ $# -gt 0 ] && [ "$1" != -- ]; do view[${#view[@]}]=$1; shift; done; shift
+    local sels=("$@") i s okc=1 data=${CASE_DATA:-$T/data}
+    printf '%s\n' "${view[@]}" > "$T/view.in"
+    for side in bash rust; do
+        rm -rf "$T/run-$side" "$T/out-$side"; mkdir -p "$T/run-$side" "$T/out-$side"
+        ( export BHOTE_DATA=$data; [ "$col" = 1 ] && export BHOTE_FORCE_COLOR=1; [ "$col" = 0 ] && export NO_COLOR=1
+          bash -c '
+            BHOTE_SOURCE_ONLY=1; . ./bhote; bhote_info >/dev/null 2>&1; theme_apply; side=$1; cols=$2; rows=$3; shift 3
+            cfg_set BHOTED_FRAME $( [ "$side" = bash ] && echo off || echo auto )
+            COLS=$cols; ROWS=$rows; REAL_COLS=$cols; REAL_ROWS=$rows; RUN_DIR=$T/run-$side; HEAD_ROWS=0
+            RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 )))
+            ui_load >/dev/null 2>&1; NOW=$FIXNOW; step=0
+            while IFS== read -r k v; do [ -n "$k" ] && printf -v "$k" %s "$v"; done < "$T/view.in"
+            [ "${EXPANDED:-}" = "" ] && EXPANDED=" "
+            for s in "$@"; do
+                SEL_ID=$s; step=$(( step + 1 ))
+                bhote_view > "$T/out-$side/frame.$step" 2>/dev/null
+                for f in tmap spinrows divrow toff; do [ -e "$RUN_DIR/$f" ] && cp "$RUN_DIR/$f" "$T/out-$side/$f.$step" || : > "$T/out-$side/$f.$step.none"; done
+            done' _ "$side" "$cols" "$rows" "${sels[@]}" ) 2>/dev/null
+    done
+    i=0; for s in "${sels[@]}"; do i=$(( i + 1 ))
+        for f in frame tmap spinrows divrow toff; do
+            if [ -e "$T/out-bash/$f.$i.none" ] || [ -e "$T/out-rust/$f.$i.none" ]; then [ -e "$T/out-bash/$f.$i.none" ] && [ -e "$T/out-rust/$f.$i.none" ] || { okc=0; echo "  $f step $i: one side has no file"; }; continue; fi
+            cmp -s "$T/out-bash/$f.$i" "$T/out-rust/$f.$i" || { okc=0; echo "  differs: $f (step $i, selected $s)"; diff <(command cat -v "$T/out-bash/$f.$i") <(command cat -v "$T/out-rust/$f.$i") | head -6; }
+        done
+    done
+    [ "$okc" = 1 ] && [ -s "$T/out-rust/frame.1" ] && ok "frame: the whole view, $name (colour $col, $cols x $rows)" || bad "frame: the whole view, $name (colour $col, $cols x $rows)"
+}
+for spec in "1 44 60" "1 44 24" "1 44 12" "1 66 60" "1 66 40" "1 66 30" "1 66 24" "1 66 16" "1 66 10" "0 66 40" "0 66 16"; do set -- $spec; col=$1; cols=$2; rows=$3
+    whole_case "walk down" $col $cols $rows "EXPANDED= " -- 1000-1 1002-1 1006-1 2000-1 2000-5 2100-2 2200-1
+    whole_case "walk up, groups open" $col $cols $rows "EXPANDED= next waiting later done " -- 2200-3 2100-2 2000-12 1007-1 1000-1 1000-1
+done
+whole_case "hover, done selected" 1 66 40 "HOVER_ID=1002-1" -- 2301-2 1002-1
+whole_case "project scope" 1 66 40 "U_SCOPE=project" "CUR_PROJ=proj-ims" -- 1002-1
+CASE_DATA=$T/empty whole_case "empty" 1 66 40 -- x
+CASE_DATA=$T/empty whole_case "empty, low" 1 66 14 -- x
+[ -n "${KEEP:-}" ] && echo "kept $T" || rm -rf "$T"; exit $fail
+
 

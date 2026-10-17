@@ -110,6 +110,7 @@ fn age(now: u64, t: &str) -> String {
 }
 
 pub fn dash_caption_pub(c: &Ctx, text: &str) -> String { dash_caption(c, text, "", false) }
+pub fn dash_caption_section(c: &Ctx, text: &str, section: &str) -> String { dash_caption(c, text, section, false) }
 fn dash_caption(c: &Ctx, text: &str, section: &str, hover_btn: bool) -> String {
     let (mut rest, mut rf, mut btn) = (c.rule_len() - 4 - text.chars().count() as i64, String::new(), String::new());
     if !section.is_empty() {

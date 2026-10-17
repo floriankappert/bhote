@@ -430,12 +430,25 @@ follow_do() {  # follow_do <function>: a follow-up of the collector. BHOTED_FOLL
     esac
     "$1"
 }
-bhoted_block() {  # bhoted_block <block>: the block of the frame drawn by the daemon (ui.rs: the same bytes as the bash function); 1 = draw it in bash
+bhoted_block() {  # bhoted_block <block> [arguments]: the block of the frame drawn by the daemon (ui.rs: the same bytes as the bash function); 1 = draw it in bash
     local bin off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1; cfg_var off BHOTED_FRAME auto; [ "$off" = off ] && return 1
     [ -s "$RUN_DIR/colors.env" ] || return 1                                          # (the colours of this run: ui_load writes them)
     bin=${BHOTED_BIN_CACHE:-}; [ -n "$bin" ] || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
-    local view=""; case "$1" in cards|lists) view_dump "$RUN_DIR/view.env"; view="$RUN_DIR/view.env" ;; esac
-    "$bin" block "$1" --cols "${COLS:-44}" --now "${NOW:-$(date +%s)}" --config "$CONFIG_FILE" --shared "$SHARED_DIR" --topics "$TOPIC_DIR" --colors "$RUN_DIR/colors.env" ${view:+--view "$view"} 2>/dev/null
+    [ "$bin" != none ] || return 1
+    local view=""; case "$1" in cards|lists|done) view_dump "$RUN_DIR/view.env"; view="$RUN_DIR/view.env" ;; esac
+    "$bin" block "$1" --cols "${COLS:-44}" --now "${NOW:-$(date +%s)}" --config "$CONFIG_FILE" --shared "$SHARED_DIR" --topics "$TOPIC_DIR" --colors "$RUN_DIR/colors.env" ${view:+--view "$view"} "${@:2}" 2>/dev/null
+}
+bhoted_frame() {  # bhoted_frame <head> <bottom>: the whole main view from the daemon (cards.rs Layout: the same bytes and the same maps as bhote_view); 1 = bash draws it
+    local bin off out; cfg_var off BHOTED auto; [ "$off" = off ] && return 1; cfg_var off BHOTED_FRAME auto; [ "$off" = off ] && return 1
+    [ -s "$RUN_DIR/colors.env" ] || return 1
+    bin=${BHOTED_BIN_CACHE:-}; [ -n "$bin" ] || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
+    [ "$bin" != none ] || return 1
+    printf '%s' "$1" > "$RUN_DIR/frame.head" 2>/dev/null && printf '%s' "$2" > "$RUN_DIR/frame.bottom" 2>/dev/null || return 1
+    view_dump "$RUN_DIR/view.env"
+    out=$("$bin" block frame --cols "${COLS:-44}" --rows "${ROWS:-40}" --now "${NOW:-$(date +%s)}" --config "$CONFIG_FILE" --shared "$SHARED_DIR" --topics "$TOPIC_DIR" --colors "$RUN_DIR/colors.env" \
+        --view "$RUN_DIR/view.env" --head "$RUN_DIR/frame.head" --bottom "$RUN_DIR/frame.bottom" --run "$RUN_DIR" 2>/dev/null) || return 1
+    [ -n "$out" ] || return 1
+    printf '%s' "$out"
 }
 bhoted_agents() { [ -e "$SHARED_DIR/bhoted.pid.agents" ] && bhoted_alive; }   # the daemon collects this machine's agents (no collect_local in the collector)
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
@@ -854,8 +867,9 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     TITLE=${TITLE:-$L}; TITLESEL=${TITLESEL:-$LSEL}
 }
 view_dump() {  # view_dump <file>: what the daemon needs of the screen's own state to draw the cards (ui.rs, cards.rs)
-    local _t="$1.tmp.$$" _mc; machine_fg_set _mc
-    { printf 'SEL_ID=%s\nHOVER_ID=%s\nEXPANDED=%s\nU_SCOPE=%s\nCUR_PROJ=%s\nSPIN_CH=%s\nBORED_SMALL=%s\nU_ARCHIVE_DAYS=%s\nU_GITHUB=%s\nHOST=%s\nMACH_FG=%s\nLINE_MAX=%s\n' \
+    local _t="$1.tmp.$$" _mc _i _mp=""; machine_fg_set _mc
+    [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; for (( _i = 0; _i < ${MC_N:-0}; _i++ )); do _mp="$_mp${MC_NAME[$_i]}$US${MC_CODE[$_i]}"$'\036'; done
+    { printf 'MCODES=%s\nU_DONE_MAX=%s\n' "$_mp" "${U_DONE_MAX:-4}"; printf 'SEL_ID=%s\nHOVER_ID=%s\nEXPANDED=%s\nU_SCOPE=%s\nCUR_PROJ=%s\nSPIN_CH=%s\nBORED_SMALL=%s\nU_ARCHIVE_DAYS=%s\nU_GITHUB=%s\nHOST=%s\nMACH_FG=%s\nLINE_MAX=%s\n' \
         "${SEL_ID:-}" "${HOVER_ID:-}" "${EXPANDED:-}" "${U_SCOPE:-all}" "${CUR_PROJ:-}" "${SPIN_CH:-}" "${BORED_SMALL:-}" "${U_ARCHIVE_DAYS:-7}" "${U_GITHUB:-on}" "$HOST" "$_mc" "${LINE_MAX:-10}"; } > "$_t" && mv -f "$_t" "$1"
 }
 colors_dump() {  # colors_dump <file>: the colour variables of this run as NAME=value lines (the daemon draws with them: ui.rs)
@@ -1109,6 +1123,7 @@ ui_load() {
     [ "$NEWFEAT" = 1 ] && HEAD_ROWS=$(( HEAD_ROWS + 1 ))
     store_tag > /dev/null; STORE_TAG=$STORE_TAG_OUT
     AG_N=0; AG_LINES=(); MACH_FG_CACHE=""                      # (herdr's colour for the machine name is read again with every load)
+    machine_codes_load; machine_fg_set _mfg_unused; [ -n "${BHOTED_BIN_CACHE:-}" ] || bhoted_bin_set BHOTED_BIN_CACHE; BHOTED_BIN_CACHE=${BHOTED_BIN_CACHE:-none}   # (once per load, here: the frame's blocks run in subshells, which could not keep them)
     for f in "$AGENT_LOCAL" "$AGENT_REMOTE"; do
         [ -r "$f" ] && while IFS= read -r line; do [ -n "$line" ] && { AG_LINES[$AG_N]=$line; AG_N=$(( AG_N + 1 )); }; done < "$f"
     done
@@ -1937,6 +1952,7 @@ done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MA
     agent_pane_code_set DONE_MC "$_m" "${T_AP[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # MAC/w3:a1 (the agent), else MAC
 }
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
+    bhoted_block done --max "$1" && return 0
     local max=$1 i k n=0 all=0 idx=() tc t tw tm w=$(( ${COLS:-44} - 2 ))
     local dn=() used=" " best bu u j sel_in=0                 # newest first: by the last change (checking off is one); builtins only
     for (( i = 0; i < T_N; i++ )); do [ "${T_STATUS[$i]}" = done ] && in_scope "$i" && ! topic_archived "$i" && dn[${#dn[@]}]=$i; done; all=${#dn[@]}
@@ -2483,11 +2499,13 @@ count_lines() {  # count_lines <var> <text>  (a read loop: pattern substitution 
 }
 bhote_view() {  # head on top, topics below it (scrolling with the selection), agents + rule + keys at the BOTTOM edge
     local head topics lists bottom dblk hh th lh=0 bh dh=0 dn avail pad=0 i off sel=-1 content tl=() tr=() tz=() n=0 line lsel=-1
-    head=$(view_head); topics=$(topics_block cards); lists=$(topics_block lists)
+    head=$(view_head)
     local bkey="$UI_GEN|${COLS:-}|${ROWS:-}|${FLASH_MSG:-}|$(( SECONDS < ${FLASH_UNTIL:-0} ))|${PANE_FOCUS:-}|${HOVER_BTN:-0}" ck=""   # (the agents' area and the keys do not depend on the selection)
     { IFS= read -r ck < "$RUN_DIR/bottom.key"; } 2>/dev/null
     if [ "$ck" = "$bkey" ] && [ -s "$RUN_DIR/bottom.out" ] && [ -s "$RUN_DIR/agmap" ]; then bottom=$(< "$RUN_DIR/bottom.out")
     else bottom=$(view_bottom); printf '%s\n' "$bkey" > "$RUN_DIR/bottom.key" 2>/dev/null; printf '%s' "$bottom" > "$RUN_DIR/bottom.out" 2>/dev/null; fi
+    bhoted_frame "$head" "$bottom" && return 0                    # (the daemon puts it together: the topics, the done area, the monitors, the windows and the maps)
+    topics=$(topics_block cards); lists=$(topics_block lists)
     count_lines hh "$head"; count_lines th "$topics"; count_lines bh "$bottom"
     num_set dn "${U_DONE_MAX:-}" 4; case "$EXPANDED" in *" done "*) dn=$(done_total) ;; esac; dblk=$(done_block "$dn"); [ -n "$dblk" ] && count_lines dh "$dblk"
     while [ "$dh" -gt 0 ] && [ "$dn" -gt 0 ] && [ $(( ${ROWS:-40} - hh - bh - dh )) -lt $(( th < 6 ? th : 6 )) ]; do   # low: fewer done ones, the list keeps room

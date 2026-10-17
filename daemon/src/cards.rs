@@ -14,7 +14,7 @@ const SELMARK: char = '\u{1}'; // \001
 
 pub struct View {
     pub sel_id: String, pub hover_id: String, pub expanded: String, pub scope_project: bool, pub cur_proj: String, pub spin_ch: String,
-    pub bored_small: bool, pub archive_days: i64, pub github: bool, pub host: String, pub mach_fg: String, pub line_max: i64,
+    pub bored_small: bool, pub archive_days: i64, pub github: bool, pub host: String, pub mach_fg: String, pub line_max: i64, pub done_max: i64, pub mcodes: Vec<(String, String)>,
 }
 impl View {
     pub fn read(path: &str) -> View {
@@ -23,7 +23,8 @@ impl View {
         let g = |k: &str| m.get(k).cloned().unwrap_or_default();
         let num = |k: &str, d: i64| { let v = g(k); if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) { v.parse().unwrap_or(d) } else { d } };
         View { sel_id: g("SEL_ID"), hover_id: g("HOVER_ID"), expanded: g("EXPANDED"), scope_project: g("U_SCOPE") == "project", cur_proj: g("CUR_PROJ"), spin_ch: if g("SPIN_CH").is_empty() { "✶".into() } else { g("SPIN_CH") },
-            bored_small: g("BORED_SMALL") == "1", archive_days: num("U_ARCHIVE_DAYS", 7), github: g("U_GITHUB") != "off", host: g("HOST"), mach_fg: g("MACH_FG"), line_max: num("LINE_MAX", 10) }
+            bored_small: g("BORED_SMALL") == "1", archive_days: num("U_ARCHIVE_DAYS", 7), github: g("U_GITHUB") != "off", host: g("HOST"), mach_fg: g("MACH_FG"), line_max: num("LINE_MAX", 10), done_max: num("U_DONE_MAX", 4),
+            mcodes: g("MCODES").split('\u{1e}').filter(|p| !p.is_empty()).map(|p| { let mut f = p.splitn(2, US); (f.next().unwrap_or("").to_string(), f.next().unwrap_or("").to_string()) }).collect() }
     }
 }
 
@@ -412,6 +413,84 @@ impl<'a> Cards<'a> {
         if kd == "project" && del != "1" { clean(&name) } else { String::new() }
     }
 
+
+    // ── the done area ─────────────────────────────────────────────────────────────────────────────────────
+    fn archived_count(&self) -> i64 {
+        let mut n = 0;
+        for i in 0..self.ts.len() {
+            let t = &self.ts[i];
+            if t.status == "later" && t.dm == "1" { continue; }
+            if !self.in_scope(i) { continue; }
+            match t.status.as_str() { "review" | "now" | "testing" | "finished" => continue, "waiting" => if t.dep == "1" { continue; }, _ => {} }
+            if self.archived(i) { n += 1; }
+        }
+        n
+    }
+    fn code_of(&self, machine: &str) -> Option<&str> { self.v.mcodes.iter().find(|(n, _)| n == machine).map(|(_, c)| c.as_str()) }
+    /// done_mc: the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine
+    fn done_mc(&self, t: &Topic) -> String {
+        if t.am.is_empty() || self.v.mcodes.len() <= 1 { return String::new(); }
+        let p = &t.ap;
+        let ok = p.starts_with('w') && p.len() > 1 && p.chars().nth(1).map_or(false, |c| c.is_ascii_alphanumeric()) && p.contains(":p") && p.rsplit(":p").next().map_or(false, |n| n.starts_with(|c: char| c.is_ascii_digit()));
+        if ok {
+            let base = format!("{}:a{}", p.split(":p").next().unwrap_or(""), p.rsplit(":p").next().unwrap_or(""));
+            if !t.am.is_empty() && t.am != self.v.host { let c = self.code_of(&t.am).unwrap_or(&t.am).to_string(); return format!("{}/{}", c, base); }
+            return base;
+        }
+        self.code_of(&t.am).unwrap_or("").to_string()
+    }
+    fn done_summary(&self, d: i64, a: i64) -> String {
+        let g = |k: &str| self.g(k).to_string(); let x = g("X");
+        let mut out = String::new();
+        if d > 0 { out = format!("{}✓{} {}{} done{}", g("GREEN"), x, g("D"), d, x); }
+        if a > 0 { if !out.is_empty() { out = format!("{} {}·{} ", out, g("D"), x); } out = format!("{}{}▤ {} archived{}", out, g("D"), a, x); }
+        if out.is_empty() { String::new() } else { format!("  {}\n", out) }
+    }
+    /// done_block <max>
+    pub fn done_block(&self, max: i64) -> String {
+        let g = |k: &str| self.g(k).to_string(); let x = g("X"); let w = self.c.cols - 2;
+        let dn: Vec<usize> = (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).collect();
+        let all = dn.len() as i64; let arch = self.archived_count();
+        let mut out = String::new();
+        let compact = self.c.cfg.get("DONE_COMPACT").map_or(false, |v| v == "on");
+        if compact || max <= 0 {
+            if all == 0 && arch == 0 { return out; }
+            out.push_str(&crate::ui::dash_caption_section(self.c, "Done", "done")); out.push_str(&self.done_summary(all, arch)); return out;
+        }
+        let (mut idx, mut used, mut sel_in): (Vec<usize>, Vec<usize>, bool) = (Vec::new(), Vec::new(), false);
+        while (idx.len() as i64) < max && (idx.len() as i64) < all {
+            let (mut best, mut bu) = (usize::MAX, -1i64);
+            for &j in &dn { if used.contains(&j) { continue; } let u = self.ts[j].upd as i64; if u >= bu { bu = u; best = j; } }
+            idx.push(best); used.push(best); if self.ts[best].id == self.v.sel_id { sel_in = true; }
+        }
+        if !sel_in && !self.v.sel_id.is_empty() { for &j in &dn { if self.ts[j].id == self.v.sel_id { idx.push(j); break; } } }
+        if idx.is_empty() { if arch == 0 { return out; } out.push_str(&crate::ui::dash_caption_section(self.c, "Done", "done")); out.push_str(&self.done_summary(0, arch)); return out; }
+        out.push_str(&crate::ui::dash_caption_section(self.c, "Done", "done"));
+        for &i in &idx {
+            let t = &self.ts[i];
+            let mut tm = ago(self.c.now, &t.upd.to_string());
+            let mc = self.done_mc(t); if !mc.is_empty() { tm = format!("{} {}", mc, tm); }
+            let title = if t.title.is_empty() { "(untitled)".to_string() } else { t.title.clone() };
+            let tt = clip(&title, w - 7 - tm.chars().count() as i64); let tw = dw(&tt); let tml = tm.chars().count() as i64;
+            let mut tc = format!("{}{}", g("BOLD"), g("D"));
+            let (xs, xh) = (format!("{}{}", x, g("SELBG")), format!("{}{}", x, g("CARDHOV")));
+            if t.id == self.v.sel_id {
+                tc = format!("{}{}", g("BOLD"), g("DSEL"));
+                out.push_str(&format!("{}{}{}{}{}  {}✓{} {}{}{}{}{}{}{} {}\n", REF, t.id, REF, SELMARK, g("SELBG"), g("GREEN"), xs, tc, tt, xs, sp(w - 5 - tw - tml), g("DSEL"), tm, xs, x));
+            } else if t.id == self.v.hover_id {
+                tc = format!("{}{}", g("BOLD"), g("DSEL"));
+                out.push_str(&format!("{}{}{}{}  {}✓{}{} {}{}{}{}{}{}{} {}\n", REF, t.id, REF, g("CARDHOV"), g("GREEN"), x, g("CARDHOV"), tc, tt, xh, sp(w - 5 - tw - tml), g("DSEL"), tm, xh, x));
+            } else {
+                out.push_str(&format!("{}{}{}  {}✓{} {}{}{}{}{}{}{}\n", REF, t.id, REF, g("GREEN"), x, tc, tt, x, sp(w - 5 - tw - tml), g("D"), tm, x));
+            }
+        }
+        let n = idx.len() as i64;
+        if all > n { out.push_str(&self.more_row("done", all - n)); }
+        else if all > self.v.done_max { out.push_str(&self.more_row("done", 0)); }
+        out.push_str(&self.done_summary(all, arch));
+        out
+    }
+
     /// topics_block [cards|lists]
     pub fn block(&self, mode: &str) -> String {
         let g = |k: &str| self.g(k).to_string(); let x = g("X");
@@ -498,3 +577,97 @@ fn deploy_branch_ok(n: &str, b: &str) -> bool {
 }
 #[allow(dead_code)]
 fn unused() { let _ = _abbr; }
+
+// ── the whole main view: bhote_view ──────────────────────────────────────────────────────────────────────────
+
+/// count_lines: the lines of a block (command substitution has cut its trailing newlines; an empty text counts as one line, as the script's read loop does)
+fn count_lines(t: &str) -> i64 { t.split('\n').count() as i64 }
+
+struct Parsed { line: String, ref_: String, spin: String }
+/// view_lines: the lines without their markers (the dancing star, the topic id of the line, the selected line) and the index of the selected one
+fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
+    let mut out = Vec::new(); let mut sel = -1i64;
+    for (n, l0) in text.split('\n').enumerate() {
+        let mut l = l0.to_string(); let mut spin = String::new(); let mut rf = String::new();
+        let cs: Vec<char> = l.chars().collect();
+        if cs.len() >= 3 && cs[0] == SPIN && cs[2] == SPIN { spin = cs[1].to_string(); l = cs[3..].iter().collect(); }
+        if l.starts_with(REF) { let r: String = l.chars().skip(1).collect(); let i = r.find(REF).unwrap_or(r.len()); rf = r[..i].to_string(); l = r[(i + REF.len_utf8()).min(r.len())..].to_string(); }
+        if l.starts_with(SELMARK) { sel = n as i64; l = l.chars().skip(1).collect(); }
+        out.push(Parsed { line: l, ref_: rf, spin });
+    }
+    (out, sel)
+}
+
+struct Vp { row: i64, map: String, spin: String }
+pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf }
+impl<'a> Layout<'a> {
+    /// bhote_view: head on top, the topics below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
+    /// the run folder (tmap, spinrows, divrow, toff), as the script writes them.
+    pub fn view(&self) -> String {
+        let c = self.cards; let g = |k: &str| c.g(k).to_string();
+        let rows = self.rows;
+        let trim = |s: String| s.trim_end_matches('\n').to_string();
+        let head = trim(self.head.clone()); let bottom = trim(self.bottom.clone());
+        let mut topics = trim(c.block("cards")); let lists = trim(c.block("lists"));
+        let (hh, mut th, bh) = (count_lines(&head), count_lines(&topics), count_lines(&bottom));
+        let mut dn = c.v.done_max; if c.expanded("done") { dn = c.done_total(); }
+        let mut dblk = trim(c.done_block(dn)); let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
+        while dh > 0 && dn > 0 && rows - hh - bh - dh < th.min(6) { dn -= 1; dblk = trim(c.done_block(dn)); dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) }; }
+        let mut mblk = trim(crate::ui::monitors(c.c)); let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
+        if mh > 0 && rows - hh - bh - dh - mh < th.min(6) { mblk.clear(); mh = 0; }
+        let lh = if lists.is_empty() { 0 } else { count_lines(&lists) };
+        let mut lcut = lh; let need = th.min(6);
+        if rows - hh - bh - dh - mh - lcut < need { lcut = rows - hh - bh - dh - mh - need; if lcut < 0 { lcut = 0; } }
+        let avail = rows - hh - bh - dh - mh - lcut;
+        if topics.contains("the agents are bored") && th > avail { topics = trim(c.block_with("cards", true)); th = count_lines(&topics); }
+        let mut out = format!("{}\n", head);
+        let mut vp = Vp { row: hh, map: String::new(), spin: String::new() };
+        fn put(vp: &mut Vp, p: &[Parsed], from: i64, to: i64, out: &mut String) {
+            let mut i = from;
+            while i < to { if let Some(l) = p.get(i as usize) {
+                out.push_str(&l.line); out.push('\n'); vp.row += 1;
+                if !l.ref_.is_empty() { vp.map.push_str(&format!("{}\u{1e}{}\n", vp.row, l.ref_)); }
+                if !l.spin.is_empty() { vp.spin.push_str(&format!(" {}:3:{}", vp.row, l.spin)); }
+            } else { out.push('\n'); vp.row += 1; } i += 1; }
+        }
+        let toff = self.run_dir.join("toff");
+        let (tl, mut sel) = parse_lines(&topics); let n = tl.len() as i64;
+        let mut pad = 0;
+        if th <= avail { put(&mut vp, &tl, 0, n, &mut out); pad = avail - th; let _ = fs::remove_file(&toff); }
+        else if avail >= 4 {
+            let content = avail - 1;
+            if sel == -1 { sel = 0; }
+            let mut sh = 1; while sh < 4 && sel + sh < n && !tl.get((sel + sh) as usize).map_or(true, |p| p.line.is_empty()) { sh += 1; }
+            let prev: i64 = fs::read_to_string(&toff).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).and_then(|v| v.parse().ok()).unwrap_or(-1);
+            let mut off;
+            if prev < 0 { off = sel + sh - content; }
+            else if sel < prev { off = sel; while off > 0 && tl.get((off - 1) as usize).map_or(false, |p| p.ref_.is_empty()) { off -= 1; } }
+            else if sel + sh > prev + content { off = sel + sh - content; }
+            else { off = prev; }
+            if off > sel { off = sel; } if off < 0 { off = 0; } if off > th - content { off = th - content; }
+            let _ = fs::write(&toff, format!("{}\n", off));
+            put(&mut vp, &tl, off, off + content, &mut out);
+            out.push_str(&format!(" {}↑↓ {} more lines{}\n", g("D"), th - content, g("X"))); vp.row += 1;
+        } else { put(&mut vp, &tl, 0, n.min(avail), &mut out); }
+        for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0);
+        if lcut > 0 { let (p, _) = parse_lines(&lists); put(&mut vp, &p, 0, lcut, &mut out); }
+        if dh > 0 { let (p, _) = parse_lines(&dblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
+        if mh > 0 { let (p, _) = parse_lines(&mblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
+        let _ = fs::write(self.run_dir.join("tmap"), vp.map);
+        let _ = fs::write(self.run_dir.join("spinrows"), vp.spin);
+        let _ = fs::write(self.run_dir.join("divrow"), format!("{}\n", rows - bh + 1));
+        out.push_str(&bottom);
+        out
+    }
+}
+
+impl<'a> Cards<'a> {
+    /// topics_block with the small "bored" line (BORED_SMALL=1): the frame has no room for the agents
+    pub fn block_with(&self, mode: &str, bored_small: bool) -> String {
+        if !bored_small { return self.block(mode); }
+        let v2 = View { sel_id: self.v.sel_id.clone(), hover_id: self.v.hover_id.clone(), expanded: self.v.expanded.clone(), scope_project: self.v.scope_project, cur_proj: self.v.cur_proj.clone(), spin_ch: self.v.spin_ch.clone(),
+            bored_small: true, archive_days: self.v.archive_days, github: self.v.github, host: self.v.host.clone(), mach_fg: self.v.mach_fg.clone(), line_max: self.v.line_max, done_max: self.v.done_max, mcodes: self.v.mcodes.clone() };
+        let c2 = Cards { c: self.c, v: &v2, ts: self.ts.clone(), epj: self.epj.clone(), ag: rows(&self.shared.join("agents.local")).into_iter().chain(rows(&self.shared.join("agents.remote"))).collect(), now_l: rows(&self.shared.join("agents.now.local")), now_r: rows(&self.shared.join("agents.now.remote")), projects: Vec::new(), shared: self.shared.clone(), host: self.host.clone() };
+        c2.block(mode)
+    }
+}
