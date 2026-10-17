@@ -31,6 +31,8 @@ static SAVED: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
 extern "C" fn on_quit(_: i32) { QUIT.store(true, std::sync::atomic::Ordering::SeqCst); unsafe { if WAKE_W >= 0 { let b = [2u8]; write(WAKE_W, b.as_ptr(), 1); } } }
 extern "C" fn on_winch(_: i32) { unsafe { if WAKE_W >= 0 { let b = [1u8]; write(WAKE_W, b.as_ptr(), 1); } } }
 
+pub fn quit_requested() -> bool { QUIT.load(std::sync::atomic::Ordering::SeqCst) }
+
 pub struct Term { saved: String, wake_r: i32, buf: Vec<u8> }
 
 impl Term {
@@ -73,6 +75,7 @@ impl Term {
     }
     /// The next event; waits at most `ms`. A lone Esc is told from a sequence by waiting 50 ms for the next byte.
     pub fn next(&mut self, ms: i32) -> Ev {
+        if quit_requested() { return Ev::Eof; }
         if let Some(e) = parse(&mut self.buf, false) { return e; }
         loop {
             let mut fds = [PollFd { fd: 0, events: 1, revents: 0 }, PollFd { fd: self.wake_r, events: 1, revents: 0 }];

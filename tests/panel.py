@@ -6,6 +6,15 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "daemon", "target", "release", "bhoted")
 if not os.path.exists(BIN):
     print("skipped: no bhoted binary"); sys.exit(0)
+import signal
+LIVE = []
+def _timeout(*_):   # a test that hangs must not hold the build: end it, and the panels it started
+    print("FAIL the panel test ran out of time (240 s)")
+    for pid in LIVE:
+        try: os.killpg(pid, 9)
+        except OSError: pass
+    os._exit(1)
+signal.signal(signal.SIGALRM, _timeout); signal.alarm(240)
 fails = 0
 def ok(m): print("ok   " + m)
 def bad(m):
@@ -22,6 +31,7 @@ class Panel:
         env = dict(os.environ, BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
         for k in ("NO_COLOR", "HERDR_PANE_ID", "HERDR_TAB_ID", "CLAUDECODE"): env.pop(k, None)
         self.pid, self.fd = pty.fork()
+        if self.pid: LIVE.append(self.pid)
         if self.pid == 0:
             os.chdir(ROOT); os.execvpe("bash", ["bash", "./bhote"], env)
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -74,6 +84,9 @@ class Panel:
         except OSError: pass
         time.sleep(0.4)
         try: os.kill(self.pid, 15)
+        except OSError: pass
+        time.sleep(0.4)
+        try: os.killpg(self.pid, 9)       # the panel, a view it runs and its collector: a session of their own
         except OSError: pass
         try: os.waitpid(self.pid, 0)
         except OSError: pass
@@ -169,12 +182,17 @@ else: bad(f"the page did not show (shown={shown}, num={num})")
 
 # 11) the chooser (s): no free agent here, so only "Just mark as started": Enter takes it
 p.send(b"\x1b", 0.8)
-y = p.row("A next topic") or p.row("Brand new topic") or p.row("Waiting for Anna"); p.click(10, y)
-p.send("s", 1.0)
-sc = "\n".join(p.screen())
-if "Who takes it?" in sc and "Just mark as started" in sc:
-    p.send("\r", 1.2)
-    ok("s: the chooser; Enter on 'Just mark as started'")
-else: bad("s: the chooser did not show")
+p.topic(id="1500-1", title="Chooser candidate", status="next")
+p.out = b""; p.expect("Chooser candidate", 8)
+y = p.row("Chooser candidate")
+if y:
+    p.click(10, y); p.send("s", 1.0)
+    sc = "\n".join(p.screen())
+    if "Who takes it?" in sc and "Just mark as started" in sc:
+        p.send("\r", 1.2)
+        st = p.get("1500-1", "status")
+        ok("s: the chooser; Enter on 'Just mark as started'") if st == "now" else bad(f"chooser: status is {st}")
+    else: bad("s: the chooser did not show")
+else: bad("the topic for the chooser did not show up")
 p.close()
 sys.exit(1 if fails else 0)

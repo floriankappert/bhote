@@ -234,8 +234,14 @@ impl Panel {
     }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {
         let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h"); let _ = o.flush();
-        let st = Command::new("bash").arg(&self.script).env("BHOTE_DELEGATE", view).env("BHOTE_SEL_ID", &self.sel_id).env("BHOTE_ARG", arg).status();
-        let _ = st;
+        // the view runs in a child; a SIGTERM or a closed terminal for this panel ends the child as well
+        if let Ok(mut ch) = Command::new("bash").arg(&self.script).env("BHOTE_DELEGATE", view).env("BHOTE_SEL_ID", &self.sel_id).env("BHOTE_ARG", arg).spawn() {
+            loop {
+                match ch.try_wait() { Ok(Some(_)) | Err(_) => break, Ok(None) => {} }
+                if crate::term::quit_requested() { let _ = ch.kill(); let _ = ch.wait(); break; }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         *term = Term::enter(true);
         self.reload_cfg(); self.real_cols = Term::size().0; self.real_rows = Term::size().1; self.cols = self.real_cols.min(self.num("PANEL_MAX_WIDTH", 64).max(30) as u32).max(MIN_COLS); self.rows = self.real_rows;
         self.redraw = true; self.clamp_at = Some(Instant::now() + Duration::from_secs(1));
