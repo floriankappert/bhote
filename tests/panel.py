@@ -93,15 +93,26 @@ class Panel:
     def click(self, x, y, b=0):
         self.send(f"\x1b[<{b};{x};{y}M\x1b[<{b};{x};{y}m")
     def close(self):
+        """Ends the panel: q, then SIGTERM, then SIGKILL on it and its group; never waits for ever."""
+        def gone():
+            try: return os.waitpid(self.pid, os.WNOHANG)[0] != 0
+            except OSError: return True
         try: os.write(self.fd, b"q")
         except OSError: pass
-        time.sleep(0.4)
-        try: os.kill(self.pid, 15)
-        except OSError: pass
-        time.sleep(0.4)
-        try: os.killpg(self.pid, 9)       # the panel, a view it runs and its collector: a session of their own
-        except OSError: pass
-        try: os.waitpid(self.pid, 0)
+        t0 = time.time()
+        while time.time() - t0 < 1.5 and not gone(): self.drain(0.1)
+        if not gone():
+            try: os.kill(self.pid, 15)
+            except OSError: pass
+            t0 = time.time()
+            while time.time() - t0 < 1.5 and not gone(): self.drain(0.1)
+        if not gone():
+            for f in (lambda: os.killpg(self.pid, 9), lambda: os.kill(self.pid, 9)):
+                try: f()
+                except OSError: pass
+            t0 = time.time()
+            while time.time() - t0 < 3 and not gone(): time.sleep(0.1)
+        try: os.close(self.fd)
         except OSError: pass
         shutil.rmtree(self.T, ignore_errors=True)
 
