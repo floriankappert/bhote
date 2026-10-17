@@ -20,7 +20,7 @@ pub struct View {
 impl View {
     pub fn read(path: &str) -> View {
         let mut m: HashMap<String, String> = HashMap::new();
-        for l in fs::read_to_string(path).unwrap_or_default().split('\n') { if let Some(i) = l.find('=') { m.insert(l[..i].to_string(), l[i + 1..].to_string()); } }
+        for l in crate::proc::read_cap(path).unwrap_or_default().split('\n') { if let Some(i) = l.find('=') { m.insert(l[..i].to_string(), l[i + 1..].to_string()); } }
         let g = |k: &str| m.get(k).cloned().unwrap_or_default();
         let num = |k: &str, d: i64| { let v = g(k); if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) { v.parse().unwrap_or(d) } else { d } };
         View { sel_id: g("SEL_ID"), hover_id: g("HOVER_ID"), expanded: g("EXPANDED"), scope_project: g("U_SCOPE") == "project", cur_proj: g("CUR_PROJ"), spin_ch: if g("SPIN_CH").is_empty() { "✶".into() } else { g("SPIN_CH") },
@@ -35,7 +35,7 @@ impl View {
 #[derive(Clone)]
 pub struct Row { pub m: String, pub id: String, pub st: String, pub name: String, pub task: String }
 fn rows(p: &std::path::Path) -> Vec<Row> {
-    fs::read_to_string(p).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut f = l.split(US).map(|x| x.to_string()); Row { m: f.next().unwrap_or_default(), id: f.next().unwrap_or_default(), st: f.next().unwrap_or_default(), name: f.next().unwrap_or_default(), task: f.next().unwrap_or_default() } }).collect()
+    crate::proc::read_cap(p).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut f = l.split(US).map(|x| x.to_string()); Row { m: f.next().unwrap_or_default(), id: f.next().unwrap_or_default(), st: f.next().unwrap_or_default(), name: f.next().unwrap_or_default(), task: f.next().unwrap_or_default() } }).collect()
 }
 
 fn sp(n: i64) -> String { " ".repeat(n.unsigned_abs() as usize) }
@@ -61,7 +61,7 @@ impl<'a> Cards<'a> {
         let mut ag = rows(&shared.join("agents.local")); ag.extend(rows(&shared.join("agents.remote")));
         // topics_projects: a topic's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)
         let mut metas = String::new();
-        for f in ["agents.meta.local", "agents.meta.remote"] { metas.push_str(&fs::read_to_string(shared.join(f)).unwrap_or_default()); }
+        for f in ["agents.meta.local", "agents.meta.remote"] { metas.push_str(&crate::proc::read_cap(shared.join(f)).unwrap_or_default()); }
         let epj = ts.iter().map(|t| {
             if !t.pj.is_empty() { return t.pj.clone(); }
             if t.ap.is_empty() { return String::new(); }
@@ -76,7 +76,7 @@ impl<'a> Cards<'a> {
     /// the pane meta lists of both machines: (machine, pane, project)
     pub fn metas(&self) -> Vec<(String, String, String)> {
         let mut v = Vec::new();
-        for f in ["agents.meta.local", "agents.meta.remote"] { for l in fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines() { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 { v.push((p[0].to_string(), p[1].to_string(), p[5].to_string())); } } }
+        for f in ["agents.meta.local", "agents.meta.remote"] { for l in crate::proc::read_cap(self.shared.join(f)).unwrap_or_default().lines() { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 { v.push((p[0].to_string(), p[1].to_string(), p[5].to_string())); } } }
         v
     }
     pub fn in_scope(&self, i: usize) -> bool { if !(self.v.scope_project && !self.v.cur_proj.is_empty()) { return true; } self.epj[i].is_empty() || self.epj[i] == self.v.cur_proj }
@@ -397,7 +397,7 @@ impl<'a> Cards<'a> {
 
     /// deploy_lookup: the deployment of a waiting topic: (state, done, total, note, url, project, label)
     fn deploy_lookup(&self, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {
-        let list = fs::read_to_string(self.shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
+        let list = crate::proc::read_cap(self.shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
         let get = |k: &str| store::topic_get(&t.file, k);
         let (url, matchl) = (get("deploy_url"), get("deploy_match"));
         let since = store::num_or(&get("deploy_since"), 0);
@@ -421,7 +421,7 @@ impl<'a> Cards<'a> {
         // project_name <id>: by record id (proj-<slug>): the name of the record
         let f = self.c.topics.join(format!("{}.topic", id));
         let _ = &self.projects;
-        let txt = fs::read_to_string(f).unwrap_or_default();
+        let txt = crate::proc::read_cap(f).unwrap_or_default();
         let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
         for l in txt.lines() { if let Some(i) = l.find('=') { let (k, v) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = v.into(), "deleted" => del = v.into(), "kind" => kd = v.into(), _ => {} } } }
         if kd == "project" && del != "1" { clean(&name) } else { String::new() }
@@ -553,13 +553,13 @@ impl<'a> Cards<'a> {
             if st == "now" && state == "finished" && i as i64 == sel_idx { state = "finished · x = done".into(); }
             let sl = i as i64 == sel_idx;
             let (mut rn, mut ra) = (String::new(), String::new());
-            if st == "review" { for l in fs::read_to_string(&t.file).unwrap_or_default().lines() { if let Some(v) = l.strip_prefix("review_note=") { rn = clean(v); } else if let Some(v) = l.strip_prefix("review_ask=") { ra = clean(v); } } }
+            if st == "review" { for l in crate::proc::read_cap(&t.file).unwrap_or_default().lines() { if let Some(v) = l.strip_prefix("review_note=") { rn = clean(v); } else if let Some(v) = l.strip_prefix("review_ask=") { ra = clean(v); } } }
             let mut o = Item { id: t.id.clone(), bar: lc.clone(), prog, ..Default::default() };
             if st == "testing" && !t.ap.is_empty() {
                 let m = if t.am.is_empty() { self.host.clone() } else { t.am.clone() };
                 let key: String = format!("{}_{}", m, t.ap).chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
                 let tp = self.shared.join("testprog").join(key);
-                let lines: Vec<String> = fs::read_to_string(tp).unwrap_or_default().lines().map(clean).collect();
+                let lines: Vec<String> = crate::proc::read_cap(tp).unwrap_or_default().lines().map(clean).collect();
                 o.tbars = lines.join("\n");
             }
             if matches!(st, "now" | "testing" | "finished") && !t.ap.is_empty() && !t.ag.is_empty() {
@@ -585,7 +585,7 @@ struct Item { id: String, bar: String, prog: String, tbars: String, agm: String,
 
 /// deploy_lookup for the sync: the deployment a waiting topic is bound to or waits for
 pub fn deploy_lookup_pub(shared: &std::path::Path, topics: &std::path::Path, names: &HashMap<String, String>, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {
-    let list = fs::read_to_string(shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
+    let list = crate::proc::read_cap(shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
     let get = |k: &str| store::topic_get(&t.file, k);
     let (url, matchl) = (get("deploy_url"), get("deploy_match"));
     let since = store::num_or(&get("deploy_since"), 0);
@@ -680,7 +680,7 @@ impl<'a> Layout<'a> {
         }
         let (tl, mut sel) = parse_lines(&topics); let n = tl.len() as i64;
         let mut pad = 0; let mut toff_out: Option<i64> = None;
-        let prev_file: Option<i64> = fs::read_to_string(self.run_dir.join("toff")).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).and_then(|v| v.parse().ok());
+        let prev_file: Option<i64> = crate::proc::read_cap(self.run_dir.join("toff")).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit())).and_then(|v| v.parse().ok());
         let prev_state = if self.run_dir.as_os_str().is_empty() { self.prev_toff } else { prev_file };
         if th <= avail { put(&mut vp, &tl, 0, n, &mut out); pad = avail - th; }
         else if avail >= 4 {

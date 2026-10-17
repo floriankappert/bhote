@@ -218,4 +218,46 @@ if y:
     else: bad("s: the chooser did not show")
 else: bad("the topic for the chooser did not show up")
 p.close()
+
+# 12) what dies comes back: the collector (the panel starts it again) and the daemon (the collector starts it again)
+def children(pid):
+    r = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True)
+    return [int(x) for x in r.stdout.split()]
+def alive_pid(pid):
+    try: os.kill(pid, 0); return True
+    except OSError: return False
+p = Panel()
+pidf = os.path.join(p.T, "shared", "bhoted.pid"); t0 = time.time()
+while not os.path.exists(pidf) and time.time() - t0 < 10: time.sleep(0.3)
+d1 = int(open(pidf).read().split()[0]) if os.path.exists(pidf) else 0
+if d1:
+    os.kill(d1, 9); t0 = time.time(); d2 = d1
+    while time.time() - t0 < 14:
+        time.sleep(0.5)
+        try: d2 = int(open(pidf).read().split()[0])
+        except (OSError, ValueError): continue
+        if d2 != d1 and alive_pid(d2): break
+    ok("the daemon is started again after a kill") if (d2 != d1 and alive_pid(d2)) else bad("the daemon did not come back")
+else: bad("the daemon did not start")
+kids = children(p.pid)
+if kids:
+    for k in kids:
+        try: os.kill(k, 9)
+        except OSError: pass
+    t0 = time.time(); back = []
+    while time.time() - t0 < 12:
+        time.sleep(0.5); back = [k for k in children(p.pid) if k not in kids]
+        if back: break
+    ok("the collector is started again after a kill") if back else bad("the collector did not come back")
+else: bad("the panel has no collector child")
+p.close()
+
+# 13) a window that is far too small: a note, no crash, and the list comes back
+p = Panel()
+def resize(cols, rows):
+    fcntl.ioctl(p.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0)); os.kill(p.pid, signal.SIGWINCH)
+p.out = b""; resize(12, 6); small = p.expect("Too small", 6)
+p.out = b""; resize(70, 40); back = p.expect("REVIEW", 6)
+ok("a tiny window: 'Too small', and the list is back at normal size") if (small and back and p.alive) else bad(f"resize (small={small}, back={back}, alive={p.alive})")
+p.close()
 sys.exit(1 if fails else 0)

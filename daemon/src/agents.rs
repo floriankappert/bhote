@@ -89,7 +89,7 @@ fn put_tmp(path: &Path, text: &str) -> bool {
 
 /// agents_put: only a changed list replaces the old one and counts the revision up; an unchanged one is only touched.
 fn put_list(path: &Path, text: &str) -> bool {
-    if fs::read_to_string(path).map_or(false, |old| old == text) {
+    if crate::proc::read_cap(path).map_or(false, |old| old == text) {
         if let Ok(f) = fs::OpenOptions::new().write(true).open(path) { let _ = f.set_modified(std::time::SystemTime::now()); }
         return false;
     }
@@ -116,17 +116,9 @@ pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
 // ── the other machines through kharka (step 2b): collect_remote_kharka ───────────────────────────────────────
 
 fn kharka_ls(bin: &str, prefix: &str) -> Option<Vec<Value>> {
-    let mut child = Command::new(bin).args(["ls", prefix, "--entries"]).stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null()).spawn().ok()?;
-    let mut out = child.stdout.take()?;
-    let reader = std::thread::spawn(move || { let mut b = Vec::new(); let _ = out.read_to_end(&mut b); String::from_utf8_lossy(&b).into_owned() });
-    let t0 = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(st)) => { let s = reader.join().ok()?; if !st.success() { return None; } return Some(s.lines().filter_map(|l| serde_json::from_str(l).ok()).collect()); }
-            Ok(None) if t0.elapsed() < Duration::from_secs(10) => std::thread::sleep(Duration::from_millis(5)),
-            _ => { let _ = child.kill(); let _ = child.wait(); return None; }
-        }
-    }
+    let (code, out, _) = crate::proc::run(bin, &["ls", prefix, "--entries"], 15, None)?;
+    if code != 0 { return None; }
+    Some(String::from_utf8_lossy(&out).lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
 }
 
 pub struct Remote { pub nodes: String, pub offline: String, pub meta: String, pub now: String, pub agents: String }
@@ -180,9 +172,9 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
 fn kharka_self(shared: &Path, bin: &str) -> String {
     let f = shared.join("kharka.self");
     let fresh = fs::metadata(&f).ok().and_then(|m| m.modified().ok()).and_then(|m| m.elapsed().ok()).map_or(false, |a| a < Duration::from_secs(600));
-    if let Ok(t) = fs::read_to_string(&f) { let t = t.trim().to_string(); if !t.is_empty() && fresh { return t; } }
-    let o = Command::new(bin).arg("whoami").stdin(Stdio::null()).stderr(Stdio::null()).output().ok().filter(|o| o.status.success());
-    let n: String = o.map(|o| String::from_utf8_lossy(&o.stdout).trim().chars().filter(|c| c.is_ascii_alphanumeric() || ".-_".contains(*c)).collect()).unwrap_or_default();
+    if let Ok(t) = crate::proc::read_cap(&f) { let t = t.trim().to_string(); if !t.is_empty() && fresh { return t; } }
+    let o = crate::proc::run(bin, &["whoami"], 10, None).filter(|o| o.0 == 0);
+    let n: String = o.map(|o| String::from_utf8_lossy(&o.1).trim().chars().filter(|c| c.is_ascii_alphanumeric() || ".-_".contains(*c)).collect()).unwrap_or_default();
     if !n.is_empty() { let _ = fs::write(&f, format!("{}\n", n)); }
     n
 }
@@ -193,10 +185,10 @@ pub fn collect_remote_kharka(shared: &Path, host: &str, bin: &str, off_list: &st
     let (h, n) = (kharka_ls(bin, "herdr/"), kharka_ls(bin, "_nodes/"));
     let remote = shared.join("agents.remote");
     let (Some(h), Some(n)) = (h, n) else {
-        if let Ok(t) = fs::read_to_string(shared.join("agents.nodes")) {
+        if let Ok(t) = crate::proc::read_cap(shared.join("agents.nodes")) {
             let off: String = t.lines().filter_map(|l| l.split('\u{1f}').next()).map(|l| format!("{}\n", l)).collect(); let _ = put_tmp(&shared.join("machines.offline"), &off);
         }
-        if let Ok(old) = fs::read_to_string(&remote) {
+        if let Ok(old) = crate::proc::read_cap(&remote) {
             let body: String = old.lines().map(|l| { let mut p: Vec<String> = l.split('\u{1f}').map(|x| x.to_string()).collect(); if p.len() >= 3 && !p[2].starts_with("off-") { p[2] = format!("off-{}", p[2]); } format!("{}\n", p.join(&US.to_string())) }).collect();
             put_list(&remote, &body);
         }

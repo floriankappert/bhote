@@ -182,7 +182,7 @@ fn tests_github(c: &Ctx, proj: &str, slug: &str, names: &str) -> Option<Vec<Stri
         jf
     });
     for (r, jf) in rl.into_iter().zip(files) {
-        let Ok(txt) = fs::read_to_string(&jf) else { continue }; let Ok(v) = serde_json::from_str::<Value>(&txt) else { continue };
+        let Ok(txt) = crate::proc::read_cap(&jf) else { continue }; let Ok(v) = serde_json::from_str::<Value>(&txt) else { continue };
         let jobs: Vec<&Value> = v["jobs"].as_array().into_iter().flatten().filter(|j| { let n = s(&j["name"]); if names.is_empty() { n.to_lowercase().contains("test") } else { wanted.contains(&strip(&n).as_str()) } }).collect();
         if jobs.is_empty() { continue; }
         let any = |f: &dyn Fn(&Value) -> bool| jobs.iter().any(|j| f(j));
@@ -226,7 +226,7 @@ fn circleci_workflows(c: &Ctx, slug: &str, branch: &str, k: usize) -> Vec<Wf> {
 fn circleci_jobs(c: &Ctx, wid: &str, status: &str) -> Option<Value> {
     let dir = c.shared.join("ccjobs"); let f = dir.join(wid);
     let fin = matches!(status, "success" | "failed" | "error" | "canceled");
-    if fin { if let Ok(t) = fs::read_to_string(&f) { if !t.is_empty() { if let Ok(v) = serde_json::from_str(&t) { return Some(v); } } } }
+    if fin { if let Ok(t) = crate::proc::read_cap(&f) { if !t.is_empty() { if let Ok(v) = serde_json::from_str(&t) { return Some(v); } } } }
     let j = circleci_get(c, &format!("workflow/{}/job", wid))?;
     if fin {
         let _ = fs::create_dir_all(&dir); let tmp = dir.join(format!("{}.tmp", wid));
@@ -295,7 +295,7 @@ extern "C" { fn kill(pid: i32, sig: i32) -> i32; }
 /// worktree folder name -> the branch it is on now, from the folders of the agents (each folder asked once per round; the first agent of a worktree counts)
 fn tree_branches(c: &Ctx) -> HashMap<String, String> {
     let mut map = HashMap::new();
-    let Ok(t) = fs::read_to_string(c.shared.join("agents.cwd")) else { return map };
+    let Ok(t) = crate::proc::read_cap(c.shared.join("agents.cwd")) else { return map };
     let folders: Vec<&str> = t.lines().filter_map(|l| l.split('\u{1f}').nth(1)).filter(|f| !f.is_empty() && Path::new(f).is_dir()).collect();
     let found = par_map(&folders, |f| {
         let top = run("git", &["-C", f, "rev-parse", "--show-toplevel"], 10)?; let top = top.trim().to_string();
@@ -310,7 +310,7 @@ fn tests_local(c: &Ctx) -> Vec<String> {
     let mut runs: Vec<PathBuf> = fs::read_dir(c.data.join("testruns")).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "run")).collect()).unwrap_or_default();
     runs.sort();
     for f in runs {
-        let txt = fs::read_to_string(&f).unwrap_or_default(); let mut m: HashMap<&str, &str> = HashMap::new();
+        let txt = crate::proc::read_cap(&f).unwrap_or_default(); let mut m: HashMap<&str, &str> = HashMap::new();
         for l in txt.lines() { if let Some(i) = l.find('=') { m.insert(&l[..i], &l[i + 1..]); } }   // the last value counts (the script's read loop)
         let g = |k: &str| m.get(k).copied().unwrap_or("");
         let state = if !g("ended").is_empty() { if g("exit") == "0" { "ok" } else { "failed" } }
@@ -325,7 +325,7 @@ fn tests_local(c: &Ctx) -> Vec<String> {
     let tnow = now() as f64;
     let branches = tree_branches(c);
     for f in files {
-        let Ok(txt) = fs::read_to_string(&f) else { continue }; let Ok(v) = serde_json::from_str::<Value>(&txt) else { continue };
+        let Ok(txt) = crate::proc::read_cap(&f) else { continue }; let Ok(v) = serde_json::from_str::<Value>(&txt) else { continue };
         let truthy = |k: &str| !matches!(v.get(k), None | Some(Value::Null) | Some(Value::Bool(false)));
         if !(truthy("tree") && truthy("suite") && truthy("startedAt")) { continue; }
         let num = |k: &str| v.get(k).and_then(|x| x.as_f64());
@@ -352,7 +352,7 @@ fn projects(c: &Ctx) -> Vec<Project> {
     for e in rd.flatten() {
         let p = e.path(); let n = e.file_name().to_string_lossy().into_owned();
         if !(n.starts_with("proj-") && n.ends_with(".topic")) { continue; }
-        let txt = fs::read_to_string(&p).unwrap_or_default();
+        let txt = crate::proc::read_cap(&p).unwrap_or_default();
         let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
         for l in txt.lines() { if let Some(i) = l.find('=') { let (k, val) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = val.to_string(), "deleted" => del = val.to_string(), "kind" => kd = val.to_string(), _ => {} } } }
         if kd == "project" && del != "1" && !name.is_empty() { v.push(Project { name: name.chars().filter(|c| !c.is_control()).collect(), file: p }); }
@@ -361,7 +361,7 @@ fn projects(c: &Ctx) -> Vec<Project> {
     v
 }
 fn first(file: &Path, key: &str) -> String {
-    for l in fs::read_to_string(file).unwrap_or_default().lines() { if let Some(i) = l.find('=') { if &l[..i] == key { return l[i + 1..].to_string(); } } }
+    for l in crate::proc::read_cap(file).unwrap_or_default().lines() { if let Some(i) = l.find('=') { if &l[..i] == key { return l[i + 1..].to_string(); } } }
     String::new()
 }
 

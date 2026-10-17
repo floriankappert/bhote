@@ -12,7 +12,7 @@ impl Colors {
     pub fn from_map(m: HashMap<String, String>) -> Colors { Colors(m) }
     pub fn read(path: &str) -> Colors {
         let mut m = HashMap::new();
-        for l in fs::read_to_string(path).unwrap_or_default().split('\n') { if let Some(i) = l.find('=') { m.insert(l[..i].to_string(), l[i + 1..].to_string()); } }
+        for l in crate::proc::read_cap(path).unwrap_or_default().split('\n') { if let Some(i) = l.find('=') { m.insert(l[..i].to_string(), l[i + 1..].to_string()); } }
         Colors(m)
     }
     pub fn g(&self, k: &str) -> &str { self.0.get(k).map(|s| s.as_str()).unwrap_or("") }
@@ -66,7 +66,7 @@ pub fn projects(c: &Ctx) -> Vec<Project> {
     let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("proj-") && n.ends_with(".topic") })).collect();
     files.sort();
     for p in files {
-        let txt = fs::read_to_string(&p).unwrap_or_default();
+        let txt = crate::proc::read_cap(&p).unwrap_or_default();
         let (mut name, mut del, mut kd, mut ci) = (String::new(), "0".to_string(), String::new(), None::<String>);
         for l in txt.lines() { if let Some(i) = l.find('=') { let (k, val) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = val.to_string(), "deleted" => del = val.to_string(), "kind" => kd = val.to_string(), "ci" if ci.is_none() => ci = Some(val.chars().filter(|c| !c.is_control()).collect()), _ => {} } } }
         if kd == "project" && del != "1" && !name.is_empty() { v.push(Project { id: p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), name: name.chars().filter(|c| !c.is_control()).collect(), ci: ci.map_or(false, |x| !x.is_empty()) }); }
@@ -166,7 +166,7 @@ fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
     let list = c.shared.join(format!("{}.list", kind));
     if fs::metadata(&list).map_or(true, |m| m.len() == 0) { return String::new(); }
     let off = c.cfg(if kind == "deploys" { "DEPLOY_PROJECTS_OFF" } else { "TEST_PROJECTS_OFF" }, "");
-    let all = fs::read_to_string(&list).unwrap_or_default();
+    let all = crate::proc::read_cap(&list).unwrap_or_default();
     let lines: Vec<&str> = all.lines().filter(|l| { if off.is_empty() { return true; } let pj = l.split(US).nth(1).unwrap_or(""); !hidden(&off, pj, ps) }).collect();
     let mut out = mon_caption(c, kind, cap, ps);
     if lines.is_empty() { return out; }

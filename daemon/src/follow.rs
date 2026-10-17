@@ -5,7 +5,7 @@ use crate::store::{self, chars_prefix, first_value, nocntrl, now, num_or, topic_
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+
 
 const US: char = '\u{1f}';
 
@@ -27,12 +27,12 @@ impl<'a> Ctx<'a> {
 }
 
 pub fn read_rows(path: &Path) -> Option<Vec<Row>> {
-    let t = fs::read_to_string(path).ok()?;
+    let t = crate::proc::read_cap(path).ok()?;
     Some(t.lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split(US).map(|x| x.to_string()); Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect())
 }
 
 fn herdr_read(p: &str) -> String {
-    Command::new("herdr").args(["pane", "read", p, "--source", "recent-unwrapped", "--lines", "80"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+    crate::proc::run("herdr", &["pane", "read", p, "--source", "recent-unwrapped", "--lines", "80"], 20, None).map(|o| String::from_utf8_lossy(&o.1).into_owned()).unwrap_or_default()
 }
 
 /// pane_question_text: the agent's last line when it ends with a question (above the input box, footers skipped)
@@ -55,7 +55,7 @@ pub fn question_text(text: &str) -> String {
 }
 
 fn touch_state(d: &Path, id: &str, v: &str) { let _ = fs::write(d.join(id), format!("{}\n", v)); }
-fn read_state(d: &Path, id: &str) -> String { fs::read_to_string(d.join(id)).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).unwrap_or_default() }
+fn read_state(d: &Path, id: &str) -> String { crate::proc::read_cap(d.join(id)).ok().and_then(|t| t.lines().next().map(|x| x.to_string())).unwrap_or_default() }
 fn rm_state(d: &Path, id: &str) { let _ = fs::remove_file(d.join(id)); }
 
 pub fn remind_waiting(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
@@ -65,7 +65,7 @@ pub fn remind_waiting(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
         if t.status != "waiting" { continue; }
         if (n as i128 - num_or(&t.wsince, n) as i128) < (h * 3600) as i128 { continue; }
         let id = format!("{}:{}", t.id, t.wsince);
-        if fs::read_to_string(&c.reminded).unwrap_or_default().lines().any(|l| l == id) { continue; }
+        if crate::proc::read_cap(&c.reminded).unwrap_or_default().lines().any(|l| l == id) { continue; }
         if let Some(p) = c.reminded.parent() { let _ = fs::create_dir_all(p); }
         { use std::io::Write; if let Ok(mut f) = fs::OpenOptions::new().append(true).create(true).open(&c.reminded) { let _ = writeln!(f, "{}", id); } }
         s.notify("Still waiting", &format!("{} · {} for {}h+", t.title, if t.wfor.is_empty() { "?" } else { &t.wfor }, h), "request");
@@ -217,7 +217,7 @@ pub fn agent_gone_follow(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
         else { s.set(&t.file, "status", "later"); s.set(&t.file, "dismissed", "1"); s.set(&t.file, "auto_back", ""); }
     }
 }
-fn herdr_answers() -> bool { Command::new("herdr").args(["pane", "list"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map_or(false, |s| s.success()) }
+fn herdr_answers() -> bool { crate::proc::run("herdr", &["pane", "list"], 15, None).map_or(false, |o| o.0 == 0) }
 
 pub fn auto_question_follow(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
     if c.local.is_none() { return; }
@@ -246,21 +246,21 @@ pub fn git_branch(folder: &str) -> Option<String> {
         let g = Path::new(&d).join(".git");
         if g.is_dir() { head = Some(g.join("HEAD")); break; }
         if g.is_file() {
-            let l = fs::read_to_string(&g).ok()?; let l = l.lines().next()?.trim_start_matches("gitdir: ").to_string();
+            let l = crate::proc::read_cap(&g).ok()?; let l = l.lines().next()?.trim_start_matches("gitdir: ").to_string();
             let p = if l.starts_with('/') { PathBuf::from(l) } else { Path::new(&d).join(l) };
             head = Some(p.join("HEAD")); break;
         }
         if d == "/" { break; }
         d = match d.rfind('/') { Some(0) => "/".into(), Some(i) => d[..i].to_string(), None => break };
     }
-    let l = fs::read_to_string(head?).ok()?; let l = l.lines().next()?;
+    let l = crate::proc::read_cap(head?).ok()?; let l = l.lines().next()?;
     if let Some(b) = l.strip_prefix("ref: refs/heads/") { Some(b.to_string()) }
     else if l.starts_with(|c: char| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) { Some(format!("@{}", chars_prefix(l, 7))) } else { None }
 }
 
 pub fn branch_sync(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
     if c.cfg("GITHUB_BRANCHES", "on") != "on" { return; }
-    let Ok(t) = fs::read_to_string(c.env.shared.join("agents.cwd")) else { return };
+    let Ok(t) = crate::proc::read_cap(c.env.shared.join("agents.cwd")) else { return };
     let mut map: HashMap<String, String> = HashMap::new();
     for l in t.lines() { let mut p = l.splitn(2, US); if let (Some(a), Some(b)) = (p.next(), p.next()) { if !a.is_empty() { map.entry(a.to_string()).or_insert(b.to_string()); } } }
     for tp in ts {
@@ -275,7 +275,7 @@ pub fn agentnum_assign(c: &Ctx, s: &mut dyn Sink) {
     let mut files: Vec<PathBuf> = fs::read_dir(&c.env.topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("an-") && n.ends_with(".topic") })).collect()).unwrap_or_default();
     files.sort();
     for f in &files {
-        let t = fs::read_to_string(f).unwrap_or_default();
+        let t = crate::proc::read_cap(f).unwrap_or_default();
         let (mut k, mut n, mut d) = (String::new(), String::new(), "0".to_string());
         for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if k.is_empty() { k = v.to_string(); } } else if let Some(v) = l.strip_prefix("num=") { n = v.to_string(); } else if let Some(v) = l.strip_prefix("deleted=") { d = v.to_string(); } }
         if n.is_empty() || !n.bytes().all(|b| b.is_ascii_digit()) || d == "1" || k.is_empty() { continue; }
@@ -309,7 +309,7 @@ pub fn projects_full(topics: &Path) -> Vec<Proj> {
     files.sort();
     for f in files {
         let (mut name, mut repos, mut ws, mut del, mut kd) = (String::new(), String::new(), String::new(), "0".to_string(), String::new());
-        for l in fs::read_to_string(&f).unwrap_or_default().lines() { if let Some(i) = l.find('=') { let (k, x) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = x.to_string(), "repos" => repos = x.to_string(), "workspaces" => ws = x.to_string(), "deleted" => del = x.to_string(), "kind" => kd = x.to_string(), _ => {} } } }
+        for l in crate::proc::read_cap(&f).unwrap_or_default().lines() { if let Some(i) = l.find('=') { let (k, x) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = x.to_string(), "repos" => repos = x.to_string(), "workspaces" => ws = x.to_string(), "deleted" => del = x.to_string(), "kind" => kd = x.to_string(), _ => {} } } }
         if kd == "project" && del != "1" && !name.is_empty() { v.push(Proj { id: f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), name: nocntrl(&name), repos, ws }); }
     }
     v.sort_by(|a, b| crate::ui::coll(&a.name, &b.name));
@@ -329,7 +329,7 @@ pub fn git_repo_key(folder: &str) -> Option<String> {
         let g = Path::new(&d).join(".git");
         if g.is_dir() { cfgdir = Some(g); main = d.clone(); break; }
         if g.is_file() {
-            let l = fs::read_to_string(&g).ok()?; let l = l.lines().next()?.trim_start_matches("gitdir: ").to_string();
+            let l = crate::proc::read_cap(&g).ok()?; let l = l.lines().next()?.trim_start_matches("gitdir: ").to_string();
             let p = if l.starts_with('/') { PathBuf::from(l) } else { Path::new(&d).join(l) };
             let ps = p.to_string_lossy().to_string();
             if let Some(i) = ps.find("/worktrees/") { let c = PathBuf::from(&ps[..i]); main = c.to_string_lossy().trim_end_matches("/.git").to_string(); cfgdir = Some(c); } else { cfgdir = Some(p); main = d.clone(); }
@@ -340,7 +340,7 @@ pub fn git_repo_key(folder: &str) -> Option<String> {
     }
     let c = cfgdir?;
     let (mut url, mut inr) = (String::new(), false);
-    for l in fs::read_to_string(c.join("config")).unwrap_or_default().lines() {
+    for l in crate::proc::read_cap(c.join("config")).unwrap_or_default().lines() {
         if l.starts_with('[') { inr = l == "[remote \"origin\"]"; } else if inr && l.contains("url") && l.contains('=') { url = l[l.find('=').unwrap() + 1..].trim_start_matches(' ').to_string(); break; }
     }
     if !url.is_empty() {
@@ -352,10 +352,10 @@ pub fn git_repo_key(folder: &str) -> Option<String> {
 }
 
 pub fn project_sync(c: &Ctx, s: &mut dyn Sink) {
-    let Ok(meta) = fs::read_to_string(c.env.shared.join("agents.meta.local")) else { return };
+    let Ok(meta) = crate::proc::read_cap(c.env.shared.join("agents.meta.local")) else { return };
     let ps = projects_full(&c.env.topics);
     let cache_f = c.env.shared.join("repo.cache");
-    let mut cache: HashMap<String, String> = fs::read_to_string(&cache_f).unwrap_or_default().lines().filter_map(|l| { let mut p = l.splitn(2, US); Some((p.next()?.to_string(), p.next().unwrap_or("").to_string())) }).collect();
+    let mut cache: HashMap<String, String> = crate::proc::read_cap(&cache_f).unwrap_or_default().lines().filter_map(|l| { let mut p = l.splitn(2, US); Some((p.next()?.to_string(), p.next().unwrap_or("").to_string())) }).collect();
     let local = c.local.as_deref().unwrap_or(&[]);
     for l in meta.lines() {
         let f: Vec<&str> = l.split(US).collect(); if f.len() < 4 || f[3] != "a" { continue; }
@@ -378,16 +378,16 @@ pub fn project_sync(c: &Ctx, s: &mut dyn Sink) {
 /// The tree (folder name of the worktree) of an agent's pane, and the test status files of it that are live: (done, total, suite)
 fn live_tests(c: &Ctx, pane: &str) -> Vec<(String, String, String)> {
     if c.cfg("TESTS_BUSY", "on") != "on" { return Vec::new(); }
-    let cwd = fs::read_to_string(c.env.shared.join("agents.cwd")).unwrap_or_default().lines().find_map(|l| { let mut p = l.splitn(2, US); if p.next() == Some(pane) { p.next().map(|x| x.to_string()) } else { None } }).unwrap_or_default();
+    let cwd = crate::proc::read_cap(c.env.shared.join("agents.cwd")).unwrap_or_default().lines().find_map(|l| { let mut p = l.splitn(2, US); if p.next() == Some(pane) { p.next().map(|x| x.to_string()) } else { None } }).unwrap_or_default();
     if cwd.is_empty() { return Vec::new(); }
-    let top = Command::new("git").args(["-C", &cwd, "rev-parse", "--show-toplevel"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or(cwd);
+    let top = crate::proc::run("git", &["-C", &cwd, "rev-parse", "--show-toplevel"], 10, None).filter(|o| o.0 == 0).map(|o| String::from_utf8_lossy(&o.1).trim().to_string()).unwrap_or(cwd);
     let tree = top.rsplit('/').next().unwrap_or("").to_string();
     let dir = c.cfg("TEST_STATUS_DIR", "~/.cache/bhote/test-status"); let dir = if let Some(r) = dir.strip_prefix('~') { format!("{}{}", std::env::var("HOME").unwrap_or_default(), r) } else { dir };
     let mut files: Vec<PathBuf> = fs::read_dir(&dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with(&format!("{}.", tree)) && n.ends_with(".json") })).collect()).unwrap_or_default();
     files.sort();
     let now_f = now() as f64; let mut out = Vec::new();
     for f in files {
-        let Ok(t) = fs::read_to_string(&f) else { continue }; let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else { continue };
+        let Ok(t) = crate::proc::read_cap(&f) else { continue }; let Ok(v) = serde_json::from_str::<serde_json::Value>(&t) else { continue };
         let finished = v.get("finished") == Some(&serde_json::Value::Bool(true));
         let okn = v.get("ok").map_or(true, |x| x.is_null());
         let total = v.get("total").and_then(|x| x.as_f64()).unwrap_or(0.0);
@@ -436,14 +436,14 @@ pub fn tests_sync(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
 fn branch_pr_number(c: &Ctx, slug: &str, branch: &str) -> String {
     let san = |x: &str| -> String { x.chars().map(|ch| if ch.is_ascii_alphanumeric() || "._-".contains(ch) { ch } else { '_' }).collect() };
     let f = c.env.shared.join("prnum").join(format!("{}__{}", san(slug), san(branch)));
-    if let Ok(m) = fs::metadata(&f) { if m.modified().ok().and_then(|t| t.elapsed().ok()).map_or(false, |a| a < std::time::Duration::from_secs(600)) { return fs::read_to_string(&f).unwrap_or_default(); } }
-    let out = Command::new("gh").args(["pr", "list", "-R", slug, "--head", branch, "--state", "merged", "--limit", "1", "--json", "number", "--jq", ".[0].number // empty"]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    if let Ok(m) = fs::metadata(&f) { if m.modified().ok().and_then(|t| t.elapsed().ok()).map_or(false, |a| a < std::time::Duration::from_secs(600)) { return crate::proc::read_cap(&f).unwrap_or_default(); } }
+    let out = crate::proc::run("gh", &["pr", "list", "-R", slug, "--head", branch, "--state", "merged", "--limit", "1", "--json", "number", "--jq", ".[0].number // empty"], 25, None).filter(|o| o.0 == 0).map(|o| String::from_utf8_lossy(&o.1).trim().to_string()).unwrap_or_default();
     let n = if !out.is_empty() && out.bytes().all(|b| b.is_ascii_digit()) { out } else { String::new() };
     let _ = fs::create_dir_all(f.parent().unwrap()); let _ = fs::write(&f, &n); n
 }
 
 pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
-    let Ok(list) = fs::read_to_string(c.env.shared.join("deploys.list")) else { return }; if list.is_empty() { return; }
+    let Ok(list) = crate::proc::read_cap(c.env.shared.join("deploys.list")) else { return }; if list.is_empty() { return; }
     let n = now().to_string(); let ps = projects_full(&c.env.topics);
     let mut ts = store::load_fast(&c.env.topics, &c.env.shared);
     for l in list.lines() {

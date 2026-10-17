@@ -35,7 +35,7 @@ pub struct Panel {
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
     click_last: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>,
-    screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>,
+    screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
 
 fn mtime(p: &std::path::Path) -> u128 { fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos()) }
@@ -49,7 +49,7 @@ impl Panel {
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
             flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
-            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), screen: Screen::Main, pmap: Vec::new(), menu_flash: None }
+            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
         self.cfg = crate::config_read(&self.cfg_path.to_string_lossy());
@@ -66,11 +66,11 @@ impl Panel {
     fn cfg_set(&mut self, key: &str, val: &str) {
         let lock = PathBuf::from(format!("{}.lock", self.cfg_path.display()));
         for _ in 0..40 { if std::os::unix::fs::symlink(std::process::id().to_string(), &lock).is_ok() { break; } std::thread::sleep(Duration::from_millis(50)); }
-        let old = fs::read_to_string(&self.cfg_path).unwrap_or_default();
+        let old = crate::proc::read_cap(&self.cfg_path).unwrap_or_default();
         let mut out: String = old.lines().filter(|l| l.split('=').next() != Some(key)).map(|l| format!("{}\n", l)).collect();
         if !val.is_empty() { out.push_str(&format!("{}={}\n", key, val)); }
         let tmp = PathBuf::from(format!("{}.tmp.{}", self.cfg_path.display(), std::process::id()));
-        if fs::write(&tmp, out).is_ok() { let _ = fs::rename(&tmp, &self.cfg_path); }
+        if fs::write(&tmp, out).is_ok() { use std::os::unix::fs::PermissionsExt; let _ = fs::set_permissions(&tmp, fs::Permissions::from_mode(0o600)); let _ = fs::rename(&tmp, &self.cfg_path); }   // (the settings hold a token: 0600)
         let _ = fs::remove_file(&lock);
         self.reload_cfg();
     }
@@ -80,7 +80,7 @@ impl Panel {
         if !self.color { return "none".into(); }
         let p = envs("HERDR_CONFIG"); let path = if p.is_empty() { format!("{}/.config/herdr/config.toml", envs("HOME")) } else { p };
         let mut hx = "ff3ea5".to_string();
-        for l in fs::read_to_string(path).unwrap_or_default().lines() {
+        for l in crate::proc::read_cap(path).unwrap_or_default().lines() {
             if l.contains("token = \"machine\"") { if let Some(i) = l.find("fg = \"#") { let h: String = l[i + 7..].chars().take(6).collect(); if h.len() == 6 && h.bytes().all(|b| b.is_ascii_hexdigit()) { hx = h; } } break; }
         }
         let p = |i: usize| u8::from_str_radix(&hx[i..i + 2], 16).unwrap_or(0);
@@ -88,7 +88,7 @@ impl Panel {
     }
     fn update_note(&self) -> String {
         if self.c("UPDATE_CHECK", "on") != "on" { return String::new(); }
-        let txt = fs::read_to_string(self.data.join("update")).unwrap_or_default();
+        let txt = crate::proc::read_cap(self.data.join("update")).unwrap_or_default();
         let latest = txt.lines().filter_map(|l| l.strip_prefix("latest=")).last().unwrap_or("").to_string();
         if latest.is_empty() || !latest.bytes().all(|b| b.is_ascii_digit() || b == b'.') { return String::new(); }
         let parse = |s: &str| -> u64 { let mut it = s.split('.').map(|x| x.parse::<u64>().unwrap_or(0)); it.next().unwrap_or(0) * 1_000_000 + it.next().unwrap_or(0) * 1000 + it.next().unwrap_or(0) };
@@ -96,7 +96,7 @@ impl Panel {
     }
     fn current_project(&self) -> String {
         if self.pane_id.is_empty() { return String::new(); }
-        let t = fs::read_to_string(self.shared.join("agents.meta.local")).unwrap_or_default();
+        let t = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
         let rows: Vec<Vec<&str>> = t.lines().map(|l| l.split(US).collect()).collect();
         let tab = rows.iter().find(|r| r.get(1) == Some(&self.pane_id.as_str())).and_then(|r| r.get(2).copied()).unwrap_or("");
         if tab.is_empty() { return String::new(); }
@@ -119,7 +119,7 @@ impl Panel {
         if self.screen != Screen::Main { if let Some(s) = self.other_frame() { return s; } self.screen = Screen::Main; }
         if self.real_cols < MIN_COLS || self.real_rows < MIN_ROWS { return format!("\u{1b}[H\u{1b}[J{}", ui::clip(&format!("Too small (min {}x{})", MIN_COLS, MIN_ROWS), self.real_cols as i64 - 1)); }
         let ctx = Ctx { cols: self.cols as i64, now: store::now(), shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(self.theme.vars.clone()) };
-        let agents: Vec<String> = { let mut m = Vec::new(); for f in ["agents.local", "agents.remote"] { for l in fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines() { if let Some(x) = l.split(US).next() { if !x.is_empty() { m.push(x.to_string()); } } } } m };
+        let agents: Vec<String> = { let mut m = Vec::new(); for f in ["agents.local", "agents.remote"] { for l in crate::proc::read_cap(self.shared.join(f)).unwrap_or_default().lines() { if let Some(x) = l.split(US).next() { if !x.is_empty() { m.push(x.to_string()); } } } } m };
         let mc = agentsui::machine_codes(&self.topics, &self.host, &agents);
         let view = self.view(mc.clone());
         let mut cards = Cards::new(&ctx, &view); cards.rows_total = self.rows as i64;
@@ -140,12 +140,12 @@ impl Panel {
     }
     fn ctx(&self) -> Ctx { Ctx { cols: self.cols as i64, now: store::now(), shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(self.theme.vars.clone()) } }
     fn project_name(&self, id: &str) -> Option<String> {
-        let t = fs::read_to_string(self.topics.join(format!("{}.topic", id))).ok()?; let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
+        let t = crate::proc::read_cap(self.topics.join(format!("{}.topic", id))).ok()?; let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
         for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } }
         if kd == "project" && del != "1" { Some(name) } else { None }
     }
     fn agent_rows_all(&self) -> Vec<crate::cards::Row> {
-        ["agents.local", "agents.remote"].iter().flat_map(|f| fs::read_to_string(self.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split(US).map(|x| x.to_string()); crate::cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect()
+        ["agents.local", "agents.remote"].iter().flat_map(|f| crate::proc::read_cap(self.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split(US).map(|x| x.to_string()); crate::cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect()
     }
     fn menu_list(&self, file: &std::path::Path) -> Vec<(String, String)> { let ctx = self.ctx(); let ps = ui::projects(&ctx); crate::menuui::menu_items(file, &ps, &|id| self.project_name(id)) }
     /// The topic's page or the chooser: the text with its markers made into a screen; the map of the clickable rows is kept
@@ -222,14 +222,14 @@ impl Panel {
         for (i, p) in self.pending.iter_mut().enumerate() { if let Ok(Some(_)) = p.child.try_wait() { done.push(i); } }
         for i in done.into_iter().rev() {
             let p = self.pending.remove(i);
-            if let Some(f) = &p.out { let t = fs::read_to_string(f).unwrap_or_default(); let _ = fs::remove_file(f); if p.kind == "menuflash" && !t.trim().is_empty() { self.menu_flash = Some((t.trim().to_string(), Instant::now() + Duration::from_secs(8))); }
-            if p.kind == "flash" && !t.trim().is_empty() { self.flash = Some((t.trim().to_string(), Instant::now() + Duration::from_secs(10))); } }
+            if let Some(f) = &p.out { let t = crate::proc::read_cap(f).unwrap_or_default(); let _ = fs::remove_file(f); if p.kind == "menuflash" && !t.trim().is_empty() { self.menu_flash = Some((store::nocntrl(t.trim()), Instant::now() + Duration::from_secs(8))); }
+            if p.kind == "flash" && !t.trim().is_empty() { self.flash = Some((store::nocntrl(t.trim()), Instant::now() + Duration::from_secs(10))); } }
             self.redraw = true;
         }
     }
     fn agent_jump(&mut self, m: &str, p: &str) {
         if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
-        if m == self.host { let _ = Command::new("herdr").args(["agent", "focus", p]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn(); }
+        if m == self.host { let mut c = Command::new("herdr"); c.args(["agent", "focus", p]); crate::proc::detached(c); }
         else { self.act(&["flash", m, p], "flash", true); }
     }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {
@@ -385,12 +385,26 @@ impl Panel {
     }
 
     // ── the loop ──────────────────────────────────────────────────────────────────────────────────────────────
+    /// The collector (what is still the script's: lead election, the keys, Slack, the update check): a child that ends with this process.
+    fn start_collector(&mut self) {
+        self.collector_at = Instant::now();
+        if let Ok(c) = Command::new("bash").arg(&self.script).env("BHOTE_COLLECTOR_ONLY", std::process::id().to_string()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() { self.collector = Some(c); }
+    }
+    /// It is started again when it has ended (a crash, a kill), with a pause that grows when it keeps ending at once
+    fn keep_collector(&mut self) {
+        let ended = match self.collector.as_mut() { Some(c) => matches!(c.try_wait(), Ok(Some(_)) | Err(_)), None => true };
+        if !ended { if self.collector_at.elapsed() > Duration::from_secs(60) { self.collector_tries = 0; } return; }
+        let wait = Duration::from_secs((1u64 << self.collector_tries.min(5)).min(30));
+        if self.collector_at.elapsed() < wait { return; }
+        self.collector_tries += 1; self.collector = None; self.start_collector();
+    }
     fn tick(&mut self) {
+        self.keep_collector();
         let sec = store::now();
         if sec != self.last_tick {
             self.last_tick = sec;
             if !self.pane_id.is_empty() {
-                if let Ok(t) = fs::read_to_string(self.shared.join("focus.pane")) {
+                if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
                     let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
                     let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
                     if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; } }
@@ -401,7 +415,7 @@ impl Panel {
             if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; self.act(&["clamp"], "clamp", false); } }
             if sec >= self.last_chk + 2 { self.last_chk = sec; let s = self.sig(); if s != self.files_sig { self.files_sig = s; if self.tab_visible { self.redraw = true; self.reload_cfg(); } else { self.dirty = true; } } }
             // bhote find / a jump chose a topic: select it here
-            if let Ok(t) = fs::read_to_string(self.shared.join("select")) {
+            if let Ok(t) = crate::proc::read_cap(self.shared.join("select")) {
                 let t = t.trim().to_string();
                 if self.select_seen.as_deref() != Some(&t) {
                     if self.select_seen.is_some() { let mut p = t.split_whitespace(); let id = p.next().unwrap_or("").to_string(); if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && self.topics.join(format!("{}.topic", id)).exists() { self.sel_id = id; self.redraw = true; } }
@@ -416,28 +430,23 @@ pub fn run() -> i32 {
     if !Term::is_tty() { eprintln!("bhoted panel: needs a terminal"); return 1; }
     let mut p = Panel::new();
     p.reload_cfg();
-    // the collector (the rest of it is still the script's): lead election, merges, follow-ups, monitors; it ends with this process
-    if let Ok(c) = Command::new("bash").arg(&p.script).env("BHOTE_COLLECTOR_ONLY", std::process::id().to_string()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn() { p.collector = Some(c); }
+    p.start_collector();
     let mut term = Term::enter(true);
     { let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b]2;Bhote\x07"); let _ = o.flush(); }
     p.files_sig = p.sig();
     if p.c("SETUP_DONE", "").is_empty() { p.delegate(&mut term, "setup", "0"); }   // never set up on this machine: the wizard first
+    let shared = p.shared.clone();
+    if let Err(e) = crate::proc::check_private_dir(&shared) { term.leave(); eprintln!("bhoted panel: {}", e); return 1; }
     loop {
-        if p.redraw && p.tab_visible && !term.pending() { p.paint(); }
+        if p.redraw && p.tab_visible && !term.pending() {
+            if crate::proc::guarded("paint", &shared, || p.paint()).is_none() { p.redraw = false; p.flash = Some(("internal error: see bhoted.log in the shared folder".into(), Instant::now() + Duration::from_secs(10))); }
+        }
         else if p.redraw && !p.tab_visible { p.redraw = false; p.dirty = true; }
         let timeout = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
         let ev = term.next(timeout);
-        match ev {
-            Ev::Timeout => { if p.spin_any && p.tab_visible { p.spin_tick += 1; p.redraw = true; } }
-            Ev::Eof => break,
-            Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + Duration::from_secs(1)); }
-            Ev::Mouse { b, x, y, press } => { if p.screen == Screen::Main { p.mouse(&mut term, b, x, y, press) } else { p.screen_mouse(&mut term, b, y, press) } }
-            e if p.screen != Screen::Main => { if !p.screen_key(&mut term, &e) { break; } }
-            Ev::Key(c) => { if !p.key(&mut term, c) { break; } }
-            Ev::Right => { if p.sel_id.starts_with("more:") { let s = p.sel_id[5..].to_string(); p.toggle_expand(&s); p.redraw = true; } else if p.sel_topic().is_some() { p.open_menu(&mut term); } }
-            _ => {}
-        }
-        p.poll_pending(); p.tick();
+        let go = crate::proc::guarded("event", &shared, || handle(&mut p, &mut term, ev)).unwrap_or_else(|| { p.redraw = true; true });
+        if !go { break; }
+        crate::proc::guarded("tick", &shared, || { p.poll_pending(); p.tick(); });
     }
     term.leave();
     if let Some(mut c) = p.collector.take() { let _ = c.kill(); }
@@ -554,7 +563,7 @@ impl Panel {
             let Some(a) = map.get((idx - 1) as usize).cloned() else { return };
             let tpj = store::topic_get(&f, "project"); let mut warn = String::new();
             if !tpj.is_empty() {
-                let metas = fs::read_to_string(self.shared.join("agents.meta.local")).unwrap_or_default() + &fs::read_to_string(self.shared.join("agents.meta.remote")).unwrap_or_default();
+                let metas = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default() + &crate::proc::read_cap(self.shared.join("agents.meta.remote")).unwrap_or_default();
                 let proj = metas.lines().find_map(|l| { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 && p[0] == a.m && p[1] == a.id { Some(p[5].to_string()) } else { None } }).unwrap_or_default();
                 if proj != tpj { warn = " (NOT an agent of this topic's project!)".into(); }
             }
@@ -576,4 +585,19 @@ impl Panel {
     fn screen_mouse(&mut self, term: &mut Term, b: u32, y: u32, press: bool) {
         if let Screen::Menu(_) = self.screen { if press && b == 0 { if let Some((_, r)) = self.pmap.iter().find(|(row, _)| *row == y as i64).cloned() { if let Ok(i) = r.parse::<i64>() { self.screen = Screen::Menu(i); self.menu_run(term, i); } } } }
     }
+}
+
+/// One event of the main loop; false: leave the panel
+fn handle(p: &mut Panel, term: &mut Term, ev: Ev) -> bool {
+    match ev {
+        Ev::Timeout => { if p.spin_any && p.tab_visible { p.spin_tick += 1; p.redraw = true; } }
+        Ev::Eof => return false,
+        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + Duration::from_secs(1)); }
+        Ev::Mouse { b, x, y, press } => { if p.screen == Screen::Main { p.mouse(term, b, x, y, press) } else { p.screen_mouse(term, b, y, press) } }
+        e if p.screen != Screen::Main => { if !p.screen_key(term, &e) { return false; } }
+        Ev::Key(c) => { if !p.key(term, c) { return false; } }
+        Ev::Right => { if p.sel_id.starts_with("more:") { let s = p.sel_id[5..].to_string(); p.toggle_expand(&s); p.redraw = true; } else if p.sel_topic().is_some() { p.open_menu(term); } }
+        _ => {}
+    }
+    true
 }

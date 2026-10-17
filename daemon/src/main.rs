@@ -8,6 +8,7 @@ mod ui;
 mod term;
 mod panel;
 mod sync;
+mod proc;
 mod menuui;
 mod agentsui;
 mod theme;
@@ -85,7 +86,7 @@ fn follow_round(shared: &Path, data: &Path, topics: &Path, host: &str, cfg: &Has
 /// The settings file: KEY=value lines, the last value of a key counts (cfg_var in the script).
 pub fn config_read(file: &str) -> HashMap<String, String> {
     let mut m = HashMap::new();
-    for line in fs::read_to_string(file).unwrap_or_default().lines() {
+    for line in crate::proc::read_cap(file).unwrap_or_default().lines() {
         if let Some(i) = line.find('=') { m.insert(line[..i].to_string(), line[i + 1..].to_string()); }
     }
     m
@@ -190,13 +191,13 @@ fn main() {
             if a[2] == "menu" || a[2] == "pick" {   // bhoted block menu|pick --file F | --title T --mode M --idx N [--flash S]: the page, with its markers (for the golden tests)
                 let idx: i64 = opt("--idx").and_then(|v| v.parse().ok()).unwrap_or(0);
                 let projects = ui::projects(&ctx);
-                let pname = |id: &str| -> Option<String> { let f = ctx.topics.join(format!("{}.topic", id)); let t = fs::read_to_string(f).ok()?; let mut name = String::new(); let (mut del, mut kd) = ("0".to_string(), String::new()); for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } } if kd == "project" && del != "1" { Some(name) } else { None } };
+                let pname = |id: &str| -> Option<String> { let f = ctx.topics.join(format!("{}.topic", id)); let t = crate::proc::read_cap(f).ok()?; let mut name = String::new(); let (mut del, mut kd) = ("0".to_string(), String::new()); for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } } if kd == "project" && del != "1" { Some(name) } else { None } };
                 let out = if a[2] == "menu" {
                     let file = PathBuf::from(opt("--file").unwrap_or_default());
                     let items = menuui::menu_items(&file, &projects, &pname);
                     menuui::render_menu(&menuui::MenuIn { c: &ctx, file: &file, idx, items: &items, project_name: &pname, github: view.github, flash: &opt("--flash").unwrap_or_default(), now: ctx.now })
                 } else {
-                    let rows: Vec<cards::Row> = ["agents.local", "agents.remote"].iter().flat_map(|f| fs::read_to_string(ctx.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split('\u{1f}').map(|x| x.to_string()); cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect();
+                    let rows: Vec<cards::Row> = ["agents.local", "agents.remote"].iter().flat_map(|f| crate::proc::read_cap(ctx.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split('\u{1f}').map(|x| x.to_string()); cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect();
                     let ts = store::load(&ctx.topics); let mode = opt("--mode").unwrap_or_else(|| "start".into());
                     let src = opt("--file").map(|f| (store::topic_get(Path::new(&f), "agent_machine"), store::topic_get(Path::new(&f), "agent_pane")));
                     let map = menuui::pick_map(&rows, &ts, &mode, if mode == "transfer" { src.as_ref().map(|(a, b)| (a.as_str(), b.as_str())) } else { None });
@@ -215,7 +216,7 @@ fn main() {
             }
             if a[2] == "frame" {   // the whole main view: bhoted block frame --head F --bottom F --rows N --run DIR
                 let cards = cards::Cards::new(&ctx, &view);
-                let lay = cards::Layout { cards: &cards, rows: opt("--rows").and_then(|v| v.parse().ok()).unwrap_or(40), head: fs::read_to_string(opt("--head").unwrap_or_default()).unwrap_or_default(), bottom: fs::read_to_string(opt("--bottom").unwrap_or_default()).unwrap_or_default(), run_dir: PathBuf::from(opt("--run").unwrap_or_default()), prev_toff: None };
+                let lay = cards::Layout { cards: &cards, rows: opt("--rows").and_then(|v| v.parse().ok()).unwrap_or(40), head: crate::proc::read_cap(opt("--head").unwrap_or_default()).unwrap_or_default(), bottom: crate::proc::read_cap(opt("--bottom").unwrap_or_default()).unwrap_or_default(), run_dir: PathBuf::from(opt("--run").unwrap_or_default()), prev_toff: None };
                 let out = lay.view(); use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes()); return;
             }
             let out = match a[2].as_str() { "monitors" => ui::monitors(&ctx), "cards" => cards::Cards::new(&ctx, &view).block("cards"), "lists" => cards::Cards::new(&ctx, &view).block("lists"), "done" => cards::Cards::new(&ctx, &view).done_block(opt("--max").and_then(|v| v.parse().ok()).unwrap_or(4)), _ => { eprintln!("bhoted: no block {}", a[2]); std::process::exit(2) } };
@@ -273,6 +274,7 @@ fn main() {
         }
         "run" => {
             let shared = out.parent().unwrap_or(Path::new(".")).to_path_buf();
+            if let Err(e) = proc::check_private_dir(&shared) { eprintln!("bhoted: {}", e); std::process::exit(1); }
             let host = opt("--host").unwrap_or_default();
             let config = opt("--config");
             // the agents duty needs inotify (the poke file wakes it): Linux only for now, bash keeps it on macOS
@@ -287,6 +289,8 @@ fn main() {
             let remote_duty = a.iter().any(|x| x == "--remote") && cfg!(target_os = "linux") && !host.is_empty();
             let remote_running = Arc::new(AtomicBool::new(false));
             let mut next_remote = Instant::now();
+            // one daemon per shared folder: another one that is alive keeps the work (two would do every follow-up twice)
+            if let Some(f) = &pid_file { if let Some(other) = fs::read_to_string(f).ok().and_then(|t| t.split_whitespace().next().and_then(|p| p.parse::<i32>().ok())) { if other != std::process::id() as i32 && alive(other) { eprintln!("bhoted: another daemon ({}) runs for this folder", other); std::process::exit(0); } } }
             let mut last = Vec::new();
             if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); if duty { let _ = fs::write(format!("{}.agents", f), "agents\n"); } if monitors { let _ = fs::write(format!("{}.monitors", f), "monitors\n"); } if remote_duty { let _ = fs::write(format!("{}.remote", f), "remote\n"); } if sync_duty { let _ = fs::write(format!("{}.sync", f), "sync\n"); } }
             #[cfg(target_os = "linux")]
@@ -295,16 +299,16 @@ fn main() {
             loop {
                 if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); let _ = fs::remove_file(format!("{}.monitors", f)); let _ = fs::remove_file(format!("{}.remote", f)); let _ = fs::remove_file(format!("{}.sync", f)); } return; } }
                 let sig = signature(dir);
-                if sig != last || !out.exists() { if build(dir, out, &token()).is_ok() { last = sig; } }
+                if sig != last || !out.exists() { if proc::guarded("index", &shared, || build(dir, out, &token())).map_or(false, |r| r.is_ok()) { last = sig; } }
                 if duty && Instant::now() >= next_collect {
                     let cfg = config.as_deref().map(config_read).unwrap_or_default();
                     let every: u64 = cfg.get("LOCAL_EVERY").and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(3);
                     let tests_busy = cfg.get("TESTS_BUSY").map_or(true, |v| v != "off");
-                    agents::collect_local(&shared, &host, tests_busy);
+                    proc::guarded("agents", &shared, || agents::collect_local(&shared, &host, tests_busy));
                     next_collect = Instant::now() + Duration::from_secs(every);
                     if a.iter().any(|x| x == "--follow") {                       // the follow-ups of the collector, behind the fresh agent list
                         let mode = cfg.get("BHOTED_FOLLOW").map(|s| s.as_str()).unwrap_or("off");
-                        if mode == "shadow" || mode == "on" { follow_round(&shared, &data, dir, &host, &cfg, mode == "shadow"); }
+                        if mode == "shadow" || mode == "on" { proc::guarded("follow-ups", &shared, || follow_round(&shared, &data, dir, &host, &cfg, mode == "shadow")); }
                     }
                 }
                 if remote_duty && Instant::now() >= next_remote && !remote_running.load(Ordering::SeqCst) {
@@ -316,7 +320,7 @@ fn main() {
                         let (sh, hs, flag) = (shared.clone(), host.clone(), remote_running.clone());
                         let (off, tb) = (cfg.get("MACHINES_OFF").cloned().unwrap_or_default(), cfg.get("TESTS_BUSY").map_or(true, |v| v != "off"));
                         flag.store(true, Ordering::SeqCst);
-                        std::thread::spawn(move || { agents::collect_remote_kharka(&sh, &hs, &bin, &off, tb); flag.store(false, Ordering::SeqCst); });
+                        std::thread::spawn(move || { let _g = proc::Flag(flag); let shd = sh.clone(); proc::guarded("remote agents", &shd, || agents::collect_remote_kharka(&sh, &hs, &bin, &off, tb)); });
                     } else { next_remote = Instant::now() + Duration::from_secs(2); }
                 }
                 if sync_duty && Instant::now() >= next_sync && !sync_running.load(Ordering::SeqCst) {
@@ -327,7 +331,7 @@ fn main() {
                         let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
                         let sc = sync::Cfg { topics: dir.to_path_buf(), shared: shared.clone(), data: data.clone(), kharka: bin };
                         let flag = sync_running.clone(); flag.store(true, Ordering::SeqCst);
-                        std::thread::spawn(move || { let rc = sync::store_sync(&sc); if rc == 2 { let _ = fs::write(sc.shared.join("dirty"), ""); } flag.store(false, Ordering::SeqCst); });
+                        std::thread::spawn(move || { let _g = proc::Flag(flag); let shd = sc.shared.clone(); if let Some(rc) = proc::guarded("merge with kharka", &shd, || sync::store_sync(&sc)) { if rc == 2 { let _ = fs::write(sc.shared.join("dirty"), ""); } } });
                     } else { next_sync = Instant::now() + Duration::from_secs(2); }
                 }
                 if monitors {
@@ -338,7 +342,7 @@ fn main() {
                         next_fetch[i] = Instant::now() + Duration::from_secs(secs);
                         running[i].store(true, Ordering::SeqCst);
                         let (flag, ctx) = (running[i].clone(), monitor::Ctx { shared: shared.clone(), data: data.clone(), topics: dir.to_path_buf(), cfg: cfg.clone() });
-                        std::thread::spawn(move || { monitor::fetch(&ctx, kind); flag.store(false, Ordering::SeqCst); });
+                        std::thread::spawn(move || { let _g = proc::Flag(flag); proc::guarded("monitor fetch", &ctx.shared.clone(), || monitor::fetch(&ctx, kind)); });
                     }
                 }
                 #[cfg(target_os = "linux")]

@@ -35,6 +35,11 @@ setup() {  # setup <name>: a hub, a daemon and a topic folder with the scenario
     rput bhote.topics/proj-bad '{"id":"proj-bad","title":"Wrong collection","updated":"500","deleted":"0"}'
     rput bhote.topics/t10 '{"id":"t10","title":"Ctrl char","updated":"60","deleted":"0","description":"a\u0001b"}'
     rput bhote.topics/t11 '{"id":"t12","title":"Another id","updated":"60","deleted":"0"}'
+    rput bhote.topics/t14 "$(python3 -c "import json; print(json.dumps({'id': 't14', 'updated': '60', **{'k%d' % i: 'v' for i in range(80)}}))" | sed 's/k\([0-9]*\)/key_\1/g; s/key_\([0-9]*\)/key_x/g')"     # (more than 64 lines would be refused: the same key repeated is dropped by JSON, so the next one is the big one)
+    rput bhote.topics/t15 "$(python3 -c "import json; d={'id':'t15','updated':'60'}; d.update({'key_'+chr(97+i//26)+chr(97+i%26): 'v' for i in range(80)}); print(json.dumps(d))")"
+    rput bhote.topics/t16 "{\"id\":\"t16\",\"updated\":\"60\",\"description\":\"$(python3 -c "print('x' * 5000)")\"}"
+    rput bhote.topics/t17 '{"id":"t17","updated":"sixty","deleted":"0"}'
+    rput bhote.topics/t18 '{"id":"t18","Updated":"60","UPPER":"x"}'
     lput id=t13 title=Same\ and\ equal updated=70 deleted=0 description=same; rput bhote.topics/t13 '{"id":"t13","title":"Same and equal","updated":"70","deleted":"0","description":"same"}'
 }
 state() {  # state <name>: the folder and the entries, comparable

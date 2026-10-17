@@ -144,3 +144,25 @@ herdr on another machine, `kharka watch` (the process that turns changes into th
 collecting agents and merging (an alternative to kharka that this machine does not use). Each is rare or cheap, and a port would
 replace code that works with code that has to be trusted again, for a gain nobody would measure.
 **Settings, the wizard and the suggestions stay the script's views for the same reason** (see step 6b).
+
+## Hardening
+
+- **No panic on garbage:** `tests/fuzz.py` throws random and hostile data at everything the daemon reads (topics, agent and monitor lists,
+  settings, the screen's state, binary files, 5,000-character lines, escape codes, wide and combining characters) and calls every block, the
+  whole frame, the screen, the follow-ups, the index and the merge's validation: over 9,000 calls on 600 random setups, no panic.
+- **A panic does not end the daemon or the panel:** each part of the daemon (index, agents, follow-ups, monitors, merge) and each frame and
+  event of the panel runs guarded; a panic is written to `bhoted.log` in the shared folder (kept small) and the work goes on. A flag that
+  says "this is running" is cleared when its thread panics (it used to stay set and stop that duty for good).
+- **No child hangs it:** every call of `kharka`, `herdr`, `git` and `gh` has a time limit (30, 20, 10, 25 s) and is killed after it; what is
+  started and not waited for is reaped (no zombies in a daemon that runs for days).
+- **What dies comes back:** the panel starts its collector again (with a growing pause), the collector starts the daemon again; a second
+  daemon for the same folder ends at once. Tested with a kill -9 of each, and with a window that shrinks to 12x6 and grows again.
+- **Closed doors:** the shared folder must be ours, a plain folder and closed to others (else the daemon and the panel refuse it); the
+  settings are written 0600 (they hold the CircleCI token); a file of the data or shared folder over 16 MB is read as empty; what comes
+  back from the script is stripped of control characters before it is shown; a name from another machine is only taken as a plain topic name
+  and a valid topic (tests/sync.sh has the hostile entries: wrong collection, other id, from the future, too many lines, a line of 5,000).
+- **Dependencies:** `cargo audit` on every build (80 crates, nothing known), clippy for what is wrong (not for style), the unit tests of the
+  input parser and the guards on both systems.
+- **Soak:** 105 s of 100 file changes a second with a collection every second: memory 5.4 -> 5.5 MB, 4 file handles, no zombies.
+- **Measured at the end:** the whole of bhote on this machine takes about 2 % of one core (the bash collector 1.1, the daemon 0.7), the load
+  average is 0.9 (10.6 when this work began), a frame is 3 ms, a panel idles at 0.2 %.

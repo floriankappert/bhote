@@ -48,7 +48,7 @@ pub fn machine_codes(topics: &std::path::Path, host: &str, agent_machines: &[Str
     files.sort();
     for f in files {
         let (mut t, mut cd, mut kd, mut del) = (String::new(), String::new(), String::new(), "0".to_string());
-        for l in fs::read_to_string(&f).unwrap_or_default().lines() { if let Some(v) = l.strip_prefix("title=") { if t.is_empty() { t = v.to_string(); } } else if let Some(v) = l.strip_prefix("code=") { cd = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } }
+        for l in crate::proc::read_cap(&f).unwrap_or_default().lines() { if let Some(v) = l.strip_prefix("title=") { if t.is_empty() { t = v.to_string(); } } else if let Some(v) = l.strip_prefix("code=") { cd = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } }
         let t: String = t.chars().filter(|c| !c.is_control()).collect();
         if kd == "machine" && del != "1" && !t.is_empty() { recs.push((t, cd)); }
     }
@@ -231,7 +231,7 @@ impl View {
     pub fn head_view(&self) -> HeadView { HeadView { label: self.version_label.clone(), pane_focus: self.pane_focus, head_grad: self.head_grad.clone(), note: self.head_note.clone(), newfeat: self.newfeat } }
 }
 pub fn agent_view(v: &View, cfg: &std::collections::HashMap<String, String>, shared: &std::path::Path) -> AgentView {
-    let offline: Vec<String> = fs::read_to_string(shared.join("machines.offline")).unwrap_or_default().lines().map(|l| l.to_string()).collect();
+    let offline: Vec<String> = crate::proc::read_cap(shared.join("machines.offline")).unwrap_or_default().lines().map(|l| l.to_string()).collect();
     AgentView { head_rows: v.head_rows, hover_btn: v.hover_btn, flash: v.flash.clone(), remote_on: v.remote_on, has_machines: v.has_machines, agent_rows: v.agent_rows,
         name_colors: cfg.get("NAME_COLORS").cloned().unwrap_or_default(), project_colors: cfg.get("PROJECT_COLORS").cloned().unwrap_or_default(), offline }
 }

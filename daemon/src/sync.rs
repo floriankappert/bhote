@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+
 
 pub struct Cfg { pub topics: PathBuf, pub shared: PathBuf, pub data: PathBuf, pub kharka: String }
 
@@ -44,19 +44,17 @@ pub fn topic_valid(text: &str, now: u64) -> bool {
 }
 
 fn kharka(bin: &str, args: &[&str], stdin: Option<&[u8]>) -> (i32, Vec<u8>, String) {
-    let mut c = Command::new(bin); c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if stdin.is_some() { c.stdin(Stdio::piped()); } else { c.stdin(Stdio::null()); }
-    let Ok(mut ch) = c.spawn() else { return (127, Vec::new(), "no kharka binary".into()) };
-    if let Some(d) = stdin { use std::io::Write; if let Some(mut s) = ch.stdin.take() { let _ = s.write_all(d); } }
-    let Ok(o) = ch.wait_with_output() else { return (1, Vec::new(), String::new()) };
-    (o.status.code().unwrap_or(1), o.stdout, String::from_utf8_lossy(&o.stderr).to_string())
+    match crate::proc::run(bin, args, 30, stdin) {   // never longer than 30 s: a hung daemon of kharka must not hold the merge (and its lock) for ever
+        Some((c, o, e)) => (c, o, String::from_utf8_lossy(&e).to_string()),
+        None => (127, Vec::new(), "no kharka binary".into()),
+    }
 }
 fn err_line(e: &str) -> String { let l = e.lines().next().unwrap_or(""); let l: String = l.chars().filter(|c| !c.is_control()).collect(); let l = l.strip_prefix("kharka: ").unwrap_or(&l).to_string(); l.chars().take(200).collect() }
 
 /// store_note ok|offline|again [extra lines]
 fn note(cfg: &Cfg, state: &str, extra: &str) {
     let f = cfg.data.join("store.status");
-    let mut ok_at = fs::read_to_string(&f).unwrap_or_default().lines().find_map(|l| l.strip_prefix("ok_at=").map(|s| s.to_string())).unwrap_or_default();
+    let mut ok_at = crate::proc::read_cap(&f).unwrap_or_default().lines().find_map(|l| l.strip_prefix("ok_at=").map(|s| s.to_string())).unwrap_or_default();
     if state == "ok" { ok_at = store::now().to_string(); }
     let mut body = format!("state={}\nok_at={}\n", state, if ok_at.is_empty() { "0".into() } else { ok_at });
     if !extra.is_empty() { body.push_str(extra); body.push('\n'); }
@@ -101,7 +99,7 @@ fn value_of(text: &str) -> (serde_json::Map<String, Value>, String) {
 
 /// kharka_push: 0 ok, 4 the entry changed since the merge read it, else an error (and its text)
 fn push(cfg: &Cfg, file: &Path, stamp: &str, remote_lines: Option<&str>) -> (i32, String) {
-    let Ok(was) = fs::read_to_string(file) else { return (1, String::new()) };
+    let Ok(was) = crate::proc::read_cap(file) else { return (1, String::new()) };
     let (m, lines) = value_of(&was);
     let mut rc = 0; let mut err = String::new();
     if remote_lines.map_or(false, |r| r == lines) { /* kharka has it already: only the local file was not in its form */ }
@@ -111,7 +109,7 @@ fn push(cfg: &Cfg, file: &Path, stamp: &str, remote_lines: Option<&str>) -> (i32
         let mut args = vec!["put", key.as_str(), "-"]; if !stamp.is_empty() { args.push("--if-hlc"); args.push(stamp); }
         let (r, _, e) = kharka(&cfg.kharka, &args, Some(&body)); rc = r; err = err_line(&e);
     }
-    if rc == 0 && was != lines && fs::read_to_string(file).map_or(false, |now| now == was) {
+    if rc == 0 && was != lines && crate::proc::read_cap(file).map_or(false, |now| now == was) {
         let tmp = PathBuf::from(format!("{}.{}x", file.display(), std::process::id()));
         if fs::write(&tmp, &lines).is_ok() { let _ = fs::rename(&tmp, file); }
     }
@@ -146,7 +144,7 @@ fn run(cfg: &Cfg) -> i32 {
     }
     let rejected: Vec<&String> = remote.files.keys().filter(|f| !rfiles.contains_key(*f)).collect();
     let mut local: HashMap<String, String> = HashMap::new();
-    if let Ok(rd) = fs::read_dir(&cfg.topics) { for e in rd.flatten() { let n = e.file_name().to_string_lossy().to_string(); if n.ends_with(".topic") && name_ok(n.trim_end_matches(".topic")) { local.insert(n, fs::read_to_string(e.path()).unwrap_or_default()); } } }
+    if let Ok(rd) = fs::read_dir(&cfg.topics) { for e in rd.flatten() { let n = e.file_name().to_string_lossy().to_string(); if n.ends_with(".topic") && name_ok(n.trim_end_matches(".topic")) { local.insert(n, crate::proc::read_cap(e.path()).unwrap_or_default()); } } }
     let mut ids: Vec<String> = rfiles.keys().chain(local.keys()).cloned().collect(); ids.sort(); ids.dedup();
     let (mut ok, mut again, mut err) = (true, false, String::new());
     for f in ids {
@@ -177,7 +175,7 @@ fn run(cfg: &Cfg) -> i32 {
     if let Ok(rd) = fs::read_dir(&cfg.topics) {
         let mut tombs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect(); tombs.sort();
         for t in tombs {
-            let Ok(text) = fs::read_to_string(&t) else { continue };
+            let Ok(text) = crate::proc::read_cap(&t) else { continue };
             if !text.lines().any(|l| l.starts_with("deleted=1")) { continue; }
             if num_or(&topic_get(&t, "updated"), 0) >= old { continue; }
             let name = t.file_name().unwrap_or_default().to_string_lossy().to_string();

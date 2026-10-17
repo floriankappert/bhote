@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) }
@@ -28,7 +28,7 @@ pub fn first_value(text: &str, key: &str) -> Option<String> {
     None
 }
 /// topic_get <file> <key> [default]: the first value, control characters removed
-pub fn topic_get(file: &Path, key: &str) -> String { fs::read_to_string(file).ok().and_then(|t| first_value(&t, key)).map(|v| nocntrl(&v)).unwrap_or_default() }
+pub fn topic_get(file: &Path, key: &str) -> String { crate::proc::read_cap(file).ok().and_then(|t| first_value(&t, key)).map(|v| nocntrl(&v)).unwrap_or_default() }
 
 /// topics_load: every topic, the order of the screen (review, now, testing, deploying, finished, next, waiting, later, done; in a group by file name).
 pub fn load(topics: &Path) -> Vec<Topic> { load_files(topics) }
@@ -43,7 +43,7 @@ pub fn load_fast(topics: &Path, shared: &Path) -> Vec<Topic> {
 /// is for this folder and no topic file is newer than it (a writer removes it, the daemon rebuilds it within moments).
 fn load_index(topics: &Path, shared: &Path) -> Option<Vec<Topic>> {
     let idx = shared.join("topics.idx");
-    let text = fs::read_to_string(&idx).ok()?;
+    let text = crate::proc::read_cap(&idx).ok()?;
     let mut lines = text.split('\n');
     let head = lines.next()?;
     if !head.starts_with('#') || !head.contains(&format!(" {} ", topics.display())) { return None; }
@@ -65,7 +65,7 @@ fn load_files(topics: &Path) -> Vec<Topic> {
     files.sort_by(|a, b| crate::ui::coll(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy()));   // (the shell's glob order: the locale's collation)
     let mut items: Vec<(PathBuf, Box<dyn Fn(&str) -> String>)> = Vec::new();
     for f in files {
-        let text = fs::read_to_string(&f).unwrap_or_default();
+        let text = crate::proc::read_cap(&f).unwrap_or_default();
         items.push((f, Box::new(move |k: &str| first_value(&text, k).unwrap_or_default())));
     }
     build(items)
@@ -127,7 +127,7 @@ fn sanitize(key: &str, v: &str) -> String { let v = nocntrl(v); if key == "descr
 
 fn today() -> String {
     // YYYY-MM-DD from the clock, local time through `date` (the script uses date +%Y-%m-%d)
-    Command::new("date").arg("+%Y-%m-%d").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    crate::proc::run("date", &["+%Y-%m-%d"], 5, None).map(|o| String::from_utf8_lossy(&o.1).trim().to_string()).unwrap_or_default()
 }
 
 /// The text of the description when a done topic is taken up again ("Reopened 2026-10-17. <the old one>").
@@ -143,13 +143,13 @@ fn reopened(old: &str) -> String {
 
 fn real_set(env: &Env, f: &Path, key: &str, value: &str) {
     let v = sanitize(key, value);
-    let cur = fs::read_to_string(f).unwrap_or_default();
+    let cur = crate::proc::read_cap(f).unwrap_or_default();
     if key == "status" && v != "done" && first_value(&cur, "status").map(|x| nocntrl(&x)).as_deref() == Some("done") {
         let d = first_value(&cur, "description").map(|x| nocntrl(&x)).unwrap_or_default();
         real_set(env, f, "description", &reopened(&d));
     }
     let locked = lock(f);
-    let cur = fs::read_to_string(f).unwrap_or_default();   // (after the wait: what the other writer left)
+    let cur = crate::proc::read_cap(f).unwrap_or_default();   // (after the wait: what the other writer left)
     let old = num_or(&first_value(&cur, "updated").map(|x| nocntrl(&x)).unwrap_or_default(), 0);
     let n = now().max(old + 1);
     let mut drop: Vec<&str> = vec!["updated"];
@@ -190,9 +190,9 @@ impl<'a> Sink for Live<'a> {
     fn write_file(&mut self, file: &Path, content: &str) { self.n += 1; if fs::write(file, content).is_ok() { let _ = fs::write(self.env.shared.join("dirty"), ""); } }
     fn notify(&mut self, title: &str, body: &str, sound: &str) {
         if !self.notify_on { return; }
-        let _ = Command::new("herdr").args(["notification", "show", &nocntrl(title), "--body", &nocntrl(body), "--sound", sound]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
+        let mut c = Command::new("herdr"); c.args(["notification", "show", &nocntrl(title), "--body", &nocntrl(body), "--sound", sound]); crate::proc::detached(c);
     }
-    fn herdr(&mut self, args: &[String]) { self.n += 1; let _ = Command::new("herdr").args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status(); }
+    fn herdr(&mut self, args: &[String]) { self.n += 1; let a: Vec<&str> = args.iter().map(|x| x.as_str()).collect(); let _ = crate::proc::run("herdr", &a, 20, None); }
     fn is_shadow(&self) -> bool { false }
     fn writes(&self) -> usize { self.n }
 }
