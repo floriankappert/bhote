@@ -172,9 +172,8 @@ p.close()
 # 7) the menu of a topic is the script's view: a double click opens it, Esc comes back
 p = Panel()
 y = p.row("Working topic"); p.out = b""
-os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode()); p.drain(0.3)
-os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode())
-menu = p.expect("ACTIONS", 8)
+os.write(p.fd, (f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m" * 2).encode())   # a double click: both in one write (a slow machine must not stretch it past 500 ms)
+menu = p.expect("ACTIONS", 10)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("double click: the topic's menu (the script's view), Esc: back on the list") if (menu and back) else bad(f"menu round trip (menu={menu}, back={back})")
 
