@@ -43,6 +43,7 @@ class Panel:
         self.pid, self.fd = pty.fork()
         if self.pid: LIVE.append(self.pid)
         if self.pid == 0:
+            fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))   # the size is there before the panel looks (a race on a slow machine otherwise)
             os.chdir(ROOT); os.execvpe("bash", ["bash", "./bhote"], env)
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self.out = b""; self.alive = True; CUR[0] = self
