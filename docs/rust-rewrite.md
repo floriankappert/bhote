@@ -32,7 +32,7 @@ one). From step 4 on the daemon writes topics itself, in-process.
 | 2b | the other machines through kharka (`AGENTS_VIA=kharka`): `herdr/<node>` and `_nodes/` into `agents.remote`, `.meta.remote`, `.now.remote`, `agents.nodes`, `machines.offline` (the ssh way stays bash) | agent names, cards, the ssh path | byte-identical files (live and `tests/agents.sh`) |
 | 3 | monitors: CircleCI (API, `ureq`), GitHub Actions (`gh`), local test runs and status files into `deploys.list` / `tests.list` | panel reads the lists as before | same lists as `monitor_fetch` (live and `tests/monitor.sh`) |
 | 4a | ten follow-ups of the collector (cards, dedup, review, finished, gone, question, branches, numbers, reminders), through a Sink: `BHOTED_FOLLOW=off\|shadow\|on` | the other follow-ups (tests, deploys, auto-assign, projects), the stores' sync, Slack, updates, kharka watch | decisions identical in `tests/follow.sh` (logged and written), shadow soak with `tools/shadow-report.sh` |
-| 4b | the rest of the collector | CLI | collector no longer runs in bash |
+| 4b | project_sync, tests_sync, deploy_sync (26 parity cases), and the merge with kharka (`store_sync`, `tests/sync.sh`) | auto_assign, Slack, the update check, the keys of other machines, the ssh/herdr way of agents and sync, `kharka watch` | the bash collector only does what is listed on the right |
 | 5a | blocks of the main view, one at a time, as `bhoted block <name>` (the panel calls it once per block): monitors, cards, lists; then done, agents, head, bottom | key and mouse handling, click maps, the other views | `tests/frame.sh`: the same bytes as the bash function, with and without colour, three widths |
 | 6a | the panel itself (`bhoted panel`, `BHOTED_PANEL=on`): terminal, keys, mouse, hover, the main view, its actions, a line to type into; the topic's page (menu) and the chooser of free agents are the panel's own (68 golden cases); settings, wizard and the suggestions are still the script's views, run as a child on the same terminal | the collector (as a child of the panel), the views listed | `tests/panel.py`: a pty, the real binary, clicks and keys |
 | 5b | the whole main view and its maps in one call (`bhoted block frame`), and the screen made of it (`bhoted paint`) | key and mouse handling, `ui_load`, the other views (menu, settings, pick, wizard) | `tests/frame.sh`: the same frame, screen and click maps, step by step |
@@ -129,3 +129,18 @@ describe, delete, jump, start, transfer, resume, deployment wait, Slack pin) and
 a click on a line. What talks to herdr, kharka or Slack runs as `bhote __act …`. A topic with a Slack pin or answer on it still gets
 the script's page (its text goes through `slack_marks`). **Settings, the wizard and the suggestions stay the script's views on purpose:**
 they are used rarely, nothing in them is time critical, and a port would be some 2,000 lines for no gain a user would see.
+
+## Step 4b: the rest of the collector, and what stays
+
+Moved to the daemon: the three remaining follow-ups (`project_sync`, `tests_sync`, `deploy_sync`) and the merge with kharka
+(`sync.rs`: validation, newer-`updated`-wins in both directions, the checksum rule for a tie, writes only `--if-hlc`,
+tombstones after 30 days, `store.status`). `tests/sync.sh` runs the same scenario (a pull, a push, a tie, an entry from the
+future, a wrong collection, tombstones, a project record, a control character) against two real kharka setups, one merged by the
+script and one by the daemon: the folders and the entries come out the same; a changed tie rule was seen to fail it. A change here
+(`dirty`) or kharka's watch wakes the merge at once, every minute is the safety net.
+**What stays in the script's collector, on purpose** (it runs as the panel's child and now has little to do): `auto_assign` (off by
+default, and it types prompts into agents), the Slack watch (it calls Claude), the update check (once in six hours), the keys of the
+herdr on another machine, `kharka watch` (the process that turns changes into the wake-ups above), and the ssh and herdr way of
+collecting agents and merging (an alternative to kharka that this machine does not use). Each is rare or cheap, and a port would
+replace code that works with code that has to be trusted again, for a gain nobody would measure.
+**Settings, the wizard and the suggestions stay the script's views for the same reason** (see step 6b).

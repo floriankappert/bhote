@@ -10,5 +10,5 @@ lto = true
 strip = true
 
 [dependencies]
-serde_json = "1.0.154"
+serde_json = { version = "1", features = ["preserve_order"] }
 ureq = "2"

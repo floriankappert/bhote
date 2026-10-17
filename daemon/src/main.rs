@@ -7,6 +7,7 @@ mod store;
 mod ui;
 mod term;
 mod panel;
+mod sync;
 mod menuui;
 mod agentsui;
 mod theme;
@@ -253,6 +254,12 @@ fn main() {
         }
         "panel" => { std::process::exit(panel::run()); }
         "branch" => { println!("{}", follow::git_branch(&a[2]).unwrap_or_default()); }
+        "sync" => { // bhoted sync <topic dir> --shared S --data D [--config F]: one merge with kharka (the parity test)
+            let cfgm = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
+            let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfgm.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
+            let c = sync::Cfg { topics: PathBuf::from(&a[2]), shared: PathBuf::from(opt("--shared").unwrap_or_default()), data: PathBuf::from(opt("--data").unwrap_or_default()), kharka: bin };
+            std::process::exit(sync::store_sync(&c));
+        }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
             let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
@@ -274,16 +281,19 @@ fn main() {
             let data = opt("--data").map(PathBuf::from).unwrap_or_else(|| dir.parent().unwrap_or(Path::new(".")).to_path_buf());
             let running = [Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))];
             let mut next_fetch = [Instant::now(), Instant::now()];
+            let sync_duty = a.iter().any(|x| x == "--sync") && !host.is_empty();
+            let sync_running = Arc::new(AtomicBool::new(false));
+            let mut next_sync = Instant::now();
             let remote_duty = a.iter().any(|x| x == "--remote") && cfg!(target_os = "linux") && !host.is_empty();
             let remote_running = Arc::new(AtomicBool::new(false));
             let mut next_remote = Instant::now();
             let mut last = Vec::new();
-            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); if duty { let _ = fs::write(format!("{}.agents", f), "agents\n"); } if monitors { let _ = fs::write(format!("{}.monitors", f), "monitors\n"); } if remote_duty { let _ = fs::write(format!("{}.remote", f), "remote\n"); } }
+            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); if duty { let _ = fs::write(format!("{}.agents", f), "agents\n"); } if monitors { let _ = fs::write(format!("{}.monitors", f), "monitors\n"); } if remote_duty { let _ = fs::write(format!("{}.remote", f), "remote\n"); } if sync_duty { let _ = fs::write(format!("{}.sync", f), "sync\n"); } }
             #[cfg(target_os = "linux")]
             let w = watch::open(&[(dir, watch::TOPICS), (&shared, watch::APPEAR)]);
             let mut next_collect = Instant::now();
             loop {
-                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); let _ = fs::remove_file(format!("{}.monitors", f)); let _ = fs::remove_file(format!("{}.remote", f)); } return; } }
+                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); let _ = fs::remove_file(format!("{}.monitors", f)); let _ = fs::remove_file(format!("{}.remote", f)); let _ = fs::remove_file(format!("{}.sync", f)); } return; } }
                 let sig = signature(dir);
                 if sig != last || !out.exists() { if build(dir, out, &token()).is_ok() { last = sig; } }
                 if duty && Instant::now() >= next_collect {
@@ -309,6 +319,17 @@ fn main() {
                         std::thread::spawn(move || { agents::collect_remote_kharka(&sh, &hs, &bin, &off, tb); flag.store(false, Ordering::SeqCst); });
                     } else { next_remote = Instant::now() + Duration::from_secs(2); }
                 }
+                if sync_duty && Instant::now() >= next_sync && !sync_running.load(Ordering::SeqCst) {
+                    let cfg = config.as_deref().map(config_read).unwrap_or_default();
+                    if cfg.get("STORE").map_or(false, |v| v == "kharka") {
+                        let dirty = shared.join("dirty"); let was_dirty = dirty.exists(); if was_dirty { let _ = fs::remove_file(&dirty); }
+                        next_sync = Instant::now() + Duration::from_secs(60);   // with kharka its watch asks for a merge: every minute is a safety net
+                        let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
+                        let sc = sync::Cfg { topics: dir.to_path_buf(), shared: shared.clone(), data: data.clone(), kharka: bin };
+                        let flag = sync_running.clone(); flag.store(true, Ordering::SeqCst);
+                        std::thread::spawn(move || { let rc = sync::store_sync(&sc); if rc == 2 { let _ = fs::write(sc.shared.join("dirty"), ""); } flag.store(false, Ordering::SeqCst); });
+                    } else { next_sync = Instant::now() + Duration::from_secs(2); }
+                }
                 if monitors {
                     let cfg = config.as_deref().map(config_read).unwrap_or_default();
                     for (i, (kind, on, every)) in [("deploys", "DEPLOY_MONITOR", "DEPLOY_EVERY"), ("tests", "TEST_MONITOR", "TEST_EVERY")].into_iter().enumerate() {
@@ -326,7 +347,8 @@ fn main() {
                         let ms = if duty { next_collect.saturating_duration_since(Instant::now()).as_millis().min(1000) as i32 } else { 1000 };
                         let events = w.wait(ms);
                         if events.iter().any(|(i, n)| *i == 1 && n == "poke") { next_collect = Instant::now(); }   // a poke: look at once
-                        if events.iter().any(|(i, n)| *i == 1 && n == "remote.due") { next_remote = Instant::now(); }   // kharka's watch: another machine's agents moved
+                        if events.iter().any(|(i, n)| *i == 1 && n == "remote.due") { next_remote = Instant::now(); }
+                        if events.iter().any(|(i, n)| *i == 1 && n == "dirty") { next_sync = Instant::now(); }   // a change here, or kharka's watch: merge at once   // kharka's watch: another machine's agents moved
                         if events.iter().any(|(i, _)| *i == 0) { std::thread::sleep(Duration::from_millis(15)); let _ = w.wait(0); } // a burst of writes: one rebuild
                         continue;
                     }

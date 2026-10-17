@@ -417,8 +417,8 @@ bhoted_alive() {  # 0 when the daemon runs for THIS topic folder (its pid file s
 bhoted_keep() {  # bhoted_keep <collector pid>: the lead collector keeps the daemon running (it ends when the collector does)
     local bin off; bhoted_alive && return 0; cfg_var off BHOTED auto; [ "$off" = off ] && return 0
     bhoted_bin_set bin; [ -n "$bin" ] || return 0
-    mkdir -p "$SHARED_DIR" 2>/dev/null; rmf "$SHARED_DIR/bhoted.pid"; rmf "$SHARED_DIR/bhoted.pid.agents"; rmf "$SHARED_DIR/bhoted.pid.monitors"; rmf "$SHARED_DIR/bhoted.pid.remote"
-    ( "$bin" run "$TOPIC_DIR" "$SHARED_DIR/topics.idx" --parent "$1" --pid-file "$SHARED_DIR/bhoted.pid" --agents --remote --follow --monitors --data "$DATA_DIR" --host "$HOST" --config "$CONFIG_FILE" >/dev/null 2>&1 & )
+    mkdir -p "$SHARED_DIR" 2>/dev/null; rmf "$SHARED_DIR/bhoted.pid"; rmf "$SHARED_DIR/bhoted.pid.agents"; rmf "$SHARED_DIR/bhoted.pid.monitors"; rmf "$SHARED_DIR/bhoted.pid.remote"; rmf "$SHARED_DIR/bhoted.pid.sync"
+    ( "$bin" run "$TOPIC_DIR" "$SHARED_DIR/topics.idx" --parent "$1" --pid-file "$SHARED_DIR/bhoted.pid" --agents --remote --follow --sync --monitors --data "$DATA_DIR" --host "$HOST" --config "$CONFIG_FILE" >/dev/null 2>&1 & )
 }
 bhoted_monitors() { [ -e "$SHARED_DIR/bhoted.pid.monitors" ] && bhoted_alive; }   # the daemon fetches the deployment and test lists (no monitor_fetch in the collector)
 bhoted_remote() { [ -e "$SHARED_DIR/bhoted.pid.remote" ] && agents_kharka && bhoted_alive; }   # the daemon looks at the other machines through kharka
@@ -467,6 +467,7 @@ bhoted_rust_panel() {  # the panel of the daemon (panel.rs) instead of this loop
     export BHOTE_HOST="$HOST" BHOTE_VER="$VERSION" BHOTE_SCRIPT="$sc" BHOTE_VLABEL="${VERSION_LABEL:-$VERSION}" BHOTE_HAS_MACHINES="${HAS_MACHINES:-0}" BHOTE_SHARED="$SHARED_DIR" BHOTE_CONFIG="$CONFIG_FILE" BHOTE_DATA="$DATA_DIR"
     rm -rf "$RUN_DIR"; exec "$bin" panel
 }
+bhoted_sync() { [ -e "$SHARED_DIR/bhoted.pid.sync" ] && [ "$(cfg_get STORE local)" = kharka ] && bhoted_alive; }   # the daemon merges with kharka
 bhoted_agents() { [ -e "$SHARED_DIR/bhoted.pid.agents" ] && bhoted_alive; }   # the daemon collects this machine's agents (no collect_local in the collector)
 topics_index_ensure() {  # the index is current when it is newer than every topic file and counts as many (a file that is not older than it counts as changed: the clock's seconds are coarse)
     local f hdr stale=0 files; TOPICS_IDX="$SHARED_DIR/topics.idx"; files=("$TOPIC_DIR"/*.topic); [ -f "${files[0]}" ] || files=()
@@ -1587,7 +1588,8 @@ collector() {  # collector <main pid>; runs in the background: local often, remo
             # With kharka its watch asks for a merge and wakes us at once (kharka_follow_keep); every minute is only a safety net.
             kharka_follow_keep "$me"
             cfg_var every_s STORE local; if [ "$every_s" = kharka ]; then every_s=60; else every_s=$every_r; fi
-            if [ -n "$sync_pid" ] && kill -0 "$sync_pid" 2>/dev/null; then :
+            if bhoted_sync; then :                                        # (the daemon merges: its own lock, its own clock)
+            elif [ -n "$sync_pid" ] && kill -0 "$sync_pid" 2>/dev/null; then :
             elif [ -e "$STORE_DIRTY" ]; then rm -f "$STORE_DIRTY"; last_s=$SECONDS
                 ( store_sync; [ $? = 2 ] && : > "$STORE_DIRTY" ) & sync_pid=$!
             elif [ $(( SECONDS - last_s )) -ge "$every_s" ]; then last_s=$SECONDS; ( store_sync ) & sync_pid=$!; fi
