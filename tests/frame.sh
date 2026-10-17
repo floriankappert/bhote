@@ -161,6 +161,14 @@ whole_case "hover, done selected" 1 66 40 "HOVER_ID=1002-1" -- 2301-2 1002-1
 whole_case "project scope" 1 66 40 "U_SCOPE=project" "CUR_PROJ=proj-ims" -- 1002-1
 CASE_DATA=$T/empty whole_case "empty" 1 66 40 -- x
 CASE_DATA=$T/empty whole_case "empty, low" 1 66 14 -- x
+# ── the theme: every colour variable and the head gradient, from THEME and the COLOR_* settings ───────────────────────────────────
+for tcase in "" "THEME=catppuccin" "THEME=dracula" "THEME=dracula;COLOR_TEXT=#ffeeaa;COLOR_DIM=#808080;COLOR_SELECTION=#223344;COLOR_NOW=#ff8800;COLOR_DONE=#00ff88" "COLOR_ACCENT=#00ffff;COLOR_ERROR=#ff0000;COLOR_FRAME=#444444;COLOR_WAITING=#f0f000;COLOR_REVIEW=#0088ff;COLOR_LATER=#aa66ff"; do
+    printf '%s\n' ${tcase//;/ } > "$T/tconfig"
+    b=$( export TMPF=$T/theme.out BHOTE_CONFIG=$T/tconfig BHOTE_FORCE_COLOR=1; bash -c 'BHOTE_SOURCE_ONLY=1; . ./bhote; theme_apply; HEAD_GRAD=$(gradient "Bhote v0.9.1.3 Preview"); HEAD_GRAD="${esc}[1m$HEAD_GRAD"; colors_dump $TMPF; cat $TMPF; echo "HEAD_GRAD=$HEAD_GRAD"' 2>&1 )
+    r=$( "$BD" theme --config "$T/tconfig" --head "Bhote v0.9.1.3 Preview" )
+    [ "$b" = "$r" ] && [ "${#b}" -gt 200 ] && ok "theme: the colours and the head gradient (${tcase:-the terminal palette})" || { bad "theme: ${tcase:-terminal}"; diff <(printf '%s' "$b" | command cat -v) <(printf '%s' "$r" | command cat -v) | head -4; }
+done
+
 [ -n "${KEEP:-}" ] && echo "kept $T" || rm -rf "$T"; exit $fail
 
 

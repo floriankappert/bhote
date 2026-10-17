@@ -5,6 +5,8 @@ mod agents;
 mod monitor;
 mod store;
 mod ui;
+mod term;
+mod theme;
 mod cards;
 mod follow;
 use std::collections::HashMap;
@@ -212,6 +214,12 @@ fn main() {
             }
             let _ = fs::write(PathBuf::from(opt("--run").unwrap_or_default()).join("pmap"), map);
             let _ = std::io::stdout().write_all(format!("\u{1b}[H{}\u{1b}[J", out).as_bytes());
+        }
+        "theme" => { // bhoted theme --config F --head TEXT [--nocolor]: the colour variables (NAME=value) and HEAD_GRAD, as colors_dump and ui_load make them
+            let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
+            let t = theme::apply(&cfg, !a.iter().any(|x| x == "--nocolor"), &opt("--head").unwrap_or_default());
+            for k in ["X", "R", "NN", "S", "C", "L", "D", "BOLD", "B", "Y", "GREEN", "BLUE", "ORANGE", "MUTED", "PINK", "TEAL", "SELBG", "CARDBG", "CARDSEL", "CARDHOV", "CARDSUB", "CARDBTN", "LSEL", "DSEL", "DESC", "DESCSEL", "TITLE", "TITLESEL"] { println!("{}={}", k, t.vars.get(k).cloned().unwrap_or_default()); }
+            println!("HEAD_GRAD={}", t.head_grad);
         }
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();

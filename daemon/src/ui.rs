@@ -9,6 +9,7 @@ const RS_REF: char = '\u{1d}';   // \035 around the ref of a clickable line
 
 pub struct Colors(HashMap<String, String>);
 impl Colors {
+    pub fn from_map(m: HashMap<String, String>) -> Colors { Colors(m) }
     pub fn read(path: &str) -> Colors {
         let mut m = HashMap::new();
         for l in fs::read_to_string(path).unwrap_or_default().split('\n') { if let Some(i) = l.find('=') { m.insert(l[..i].to_string(), l[i + 1..].to_string()); } }
