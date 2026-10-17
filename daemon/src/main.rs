@@ -2,10 +2,12 @@
 //!   bhoted index <topic dir> <out>      build once
 //!   bhoted run   <topic dir> <out>      keep it current: rebuild when a topic file is added, removed or changed
 mod agents;
+mod monitor;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const US: char = '\u{1f}';
@@ -134,6 +136,10 @@ fn main() {
     let (dir, out) = (Path::new(&a[2]), Path::new(&a[3]));
     match a[1].as_str() {
         "index" => build(dir, out, &token()).unwrap_or_else(|e| { eprintln!("bhoted: {e}"); std::process::exit(1) }),
+        "fetch" => { // bhoted fetch <shared dir> <data dir> --config <file> --kind deploys|tests (for the parity test)
+            let ctx = monitor::Ctx { shared: PathBuf::from(&a[2]), data: PathBuf::from(&a[3]), topics: PathBuf::from(&a[3]).join("topics"), cfg: opt("--config").map(|c| config_read(&c)).unwrap_or_default() };
+            monitor::fetch(&ctx, &opt("--kind").unwrap_or_else(|| "deploys".into()));
+        }
         "collect" => { // bhoted collect <shared dir> <host>: one collection of this machine (for the parity test)
             let tests_busy = opt("--config").map(|c| config_read(&c)).and_then(|c| c.get("TESTS_BUSY").cloned()).map_or(true, |v| v != "off");
             let ok = agents::collect_local(Path::new(&a[2]), &a[3], tests_busy);
@@ -145,13 +151,17 @@ fn main() {
             let config = opt("--config");
             // the agents duty needs inotify (the poke file wakes it): Linux only for now, bash keeps it on macOS
             let duty = a.iter().any(|x| x == "--agents") && cfg!(target_os = "linux") && !host.is_empty();
+            let monitors = a.iter().any(|x| x == "--monitors");
+            let data = opt("--data").map(PathBuf::from).unwrap_or_else(|| dir.parent().unwrap_or(Path::new(".")).to_path_buf());
+            let running = [Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))];
+            let mut next_fetch = [Instant::now(), Instant::now()];
             let mut last = Vec::new();
-            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); if duty { let _ = fs::write(format!("{}.agents", f), "agents\n"); } }
+            if let Some(f) = &pid_file { let _ = fs::write(f, format!("{} {}\n", std::process::id(), dir.display())); if duty { let _ = fs::write(format!("{}.agents", f), "agents\n"); } if monitors { let _ = fs::write(format!("{}.monitors", f), "monitors\n"); } }
             #[cfg(target_os = "linux")]
             let w = watch::open(&[(dir, watch::TOPICS), (&shared, watch::APPEAR)]);
             let mut next_collect = Instant::now();
             loop {
-                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); } return; } }
+                if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); let _ = fs::remove_file(format!("{}.monitors", f)); } return; } }
                 let sig = signature(dir);
                 if sig != last || !out.exists() { if build(dir, out, &token()).is_ok() { last = sig; } }
                 if duty && Instant::now() >= next_collect {
@@ -160,6 +170,17 @@ fn main() {
                     let tests_busy = cfg.get("TESTS_BUSY").map_or(true, |v| v != "off");
                     agents::collect_local(&shared, &host, tests_busy);
                     next_collect = Instant::now() + Duration::from_secs(every);
+                }
+                if monitors {
+                    let cfg = config.as_deref().map(config_read).unwrap_or_default();
+                    for (i, (kind, on, every)) in [("deploys", "DEPLOY_MONITOR", "DEPLOY_EVERY"), ("tests", "TEST_MONITOR", "TEST_EVERY")].into_iter().enumerate() {
+                        if cfg.get(on).map_or(true, |v| v != "on") || running[i].load(Ordering::SeqCst) || Instant::now() < next_fetch[i] { continue; }
+                        let secs: u64 = cfg.get(every).and_then(|v| v.parse().ok()).unwrap_or(60);
+                        next_fetch[i] = Instant::now() + Duration::from_secs(secs);
+                        running[i].store(true, Ordering::SeqCst);
+                        let (flag, ctx) = (running[i].clone(), monitor::Ctx { shared: shared.clone(), data: data.clone(), topics: dir.to_path_buf(), cfg: cfg.clone() });
+                        std::thread::spawn(move || { monitor::fetch(&ctx, kind); flag.store(false, Ordering::SeqCst); });
+                    }
                 }
                 #[cfg(target_os = "linux")]
                 {

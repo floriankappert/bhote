@@ -11,3 +11,4 @@ strip = true
 
 [dependencies]
 serde_json = "1.0.154"
+ureq = "2"

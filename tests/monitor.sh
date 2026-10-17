@@ -408,4 +408,16 @@ rm -f "$rf"
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"
+
+# the Rust daemon fetches the same lists as monitor_fetch (the same fakes: gh, curl; skipped without the binary)
+BD=""; bhoted_bin_set BD
+if [ -n "$BD" ]; then
+  for k in deploys tests; do
+    rm -f "$SHARED_DIR/$k.list"; monitor_fetch $k; cp "$SHARED_DIR/$k.list" "$T/$k.bash" 2>/dev/null
+    RS=$T/rs-$k; rm -rf "$RS"; mkdir -p "$RS"; cp "$SHARED_DIR/agents.cwd" "$RS/" 2>/dev/null
+    BHOTED_HTTP=curl "$BD" fetch "$RS" "$BHOTE_DATA" --config "$CONFIG_FILE" --kind $k
+    if [ -s "$T/$k.bash" ] && cmp -s "$T/$k.bash" "$RS/$k.list"; then ok "bhoted: the same $k list as monitor_fetch ($(wc -l < "$RS/$k.list" | tr -d ' ') entries)"
+    else bad "bhoted $k list differs"; command diff <(command cat -v "$T/$k.bash") <(command cat -v "$RS/$k.list") | head -4; fi
+  done
+fi
 rm -rf "$T"; exit $fail
