@@ -38,20 +38,26 @@ takes over what costs time in bash: agents of all machines, the topic store, the
 switch it on (`BHOTED_PANEL=on`), the panel itself (keys, mouse, drawing). One daemon runs per machine; the panels and the collector start it. Without the binary, or with
 `BHOTED=off`, everything runs in bash as before. Measured on a busy machine: load 10.6 down to 0.8, a frame 90 ms down to 3 ms, an idle panel 0.2 % of a core.
 
-```mermaid
-flowchart LR
-    subgraph machine[One machine]
-        herdr[herdr<br/>panes, agents] --> d
-        gh[GitHub Actions<br/>CircleCI] --> d
-        d{{bhoted daemon<br/>agents · monitors · follow-ups · index}}
-        d <-->|files, written atomically| files[(topics/*.topic<br/>agent and monitor lists<br/>topic index)]
-        files --> p1[bhoted panel<br/>tab 1]
-        files --> p2[bhoted panel<br/>tab 2]
-        p1 -.->|settings, topic page, wizard| sh[bhote script<br/>bash views, CLI, hooks]
-        sh <--> files
-    end
-    d <-->|merge, newer wins| k[(kharka<br/>every machine)]
-    d -->|agents of other machines| k
+```text
+   herdr (panes, agents)      GitHub Actions, CircleCI
+            │                            │
+            ▼                            ▼
+   ┌──────────────────────────────────────────────┐        ┌───────────────────┐
+   │  bhoted daemon (one per machine)             │  merge │      kharka       │
+   │  agents · monitors · follow-ups · index      │◄──────►│ topics and agents │
+   └──────────────────────┬───────────────────────┘ newer  │ of every machine  │
+                          │ files, written atomically wins └───────────────────┘
+                          ▼
+   ┌──────────────────────────────────────────────┐
+   │  topics/*.topic · agent and monitor lists ·  │◄─────────────┐
+   │  topic index                                 │              │ same files
+   └───────────┬──────────────────┬───────────────┘              │
+               │ read             │ read                ┌────────┴─────────────┐
+               ▼                  ▼                     │ bhote script (bash): │
+      ┌────────────────┐ ┌────────────────┐             │ CLI, hooks, settings,│
+      │ bhoted panel   │ │ bhoted panel   │ ── hands ──►│ wizard, topic page   │
+      │ tab 1          │ │ tab 2          │    over     └──────────────────────┘
+      └────────────────┘ └────────────────┘
 ```
 
 - **Files are the interface.** A bash script cannot talk to a socket without starting a process, and a process per read is what made bhote slow.

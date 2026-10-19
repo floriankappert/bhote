@@ -5718,7 +5718,7 @@ panel_setup() {  # the wizard from inside the panel: a normal terminal for it, t
     stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null; printf '\033[?25l%s' "$MOUSE_ON"; trap 'anim=1' USR1; term_size
 }
 bhote_main() {
-    local f pf chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
+    local f pf chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0 _cl
     harden_perms; bhote_info
     if [ -n "${BHOTE_COLLECTOR_ONLY:-}" ]; then               # the collector alone (the Rust panel runs it for itself): until that panel is gone
         trap 'rm -rf "$RUN_DIR"; exit 0' TERM INT HUP
@@ -5779,7 +5779,7 @@ bhote_main() {
         if [ "$redraw" = 1 ] && [ -z "$key" ] && [ "${TAB_VISIBLE:-1}" = 0 ] && [ "$view" = main ]; then redraw=0; DIRTY=1   # (its tab is not shown: it draws when it is; DIRTY says there is something to draw)
         elif [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
         elif [ "$redraw" = 1 ]; then
-            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; }
+            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; cfg_var _cl PANEL_MIN_WIDTH 46; [ "$REAL_COLS" -lt "$_cl" ] && CLAMP_AT=$SECONDS; }   # (a pane that is too narrow is widened at once)
             [ "$view" = splash ] && ! splash_fits && view=main
             { read -r DOG_IDX _ < "$ANIM_FILE"; } 2>/dev/null || DOG_IDX=0
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on

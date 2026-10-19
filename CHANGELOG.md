@@ -24,6 +24,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
 ### Fixed
+- A panel whose pane is too narrow (the panel of a workspace you just switched to, e.g. by a click on an agent card) is widened at once, after about 0.1 s instead of 1 to 2 s: the Rust panel no longer waits for its once-a-second tick or a one-second sleep, and a resize outside `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH` is not waited out.
 - One agent, one card on now/testing: when an agent had several topics there (a card for each piece of work, one session), the list showed two cards for it. Now the newest stays and the older ones are recently finished.
 - An agent with several recently finished cards no longer reopens all of them when it works again: only the newest comes back on now (two cards for one agent in NOW).
 - A topic that waits for a deployment and has a branch (its agent's) follows the deployment of that branch, no longer the newest one of the project; a binding made to another branch's deployment is ignored.

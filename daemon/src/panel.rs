@@ -244,7 +244,15 @@ impl Panel {
         }
         *term = Term::enter(true);
         self.reload_cfg(); self.real_cols = Term::size().0; self.real_rows = Term::size().1; self.cols = self.real_cols.min(self.num("PANEL_MAX_WIDTH", 64).max(30) as u32).max(MIN_COLS); self.rows = self.real_rows;
-        self.redraw = true; self.clamp_at = Some(Instant::now() + Duration::from_secs(1));
+        self.redraw = true; self.clamp_at = Some(Instant::now() + self.clamp_wait());
+    }
+
+    /// How long a resize settles before the width is checked: a pane outside PANEL_MIN_WIDTH..PANEL_MAX_WIDTH (the panel of a workspace
+    /// that was just shown) is corrected at once, so it does not stay narrow for a second; any other resize waits as before
+    fn clamp_wait(&self) -> Duration {
+        let (lo, hi) = (self.num("PANEL_MIN_WIDTH", 46), self.num("PANEL_MAX_WIDTH", 64).max(30));
+        let w = self.real_cols as i64;
+        if w < lo || w > hi.max(lo) { Duration::from_millis(50) } else { Duration::from_secs(1) }
     }
 
     // ── a line to type into (ask) ─────────────────────────────────────────────────────────────────────────────
@@ -390,6 +398,7 @@ impl Panel {
     fn tick(&mut self) {
         self.keep_collector();
         let sec = store::now();
+        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; self.act(&["clamp"], "clamp", false); } }   // (not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
             if !self.pane_id.is_empty() {
@@ -401,7 +410,6 @@ impl Panel {
                 }
             }
             if let Some((_, u)) = &self.flash { if Instant::now() >= *u { self.flash = None; self.redraw = true; } }
-            if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; self.act(&["clamp"], "clamp", false); } }
             if sec >= self.last_chk + 2 { self.last_chk = sec; let s = self.sig(); if s != self.files_sig { self.files_sig = s; if self.tab_visible { self.redraw = true; self.reload_cfg(); } else { self.dirty = true; } } }
             // bhote find / a jump chose a topic: select it here
             if let Ok(t) = crate::proc::read_cap(self.shared.join("select")) {
@@ -431,7 +439,8 @@ pub fn run() -> i32 {
             if crate::proc::guarded("paint", &shared, || p.paint()).is_none() { p.redraw = false; p.flash = Some(("internal error: see bhoted.log in the shared folder".into(), Instant::now() + Duration::from_secs(10))); }
         }
         else if p.redraw && !p.tab_visible { p.redraw = false; p.dirty = true; }
-        let timeout = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
+        let mut timeout: i32 = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
+        if let Some(t) = p.clamp_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }   // (the width check is due: do not sleep past it)
         let ev = term.next(timeout);
         let go = crate::proc::guarded("event", &shared, || handle(&mut p, &mut term, ev)).unwrap_or_else(|| { p.redraw = true; true });
         if !go { break; }
@@ -581,7 +590,7 @@ fn handle(p: &mut Panel, term: &mut Term, ev: Ev) -> bool {
     match ev {
         Ev::Timeout => { if p.spin_any && p.tab_visible { p.spin_tick += 1; p.redraw = true; } }
         Ev::Eof => return false,
-        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + Duration::from_secs(1)); }
+        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + p.clamp_wait()); }
         Ev::Mouse { b, x, y, press } => { if p.screen == Screen::Main { p.mouse(term, b, x, y, press) } else { p.screen_mouse(term, b, y, press) } }
         e if p.screen != Screen::Main => { if !p.screen_key(term, &e) { return false; } }
         Ev::Key(c) => { if !p.key(term, c) { return false; } }
