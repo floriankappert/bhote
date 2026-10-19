@@ -297,4 +297,9 @@ grep -q "pane resize --pane w2:p2 --direction left --amount 0.0407" "$WLOG" && !
 : > "$WLOG"; PATH="$T/wbin:$PATH" FOCUS1=false HERDR_PANE_ID=w1:p2 B __act clamp >/dev/null 2>&1
 grep -q "pane resize" "$WLOG" && bad "a panel that is not in front changed the others: $(grep resize "$WLOG")" || ok "widths: a panel in a tab that is not in front does not lead"
 
+# a panel whose size changed because the layout was worked out again takes the width the panels have, it does not lead with its own
+printf '%s %s\n' 56 1 > "$T/shared/panel.width"; : > "$WLOG"
+PATH="$T/wbin:$PATH" FOCUS1=true HERDR_PANE_ID=w2:p2 B __act clamp adopt >/dev/null 2>&1
+grep -q "pane resize --pane w2:p2 --direction left --amount 0.0407" "$WLOG" && ! grep -q "resize --pane w1:p2" "$WLOG" && ok "widths: adopt: the panel takes the known width (56), the others stay" || bad "width adopt: $(grep resize "$WLOG")"
+
 rm -rf "$T"; exit $fail

@@ -2370,10 +2370,15 @@ panel_set_width() {  # panel_set_width <pane> <want>: moves the split so the pan
     amt=$(LC_ALL=C awk -v a="$PG_W" -v b="$want" -v s="$PG_SW" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
     herdr pane resize --pane "$p" --direction "$dir" --amount "$amt" >/dev/null 2>&1
 }
-panel_width_clamp() {
-    local p=${HERDR_PANE_ID:-} lo hi w want
+panel_width_clamp() {  # panel_width_clamp [adopt]: adopt = the size changed because the layout was worked out again (the workspace was shown, a sync moved the
+    # split of a hidden one), not because you dragged: the panel takes the width the panels have (panel.width) instead of leading with its own
+    local p=${HERDR_PANE_ID:-} lo hi w want kw
     case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
     cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
+    if [ "${1:-}" = adopt ]; then
+        { read -r kw _ < "$SHARED_DIR/panel.width"; } 2>/dev/null; num_set kw "${kw:-}" 0
+        if [ "$kw" -gt 0 ]; then [ "$kw" -lt "$lo" ] && kw=$lo; [ "$kw" -gt "$hi" ] && kw=$hi; panel_set_width "$p" "$kw"; return 0; fi
+    fi
     panel_geom "$p"; w=$PG_W; [ "$w" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 0
     if [ "$w" -gt "$hi" ]; then want=$hi; elif [ "$w" -lt "$lo" ]; then want=$lo; else want=""; fi
     if [ -n "$want" ]; then panel_set_width "$p" "$want"; return 0; fi      # (the resize reaches this panel again: the others follow then)
@@ -5853,7 +5858,7 @@ bhote_main() {
         if [ "$redraw" = 1 ] && [ -z "$key" ] && [ "${TAB_VISIBLE:-1}" = 0 ] && [ "$view" = main ]; then redraw=0; DIRTY=1   # (its tab is not shown: it draws when it is; DIRTY says there is something to draw)
         elif [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
         elif [ "$redraw" = 1 ]; then
-            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; cfg_var _cl PANEL_MIN_WIDTH 46; [ "$REAL_COLS" -lt "$_cl" ] && CLAMP_AT=$SECONDS; }   # (a pane that is too narrow is widened at once)
+            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; cfg_var _cl PANEL_MIN_WIDTH 46; [ "$REAL_COLS" -lt "$_cl" ] && CLAMP_AT=$SECONDS; [ "${TAB_VISIBLE:-1}" = 0 ] && CLAMP_ADOPT=adopt; }   # (a pane that is too narrow is widened at once)
             [ "$view" = splash ] && ! splash_fits && view=main
             { read -r DOG_IDX _ < "$ANIM_FILE"; } 2>/dev/null || DOG_IDX=0
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
@@ -5998,7 +6003,7 @@ bhote_main() {
         # Every 2 seconds, when no key was read: did the agent lists, the topics or the sync state change? (Not tied to a read
         # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
         if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
-        if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ) & fi
+        if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ${CLAMP_ADOPT:-} ) & CLAMP_ADOPT=""; fi
         if [ -z "$key" ]; then                                 # the agent lists changed (the collector counts a revision up): at once
             local _rev=""; { read -r _rev < "$SHARED_DIR/agents.rev"; } 2>/dev/null
             if [ "$_rev" != "${AG_REV:-}" ]; then AG_REV=$_rev; case "$view" in main) redraw=1 ;; esac; fi
@@ -6130,7 +6135,7 @@ act_slack() {                                                                   
     else FLASH_MSG="✗ ${perr#bhote: }"; fi
     printf '%s' "$FLASH_MSG"
 }
-act_clamp() { panel_width_clamp; }                                                         # (the width of the panel pane is kept between the two settings)
+act_clamp() { panel_width_clamp "$@"; }                                                         # (the width of the panel pane is kept between the two settings)
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
     [ -n "${CLAUDECODE:-}" ] && return 0

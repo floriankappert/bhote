@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- Panels no longer drift apart when you switch workspaces: herdr works the layout out again from the split ratios then, so a panel could come up narrower or wider than the others and, as the one in front, set that width for all. A panel whose size changed while its tab was hidden or just shown (and a new panel) now takes the width the panels have; only a drag of the panel in front sets a new one.
 - The widths also go to the other machines: with kharka (`STORE=kharka` or `AGENTS_VIA=kharka`) a panel made wider or narrower sets the panels on every machine to that width (`bhote.width/<node>`). A panel started by hand (no label, no title) is found too: every panel registers itself in the shared folder.
 - A topic whose agent has stopped (recently finished) but whose branch is being deployed moves to the DEPLOYING group (was: WAITING FOR DEPLOYMENT, and only for topics still at work); when the deployment is over it goes to review.
 - All panels are as wide as the one you work in: when you make a panel wider or narrower, the panels of the other tabs and workspaces follow after a second (inside `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH`), so a click lands on the same column everywhere. Only the panel of the tab in front leads.

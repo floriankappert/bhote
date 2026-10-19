@@ -34,7 +34,7 @@ pub struct Panel {
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
     click_last: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
-    pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>,
+    pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
 
@@ -49,7 +49,7 @@ impl Panel {
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
             flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
-            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
+            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
         self.cfg = crate::config_read(&self.cfg_path.to_string_lossy());
@@ -244,7 +244,7 @@ impl Panel {
         }
         *term = Term::enter(true);
         self.reload_cfg(); self.real_cols = Term::size().0; self.real_rows = Term::size().1; self.cols = self.real_cols.min(self.num("PANEL_MAX_WIDTH", 64).max(30) as u32).max(MIN_COLS); self.rows = self.real_rows;
-        self.redraw = true; self.clamp_at = Some(Instant::now() + self.clamp_wait());
+        self.redraw = true; self.clamp_adopt = true; self.clamp_at = Some(Instant::now() + self.clamp_wait());   // (the size may have changed under the page: no lead)
     }
 
     /// How long a resize settles before the width is checked: a pane outside PANEL_MIN_WIDTH..PANEL_MAX_WIDTH (the panel of a workspace
@@ -406,7 +406,7 @@ impl Panel {
     fn tick(&mut self) {
         self.keep_collector();
         let sec = store::now();
-        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { self.act(&["clamp"], "clamp", false); } } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
+        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { if self.clamp_adopt { self.act(&["clamp", "adopt"], "clamp", false); } else { self.act(&["clamp"], "clamp", false); } } self.clamp_adopt = false; } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
             self.register();
@@ -414,7 +414,7 @@ impl Panel {
                 if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
                     let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
                     let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
-                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; } }
+                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); } }
                     if pf != self.pane_focus { self.pane_focus = pf; self.redraw = true; }
                 }
             }
@@ -600,7 +600,7 @@ fn handle(p: &mut Panel, term: &mut Term, ev: Ev) -> bool {
     match ev {
         Ev::Timeout => { if p.spin_any && p.tab_visible { p.spin_tick += 1; p.redraw = true; } }
         Ev::Eof => return false,
-        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + p.clamp_wait()); }
+        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; if !p.tab_visible || p.shown_at.map_or(false, |t| t.elapsed() < Duration::from_secs(3)) { p.clamp_adopt = true; } p.clamp_at = Some(Instant::now() + p.clamp_wait()); }   // (a size that changed while the tab was hidden or just shown comes from the layout, not from a drag)
         Ev::Mouse { b, x, y, press } => { if p.screen == Screen::Main { p.mouse(term, b, x, y, press) } else { p.screen_mouse(term, b, y, press) } }
         e if p.screen != Screen::Main => { if !p.screen_key(term, &e) { return false; } }
         Ev::Key(c) => { if !p.key(term, c) { return false; } }
