@@ -5,6 +5,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-19
+
 ### Added
 - Setting `CARD_GROUPING` (settings › *Agent cards: grouping/sorting*): `ungrouped` (the new default) lists all agent cards in one list without group headings, in the order of the agents in herdr's agent panel (idle agents without a card too; cards without an agent after them); `status` keeps the groups (NOW, TESTING, DEPLOYING, RECENTLY FINISHED, IDLE) with their headings.
 - A card shows the CI test jobs (CircleCI, GitHub Actions) that run for its agent's branch as bars, like local test runs (two at most; CircleCI jobs report 0 of 1 until they are over, so the bar fills when they finish).
