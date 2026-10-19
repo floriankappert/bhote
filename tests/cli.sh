@@ -283,7 +283,7 @@ mkdir -p "$T/wbin"; cat > "$T/wbin/herdr" <<'SH'
 #!/bin/sh
 echo "$*" >> "$WLOG"
 case "$*" in
- *"pane list"*) echo '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"claude","focused":'"$FOCUS1"'},{"pane_id":"w1:p2","tab_id":"w1:t1","label":"bhote","focused":false},{"pane_id":"w2:p1","tab_id":"w2:t1","agent":"claude","focused":false},{"pane_id":"w2:p2","tab_id":"w2:t1","label":"bhote","focused":false}]}}' ;;
+ *"pane list"*) echo '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"claude","focused":'"$FOCUS1"'},{"pane_id":"w1:p2","tab_id":"w1:t1","label":"bhote","focused":false},{"pane_id":"w2:p1","tab_id":"w2:t1","agent":"claude","focused":false},{"pane_id":"w2:p2","tab_id":"w2:t1","focused":false}]}}' ;;
  *"pane layout --pane w1:p2"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w1:p2","rect":{"x":200,"y":0,"width":56,"height":40}}],"splits":[{"direction":"right","ratio":0.78125,"rect":{"x":0,"y":0,"width":256,"height":40}}]}}}' ;;
  *"pane layout --pane w2:p2"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w2:p2","rect":{"x":200,"y":0,"width":46,"height":40}}],"splits":[{"direction":"right","ratio":0.813,"rect":{"x":0,"y":0,"width":246,"height":40}}]}}}' ;;
  *) exit 0 ;;
@@ -291,8 +291,9 @@ esac
 SH
 chmod +x "$T/wbin/herdr"
 export WLOG=$T/wide.log
+mkdir -p "$T/shared/panels"; echo $$ > "$T/shared/panels/w2:p2"; echo 999999 > "$T/shared/panels/w9:p9"   # (w2:p2 is a panel started by hand: no label, registered; w9:p9 is gone)
 : > "$WLOG"; PATH="$T/wbin:$PATH" FOCUS1=true HERDR_PANE_ID=w1:p2 B __act clamp >/dev/null 2>&1
-grep -q "pane resize --pane w2:p2 --direction left --amount 0.0407" "$WLOG" && ! grep -q "resize --pane w1:p2" "$WLOG" && ok "widths: the panel in front leads, the other tab's panel is widened to 56" || bad "width sync: $(grep resize "$WLOG")"
+grep -q "pane resize --pane w2:p2 --direction left --amount 0.0407" "$WLOG" && ! grep -q "resize --pane w1:p2" "$WLOG" && ok "widths: the panel in front leads, the other tab's panel (no label: it registered itself) is widened to 56" || bad "width sync: $(grep resize "$WLOG")"
 : > "$WLOG"; PATH="$T/wbin:$PATH" FOCUS1=false HERDR_PANE_ID=w1:p2 B __act clamp >/dev/null 2>&1
 grep -q "pane resize" "$WLOG" && bad "a panel that is not in front changed the others: $(grep resize "$WLOG")" || ok "widths: a panel in a tab that is not in front does not lead"
 

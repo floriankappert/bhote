@@ -532,7 +532,7 @@ impl<'a> Cards<'a> {
                 continue;
             }
             if gk != prev {
-                let (label, lc) = match gk { "deploying" => ("WAITING FOR DEPLOYMENT", g("Y")), "finished" => ("RECENTLY FINISHED", g("GREEN")), "now" => ("NOW", g("ORANGE")), "testing" => ("TESTING", g("C")), "review" => ("REVIEW", g("BLUE")), _ => ("", g("D")) };
+                let (label, lc) = match gk { "deploying" => ("DEPLOYING", g("Y")), "finished" => ("RECENTLY FINISHED", g("GREEN")), "now" => ("NOW", g("ORANGE")), "testing" => ("TESTING", g("C")), "review" => ("REVIEW", g("BLUE")), _ => ("", g("D")) };
                 out.push('\n'); out.push_str(&format!("  {}{}{}\n", lc, label, x)); prev = gk.to_string();
             }
             let (mut who, mut state, mut sc, mut tm, br) = self.meta(i);

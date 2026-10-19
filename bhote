@@ -298,6 +298,7 @@ kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid> 
         if IFS= read -r -t 5 line; then
             case "$line" in                                    # (a line starts with the key: {"entry":{"key":"…)
                 *'{"key":"bhote.jump/'*) jump_request "$line" & ;;
+                *'{"key":"bhote.width/'*) width_request "$line" & ;;
                 *'{"key":"bhote.'*) [ "${4:-bhote.}" = herdr/ ] || { : > "$STORE_DIRTY"; poke; } ;;
                 *'{"key":"herdr/'*) [ "${4:-bhote.}" = bhote. ] || { : > "$SHARED_DIR/remote.due"; poke; } ;;
             esac
@@ -1937,7 +1938,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
             continue ;;
         esac
         if [ "$gk" != "$prev" ]; then
-            case "$gk" in deploying) label="WAITING FOR DEPLOYMENT"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
+            case "$gk" in deploying) label="DEPLOYING"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
             printf '\n'                                                  # (a card brings its own edges, the caption its blank row)
             printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
         fi
@@ -2386,11 +2387,49 @@ panel_width_sync() {  # panel_width_sync <this pane> <its width>
     tab=$(printf '%s\n' "$lines" | awk -F'|' -v p="$p" '$1 == p { print $2 }')
     [ -n "$tab" ] && [ -n "$(printf '%s\n' "$lines" | awk -F'|' -v t="$tab" '$2 == t && $5 == "true"')" ] || return 0   # (the tab is not the one in front: it follows)
     cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
-    while IFS='|' read -r q _ lbl ag _; do
-        [ "$q" != "$p" ] && [ "$lbl" = bhote ] && [ -z "$ag" ] || continue
-        case "$q" in *[!A-Za-z0-9:_-]*) continue ;; esac
+    while read -r q; do
+        [ "$q" != "$p" ] || continue
         panel_set_width "$q" "$w"
-    done <<< "$lines"
+    done <<< "$(panel_pane_ids)"
+    panel_width_publish "$w"
+}
+# The panels of this machine: panes that carry the label bhote or the title Bhote and no agent (what the plugin makes), and every pane whose
+# panel is running here (it registers itself in $SHARED_DIR/panels/<pane>; a panel started by hand has neither label nor title).
+panel_pane_ids() {
+    { herdr pane list 2>/dev/null | jq -r '.result.panes[] | select(((.agent // "") == "") and ((.label // "") == "bhote" or (.terminal_title_stripped // "") == "Bhote")) | .pane_id' 2>/dev/null
+      local f pid; for f in "$SHARED_DIR"/panels/*; do
+          [ -f "$f" ] || continue; pid=""; { read -r pid < "$f"; } 2>/dev/null
+          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then basename "$f"; else rm -f "$f"; fi
+      done; } | LC_ALL=C sort -u | while read -r q; do case "$q" in ''|*[!A-Za-z0-9:_-]*) ;; *) printf '%s\n' "$q" ;; esac; done
+}
+panel_register() {  # panel_register: this panel's pane and process, for panel_pane_ids
+    case "${HERDR_PANE_ID:-}" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
+    mkdir -p "$SHARED_DIR/panels" 2>/dev/null && printf '%s\n' "$$" > "$SHARED_DIR/panels/$HERDR_PANE_ID"
+}
+# The width goes to the other machines through kharka (bhote.width/<this node>), when the collector follows kharka: a panel made wider on
+# Linux makes the panels on the Mac as wide, and back. PANEL_WIDTH_FILE holds "<width> <ms>" of the last width this machine knows (set
+# here or taken from another machine): a width that equals it is not sent again, so the machines never answer each other for ever.
+panel_width_publish() {  # panel_width_publish <width>
+    local w=$1 kw me lw lat now
+    kharka_follow_want kw; [ "$kw" = none ] && return 0
+    { read -r lw lat < "$SHARED_DIR/panel.width"; } 2>/dev/null; [ "${lw:-}" = "$w" ] && return 0
+    kharka_self_set me || return 0
+    now=$(( $(date +%s) * 1000 )); printf '%s %s\n' "$w" "$now" > "$SHARED_DIR/panel.width"
+    jq -cn --argjson w "$w" --argjson at "$now" '{width: $w, at: $at}' | kharka_run put "bhote.width/$me" - >/dev/null 2>&1
+}
+width_request() {  # width_request <watch line>: another machine's panels were made wider or narrower (panel_width_publish): ours follow
+    local me from w at lw lat q lo hi lines lbl ag
+    kharka_self_set me || return 0
+    IFS=$'\t' read -r from w at < <(printf '%s' "$1" | jq -r '.entry // . | select(.deleted != true) | [(.key | sub("^bhote.width/"; "")),
+        (.value.width // 0), (.value.at // 0)] | map(tostring | gsub("[\t\n]"; "")) | @tsv' 2>/dev/null)
+    [ -n "$from" ] && [ "$from" != "$me" ] || return 0
+    case "$w$at" in *[!0-9]*|'') return 0 ;; esac
+    { read -r lw lat < "$SHARED_DIR/panel.width"; } 2>/dev/null
+    [ "$at" -gt "${lat:-0}" ] || return 0                       # (a newer width only: a watch that starts again replays the old ones)
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
+    [ "$w" -lt "$lo" ] && w=$lo; [ "$w" -gt "$hi" ] && w=$hi
+    printf '%s %s\n' "$w" "$at" > "$SHARED_DIR/panel.width"
+    while read -r q; do panel_set_width "$q" "$w"; done <<< "$(panel_pane_ids)"
 }
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot). So on a Mac, with the agents from kharka, bhote types herdr's own key for that agent's row into the
@@ -4532,7 +4571,7 @@ mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a sub
     local a; num_set a "$2" "$NOW"; a=$(( NOW - a )); [ "$a" -lt 0 ] && a=0
     if [ "$a" -lt 60 ]; then printf -v "$1" '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf -v "$1" '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf -v "$1" '%dh' $(( a / 3600 )); else printf -v "$1" '%dd' $(( a / 86400 )); fi
 }
-# A topic that waits for a deployment (status waiting, deploy_wait=1; own group WAITING FOR DEPLOYMENT) follows one entry of deploys.list:
+# A topic that waits for a deployment (status waiting, deploy_wait=1; own group DEPLOYING, a card like testing) follows one entry of deploys.list:
 # deploy_url is the entry it is bound to, deploy_match (optional) the label it may bind to (Backend, Production), deploy_since when the
 # wait began. Unbound it looks for the newest entry of its project (and label) that is under way, or that began after deploy_since.
 agent_reopen_pick() {  # agent_reopen_pick <session> <pane> <machine> <strict 0|1>: REOPEN_IDX = the ONE recently finished or dismissed card of this agent that
@@ -4739,7 +4778,7 @@ deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, an
         prn=""   # CircleCI deploys main: the note is the commit's title: "… (#123)" (squash) or "Merge pull request #123 from …" is the merged pull request
         case "$nt" in *"(#"[0-9]*")") prn=${nt##*"(#"}; prn=${prn%")"} ;; "Merge pull request #"[0-9]*) prn=${nt#"Merge pull request #"}; prn=${prn%%[!0-9]*} ;; esac
         for (( i = 0; i < T_N; i++ )); do
-            case "${T_STATUS[$i]}" in now|review|testing) ;; *) continue ;; esac
+            case "${T_STATUS[$i]}" in now|review|testing|finished) ;; *) continue ;; esac     # (finished: its agent has stopped, the branch is still on its way)
             [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] || continue
             pn=""; [ -n "${T_PJ[$i]}" ] && { projects_load; pn=$(project_name "${T_PJ[$i]}"); }
             [ -z "$pn" ] || [ "$pn" = "$p" ] || continue
@@ -5773,12 +5812,14 @@ bhote_main() {
     cleanup() {
         trap '' INT TERM HUP QUIT USR1 WINCH                  # once, and not interrupted by the next signal
         kill $pids 2>/dev/null
+        [ -n "${BHOTE_DELEGATE:-}" ] || rm -f "$SHARED_DIR/panels/${HERDR_PANE_ID:-none}" 2>/dev/null
         [ -n "$stty_saved" ] && stty "$stty_saved" </dev/tty 2>/dev/null
         lock_drop "$SHARED_DIR/collector.lock" "$$"; lock_drop "$SHARED_DIR/sync.lock" "$$"; lock_drop "$SHARED_DIR/setup.lock" "$$"
         rm -rf "$RUN_DIR"
         printf '%s\033[0m\033[?25h\033[?1049l\033]2;\007' "$MOUSE_OFF" 2>/dev/null   # mouse off, colours, cursor, normal screen, title
     }
     trap 'cleanup; exit 0' INT TERM HUP QUIT EXIT
+    [ -n "${BHOTE_DELEGATE:-}" ] || panel_register
     trap 'redraw=1; resize=1; CLAMP_AT=$(( SECONDS + 1 ))' WINCH       # (the width is checked once the resizing has settled)
     CLAMP_AT=$(( SECONDS + 2 ))
     trap 'anim=1' USR1

@@ -395,12 +395,21 @@ impl Panel {
         self.collector_tries += 1; self.collector = None; self.start_collector();
         crate::proc::note(&self.shared, &format!("the collector ended: started again (try {})", self.collector_tries));
     }
+    /// This panel's pane and process in <shared>/panels/<pane>: how the width sync finds a panel that has no label (one started by hand)
+    fn register(&self) {
+        if self.pane_id.is_empty() || !self.pane_id.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
+        let dir = self.shared.join("panels"); let _ = fs::create_dir_all(&dir);
+        let f = dir.join(&self.pane_id); let me = format!("{}\n", std::process::id());
+        if fs::read_to_string(&f).map_or(true, |t| t != me) { let _ = fs::write(&f, me); }
+    }
+    fn unregister(&self) { if !self.pane_id.is_empty() { let _ = fs::remove_file(self.shared.join("panels").join(&self.pane_id)); } }
     fn tick(&mut self) {
         self.keep_collector();
         let sec = store::now();
         if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { self.act(&["clamp"], "clamp", false); } } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
+            self.register();
             if !self.pane_id.is_empty() {
                 if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
                     let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
@@ -446,6 +455,7 @@ pub fn run() -> i32 {
         if !go { break; }
         crate::proc::guarded("tick", &shared, || { p.poll_pending(); p.tick(); });
     }
+    p.unregister();
     term.leave();
     if let Some(mut c) = p.collector.take() { let _ = c.kill(); }
     0

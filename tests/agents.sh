@@ -682,11 +682,11 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   deploy_lookup "$df" && [ "$DL_URL" = https://ci/1 ] && [ "$DL_STATE" = running ] || exit 2                   # (the label narrows it: Backend, not Frontend)
   COLS=50; ROWS=60; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$now; AG_N=0; AG_LINES=(); ui_load; projects_load; topics_load
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
-  printf '%s\n' "$out" | grep -q "WAITING FOR DEPLOYMENT" || exit 3
+  printf '%s\n' "$out" | grep -q "DEPLOYING" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
   bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 40 ] || exit 5                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
-  [ "$(printf '%s\n' "$out" | grep -n "WAITING FOR DEPLOYMENT" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
+  [ "$(printf '%s\n' "$out" | grep -n "DEPLOYING" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
   printf '%s\n' "$now${US}IMS${US}Backend${US}ok${US}${US}${US}fix/x${US}https://ci/1" > "$SHARED_DIR/deploys.list"
   deploy_sync; [ "$(topic_get "$df" status)" = review ] && [ -z "$(topic_get "$df" deploy_wait)" ] && [ -z "$(topic_get "$df" deploy_url)" ] || exit 9
@@ -699,6 +699,8 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}fix/z${US}https://ci/3" > "$SHARED_DIR/deploys.list"
   deploy_sync; [ "$(topic_get "$bf" status)" = waiting ] && [ "$(topic_get "$bf" deploy_wait)" = 1 ] || exit 13
   topic_set "$bf" status now; [ -z "$(topic_get "$bf" deploy_wait)" ] || exit 14                                  # leaving the wait ends it
+  topic_set "$bf" status finished; deploy_sync; [ "$(topic_get "$bf" status)" = waiting ] && [ "$(topic_get "$bf" deploy_wait)" = 1 ] || exit 30   # (its agent has stopped: the branch is still on its way, not "recently finished")
+  topic_set "$bf" status now
   # a topic with a branch waits for the deployment of that branch, not for the newest one of the project (also when it was bound to another one before)
   topic_new "Mine" "" ""; mf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mf" project "$pid"; topic_set "$mf" agent_branch fix/cancellation-service-until-end; deploy_wait_set "$mf"; now=$(date +%s)
   printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}64${US}70${US}feat/contract-sheet-catalogue-g…${US}https://ci/7" > "$SHARED_DIR/deploys.list"

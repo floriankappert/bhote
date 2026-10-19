@@ -456,7 +456,7 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
         else if let Some(r) = nt.strip_prefix("Merge pull request #") { prn = r.chars().take_while(|ch| ch.is_ascii_digit()).collect(); }
         for i in 0..ts.len() {
             let t = ts[i].clone();
-            if !matches!(t.status.as_str(), "now" | "review" | "testing") || t.ap.is_empty() || t.br.is_empty() { continue; }
+            if !matches!(t.status.as_str(), "now" | "review" | "testing" | "finished") || t.ap.is_empty() || t.br.is_empty() { continue; }
             let pn = if t.pj.is_empty() { String::new() } else { ps.iter().find(|x| x.id == t.pj).map(|x| x.name.clone()).unwrap_or_default() };
             if !pn.is_empty() && pn != p { continue; }
             if t.br != nt {

@@ -347,6 +347,29 @@ printf '%s' "$v" | jq -e '.machine == "Box" and .pane == "w2:p2" and .host == "a
     && ok "jump: elsewhere the click asks the other machines (bhote.jump/<node>: the agent, this herdr's host)" || bad "bhote.jump/a: $v"
 printf '#!/bin/sh\ncase "$2" in *"front window"*) cat "%s/title" ;; *) printf "%%s\\n" "$2" > "%s/osa.out" ;; esac\n' "$T" "$T" > "$T/osa"
 ask_b() { rm -f "$T/osa.out"; jq -cn --argjson at "$1" '{machine: "Box", pane: "w2:p2", host: "b", at: $at}' | put_on b bhote.jump/b; sleep 1; }
+# the width of the panels goes through kharka: made wider here (panel_width_publish), taken over from another machine (width_request)
+mkdir -p "$T/wb"; cat > "$T/wb/herdr" <<'SH'
+#!/bin/sh
+echo "$*" >> "$WLOG"
+case "$*" in
+ *"pane list"*) echo '{"result":{"panes":[{"pane_id":"w1:p2","tab_id":"w1:t1","label":"bhote"},{"pane_id":"w2:p2","tab_id":"w2:t1","label":"bhote"}]}}' ;;
+ *"pane layout --pane w1:p2"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w1:p2","rect":{"x":200,"y":0,"width":56,"height":40}}],"splits":[{"direction":"right","ratio":0.78125,"rect":{"x":0,"y":0,"width":256,"height":40}}]}}}' ;;
+ *"pane layout --pane w2:p2"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w2:p2","rect":{"x":200,"y":0,"width":46,"height":40}}],"splits":[{"direction":"right","ratio":0.813,"rect":{"x":0,"y":0,"width":246,"height":40}}]}}}' ;;
+ *) exit 0 ;;
+esac
+SH
+chmod +x "$T/wb/herdr"; export WLOG=$T/wide.log; rm -f "$SHARED_DIR/panel.width"; : > "$WLOG"
+line='{"entry":{"key":"bhote.width/b","value":{"width":56,"at":'$(( $(date +%s) * 1000 ))'}}}'
+( PATH=$T/wb:$PATH; width_request "$line" )
+grep -q "pane resize --pane w2:p2 --direction left" "$WLOG" && ! grep -q "resize --pane w1:p2" "$WLOG" && read -r lw _ < "$SHARED_DIR/panel.width" && [ "$lw" = 56 ] \
+    && ok "width: another machine's width is taken over by every panel here (the one that is 56 already stays)" || bad "width_request: $(grep resize "$WLOG") [$(cat "$SHARED_DIR/panel.width" 2>&1)]"
+: > "$WLOG"; ( PATH=$T/wb:$PATH; width_request "$line" ); ! grep -q resize "$WLOG" && ok "width: the same message again changes nothing (only a newer one counts)" || bad "width replay: $(grep resize "$WLOG")"
+( PATH=$T/wb:$PATH; width_request "${line//bhote.width\/b/bhote.width/a}" ) ; : > "$WLOG"
+rm -f "$SHARED_DIR/panel.width"; ( kharka_follow_want(){ printf -v "$1" bhote.; }; panel_width_publish 60 )
+v=$("$REAL_KHARKA" --socket "$T/a.sock" get bhote.width/a 2>/dev/null); printf '%s' "$v" | jq -e '.width == 60 and (.at | type == "number")' >/dev/null \
+    && ok "width: a width changed here is put to kharka (bhote.width/<node>)" || bad "width publish: [$v]"
+v1=$("$REAL_KHARKA" --socket "$T/a.sock" get bhote.width/a 2>/dev/null); ( kharka_follow_want(){ printf -v "$1" bhote.; }; panel_width_publish 60 ); v2=$("$REAL_KHARKA" --socket "$T/a.sock" get bhote.width/a 2>/dev/null)
+[ "$v1" = "$v2" ] && ok "width: the same width is not sent twice (no answering back and forth)" || bad "width sent twice: $v1 / $v2"
 rm -f "$STORE_DIRTY"; ( PATH=$T/hb:$PATH; KEYS_OS_LOCAL=Darwin; HERDR_CONFIG_OWN=$T/herdr.toml; BHOTE_OSASCRIPT=$T/osa; kharka_follow_start $$ herdr/; echo "$KW_WATCH $KW_READ" > "$T/fw" )
 echo "b: Work · tests" > "$T/title"; ask_b "$(( $(date +%s) * 1000 ))"
 grep -q "key code 23 using {control down}" "$T/osa.out" 2>/dev/null && ok "jump: asked from another machine, its herdr in front here: the key for the agent's row" || bad "asked: $(cat "$T/osa.out" 2>&1)"
