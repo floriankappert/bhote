@@ -1832,7 +1832,7 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
     if [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
         local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
         while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
-        [ "$tw" -gt 10 ] && tw=10
+        [ "$tw" -gt 13 ] && tw=13
         pw=$(( w - 10 - tw - 1 ))
         while IFS= read -r tl; do
             td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
@@ -1951,6 +1951,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
             _tp=${T_AM[$i]:-$HOST}_${T_AP[$i]}; _tp=$SHARED_DIR/testprog/${_tp//[^A-Za-z0-9_-]/_}
             [ -r "$_tp" ] && while IFS= read -r rline; do TI_TBARS="$TI_TBARS${TI_TBARS:+$'\n'}${rline//[[:cntrl:]]/}"; done < "$_tp"
         fi
+        [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && case "$gk" in now|testing|finished|review) ci_bars_set "${T_BR[$i]}" "${T_PJ[$i]}" ;; esac   # (the CI test jobs that run for its branch: a bar each)
         case "$gk" in now|testing|finished|review|deploying)     # a card with an agent (finished: it has stopped; review, deploying: the agent of the topic): icon, machine · agent, ∟ what it works on
             if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ] && { [ "$gk" != review ] || [ -z "${T_SM[$i]}" ]; }; then
                 TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
@@ -1964,6 +1965,18 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     done
     [ "$mode" = lists ] || idle_cards
     TI_AGN=""
+}
+ci_bars_set() {  # ci_bars_set <branch> <project id>: TI_TBARS gets a line "done total name" for each CI test job that runs for that branch (at most two bars on a card)
+    [ -s "$SHARED_DIR/tests.list" ] || return 0
+    local t p lb st d tot note rest pn="" n=0 br; [ -n "$2" ] && pn=$(project_name "$2")
+    n=$(printf '%s' "$TI_TBARS" | grep -c .)
+    while IFS=$US read -r t p lb st d tot note rest; do
+        [ "$st" = running ] && [ "$n" -lt 2 ] || continue
+        br=${note%%"|~|"*}; [ "$br" = "$1" ] || continue
+        [ -z "$pn" ] || [ "$p" = "$pn" ] || continue
+        case "$d$tot" in ''|*[!0-9]*) continue ;; esac
+        TI_TBARS="$TI_TBARS${TI_TBARS:+$'\n'}$d $tot ${lb//[[:cntrl:]]/}"; n=$(( n + 1 ))
+    done < "$SHARED_DIR/tests.list"
 }
 idle_cards() {  # the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
     # one card each (the agent, and its last task); a click on it shows the agent in herdr (ref agent:<machine>/<pane>)

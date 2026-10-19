@@ -60,6 +60,7 @@ tp 1007-1 $((NOW-600)) title="Finished work" status=finished agent=a7 agent_mach
 tp 1008-1 $((NOW-700)) title="Remote agent" status=now agent=a8 agent_machine=Mac agent_pane=w4:p1
 tp 1009-1 $((NOW-800)) title="Waits for a deployment" status=waiting deploy_wait=1 project=proj-ims agent_branch=feat/cancel waiting_for="Deployment" waiting_since=$((NOW-800))
 tp 1013-1 $((NOW-800)) title="Waits and nothing is deployed" status=waiting deploy_wait=1 project=proj-ims agent_branch=other/branch waiting_for="Deployment" waiting_since=$((NOW-800))
+tp 1014-1 $((NOW-900)) title="Tests run in CI" status=now agent=a9 agent_machine=$H agent_pane=w2:p9 agent_branch=feat/ci project=proj-ims
 tp 1010-1 $((NOW-800)) title="Deployment under way" status=waiting deploy_wait=1 project=proj-ims waiting_for="Deployment" waiting_since=$((NOW-800)) deploy_url=https://ci/1
 tp 1011-1 $((NOW-800)) title="Deployment failed" status=waiting deploy_wait=1 project=proj-ims waiting_for="Deployment" waiting_since=$((NOW-800)) deploy_url=https://ci/6
 tp 1012-1 $((NOW-800)) title="Deployment done" status=waiting deploy_wait=1 project=proj-ims waiting_for="Deployment" waiting_since=$((NOW-800)) deploy_url=https://ci/5
@@ -79,6 +80,7 @@ printf 'Mac%sw4:p1%sblocked%sa8%sRemote task\n' "$US" "$US" "$US" "$US" > "$T/sh
 printf '%s\n' "$H${US}w2:p1${US}✳ Editing the rounding module" > "$T/shared/agents.now.local"
 printf '%s\n' "$H${US}w1:p1${US}t1${US}a${US}repo${US}proj-ims${US}/x" "Mac${US}w4:p1${US}t2${US}a${US}repo${US}proj-bm${US}/y" > "$T/shared/agents.meta.local"
 printf '3 7 server\n9 9 client\n' > "$T/shared/testprog/${H}_w3_p1"
+printf '%s\n' "$(( NOW - 5 ))${US}IMS${US}build-backend${US}running${US}0${US}2${US}feat/ci|~|${US}https://ci/9" "$(( NOW - 6 ))${US}IMS${US}build-frontend${US}running${US}1${US}2${US}feat/ci|~|${US}https://ci/10" >> "$T/shared/tests.list"   # (the CI test jobs of a card's branch: a bar each)
 mk2() { printf '%s\n' "$(( NOW - $1 ))$US$2$US$3$US$4$US$5$US$6$US$7$US$8"; }
 { mk2 5 IMS Backend running 3 7 "feat/cancel (#12)" https://ci/1; mk2 3700 IMS Backend ok 9 9 "feat/cancel (#10)" https://ci/5; mk2 4000 IMS Portal failed 2 5 "oops" https://ci/6; } > "$T/shared/deploys.list"
 card_case() {  # card_case <name> <colour 0|1> <cols> <view lines…>

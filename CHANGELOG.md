@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- A card shows the CI test jobs (CircleCI, GitHub Actions) that run for its agent's branch as bars, like local test runs (two at most; CircleCI jobs report 0 of 1 until they are over, so the bar fills when they finish).
 - Panels no longer drift apart when you switch workspaces: herdr works the layout out again from the split ratios then, so a panel could come up narrower or wider than the others and, as the one in front, set that width for all. A panel whose size changed while its tab was hidden or just shown (and a new panel) now takes the width the panels have; only a drag of the panel in front sets a new one.
 - The widths also go to the other machines: with kharka (`STORE=kharka` or `AGENTS_VIA=kharka`) a panel made wider or narrower sets the panels on every machine to that width (`bhote.width/<node>`). A panel started by hand (no label, no title) is found too: every panel registers itself in the shared folder.
 - A topic whose agent has stopped (recently finished) but whose branch is being deployed moves to the DEPLOYING group (was: WAITING FOR DEPLOYMENT, and only for topics still at work); when the deployment is over it goes to review.

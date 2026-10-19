@@ -438,6 +438,14 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   fr=$(bhote_view); r=$(awk -F'\036' '$2 == "agent:Omarchy/w1:p1" { print $1; exit }' "$RUN_DIR/tmap"); [ -n "$r" ] || exit 6
   MOUSE_KEY=""; mouse_event "0;5;$r" M; [ "$MOUSE_KEY" = AGENT ] && [ "$CLICK_M" = Omarchy ] && [ "$CLICK_P" = w1:p1 ] || exit 7   # a click: that agent is shown
   exit 0 ) && ok "IDLE: the idle agents without a card, one card each (a click shows the agent); the Agents list keeps the others" || bad "idle group: step $?"
+# the CI test jobs that run for the branch of a card: a bar each (the CircleCI jobs have no progress of their own: they are 0 of 1 until they are over)
+( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"
+  topic_new "Pushed" "" ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent a1; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w1:p1; topic_set "$cf" agent_branch fix/ci; topic_set "$cf" status now
+  AG_LINES=("Omarchy${US}w1:p1${US}working${US}a1${US}x"); AG_N=1; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=60; ROWS=60; ui_load; NOW=$(date +%s)
+  printf '%s\n' "$NOW${US}IMS${US}build-backend${US}running${US}0${US}1${US}fix/ci|~|${US}https://ci/1" "$NOW${US}IMS${US}build-frontend${US}running${US}0${US}1${US}other|~|${US}https://ci/2" "$NOW${US}IMS${US}server${US}ok${US}6${US}6${US}fix/ci|~|37 passed${US}" > "$SHARED_DIR/tests.list"
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "build-backend ■" || exit 1
+  printf '%s\n' "$out" | grep -q "build-frontend" && exit 2; printf '%s\n' "$out" | grep -q "server ■" && exit 3          # (another branch's job, a job that is over: no bar)
+  exit 0 ) && ok "cards: a CI test job that runs for the card's branch has a bar on it" || bad "CI bars: step $?"
 # a click on a topic: every row of an entry selects it, captions and gaps do not; the window stays while the selection is in it
 ( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; AG_N=0; AG_LINES=(); : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
   for i in 1 2 3 4 5 6 7 8 9 10; do topic_new "Click topic $i" "desc $i" "" >/dev/null; done

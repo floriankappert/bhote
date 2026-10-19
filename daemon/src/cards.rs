@@ -288,7 +288,7 @@ impl<'a> Cards<'a> {
             let lines: Vec<&str> = o.tbars.split('\n').collect();
             let mut tw0 = 0usize;
             for tl in &lines { let tn = tl.splitn(3, ' ').nth(2).unwrap_or(""); tw0 = tw0.max(tn.chars().count()); }
-            let tw0 = tw0.min(10) as i64; let pw = w - 10 - tw0 - 1;
+            let tw0 = tw0.min(13) as i64; let pw = w - 10 - tw0 - 1;
             for tl in &lines {
                 let mut p = tl.splitn(3, ' '); let td: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tt: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tsn = p.next().unwrap_or("");
                 if !(tt > 0 && pw > 3) { continue; }
@@ -504,6 +504,19 @@ impl<'a> Cards<'a> {
                 let key: String = format!("{}_{}", m, t.ap).chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();
                 let tp = self.shared.join("testprog").join(key);
                 let lines: Vec<String> = crate::proc::read_cap(tp).unwrap_or_default().lines().map(clean).collect();
+                o.tbars = lines.join("\n");
+            }
+            if !t.ap.is_empty() && !t.br.is_empty() && matches!(gk, "now" | "testing" | "finished" | "review") {   // the CI test jobs that run for its branch: a bar each (two at most)
+                let pn = if t.pj.is_empty() { String::new() } else { self.projects.iter().find(|p| p.id == t.pj).map(|p| p.name.clone()).unwrap_or_default() };
+                let mut lines: Vec<String> = if o.tbars.is_empty() { Vec::new() } else { o.tbars.split('\n').map(|s| s.to_string()).collect() };
+                for l in crate::proc::read_cap(self.shared.join("tests.list")).unwrap_or_default().lines() {
+                    if lines.len() >= 2 { break; }
+                    let f: Vec<&str> = l.split(US).collect(); let at = |i: usize| f.get(i).copied().unwrap_or("");
+                    if at(3) != "running" || at(6).split("|~|").next().unwrap_or("") != t.br { continue; }
+                    if !pn.is_empty() && at(1) != pn { continue; }
+                    if !digits(at(4)) || !digits(at(5)) { continue; }
+                    lines.push(format!("{} {} {}", at(4), at(5), clean(at(2))));
+                }
                 o.tbars = lines.join("\n");
             }
             if matches!(gk, "now" | "testing" | "finished" | "review" | "deploying") && !t.ap.is_empty() && !t.ag.is_empty() && (gk != "review" || t.sm.is_empty()) {
