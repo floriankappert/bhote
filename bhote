@@ -1434,7 +1434,8 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         [ "${T_AN[$i]}" = 1 ] && continue
-        case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
+        case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;;
+            waiting) [ "${T_DEP[$i]:-}" = 1 ] && owned="$owned${T_AP[$i]}"$'\n' ;; esac   # (waiting for a deployment: it is a card, the agent has one: no second card that deploy_sync would take again)
     done
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
@@ -4813,6 +4814,17 @@ agent_head_pr_set() {  # agent_head_pr_set <var> <pane>: the pull request number
     case "$_n" in *[!0-9]*) _n="" ;; esac
     printf -v "$1" '%s' "$_n"
 }
+deploy_agent_newest() {  # deploy_agent_newest <topic index>: 0 when no other topic of the same agent (machine and pane) that is at work, in review, finished or waits
+    # for a deployment is newer (by its last change; at the same time the first one wins)
+    local i=$1 j ui uj am=${T_AM[$1]:-$HOST}; ui=$(num_or "${T_UPD[$i]}" 0)
+    for (( j = 0; j < T_N; j++ )); do
+        [ "$j" != "$i" ] && [ "${T_AP[$j]}" = "${T_AP[$i]}" ] && [ "${T_AM[$j]:-$HOST}" = "$am" ] || continue
+        case "${T_STATUS[$j]}" in now|review|testing|finished) ;; waiting) [ "${T_DEP[$j]:-}" = 1 ] || continue ;; *) continue ;; esac
+        uj=$(num_or "${T_UPD[$j]}" 0)
+        { [ "$uj" -gt "$ui" ] || { [ "$uj" = "$ui" ] && [ "$j" -lt "$i" ]; }; } && return 1
+    done
+    return 0
+}
 deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, and when that is over it goes to review (ok: check production; failed:
     # what went wrong). Runs in the collector of a machine with the deployment monitor.
     [ -s "$SHARED_DIR/deploys.list" ] || return 0
@@ -4825,6 +4837,7 @@ deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, an
         case "$nt" in *"(#"[0-9]*")") prn=${nt##*"(#"}; prn=${prn%")"} ;; "Merge pull request #"[0-9]*) prn=${nt#"Merge pull request #"}; prn=${prn%%[!0-9]*} ;; esac
         for (( i = 0; i < T_N; i++ )); do
             case "${T_STATUS[$i]}" in now|review|testing|finished) ;; *) continue ;; esac     # (finished: its agent has stopped, the branch is still on its way)
+            deploy_agent_newest "$i" || continue                       # (one topic per agent: its newest; the older ones of that agent are not what is deployed)
             [ "${T_STATUS[$i]}" = finished ] && [ "$(num_or "${T_UPD[$i]}" 0)" -lt $(( $(num_or "$t" 0) - 600 )) ] && continue   # (finished long before this deployment began: an old topic of that agent, not its work)
             [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] || continue
             pn=""; [ -n "${T_PJ[$i]}" ] && { projects_load; pn=$(project_name "${T_PJ[$i]}"); }

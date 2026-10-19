@@ -107,7 +107,7 @@ pub fn agent_cards(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
     for r in local.iter().filter(|r| r.m == c.host) {
         match r.st.as_str() { "working" | "testing" => { work.push(&r.id); if !cd.join(key(&r.id)).exists() { touch_state(&cd, &key(&r.id), &n.to_string()); } } _ => rm_state(&cd, &key(&r.id)) }
     }
-    let owned: Vec<&str> = ts.iter().filter(|t| t.am == c.host && !t.ap.is_empty() && t.an != "1" && matches!(t.status.as_str(), "now" | "testing" | "finished" | "review" | "next")).map(|t| t.ap.as_str()).collect();
+    let owned: Vec<&str> = ts.iter().filter(|t| t.am == c.host && !t.ap.is_empty() && t.an != "1" && (matches!(t.status.as_str(), "now" | "testing" | "finished" | "review" | "next") || (t.status == "waiting" && t.dep == "1"))).map(|t| t.ap.as_str()).collect();   // (waiting for a deployment: a card, the agent has one: no second card that deploy_sync would take again)
     let mut cards: Vec<String> = Vec::new();
     for t in ts {
         if !(t.am == c.host && !t.ap.is_empty()) || t.an != "1" { continue; }
@@ -467,7 +467,10 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
         for i in 0..ts.len() {
             let t = ts[i].clone();
             if !matches!(t.status.as_str(), "now" | "review" | "testing" | "finished") || t.ap.is_empty() || t.br.is_empty() { continue; }
-            if t.status == "finished" && t.upd + 600 < at(0).parse::<u64>().unwrap_or(0) { continue; }   // (finished long before this deployment began: an old topic of that agent, not its work)
+            if t.status == "finished" && t.upd + 600 < at(0).parse::<u64>().unwrap_or(0) { continue; }
+            // one topic per agent: its newest (by its last change; at the same time the first one wins); the older ones of that agent are not what is deployed
+            let am = |x: &Topic| if x.am.is_empty() { c.host.clone() } else { x.am.clone() };
+            if ts.iter().enumerate().any(|(j, o)| j != i && o.ap == t.ap && am(o) == am(&t) && (matches!(o.status.as_str(), "now" | "review" | "testing" | "finished") || (o.status == "waiting" && o.dep == "1")) && (o.upd > t.upd || (o.upd == t.upd && j < i))) { continue; }   // (finished long before this deployment began: an old topic of that agent, not its work)
             let pn = if t.pj.is_empty() { String::new() } else { ps.iter().find(|x| x.id == t.pj).map(|x| x.name.clone()).unwrap_or_default() };
             if !pn.is_empty() && pn != p { continue; }
             if t.br != nt {

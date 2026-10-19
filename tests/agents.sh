@@ -438,6 +438,15 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   fr=$(bhote_view); r=$(awk -F'\036' '$2 == "agent:Omarchy/w1:p1" { print $1; exit }' "$RUN_DIR/tmap"); [ -n "$r" ] || exit 6
   MOUSE_KEY=""; mouse_event "0;5;$r" M; [ "$MOUSE_KEY" = AGENT ] && [ "$CLICK_M" = Omarchy ] && [ "$CLICK_P" = w1:p1 ] || exit 7   # a click: that agent is shown
   exit 0 ) && ok "IDLE: the idle agents without a card, one card each (a click shows the agent); the Agents list keeps the others" || bad "idle group: step $?"
+# one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
+( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }
+  now=$(date +%s); o1=$(mk "Old one" $(( now - 60 ))); o2=$(mk "Old two" $(( now - 30 ))); nw=$(mk "Newest" "$now")
+  printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}fix/z${US}https://ci/9" > "$SHARED_DIR/deploys.list"; topics_load; deploy_sync
+  [ "$(topic_get "$nw" status)" = waiting ] && [ "$(topic_get "$o1" status)" = finished ] && [ "$(topic_get "$o2" status)" = finished ] || exit 1   # (only the newest topic of the agent)
+  n0=$(ls "$TOPIC_DIR"/*.topic | wc -l); cfg_set AGENT_CARDS on; echo 1 > "$RUN_DIR/cards/w3_p5"; printf '%s\n' "Omarchy${US}w3:p5${US}working${US}a5${US}task" > "$AGENT_LOCAL"
+  topics_load; agent_cards; [ "$(ls "$TOPIC_DIR"/*.topic | wc -l)" = "$n0" ] || exit 2       # (it waits for the deployment: that is its card)
+  exit 0 ) && ok "deployment: one topic per agent is bound (its newest), and an agent whose topic waits for it gets no second card" || bad "deploy newest: step $?"
 # the CI test jobs that run for the branch of a card: a bar each (the CircleCI jobs have no progress of their own: they are 0 of 1 until they are over)
 ( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"
   topic_new "Pushed" "" ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent a1; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w1:p1; topic_set "$cf" agent_branch fix/ci; topic_set "$cf" status now

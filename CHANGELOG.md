@@ -33,6 +33,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
 ### Fixed
+- A flood of cards under DEPLOYING (one card per old topic of the agent, and a new topic every few seconds while it deployed) is gone: a deployment is bound to one topic per agent (its newest), and an agent whose topic waits for a deployment gets no second automatic card (that card was bound again, and so on).
 - A double click on a card (review too) opens its page: the click before it no longer shows the agent at once (that took the focus away from the panel, and the second click went to another pane); the agent is shown half a second later, unless a second click follows. (The Rust panel; the shell panel still shows the agent at once.)
 - A topic of an agent that has finished is bound to a deployment of its branch only when it finished no more than ten minutes before that deployment began: an old topic of the agent (here a Commerzbank topic, reopened days ago) is not what is deployed.
 - A topic that says it waits for a deployment is a card in DEPLOYING only while there is a deployment it follows (running, begun, or over and not yet seen). Without one (nothing deploys for its project or its branch) it is a line in the normal Waiting list, and the agent is not shown as deploying. The collector still looks for the deployment and binds the topic when it starts.
