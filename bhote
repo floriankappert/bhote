@@ -1769,9 +1769,10 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac
     fi
     [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
+    [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && { tc=$D; gc=$MUTED; mc=$MUTED; }   # (an idle agent: all text dimmed, it is not what matters now)
     bl="${bar}▌${X}${bg} "
     if [ -n "${TI_AGN:-}" ]; then
-        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol
+        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol; [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && mcol=$MUTED
         clip_set am "${TI_AGM:-}" 12; dw_set amw "$am"; lead=2; [ -n "$am" ] && lead=$(( 2 + amw + 3 ))
         [ -n "$tm" ] && { rtp=$tm; rtc="$gc$tm"; }                  # the age on the left, the state on the right of it, and a space behind it
         [ -n "$st" ] && { rtp="$rtp${rtp:+ · }$st"; rtc="$rtc${rtc:+$gc · }$mc$st"; }
@@ -1996,8 +1997,8 @@ idle_card() {  # idle_card <agent index>: the card of an idle agent without a ca
     IFS=$US read -r m id st name task <<< "${AG_LINES[$1]}"
     case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
     printf '\n'
-    TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${D}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
-    ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""
+    TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+    TI_DIM=1; ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
 }
 ci_bars_set() {  # ci_bars_set <branch> <project id>: TI_TBARS gets a line "done total name" for each CI test job that runs for that branch (at most two bars on a card)
     [ -s "$SHARED_DIR/tests.list" ] || return 0
@@ -2024,8 +2025,8 @@ idle_cards() {  # the agents that are idle and have no card (nothing in review, 
         case "$used" in *$'\n'"$m$US$id"$'\n'*) continue ;; esac
         case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
         if [ "$first" = 1 ]; then printf '\n  %sIDLE%s\n' "$D" "$X"; first=0; else printf '\n'; fi
-        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${D}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
-        ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""
+        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+        TI_DIM=1; ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
     done
 }
 done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine

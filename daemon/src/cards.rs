@@ -207,11 +207,13 @@ impl<'a> Cards<'a> {
             bg = g("CARDSEL");
         }
         if hov { bar = "\u{1b}[38;2;255;111;97m".into(); }
+        let dim = o.dim && !hov;   // (an idle agent: all text dimmed, it is not what matters now)
+        if dim { tc = d_.clone(); gc = g("MUTED"); mc = g("MUTED"); }
         let bl = format!("{}▌{}{} ", bar, x, bg);
         let xb = format!("{}{}", x, bg);
         let mut out = String::new();
         if !o.agn.is_empty() {
-            let mcol = if self.v.mach_fg.is_empty() || self.v.mach_fg == "none" { g("PINK") } else { self.v.mach_fg.clone() };
+            let mcol = if dim { g("MUTED") } else if self.v.mach_fg.is_empty() || self.v.mach_fg == "none" { g("PINK") } else { self.v.mach_fg.clone() };
             let am = clip(&o.agm, 12); let amw = dw(&am);
             let lead = if am.is_empty() { 2 } else { 2 + amw + 3 };
             let (mut tm, st) = (time.to_string(), state.to_string());
@@ -562,7 +564,7 @@ impl<'a> Cards<'a> {
     /// idle_card: the card of an idle agent without a card, two rows; a click shows the agent (ref agent:<machine>/<pane>)
     fn idle_card(&self, r: &Row) -> String {
         let g = |k: &str| self.g(k).to_string();
-        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("D")), agtask: r.task.clone(), ..Default::default() };
+        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: r.task.clone(), dim: true, ..Default::default() };
         format!("\n{}", self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o))
     }
 
@@ -579,7 +581,7 @@ impl<'a> Cards<'a> {
         for r in &self.ag {
             if !(r.st.is_empty() || r.st == "idle") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
             if first { out.push_str(&format!("\n  {}IDLE{}\n", g("D"), x)); first = false; } else { out.push('\n'); }
-            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("D")), agtask: r.task.clone(), ..Default::default() };
+            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: r.task.clone(), dim: true, ..Default::default() };
             out.push_str(&self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
         }
         out
@@ -589,7 +591,7 @@ impl<'a> Cards<'a> {
 enum Seq { Topic(usize), Idle(usize) }
 
 #[derive(Default)]
-struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool }
+struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool, dim: bool }
 
 /// deploy_lookup for the sync: the deployment a waiting topic is bound to or waits for
 pub fn deploy_lookup_pub(shared: &std::path::Path, topics: &std::path::Path, names: &HashMap<String, String>, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {
