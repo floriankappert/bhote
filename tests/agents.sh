@@ -426,7 +426,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   TRANSFER_FORCE=1 transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "Shop (main)" 2>/dev/null; [ -n "$(topic_get "$xf" transfer_to)" ] || exit 3
   exit 0 ) && ok "transfer: an agent of another project is refused, unless forced" || bad "transfer project guard: step $?"
 # the group IDLE: the agents that are idle and have no card; a click on one shows the agent (ref agent:<machine>/<pane>); the Agents list keeps only the others
-( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
   topic_new "Has a card" "" ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent a2; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w2:p1; topic_set "$cf" status now
   AG_LINES=("Omarchy${US}w1:p1${US}idle${US}Free one${US}its last task" "Omarchy${US}w2:p1${US}idle${US}a2${US}x" "Omarchy${US}w3:p1${US}working${US}Busy${US}y" "Omarchy${US}w4:p1${US}blocked${US}Asks${US}z"); AG_N=4
   printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
@@ -438,6 +438,20 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   fr=$(bhote_view); r=$(awk -F'\036' '$2 == "agent:Omarchy/w1:p1" { print $1; exit }' "$RUN_DIR/tmap"); [ -n "$r" ] || exit 6
   MOUSE_KEY=""; mouse_event "0;5;$r" M; [ "$MOUSE_KEY" = AGENT ] && [ "$CLICK_M" = Omarchy ] && [ "$CLICK_P" = w1:p1 ] || exit 7   # a click: that agent is shown
   exit 0 ) && ok "IDLE: the idle agents without a card, one card each (a click shows the agent); the Agents list keeps the others" || bad "idle group: step $?"
+# ungrouped (the default): no headings, the cards in the order of the agents (as herdr lists them), idle ones too, cards without an agent after them
+( cfg_set CARD_GROUPING ungrouped; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Third agent topic" "" ""; t3="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t3" agent Zed; topic_set "$t3" agent_machine Omarchy; topic_set "$t3" agent_pane w3:p1; topic_set "$t3" status review
+  topic_new "First agent topic" "" ""; t1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$t1" agent Alpha; topic_set "$t1" agent_machine Omarchy; topic_set "$t1" agent_pane w1:p1; topic_set "$t1" status now
+  topic_new "No agent" "" ""; topic_set "$TOPIC_DIR/$NEW_TOPIC_ID.topic" status review
+  AG_LINES=("Omarchy${US}w1:p1${US}working${US}Alpha${US}x" "Omarchy${US}w2:p1${US}idle${US}Beta${US}b task" "Omarchy${US}w3:p1${US}idle${US}Zed${US}z"); AG_N=3
+  printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  printf '%s\n' "$out" | grep -q "^  NOW\|^  REVIEW\|^  IDLE\|^  RECENTLY" && exit 1                                    # (no group headings)
+  order=$(printf '%s\n' "$out" | grep -o 'Omarchy · [A-Za-z]*\|^▌ [^O]*No agent' | tr '\n' ' ')
+  case "$order" in "Omarchy · Alpha Omarchy · Beta Omarchy · Zed "*) ;; *) exit 2 ;; esac                                  # (the order of the agents; the idle one between them)
+  printf '%s\n' "$out" | grep -q "No agent" || exit 3                                                                       # (the card without an agent is there too)
+  [ "$(printf '%s\n' "$out" | grep -n "No agent" | cut -d: -f1)" -gt "$(printf '%s\n' "$out" | grep -n "Zed" | cut -d: -f1)" ] || exit 4   # (after the cards of the agents)
+  exit 0 ) && ok "cards ungrouped: no headings, in the order of the agents, idle ones between, cards without an agent after them" || bad "ungrouped: step $?"
 # one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
 ( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
   mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }
@@ -625,7 +639,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   echo "r1=[${r1%%Omarchy*}] r3=[${r3%%Doing*}]" | cat -v >&2; exit 0 ) && ok "agent card: machine name in herdr's colour (pink), the now line indented like the rows above" || bad "card colour/indent: step $?"
 # recently finished: a now topic whose agent stops without a question lands there (a question: review), comes back on now when the agent works again,
 # goes by itself after FINISHED_MINUTES; the card bhote makes for an agent without a topic goes the same way; key c / x end it
-( rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; HOST=Omarchy
+( cfg_set CARD_GROUPING status; rm -f "$TOPIC_DIR"/*.topic; rm -rf "$SHARED_DIR/evstate"; HOST=Omarchy
   topic_new "Work" "" ""; wf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$wf" agent bhote; topic_set "$wf" agent_machine Omarchy; topic_set "$wf" agent_pane w9:p1; topic_set "$wf" status now; topic_set "$wf" delegated 1
   BHOTE_FAKE_QUESTION="" ev w9:p1 working; BHOTE_FAKE_QUESTION="" ev w9:p1 idle
   [ "$(topic_get "$wf" status)" = finished ] || exit 1                                            # no question: recently finished, no review
@@ -704,7 +718,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   case "$out" in *"$(printf '\035cap:done\035')"*) ;; *) exit 7 ;; esac; cfg_set DONE_COMPACT off
   exit 0 ) && ok "hover: done topics and the lines of the list are a step lighter under the pointer" || bad "hover lines: step $?"
 # waiting for a deployment: its own group, bound to the deployment of its project (progress bar), review when that is over
-( rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
+( cfg_set CARD_GROUPING status; rm -f "$TOPIC_DIR"/*.topic "$SHARED_DIR/deploys.list"; projects_load; project_new IMS >/dev/null; projects_load; pid=$PROJ_ID
   topic_new "Payments Module" "" "check in production"; df="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$df" project "$pid"
   topic_new "Plain wait" "Alex" ""; pf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"
   deploy_wait_set "$df" Backend; topics_load

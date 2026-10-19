@@ -127,6 +127,14 @@ for col in 1 0; do for cols in 44 66 100; do
     mkdir -p "$T/empty/topics"; CASE_DATA=$T/empty card_case "empty: the bored agents" $col $cols "SEL_ID=x"
     CASE_DATA=$T/empty card_case "empty, small" $col $cols "SEL_ID=x" "BORED_SMALL=1"
 done; done
+# grouped by status (CARD_GROUPING=status): the headings, the group IDLE at the end
+echo "CARD_GROUPING=status" > "$T/config"
+for col in 1 0; do for cols in 44 66; do
+    card_case "grouped, plain" $col $cols "SEL_ID=1002-1" "EXPANDED= "
+    card_case "grouped, selected review" $col $cols "SEL_ID=1000-1" "EXPANDED= "
+    card_case "grouped, hover" $col $cols "SEL_ID=1005-1" "HOVER_ID=1002-1"
+done; done
+: > "$T/config"
 
 # ── the whole main view (bhote_view): the frame and the maps it leaves for the clicks, step by step (the window of the list follows the selection) ──
 whole_case() {  # whole_case <name> <colour 0|1> <cols> <rows> <view lines…> -- <selected ids, one frame each>

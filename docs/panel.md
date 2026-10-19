@@ -4,6 +4,8 @@
 100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
+By default (`CARD_GROUPING=ungrouped`, settings › *Agent cards: grouping/sorting*) the cards are **one list without group headings**, in the order of the agents in herdr's agent panel (an idle agent without a card has its own card in its place; cards without an agent follow). With `CARD_GROUPING=status` they are grouped as described below.
+
 The list shows what is on. **Review**, **now**, **testing**, **deploying** and **recently finished** topics are cards, all drawn the same way, three rows
 (a blank row between two cards, the status colour as a bar on the left):
 

@@ -59,6 +59,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTOSTART` | `on` | Auto-start with herdr | The [herdr plugin](herdr-plugin.md) opens the panel when herdr starts. |
 | `AGENT_ROWS` | automatic | settings file only | Height of the agent area in rows. |
 | `TOPICS_SCOPE` | `all` | Topics shown | `project`: the panel lists the topics of its project (the project of the agent in its herdr tab) and those without one; `all`: every topic. |
+| `CARD_GROUPING` | `ungrouped` | Agent cards: grouping/sorting | `ungrouped`: all cards (review, now, testing, deploying, finished, and the idle agents without a card) in one list, without headings, in the order of the agents in herdr; cards without an agent come after them. `status`: grouped under NOW, TESTING, DEPLOYING, RECENTLY FINISHED and so on, the idle agents as the group IDLE at the end. |
 | `DONE_MAX` | `4` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
 | `ARCHIVE_DAYS` | `7` | Archive after days | Done, next, waiting and parked topics untouched for this many days leave the panel (a line counts them); the search and the CLI still reach them (`0`: never). |
 | `HOST_LABEL` | `Mac` on macOS, else the host name | | How this machine is called in agent lists. Should match the label other machines use for it in `herdr machine list`. |

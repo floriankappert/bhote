@@ -43,7 +43,7 @@ class Panel:
     def __init__(self, cols=70, rows=40, cfg="", topics=None):
         self.T = tempfile.mkdtemp(); T = self.T
         for d in ("data/topics", "shared", "home"): os.makedirs(f"{T}/{d}")
-        open(f"{T}/config", "w").write("BHOTED_PANEL=on\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
+        open(f"{T}/config", "w").write("BHOTED_PANEL=on\nCARD_GROUPING=status\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
         self.now = int(time.time())
         for t in (topics or DEFAULT):
             self.topic(**t)

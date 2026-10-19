@@ -459,7 +459,9 @@ impl<'a> Cards<'a> {
         if mode != "lists" && self.v.scope_project && !self.v.cur_proj.is_empty() { out.push_str(&format!("\n  {}{}{} {}· its topics{}\n", g("L"), self.projects_by_id(&self.v.cur_proj), x, g("D"), x)); }
         if open == 0 && mode != "lists" { out.push_str(&self.bored()); }
         let mut prev = String::new();
-        for i in 0..self.ts.len() {
+        let grouped = self.c.cfg("CARD_GROUPING", "ungrouped") == "status";
+        for ent in self.cards_sequence(mode, grouped) {
+            let i = match ent { Seq::Idle(k) => { out.push_str(&self.idle_card(&self.ag[k])); continue; } Seq::Topic(i) => i };
             let t = &self.ts[i]; let st = t.status.as_str();
             let gk = if st == "waiting" && t.dep == "1" { "deploying" } else { st };
             if st == "done" { continue; }
@@ -476,10 +478,10 @@ impl<'a> Cards<'a> {
                 if !plan.after[i].is_empty() { out.push_str(&self.more_row(&plan.after[i], 0)); }
                 continue;
             }
-            if gk != prev {
-                let (label, lc) = match gk { "deploying" => ("DEPLOYING", g("Y")), "finished" => ("RECENTLY FINISHED", g("GREEN")), "now" => ("NOW", g("ORANGE")), "testing" => ("TESTING", g("C")), "review" => ("REVIEW", g("BLUE")), _ => ("", g("D")) };
-                out.push('\n'); out.push_str(&format!("  {}{}{}\n", lc, label, x)); prev = gk.to_string();
-            } else { out.push('\n'); }   // (the gap between two cards of a group: a blank row)
+            let (label, lc) = match gk { "deploying" => ("DEPLOYING", g("Y")), "finished" => ("RECENTLY FINISHED", g("GREEN")), "now" => ("NOW", g("ORANGE")), "testing" => ("TESTING", g("C")), "review" => ("REVIEW", g("BLUE")), _ => ("", g("D")) };   // (the label and the colour of the group; the bar of the card has the colour)
+            if !grouped { out.push('\n'); }   // ungrouped: no heading, a blank row between the cards
+            else if gk != prev { out.push('\n'); out.push_str(&format!("  {}{}{}\n", lc, label, x)); prev = gk.to_string(); }
+            else { out.push('\n'); }   // (the gap between two cards of a group: a blank row)
             let (mut who, mut state, mut sc, mut tm, br) = self.meta(i);
             let mut prog = String::new();
             if gk == "deploying" {
@@ -533,8 +535,35 @@ impl<'a> Cards<'a> {
             let desc = t.desc.clone();
             out.push_str(&self.card(sl, &sc, &tm, &g("TITLE"), &title, &desc, &who, &state, &br, &o));
         }
-        if mode != "lists" { out.push_str(&self.idle_cards()); }
+        if mode != "lists" && grouped { out.push_str(&self.idle_cards()); }   // (grouped: the group IDLE at the end; ungrouped: they are in the sequence)
         out
+    }
+
+    /// cards_sequence: what block goes through. Grouped: the topics in their order. Ungrouped: the cards in the order of the agents (as herdr lists them: the agent list),
+    /// an agent's cards, or an idle agent without a card; then the cards that have no agent in that list; then (mode all) the lines.
+    fn cards_sequence(&self, mode: &str, grouped: bool) -> Vec<Seq> {
+        let n = self.ts.len();
+        if grouped || mode == "lists" { return (0..n).map(Seq::Topic).collect(); }
+        let card = |t: &Topic| matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
+        let mut seq: Vec<Seq> = Vec::new(); let mut used = vec![false; n];
+        for (k, r) in self.ag.iter().enumerate() {
+            let mut any = false;
+            for i in 0..n {
+                let t = &self.ts[i];
+                if card(t) && t.ap == r.id && (if t.am.is_empty() { &self.host } else { &t.am }) == &r.m { seq.push(Seq::Topic(i)); used[i] = true; any = true; }
+            }
+            if !any && (r.st.is_empty() || r.st == "idle") { seq.push(Seq::Idle(k)); }
+        }
+        for i in 0..n { if card(&self.ts[i]) && !used[i] { seq.push(Seq::Topic(i)); } }
+        if mode != "cards" { for i in 0..n { if !card(&self.ts[i]) { seq.push(Seq::Topic(i)); } } }
+        seq
+    }
+
+    /// idle_card: the card of an idle agent without a card, two rows; a click shows the agent (ref agent:<machine>/<pane>)
+    fn idle_card(&self, r: &Row) -> String {
+        let g = |k: &str| self.g(k).to_string();
+        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("D")), agtask: r.task.clone(), ..Default::default() };
+        format!("\n{}", self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o))
     }
 
     /// idle_cards: the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
@@ -556,6 +585,8 @@ impl<'a> Cards<'a> {
         out
     }
 }
+
+enum Seq { Topic(usize), Idle(usize) }
 
 #[derive(Default)]
 struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool }

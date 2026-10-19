@@ -137,6 +137,7 @@ FIND_KEY||text|The herdr key that opens the search popup: find a topic or an age
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
 TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of its project (the project of the agent in its herdr tab; topics without a project are always there)
+CARD_GROUPING|ungrouped|enum:ungrouped:status|How the agent cards are listed: ungrouped (one list, in the order of the agents in herdr, no headings) or status (NOW, TESTING, DEPLOYING and so on, with headings)
 DONE_MAX|4|int:0:999|The last done topics shown above the agents (0: none)
 ARCHIVE_DAYS|7|int:0:3650|Done, next, waiting and parked topics untouched for this many days are archived: gone from the panel, still in the search (0: never)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
@@ -1917,7 +1918,10 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
         printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
     fi
     [ "$open" -gt 0 ] || [ "$mode" = lists ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
-    for (( i = 0; i < T_N; i++ )); do
+    local grp seq=() it; cfg_var grp CARD_GROUPING ungrouped; cards_sequence "$mode" "$grp"
+    for it in ${seq[@]+"${seq[@]}"}; do
+        case "$it" in a*) idle_card "${it#a}"; continue ;; esac   # (an idle agent without a card, in the order of the agents)
+        i=$it
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""; TI_TBARS=""
         gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
@@ -1934,11 +1938,10 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
             [ -n "${PLAN_AFTER[$i]:-}" ] && more_row "${PLAN_AFTER[$i]}" 0                      # an open group: "show less" after the last
             continue ;;
         esac
-        if [ "$gk" != "$prev" ]; then
-            case "$gk" in deploying) label="DEPLOYING"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
-            printf '\n'
-            printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
-        else printf '\n'; fi                                              # (the gap between two cards of a group: a blank row)
+        case "$gk" in deploying) label="DEPLOYING"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac    # (the label and the colour of the group; the bar of the card has the colour)
+        if [ "$grp" != status ]; then printf '\n'                       # ungrouped: no heading, a blank row between the cards
+        elif [ "$gk" != "$prev" ]; then printf '\n'; printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
+        else printf '\n'; fi                                            # (the gap between two cards of a group: a blank row)
         topic_meta "$i"; [ "$gk" = deploying ] && deploy_card_set "$i"
         who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
@@ -1964,8 +1967,37 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
         [ "$st" = now ] && case "$state" in finished|"finished · x = done") TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
         ti_card "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
     done
-    [ "$mode" = lists ] || idle_cards
+    [ "$mode" = lists ] || [ "$grp" != status ] || idle_cards       # (grouped: the group IDLE at the end; ungrouped: they are in the sequence)
     TI_AGN=""
+}
+cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topics_block goes through. Grouped: the topics in their order. Ungrouped: the cards in the
+    # order of the agents (as herdr lists them: the agent list), an agent's cards, or a card "a<index>" for an idle one without a card; then the cards that have no agent in
+    # that list; then (mode all) the lines. Every entry is a topic index.
+    local mode=$1 grp=$2 i k m id st used=$'\n' c any
+    seq=(); T_CARD=()
+    if [ "$grp" = status ] || [ "$mode" = lists ]; then for (( i = 0; i < T_N; i++ )); do seq[$i]=$i; done; return 0; fi
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in review|now|testing|finished) T_CARD[$i]=1 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && T_CARD[$i]=1 ;; esac
+    done
+    for (( k = 0; k < AG_N; k++ )); do
+        IFS=$US read -r m id st _ <<< "${AG_LINES[$k]}"; any=0
+        for (( i = 0; i < T_N; i++ )); do
+            [ -n "${T_CARD[$i]:-}" ] && [ "${T_AP[$i]}" = "$id" ] && [ "${T_AM[$i]:-$HOST}" = "$m" ] || continue
+            seq[${#seq[@]}]=$i; used="$used$i"$'\n'; any=1
+        done
+        [ "$any" = 0 ] && [ "${st:-idle}" = idle ] && seq[${#seq[@]}]="a$k"
+    done
+    for (( i = 0; i < T_N; i++ )); do [ -n "${T_CARD[$i]:-}" ] && case "$used" in *$'\n'"$i"$'\n'*) ;; *) seq[${#seq[@]}]=$i ;; esac; done   # (no agent in the list)
+    [ "$mode" = cards ] && return 0
+    for (( i = 0; i < T_N; i++ )); do [ -z "${T_CARD[$i]:-}" ] && seq[${#seq[@]}]=$i; done
+}
+idle_card() {  # idle_card <agent index>: the card of an idle agent without a card (see idle_cards): two rows, a click shows the agent (ref agent:<machine>/<pane>)
+    local m id st name task TI_REF TI_BAR
+    IFS=$US read -r m id st name task <<< "${AG_LINES[$1]}"
+    case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
+    printf '\n'
+    TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${D}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+    ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""
 }
 ci_bars_set() {  # ci_bars_set <branch> <project id>: TI_TBARS gets a line "done total name" for each CI test job that runs for that branch (at most two bars on a card)
     [ -s "$SHARED_DIR/tests.list" ] || return 0
@@ -2780,7 +2812,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         for (( ai = 0; ai < AG_N; ai++ )); do IFS=$US read -r am ap ast an at <<< "${AG_LINES[$ai]}"; SET_ROWS[${#SET_ROWS[@]}]="pagent|$am$US$ap|$an · $am"; done
         SET_ROWS[${#SET_ROWS[@]}]="pact|delete|Delete this project"; return
     fi
-    SET_ROWS=("link|CONNECTIONS|Connections" "link|PROJECTS|Projects" "enum|TOPICS_SCOPE|Topics shown" "link|SETUP|Setup wizard")
+    SET_ROWS=("link|CONNECTIONS|Connections" "link|PROJECTS|Projects" "enum|TOPICS_SCOPE|Topics shown" "enum|CARD_GROUPING|Agent cards: grouping/sorting" "link|SETUP|Setup wizard")
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"

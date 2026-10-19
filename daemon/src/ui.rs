@@ -20,7 +20,7 @@ impl Colors {
 
 pub struct Ctx { pub cols: i64, pub now: u64, pub shared: PathBuf, pub topics: PathBuf, pub cfg: HashMap<String, String>, pub c: Colors }
 impl Ctx {
-    fn cfg(&self, k: &str, d: &str) -> String { self.cfg.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string()) }
+    pub fn cfg(&self, k: &str, d: &str) -> String { self.cfg.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string()) }
     fn rule_len(&self) -> i64 { (self.cols - 5).max(0) }
     fn dash(&self, n: i64) -> String { "┈".repeat(n.max(0) as usize) }
 }
