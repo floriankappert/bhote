@@ -61,19 +61,19 @@ impl Term {
         let prev = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |i| { Term::restore_terminal(); prev(i); }));
         let mut o = std::io::stdout();
-        let _ = o.write_all(format!("\x1b[?1049h\x1b[?25l{}", if mouse { "\x1b[?1003h\x1b[?1006h" } else { "" }).as_bytes()); let _ = o.flush();
+        let _ = o.write_all(format!("\x1b[?1049h\x1b[?25l{}", if mouse { "\x1b[?1002h\x1b[?1006h" } else { "" }).as_bytes()); let _ = o.flush();
         Term { saved, wake_r, buf: Vec::new() }
     }
     /// Back to the shell's terminal: mouse off, cursor on, the normal screen, the saved settings (also after a panic)
     pub fn restore_terminal() {
         let mut o = std::io::stdout();
-        let _ = o.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l\x1b]2;\x07"); let _ = o.flush();
+        let _ = o.write_all(b"\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l\x1b]2;\x07"); let _ = o.flush();
         let s = SAVED.lock().map(|s| s.clone()).unwrap_or_default();
         if !s.is_empty() { Term::stty(&[&s]); }
     }
     pub fn leave(&self) {
         let mut o = std::io::stdout();
-        let _ = o.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l\x1b]2;\x07"); let _ = o.flush();
+        let _ = o.write_all(b"\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[0m\x1b[?25h\x1b[?1049l\x1b]2;\x07"); let _ = o.flush();
         if !self.saved.is_empty() { Term::stty(&[&self.saved]); }
     }
     pub fn size() -> (u32, u32) {

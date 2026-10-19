@@ -564,7 +564,19 @@ sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the
     local i; SEL_IDX=0
     case "${SEL_ID:-}" in more:*) SEL_IDX=-1; return ;; esac
     for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && { SEL_IDX=$i; return; }; done
+    sel_active_idx && return                                   # nothing chosen: the active card, the one of the agent in this panel's tab
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; return; }; done
+}
+sel_active_idx() {  # sel_active_idx: SEL_IDX = the first card of an agent of this machine that sits in this panel's tab (the agent you are working with); 1: none
+    local tab=${HERDR_TAB_ID:-} panes=" " m p t rest i; [ -n "$tab" ] && [ -r "$AGENT_META_L" ] || return 1
+    while IFS=$US read -r m p t rest; do [ "$t" = "$tab" ] && panes="$panes$p "; done < "$AGENT_META_L"
+    [ "$panes" != " " ] || return 1
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in review|now|testing|finished) ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] || continue ;; *) continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ] && in_scope "$i" || continue
+        case "$panes" in *" ${T_AP[$i]} "*) SEL_IDX=$i; return 0 ;; esac
+    done
+    return 1
 }
 topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
 sel_file() {   # (the arrays of the last frame; ui_load reloads after every change); a "+N more" row is no topic
@@ -1972,7 +1984,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     TI_AGN=""
 }
 cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topics_block goes through. Grouped: the topics in their order. Ungrouped: the cards in the
-    # order of the agents (as herdr lists them: the agent list), an agent's cards, or a card "a<index>" for an idle one without a card; then the cards that have no agent in
+    # order of the agents (as herdr lists them: the agent list; the other machines above this one), an agent's cards, or a card "a<index>" for an idle one without a card; then the cards that have no agent in
     # that list; then (mode all) the lines. Every entry is a topic index.
     local mode=$1 grp=$2 i k m id st used=$'\n' c any
     seq=(); T_CARD=()
@@ -1980,14 +1992,16 @@ cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topic
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in review|now|testing|finished) T_CARD[$i]=1 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && T_CARD[$i]=1 ;; esac
     done
-    for (( k = 0; k < AG_N; k++ )); do
+    local pass
+    for pass in 0 1; do for (( k = 0; k < AG_N; k++ )); do          # the other machines above this one (pass 0), then this machine's agents
         IFS=$US read -r m id st _ <<< "${AG_LINES[$k]}"; any=0
+        [ "$pass" = 0 ] && [ "$m" = "$HOST" ] && continue; [ "$pass" = 1 ] && [ "$m" != "$HOST" ] && continue
         for (( i = 0; i < T_N; i++ )); do
             [ -n "${T_CARD[$i]:-}" ] && [ "${T_AP[$i]}" = "$id" ] && [ "${T_AM[$i]:-$HOST}" = "$m" ] || continue
             seq[${#seq[@]}]=$i; used="$used$i"$'\n'; any=1
         done
         [ "$any" = 0 ] && [ "${st:-idle}" = idle ] && seq[${#seq[@]}]="a$k"
-    done
+    done; done
     for (( i = 0; i < T_N; i++ )); do [ -n "${T_CARD[$i]:-}" ] && case "$used" in *$'\n'"$i"$'\n'*) ;; *) seq[${#seq[@]}]=$i ;; esac; done   # (no agent in the list)
     [ "$mode" = cards ] && return 0
     for (( i = 0; i < T_N; i++ )); do [ -z "${T_CARD[$i]:-}" ] && seq[${#seq[@]}]=$i; done
@@ -3164,7 +3178,7 @@ ask_drain() {  # throw away input that is still waiting (the rest of a multi-lin
 }
 # The divider above the agents carries the ↕ button (a click: counts only). Its row is written by the frame
 # (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is AGENT_ROWS in the config.
-MOUSE_ON=$'\033[?1003h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1006l'; HOVER_ID=""   # (1003: also motion without a button, for the hover on the cards)
+MOUSE_ON=$'\033[?1002h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1002l\033[?1006l'; HOVER_ID=""   # (1002: presses, the wheel and motion with a button down (a drag); no hover: motion without a button is not reported)
 # Terminals report presses, not double clicks: a second press on the same topic within half a second is one (OPEN: its page).
 # Milliseconds from perl (bash 3.2 has no EPOCHREALTIME); without perl only two presses in the same second count.
 CLICK_LAST=""; CLICK_AT=0

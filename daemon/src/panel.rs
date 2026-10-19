@@ -233,7 +233,7 @@ impl Panel {
         else { self.act(&["flash", m, p], "flash", true); }
     }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {
-        let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h"); let _ = o.flush();
+        let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[0m\x1b[?25h"); let _ = o.flush();
         // the view runs in a child; a SIGTERM or a closed terminal for this panel ends the child as well
         if let Ok(mut ch) = Command::new("bash").arg(&self.script).env("BHOTE_DELEGATE", view).env("BHOTE_SEL_ID", &self.sel_id).env("BHOTE_ARG", arg).spawn() {
             loop {
@@ -264,7 +264,7 @@ impl Panel {
             let skip = if cur > room { cur - room } else { 0 };
             let shown: String = buf.iter().skip(skip).take(room).collect();
             let mut o = std::io::stdout().lock();
-            let _ = write!(o, "\x1b[?1003l\x1b[?1006l\x1b[{};1H\x1b[0m\x1b[K{}{}\x1b[{};{}H\x1b[?25h", rows, label, shown, rows, lw + 1 + cur - skip);
+            let _ = write!(o, "\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[{};1H\x1b[0m\x1b[K{}{}\x1b[{};{}H\x1b[?25h", rows, label, shown, rows, lw + 1 + cur - skip);
             let _ = o.flush(); let _ = text;
         };
         draw(&buf, cur, self.real_rows, self.real_cols);
@@ -287,7 +287,7 @@ impl Panel {
         let s: String = buf.iter().collect(); let s: String = s.chars().filter(|c| !c.is_control()).collect();
         Some(s.trim_matches(' ').to_string())
     }
-    fn after_ask(&mut self) { let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[0m\x1b[?25l\x1b[?1003h\x1b[?1006h"); let _ = o.flush(); self.redraw = true; }
+    fn after_ask(&mut self) { let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[0m\x1b[?25l\x1b[?1002h\x1b[?1006h"); let _ = o.flush(); self.redraw = true; }
 
     // ── the mouse ─────────────────────────────────────────────────────────────────────────────────────────────
     fn ref_at(&self, y: i64) -> Option<&String> { self.tmap.iter().find(|(r, t)| *r == y && !t.is_empty()).map(|(_, t)| t) }

@@ -93,6 +93,18 @@ impl<'a> Cards<'a> {
     pub fn sel_index(&self) -> i64 {
         if self.v.sel_id.starts_with("more:") { return -1; }
         for (i, t) in self.ts.iter().enumerate() { if t.id == self.v.sel_id { return i as i64; } }
+        // nothing chosen: the active card, the first one of an agent of this machine that sits in this panel's tab (the agent you are working with)
+        let tab = std::env::var("HERDR_TAB_ID").unwrap_or_default();
+        if !tab.is_empty() {
+            let meta = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
+            let panes: Vec<&str> = meta.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 2 && f[2] == tab { Some(f[1]) } else { None } }).collect();
+            if !panes.is_empty() {
+                for (i, t) in self.ts.iter().enumerate() {
+                    let card = matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
+                    if card && !t.ap.is_empty() && (t.am.is_empty() || t.am == self.host) && self.in_scope(i) && panes.contains(&t.ap.as_str()) { return i as i64; }
+                }
+            }
+        }
         for (i, t) in self.ts.iter().enumerate() { if Self::shows(&t.status) && self.in_scope(i) { return i as i64; } }
         0
     }
@@ -548,8 +560,9 @@ impl<'a> Cards<'a> {
         if grouped || mode == "lists" { return (0..n).map(Seq::Topic).collect(); }
         let card = |t: &Topic| matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
         let mut seq: Vec<Seq> = Vec::new(); let mut used = vec![false; n];
-        for (k, r) in self.ag.iter().enumerate() {
-            let mut any = false;
+        let order: Vec<usize> = (0..self.ag.len()).filter(|&k| self.ag[k].m != self.host).chain((0..self.ag.len()).filter(|&k| self.ag[k].m == self.host)).collect();   // the other machines above this one
+        for k in order {
+            let r = &self.ag[k]; let mut any = false;
             for i in 0..n {
                 let t = &self.ts[i];
                 if card(t) && t.ap == r.id && (if t.am.is_empty() { &self.host } else { &t.am }) == &r.m { seq.push(Seq::Topic(i)); used[i] = true; any = true; }

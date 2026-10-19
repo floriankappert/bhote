@@ -452,6 +452,15 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   printf '%s\n' "$out" | grep -q "No agent" || exit 3                                                                       # (the card without an agent is there too)
   [ "$(printf '%s\n' "$out" | grep -n "No agent" | cut -d: -f1)" -gt "$(printf '%s\n' "$out" | grep -n "Zed" | cut -d: -f1)" ] || exit 4   # (after the cards of the agents)
   exit 0 ) && ok "cards ungrouped: no headings, in the order of the agents, idle ones between, cards without an agent after them" || bad "ungrouped: step $?"
+# nothing chosen: the active card is the one of the agent in this panel's tab (not the first one of the list)
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Other agent" "" ""; o1="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$o1" agent Beta; topic_set "$o1" agent_machine Omarchy; topic_set "$o1" agent_pane w1:p1; topic_set "$o1" status review
+  topic_new "Mine" "" ""; mine="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mine" agent Alpha; topic_set "$mine" agent_machine Omarchy; topic_set "$mine" agent_pane w9:p1; topic_set "$mine" status now
+  printf 'Omarchy%sw1:p1%st1%sx\nOmarchy%sw9:p1%st9%sy\n' "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
+  topics_load; SEL_ID=""; HERDR_TAB_ID=""; sel_index; first=$SEL_IDX; [ "${T_ID[$first]}" = "$(topic_id "$o1")" ] || exit 1      # (no tab known: the first card, the review one)
+  HERDR_TAB_ID=t9; sel_index; [ "${T_ID[$SEL_IDX]}" = "$(topic_id "$mine")" ] || exit 2                                       # (in tab t9: its agent's card)
+  SEL_ID=$(topic_id "$o1"); sel_index; [ "${T_ID[$SEL_IDX]}" = "$(topic_id "$o1")" ] || exit 3                               # (a chosen one stays)
+  exit 0 ) && ok "the active card: nothing chosen selects the card of the agent in this panel's tab" || bad "active card: step $?"
 # one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
 ( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
   mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }
