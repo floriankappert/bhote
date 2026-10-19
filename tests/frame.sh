@@ -97,6 +97,10 @@ card_case() {  # card_case <name> <colour 0|1> <cols> <view lines…>
                 colors_dump "$3"; view_dump "$5"; case "$6" in done) done_block "${DONE_N:-4}" ;; *) topics_block "$6" ;; esac; printf @' _ "$cols" "$NOW" "$T/colors.env" "$T/view.in" "$T/view.env" "$mode" 2>/dev/null )
         r=$( "$BD" block "$mode" --cols "$cols" --now "$NOW" --config "$T/config" --shared "$T/shared" --topics "$data/topics" --colors "$T/colors.env" --view "$T/view.env" --max "${DONE_N:-4}"; printf @ )
         if [ "$b" = "$r" ] && { [ "${#b}" -gt 20 ] || [ -n "${CASE_DATA:-}" ]; }; then ok "frame: $mode, $name (colour $col, $cols columns)"
+        if [ "$mode" = cards ] && [ "$col" = 1 ] && [ -z "${CASE_DATA:-}" ] && [ -z "${gbar:-}" ]; then   # an agent that has stopped under NOW: its bar is green like its text, not orange (once)
+            gbar=1; l=$(printf '%s' "$r" | LC_ALL=C grep -a "Idle agent topic" | head -1)
+            case "$l" in *$'\033[32m▌'*) ok "cards: a now card whose agent has stopped has a green bar" ;; *) bad "cards: the bar of a stopped agent: $(printf '%s' "$l" | command cat -v | cut -c1-80)" ;; esac
+        fi
         else bad "frame: $mode, $name (colour $col, $cols columns)"; diff <(printf '%s' "$b" | command cat -v) <(printf '%s' "$r" | command cat -v) | head -10; fi
     done
 }

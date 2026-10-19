@@ -554,7 +554,8 @@ impl<'a> Cards<'a> {
             let sl = i as i64 == sel_idx;
             let (mut rn, mut ra) = (String::new(), String::new());
             if st == "review" { for l in crate::proc::read_cap(&t.file).unwrap_or_default().lines() { if let Some(v) = l.strip_prefix("review_note=") { rn = clean(v); } else if let Some(v) = l.strip_prefix("review_ask=") { ra = clean(v); } } }
-            let mut o = Item { id: t.id.clone(), bar: lc.clone(), prog, ..Default::default() };
+            let bar = if st == "now" && state.starts_with("finished") { g("GREEN") } else { lc.clone() };   // (its agent has stopped: the bar is green like the text, not orange like a working one)
+            let mut o = Item { id: t.id.clone(), bar, prog, ..Default::default() };
             if st == "testing" && !t.ap.is_empty() {
                 let m = if t.am.is_empty() { self.host.clone() } else { t.am.clone() };
                 let key: String = format!("{}_{}", m, t.ap).chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect();

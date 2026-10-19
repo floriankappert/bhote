@@ -1967,6 +1967,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
                 case "$state" in working) ;; finished) TI_AGMETA=1; who="" ;; handing\ over) TI_AGMETA=1 ;; "finished · x = done") TI_AGMETA=1; who="" ;; *) TI_AGMETA=1; who="" ;; esac   # (the icon says working; the rest the line adds)
             fi ;;
         esac
+        [ "$st" = now ] && case "$state" in finished|"finished · x = done") TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
         topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
     done
     TI_AGN=""
