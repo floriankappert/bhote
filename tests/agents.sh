@@ -79,7 +79,7 @@ grep -q "^agent prompt w3:p1 Steal & Transfer (bhote topic $tid" "$FAKE_LOG" && 
 grep -q "bhote handover $tid --to 'Mac/w2:p1' --branch" "$FAKE_LOG" && ok "transfer: it gets the exact handover command" || bad "handover command missing"
 grep -q "do not create a new branch" "$FAKE_LOG" && ok "transfer: the branch is kept (no new branch)" || bad "branch rule missing"
 [ "$(topic_get "$tf" transfer_to)" = "Mac/w2:p1" ] && ok "transfer: the topic remembers where it goes" || bad "transfer_to: $(topic_get "$tf" transfer_to)"
-topics_load; COLS=60; out=$(topics_block); case "$out" in *"busy → server · handing over"*) ok "transfer: the list says it is being handed over" ;; *) bad "meta: $out" ;; esac
+topics_load; COLS=60; out=$(topics_block); case "$out" in *"handing over"*"busy → server"*) ok "transfer: the list says it is being handed over (the state on the right, where it goes under the task)" ;; *) bad "meta: $out" ;; esac
 : > "$FAKE_LOG"; transfer_finish "$tf" "Mac/w2:p1" "feat/x" "abc123def"; wait; sleep 0.3
 grep -q "^agent prompt w2:p1 Steal & Transfer: take over \"Big refactor\" (bhote topic $tid) from busy. The work is on branch feat/x" "$FAKE_LOG" && ok "handover: the target agent gets the branch and the handover" || bad "no takeover prompt: $(cat "$FAKE_LOG")"
 [ "$(topic_get "$tf" agent_pane)" = w2:p1 ] && [ -z "$(topic_get "$tf" transfer_to)" ] && ok "handover: the topic now belongs to the target" || bad "topic not moved"
@@ -254,10 +254,11 @@ topic_set "$tf" status review; ev w9:p1 working; [ "$(topic_get "$tf" status)" =
   printf '%s\n' "$out" | grep -q "∟ Card topic" && exit 6
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "∟ Card topic" || exit 7   # (no task: the topic's title)
   AG_LINES=("Omarchy${US}w9:p1${US}working${US}bhote${US}x")
-  printf '%s\n' "$out" | grep -q "▄▄▄" && printf '%s\n' "$out" | grep -q "▀▀▀" && printf '%s\n' "$out" | grep -q "▌" || exit 3   # (the card's frame stays)
-  printf '%s\n' "$out" | grep -q "working" && exit 4                                                                         # (the icon says it)
+  printf '%s\n' "$out" | grep -q "▄▄▄\|▀▀▀" && exit 3; printf '%s\n' "$out" | grep -q "▌" || exit 3   # (the card has no frame rows, only its bar)
+  printf '%s\n' "$out" | grep -q "Omarchy · bhote *working" || exit 4                                                      # (the state is on the right of the first row)
+  [ "$(printf '%s\n' "$out" | grep -c "▌")" = 3 ] || exit 9                                                                  # (the agent, its task, and the description: this is the selected card; without a branch or a live text nothing else)
   AG_LINES=("Omarchy${US}w9:p1${US}blocked${US}bhote${US}x"); out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "needs you" || exit 5   # what the icon does not say stays
-  exit 0 ) && ok "now card: like herdr's agent card, with the card frame, the meta line only for what the icon does not say" || bad "agent card: step $?"
+  exit 0 ) && ok "now card: like herdr's agent card, the state on the right of the first row, no frame rows" || bad "agent card: step $?"
 # /clear: the pane runs a new session. An event without a session id (or one of another session) does not hand the old session's topic over;
 # when the new session starts working, the topic follows it, and its idle then hands the topic back for review
 evs() { HERDR_PLUGIN_EVENT_JSON=$(printf '{"data":{"pane_id":"%s","agent_status":"%s","agent_session":{"value":"%s"}}}' "$1" "$2" "$3") BHOTE_NO_SYNC=1 cli_event; }
@@ -429,7 +430,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   for i in 1 2 3 4 5 6 7 8 9 10; do topic_new "Click topic $i" "desc $i" "" >/dev/null; done
   COLS=44; ROWS=30; ui_load; fr=$(bhote_view); [ -s "$RUN_DIR/tmap" ] || exit 1
   while IFS=$'\036' read -r r t; do ln=$(printf '%s\n' "$fr" | sed -n "${r}p")
-      case "$ln" in *"Click topic"*|*"∟"*|*▄*|*▀*) ;; *) exit 2 ;; esac; done < "$RUN_DIR/tmap"
+      case "$ln" in *"Click topic"*|*"∟"*|*"desc "*) ;; *) exit 2 ;; esac; done < "$RUN_DIR/tmap"
   hd=$(( $(head -1 "$RUN_DIR/tmap" | cut -d$'\036' -f1) - 1 )); mouse_event "0;5;$hd" M; [ -z "$MOUSE_KEY" ] || exit 3   # the caption
   r=$(awk -F'\036' 'NR > 1 && $2 != p { n++ } { p = $2 } n == 3 { print $1; exit }' "$RUN_DIR/tmap"); mouse_event "0;5;$r" M
   [ "$MOUSE_KEY" = TOPIC ] || exit 4; off=$(cat "$RUN_DIR/toff")
@@ -456,9 +457,9 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   for i in 1 2 3; do topic_new "Ctx topic $i" "" "" >/dev/null; done
   SEL_ID=$NEW_TOPIC_ID; COLS=44; ROWS=40; out=$(bhote_paint main); [ -s "$RUN_DIR/tmap" ] || exit 1
   r=$(awk -F'\036' -v id="$SEL_ID" '{ t = $2; sub(/!.*/, "", t) } t == id { print $1; exit }' "$RUN_DIR/tmap")
-  ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "$(( r + 1 ))p"); case "$ln" in *"›"*) exit 2 ;; *"Ctx topic 3"*) ;; *) exit 2 ;; esac   # (the title row of the selected card: no button)
-  mouse_event "0;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = TOPIC ] || exit 4                                                              # the title itself selects
-  mouse_event "2;5;$(( r + 1 ))" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 5                                  # the right button
+  ln=$(printf '%s\n' "$out" | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | sed -n "${r}p"); case "$ln" in *"›"*) exit 2 ;; *"Ctx topic 3"*) ;; *) exit 2 ;; esac   # (the title row of the selected card: no button)
+  mouse_event "0;5;$r" M; [ "$MOUSE_KEY" = TOPIC ] || exit 4                                                              # the title itself selects
+  mouse_event "2;5;$r" M; [ "$MOUSE_KEY" = CTX ] && [ "$CLICK_T" = "$SEL_ID" ] || exit 5                                  # the right button
   mouse_event "2;5;1" M; [ "$MOUSE_KEY" = CTX ] && [ -z "$CLICK_T" ] || exit 6                                                      # (not on a topic: no topic)
   exit 0 ) && ok "the right button reports CTX (the topic page opens); a card has no › button" || bad "context menu: step $?"
 # a click: a card shows its agent, a line (next, waiting, later, done) opens its page

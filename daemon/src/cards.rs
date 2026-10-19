@@ -1,4 +1,4 @@
-//! The topic cards and lines of the frame (step 5): topics_block (cards | lists), with topics_plan, topic_item, ti_subcard, topic_meta,
+//! The topic cards and lines of the frame (step 5): topics_block (cards | lists), with topics_plan, ti_card, topic_meta,
 //! topic_line, more_row, bored_agents and the deployment card, from the script, byte for byte. The state of the screen that is not in a
 //! file (selection, hover, which groups are open, the dancing star) arrives in a small file written by the script for each frame.
 use crate::store::{self, Topic};
@@ -186,87 +186,93 @@ impl<'a> Cards<'a> {
     }
 
     // ── a card ─────────────────────────────────────────────────────────────────────────────────────────────
-    fn edge(&self, rm: &str, bg: &str, glyph: char) -> String {
-        let s: String = std::iter::repeat(glyph).take((self.c.cols - 2).max(0) as usize).collect();
-        format!("{}{}{}{}\n", rm, bg.replace("[48;", "[38;"), s, self.g("X"))
-    }
+    /// A card of the panel, the same for all of them, three rows (see ti_card in the script): with an agent "<icon> <machine> · <agent>   <state · age>",
+    /// "∟ <what it works on>", "⎇ <branch>" (plus what it does right now, the bars of a running deployment or test, and the description of a chosen card);
+    /// without one the title, "∟ <who> · <state> · <age>" and the branch. No frame: the status colour is a bar, the gap between cards a blank row.
     #[allow(clippy::too_many_arguments)]
-    fn item(&self, sel: bool, state_col: &str, time: &str, title_col: &str, title: &str, desc: &str, who: &str, state: &str, compact: bool, branch: &str, rn: &str, ra: &str, o: &Item) -> String {
+    fn card(&self, sel: bool, state_col: &str, time: &str, title_col: &str, title: &str, desc: &str, who: &str, state: &str, branch: &str, o: &Item) -> String {
         let g = |k: &str| self.g(k).to_string();
-        let w = self.c.cols - 2;
+        let w = self.c.cols - 2; let cw = self.c.cols - 4;
         let (x, d_) = (g("X"), g("D"));
         let (mut tc, mut dc, mut mc, mut gc, wc) = (title_col.to_string(), g("DESC"), if state_col.is_empty() { d_.clone() } else { state_col.to_string() }, d_.clone(), g("BLUE"));
         let rm = if o.id.is_empty() { String::new() } else { format!("{}{}{}", REF, o.id, REF) };
-        let t = clip(title, w - 3); let d = clip(desc, w - 3);
-        let mut tw = dw(&t); let mut dw2 = dw(&d);
-        let (mut bg, mut mk, mut bar) = (String::new(), String::new(), String::new());
+        let mut bg = g("CARDBG"); let mut mk = String::new();
+        let mut bar = if o.bar.is_empty() { if state_col.is_empty() { d_.clone() } else { state_col.to_string() } } else { o.bar.clone() };
         let mut hov = false;
-        bg = g("CARDBG"); bar = if o.bar.is_empty() { if state_col.is_empty() { d_.clone() } else { state_col.to_string() } } else { o.bar.clone() };
         if !o.id.is_empty() && o.id == self.v.hover_id { bg = g("CARDHOV"); hov = true; }
         if hov && !sel { dc = g("DESCSEL"); gc = g("DSEL"); if mc == d_ { mc = g("DSEL"); } }
         if sel {
-            bg = g("SELBG"); mk = SELMARK.to_string(); dc = g("DESCSEL"); gc = g("DSEL"); if mc == d_ { mc = g("DSEL"); }
+            mk = SELMARK.to_string(); dc = g("DESCSEL"); gc = g("DSEL"); if mc == d_ { mc = g("DSEL"); }
             tc = if tc == g("TITLE") || tc == g("L") { g("TITLESEL") } else { format!("{}{}", g("BOLD"), g("DSEL")) };
             bg = g("CARDSEL");
         }
         if hov { bar = "\u{1b}[38;2;255;111;97m".into(); }
         let bl = format!("{}▌{}{} ", bar, x, bg);
-        let mut out = self.edge(&rm, &bg, '▄');
-        let ag = !o.agn.is_empty();
-        let trm = rm.clone();
-        let spk = if bg == g("CARDSEL") || bg == g("SELBG") { 's' } else if bg == g("CARDHOV") { 'h' } else { 'n' };
-        if ag {
+        let xb = format!("{}{}", x, bg);
+        let mut out = String::new();
+        if !o.agn.is_empty() {
             let mcol = if self.v.mach_fg.is_empty() || self.v.mach_fg == "none" { g("PINK") } else { self.v.mach_fg.clone() };
-            let mut am = clip(&o.agm, 12);
-            let an = clip(&o.agn, w - 2 - 2 - am.chars().count() as i64 - 3 - 1);
-            let mut aw = dw(&format!("{} · {}", am, an));
-            if !am.is_empty() { am = format!("{}{}{}{}{}{} · ", mcol, g("BOLD"), am, x, bg, gc); } else { aw -= 3; }
+            let am = clip(&o.agm, 12); let amw = dw(&am);
+            let lead = if am.is_empty() { 2 } else { 2 + amw + 3 };
+            let (mut tm, st) = (time.to_string(), state.to_string());
+            let build = |tm: &str| -> (String, String, i64) {
+                let (mut p, mut c) = (String::new(), String::new());
+                if !st.is_empty() { p = st.clone(); c = format!("{}{}", mc, st); }
+                if !tm.is_empty() { if !p.is_empty() { p.push_str(" · "); c.push_str(&format!("{} · ", gc)); } p.push_str(tm); c.push_str(&format!("{}{}", gc, tm)); }
+                let rw = dw(&p); (p, c, rw)
+            };
+            let (mut _rtp, mut rtc, mut rw) = build(&tm);
+            let mut navail = cw - lead - if rw > 0 { rw + 2 } else { 0 };
+            if navail < 8 && !tm.is_empty() { tm.clear(); let r = build(&tm); _rtp = r.0; rtc = r.1; rw = r.2; navail = cw - lead - if rw > 0 { rw + 2 } else { 0 }; }
+            if navail < 8 { rtc.clear(); rw = 0; navail = cw - lead; }
+            let an = clip(&o.agn, navail); let anw = dw(&an);
+            let amc = if am.is_empty() { String::new() } else { format!("{}{}{}{}{}{} · ", mcol, g("BOLD"), am, x, bg, gc) };
             let icon = if o.agic.is_empty() { format!("{}○", gc) } else { o.agic.clone() };
+            let spk = if bg == g("CARDSEL") || bg == g("SELBG") { 's' } else if bg == g("CARDHOV") { 'h' } else { 'n' };
             let spin = if o.spin { format!("{}{}{}", SPIN, spk, SPIN) } else { String::new() };
-            out.push_str(&format!("{}{}{}{}{}{} {}{}{}{}{}{}\n", spin, trm, mk, bg, bl, icon, am, format!("{}{}", g("BOLD"), tc), an, format!("{}{}", x, bg), sp(w - 2 - 2 - aw), x));
+            out.push_str(&format!("{}{}{}{}{}{} {}{}{}{}{}{}{}\n", spin, rm, mk, bg, bl, icon, amc, format!("{}{}", g("BOLD"), tc), an, xb, sp(cw - lead - anw - rw), rtc, x));
             let t2 = clip(if o.agtask.is_empty() { title } else { &o.agtask }, w - 5); let tw2 = dw(&t2);
-            out.push_str(&format!("{}{}{}{}∟ {}{}{}{}{}{}\n", rm, bg, bl, gc, tc, t2, format!("{}{}", x, bg), sp(w - 4 - tw2), "", x));
+            out.push_str(&format!("{}{}{}{}∟ {}{}{}{}{}\n", rm, bg, bl, gc, tc, t2, xb, sp(w - 4 - tw2), x));
             if !o.now.is_empty() {
                 let t3 = clip(&o.now, w - 5); let tw3 = dw(&t3);
-                out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, g("ORANGE"), t3, format!("{}{}", x, bg), sp(w - 4 - tw3), x));
+                out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, g("ORANGE"), t3, xb, sp(w - 4 - tw3), x));
             }
+            let mut brp = String::new();
+            if !branch.is_empty() { brp = format!("⎇ {}", branch); }
+            if !who.is_empty() { if !brp.is_empty() { brp.push_str(" · "); } brp.push_str(who); }
+            if !brp.is_empty() {
+                let brp = clip(&brp, w - 4); let bw = dw(&brp);
+                out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, gc, brp, xb, sp(w - 4 - bw), x));
+            }
+            if sel && !desc.is_empty() { let d = clip(desc, w - 4); let dw2 = dw(&d); out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, dc, d, xb, sp(w - 4 - dw2), x)); }
         } else {
-            out.push_str(&format!("{}{}{}{}{}{}{}{}{}\n", rm, mk, bg, bl, tc, t, format!("{}{}", x, bg), sp(w - 2 - tw), x));
-        }
-        if ag {
-            if !d.is_empty() { let d5 = clip(desc, w - 5); dw2 = dw(&d5); out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, dc, d5, format!("{}{}", x, bg), sp(w - 4 - dw2), x)); }
-        } else if !d.is_empty() {
-            out.push_str(&format!("{}{}{}{}{}{}{}{}\n", rm, bg, bl, dc, d, format!("{}{}", x, bg), sp(w - 2 - dw2), x));
-        }
-        let _ = (&mut tw, &mut dw2);
-        if !ag || o.agmeta {
-            if who.is_empty() && state.is_empty() && time.is_empty() {
-                out.push_str(&self.edge(&rm, &bg, '▀'));
-                return out;
+            let t = clip(title, w - 3); let tw = dw(&t);
+            out.push_str(&format!("{}{}{}{}{}{}{}{}{}\n", rm, mk, bg, bl, tc, t, xb, sp(w - 2 - tw), x));
+            if !(who.is_empty() && state.is_empty() && time.is_empty()) {
+                let room = self.c.cols - 2 - 4;
+                let mut who = who.to_string(); let mut st = state.to_string(); let mut tm = time.to_string();
+                if !who.is_empty() { who = clip(&who, room); }
+                let ww = dw(&who); let mut sw = dw(&st);
+                let calc = |ww: i64, sw: i64, tm: &str| ww + sw + tm.chars().count() as i64 + (if ww > 0 && sw > 0 { 3 } else { 0 }) + (if !tm.is_empty() && ww + sw > 0 { 3 } else { 0 });
+                let mut n = calc(ww, sw, &tm);
+                if n > room { tm.clear(); n = ww + sw + (if ww > 0 && sw > 0 { 3 } else { 0 }); }
+                if n > room {
+                    st = if !who.is_empty() { clip(&st, room - ww - 3) } else { clip(&st, room) };
+                    sw = dw(&st); n = ww + sw + (if ww > 0 && sw > 0 { 3 } else { 0 });
+                }
+                let mut line = format!("{}{}{}{}∟ ", rm, bg, bl, gc);
+                if !who.is_empty() { line.push_str(&format!("{}{}", wc, who)); }
+                if !who.is_empty() && !st.is_empty() { line.push_str(&format!("{} · ", gc)); }
+                if !st.is_empty() { line.push_str(&format!("{}{}", mc, st)); }
+                if !tm.is_empty() { if !who.is_empty() || !st.is_empty() { line.push_str(&format!("{} · ", gc)); } line.push_str(&format!("{}{}", gc, tm)); }
+                line.push_str(&format!("{}{}{}{}\n", x, bg, sp(room - n), x));
+                out.push_str(&line);
             }
-            let room = self.c.cols - 2 - 4;
-            let mut who = who.to_string(); let mut st = state.to_string(); let mut tm = time.to_string();
-            if !who.is_empty() { who = clip(&who, room); }
-            let ww = dw(&who); let mut sw = dw(&st);
-            let calc = |ww: i64, sw: i64, tm: &str| ww + sw + tm.chars().count() as i64 + (if ww > 0 && sw > 0 { 3 } else { 0 }) + (if !tm.is_empty() && ww + sw > 0 { 3 } else { 0 });
-            let mut n = calc(ww, sw, &tm);
-            if n > room { tm.clear(); n = ww + sw + (if ww > 0 && sw > 0 { 3 } else { 0 }); }
-            if n > room {
-                st = if !who.is_empty() { clip(&st, room - ww - 3) } else { clip(&st, room) };
-                sw = dw(&st); n = ww + sw + (if ww > 0 && sw > 0 { 3 } else { 0 });
+            if !branch.is_empty() {
+                let bt = clip(branch, w - 6); let bw = dw(&bt);
+                out.push_str(&format!("{}{}{}{}⎇ {}{}{}{}\n", rm, bg, bl, gc, bt, xb, sp(w - 4 - bw), x));
             }
-            let mut line = if ag { format!("{}{}{}{}  ", rm, bg, bl, gc) } else { format!("{}{}{}{}∟ ", rm, bg, bl, gc) };
-            if !who.is_empty() { line.push_str(&format!("{}{}", wc, who)); }
-            if !who.is_empty() && !st.is_empty() { line.push_str(&format!("{} · ", gc)); }
-            if !st.is_empty() { line.push_str(&format!("{}{}", mc, st)); }
-            if !tm.is_empty() { if !who.is_empty() || !st.is_empty() { line.push_str(&format!("{} · ", gc)); } line.push_str(&format!("{}{}", gc, tm)); }
-            line.push_str(&format!("{}{}{}{}\n", x, bg, sp(room - n), x));
-            out.push_str(&line);
-        }
-        if !branch.is_empty() {
-            let bi = if ag { "  " } else { "" };
-            let bt = clip(branch, w - 6 - bi.len() as i64); let bw = dw(&bt);
-            out.push_str(&format!("{}{}{}{}{}⎇ {}{}{}{}\n", rm, bg, bl, bi, gc, bt, format!("{}{}", x, bg), sp(w - 4 - bi.len() as i64 - bw), x));
+            if sel && !desc.is_empty() { let d = clip(desc, w - 3); let dw2 = dw(&d); out.push_str(&format!("{}{}{}{}{}{}{}{}\n", rm, bg, bl, dc, d, xb, sp(w - 2 - dw2), x)); }
         }
         if !o.prog.is_empty() {
             let mut it = o.prog.split(' '); let pd: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0); let pt: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -290,73 +296,6 @@ impl<'a> Cards<'a> {
                 let (bf, be) = ("■".repeat(pf as usize), "■".repeat((pw - pf) as usize));
                 out.push_str(&format!("{}{}{}{}{} {}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, gc, tn, g("ORANGE"), bf, g("MUTED"), be, gc, td * 100 / tt, format!("{}{}", x, bg), x));
             }
-        }
-        if !rn.is_empty() || !ra.is_empty() { out.push_str(&self.subcard(&rm, &bg, rn, ra, &o.id, w, &bl)); }
-        out.push_str(&self.edge(&rm, &bg, '▀'));
-        let _ = compact; let _ = time;
-        out
-    }
-
-    fn wrap(&self, text: &str, width: i64, max: usize) -> Vec<String> {
-        let mut lines: Vec<String> = Vec::new(); let (mut line, mut lw, mut more) = (String::new(), 0i64, false);
-        let mut last_word = String::new();
-        for word0 in text.split_whitespace() {
-            let mut word = word0.to_string(); let mut ww = dw(&word);
-            if ww > width { word = clip(&word, width); ww = dw(&word); }
-            last_word = word.clone();
-            if line.is_empty() { line = word; lw = ww; }
-            else if lw + 1 + ww <= width { line = format!("{} {}", line, word); lw += 1 + ww; }
-            else {
-                if lines.len() >= max.saturating_sub(1) { more = true; break; }
-                lines.push(std::mem::take(&mut line)); line = word; lw = ww;
-            }
-        }
-        if more {
-            line = clip(&format!("{} {}", line, last_word), width);
-            if !line.ends_with('…') { let n = line.chars().count(); line = format!("{}…", pre(&line, n.saturating_sub(1))); }
-        }
-        if !line.is_empty() { lines.push(line); }
-        lines
-    }
-
-    fn subcard(&self, rm: &str, bg: &str, note: &str, ask: &str, id: &str, w: i64, bl: &str) -> String {
-        let g = |k: &str| self.g(k).to_string(); let x = g("X");
-        let sub = g("CARDSUB"); let sfg = sub.replace("[48;", "[38;");
-        let (sw, iw) = (w - 4, w - 6);
-        let edge: String = "▄".repeat(sw.max(0) as usize);
-        let mut out = format!("{}{}{}{}{}{}{}  {}\n", rm, bg, bl, sfg, edge, x, bg, x);
-        if !note.is_empty() {
-            for l in self.wrap(note, iw, 3) { let lw = dw(&l); out.push_str(&format!("{}{}{}{} {}{}{} {}{}  {}\n", rm, bg, bl, sub, "\u{1b}[38;2;238;240;250m", l, sp(iw - lw), x, bg, x)); }
-        }
-        if !ask.is_empty() {
-            let mut labs: Vec<&str> = Vec::new(); let mut rest = ask;
-            while !rest.is_empty() && labs.len() < 3 { let lab = rest.split('¦').next().unwrap_or(""); labs.push(lab); if rest == lab { break; } rest = &rest[lab.len() + '¦'.len_utf8()..]; }
-            let n = labs.len();
-            let texts: Vec<String> = labs.iter().enumerate().map(|(i, l)| format!(" [{}] {} ", i + 1, clip(l, sw - 6))).collect();
-            let bws: Vec<i64> = texts.iter().map(|t| dw(t)).collect();
-            let tot: i64 = bws.iter().sum::<i64>() + 2 * (n as i64 - 1);
-            let blue = g("BLUE");
-            let mut btnbg = if blue.contains("[38;") { blue.replace("[38;", "[48;") } else { blue.replace("[3", "[4") };
-            btnbg.push_str("\u{1b}[1;38;2;24;24;37m");
-            if tot <= sw {
-                let mut start = 2 + sw - tot; let mut ranges = String::new(); let mut row = sp(sw - tot);
-                for i in 0..n {
-                    if i > 0 { row.push_str("  "); start += 2; }
-                    row.push_str(&format!("{}{}{}{}", btnbg, texts[i], x, bg)); ranges.push_str(&format!("!{}!{}", start + 1, start + bws[i])); start += bws[i];
-                }
-                let rid = if id.is_empty() { String::new() } else { format!("{}{}{}{}", REF, id, ranges, REF) };
-                out.push_str(&format!("{}{}{}{}{}{}  {}\n", rid, bg, bl, row, x, bg, x));
-            } else {
-                for i in 0..n {
-                    let pad = sp(sw - bws[i]); let mut ranges = String::new();
-                    for _ in 0..i { ranges.push_str("!0!0"); }
-                    ranges.push_str(&format!("!{}!{}", 2 + sw - bws[i] + 1, 2 + sw));
-                    let rid = if id.is_empty() { String::new() } else { format!("{}{}{}{}", REF, id, ranges, REF) };
-                    out.push_str(&format!("{}{}{}{}{}{}{}{}  {}\n", rid, bg, bl, pad, btnbg, texts[i], x, bg, x));
-                }
-            }
-        } else {
-            out.push_str(&format!("{}{}{}{}{}{}{}  {}\n", rm, bg, bl, sfg, edge.replace('▄', "▀"), x, bg, x));
         }
         out
     }
@@ -539,7 +478,7 @@ impl<'a> Cards<'a> {
             if gk != prev {
                 let (label, lc) = match gk { "deploying" => ("DEPLOYING", g("Y")), "finished" => ("RECENTLY FINISHED", g("GREEN")), "now" => ("NOW", g("ORANGE")), "testing" => ("TESTING", g("C")), "review" => ("REVIEW", g("BLUE")), _ => ("", g("D")) };
                 out.push('\n'); out.push_str(&format!("  {}{}{}\n", lc, label, x)); prev = gk.to_string();
-            }
+            } else { out.push('\n'); }   // (the gap between two cards of a group: a blank row)
             let (mut who, mut state, mut sc, mut tm, br) = self.meta(i);
             let mut prog = String::new();
             if gk == "deploying" {
@@ -557,8 +496,6 @@ impl<'a> Cards<'a> {
             let _ = &mut tm;
             if st == "now" && state == "finished" && i as i64 == sel_idx { state = "finished · x = done".into(); }
             let sl = i as i64 == sel_idx;
-            let (mut rn, mut ra) = (String::new(), String::new());
-            if st == "review" { for l in crate::proc::read_cap(&t.file).unwrap_or_default().lines() { if let Some(v) = l.strip_prefix("review_note=") { rn = clean(v); } else if let Some(v) = l.strip_prefix("review_ask=") { ra = clean(v); } } }
             let bar = if st == "now" && state.starts_with("finished") { g("GREEN") } else { lc.clone() };   // (its agent has stopped: the bar is green like the text, not orange like a working one)
             let mut o = Item { id: t.id.clone(), bar, prog, ..Default::default() };
             if st == "testing" && !t.ap.is_empty() {
@@ -568,7 +505,7 @@ impl<'a> Cards<'a> {
                 let lines: Vec<String> = crate::proc::read_cap(tp).unwrap_or_default().lines().map(clean).collect();
                 o.tbars = lines.join("\n");
             }
-            if matches!(st, "now" | "testing" | "finished") && !t.ap.is_empty() && !t.ag.is_empty() {
+            if matches!(gk, "now" | "testing" | "finished" | "review" | "deploying") && !t.ap.is_empty() && !t.ag.is_empty() && (gk != "review" || t.sm.is_empty()) {
                 o.agm = if t.am.is_empty() { self.host.clone() } else { t.am.clone() }; o.agn = t.ag.clone();
                 let mut ast = self.agent_state(&o.agm, &t.ap); o.agtask = self.agent_task(&o.agm, &t.ap);
                 if st == "finished" { ast = "finished".into(); }
@@ -576,18 +513,18 @@ impl<'a> Cards<'a> {
                     "finished" => format!("{}✓", g("GREEN")), "working" | "testing" => { o.spin = true; o.now = self.agent_now(&o.agm, &t.ap); format!("{}{}", g("ORANGE"), self.v.spin_ch) }
                     "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), s if s == "gone" || s.starts_with("off-") => format!("{}◌", g("D")), _ => format!("{}○", g("D")),
                 };
-                match state.as_str() { "working" => {} _ => { o.agmeta = true; if state != "handing over" { who.clear(); } } }
+                if gk != "deploying" && state != "handing over" { who.clear(); }   // (the agent's name is in the first row; who stays for where it hands over to, and the deployment's project)
             }
             let title = if t.title.is_empty() { "(untitled)".to_string() } else { t.title.clone() };
             let desc = t.desc.clone();
-            out.push_str(&self.item(sl, &sc, &tm, &g("TITLE"), &title, &desc, &who, &state, false, &br, &rn, &ra, &o));
+            out.push_str(&self.card(sl, &sc, &tm, &g("TITLE"), &title, &desc, &who, &state, &br, &o));
         }
         out
     }
 }
 
 #[derive(Default)]
-struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool, agmeta: bool }
+struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool }
 
 /// deploy_lookup for the sync: the deployment a waiting topic is bound to or waits for
 pub fn deploy_lookup_pub(shared: &std::path::Path, topics: &std::path::Path, names: &HashMap<String, String>, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {

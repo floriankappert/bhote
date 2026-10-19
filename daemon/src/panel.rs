@@ -302,7 +302,7 @@ impl Panel {
         }
         if !press { return; }
         if b == 2 {   // the right button: the topic's menu
-            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id; self.open_menu(term); } }
+            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:")) { self.sel_id = id; self.open_menu(term); } }
             return;
         }
         if b != 0 { return; }
@@ -315,22 +315,14 @@ impl Panel {
         }
         if div == 0 || y < div {   // above it: a topic?
             if let Some(t) = self.ref_at(y).cloned() {
-                let (id, rng) = match t.find('!') { Some(i) => (t[..i].to_string(), Some(t[i + 1..].to_string())), None => (t.clone(), None) };
-                if let Some(r) = rng {
-                    let nums: Vec<i64> = r.split('!').filter_map(|v| v.parse().ok()).collect();
-                    for (n, ch) in nums.chunks(2).enumerate() { if ch.len() == 2 && x >= ch[0] && x <= ch[1] {
-                        if !id.starts_with("cap:") { self.sel_id = id.clone(); self.act(&["review", &id, &(n + 1).to_string()], "review", false); }
-                        self.redraw = true; return;
-                    } }
-                }
+                let id = t.clone();
                 let twice = self.click_twice(&id);
                 if twice { // a double click: the topic's page
-                    if !(id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id.clone(); }
-                    if !(id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.open_menu(term); }
+                    if !(id.starts_with("cap:")) { self.sel_id = id.clone(); }
+                    if !(id.starts_with("more:") || id.starts_with("cap:")) { self.open_menu(term); }
                     self.redraw = true; return;
                 }
-                if id.starts_with("pf:") {}
-                else if let Some(k) = id.strip_prefix("cap:") { let k = k.to_string(); self.section_toggle(&k); }
+                if let Some(k) = id.strip_prefix("cap:") { let k = k.to_string(); self.section_toggle(&k); }
                 else if let Some(s) = id.strip_prefix("more:") { self.sel_id = id.clone(); let s = s.to_string(); self.toggle_expand(&s); }
                 else { self.sel_id = id.clone(); if self.is_card(&id) { self.act(&["topic_jump", &id], "jump", false); } }
                 self.redraw = true; return;

@@ -159,12 +159,15 @@ p.send("x")
 st = p.get("1002-1", "status")
 ok("click on a line, x: the topic is done") if st == "done" else bad(f"x: status of 1002-1 is {st}")
 
-# 3) a button of a review card (no agent: the topic goes on now)
-y = p.fresh_row("[1] Ok"); line = p.screen()[y - 1]; x = line.index("[1] Ok") + 2
-p.click(x, y)
+# 3) the card of a review topic has no question under it any more: the key 1 (the first answer) goes on with the topic
+y = p.fresh_row("First review")
+sc = "\n".join(p.screen())
+bad("the review card still shows its question or buttons") if "Check it" in sc or "[1] Ok" in sc else ok("a review card has no question or buttons under it")
+p.click(10, y)
+p.send("1", 1.0)
 time.sleep(1.0)
 st = p.get("1000-1", "status")
-ok("click on a review button: the topic goes on") if st == "now" else bad(f"review button: status is {st}")
+ok("click on a review card, key 1: the topic goes on") if st == "now" else bad(f"review key 1: status is {st}")
 
 # 4) a line to type into: n, then a title
 p.send("n", 0.5)

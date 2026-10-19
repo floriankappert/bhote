@@ -4,8 +4,18 @@
 100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
 
-The list shows what is on. **Review**, **now** and **testing** topics are cards (title, description, agent, branch; a review card has its
-summary and the button). A topic is in **testing** when its agent stopped while a test suite runs (also one in the background); review follows when the tests are done, now when the agent works again. **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
+The list shows what is on. **Review**, **now**, **testing**, **deploying** and **recently finished** topics are cards, all drawn the same way, three rows
+(a blank row between two cards, the status colour as a bar on the left):
+
+```
+▌ ✶ Omarchy · IMS (main)               working        icon, machine · agent, state (and age) on the right
+▌ ∟ Sales Analytics                                   what the agent works on (its task; the topic's title without one)
+▌   ⎇ feature/opportunity-detail                      its branch
+```
+
+A working agent has a fourth row (orange) under the task: what it does right now. The bars of a deployment or of running tests come under the
+branch. The **description** of a topic is shown under the card you have selected. A card without an agent shows the title, then `∟ who · state · age`.
+A review card has no summary, question or button under it (the summary is in `bhote show` and in the Claude mod's pane); `1` focuses the agent. A topic is in **testing** when its agent stopped while a test suite runs (also one in the background); review follows when the tests are done, now when the agent works again. **Next**, **waiting** and parked (**later**) topics are lines grouped by status, like the done ones: a
 dot, the title and the time (waiting: for whom). A group shows ten lines; `+3 more next` below it is a row of its own: select it
 with the arrow keys and press `Enter` or `→` (or click it) to open the group, again to close it (`− show less`). Done, next,
 waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are archived: they leave the panel (the last line of the Done section counts them: `✓ 42 done · ▤ 30 archived`),
@@ -16,9 +26,12 @@ is selected.
 question it goes to review). It shows the agent with a green check and how long ago it finished. When the agent works again the topic is back on
 now; after `FINISHED_MINUTES` it is dismissed by itself; `c` dismisses it, `x` checks it off.
 
-**Waiting for deployment** is a group of cards between testing and next: a waiting topic with `bhote wait <ref> --deploy` (topic menu ›
-*Waiting for the deployment*). The card shows project and deployment (`IMS · Backend`), its state (deploying, queued, needs approval) and the
-progress as a bar with a percentage, taken from the deployment monitor. When the deployment is over the topic goes to review.
+**Deploying** is a group of cards between testing and next: a waiting topic with `bhote wait <ref> --deploy` (topic menu ›
+*Waiting for the deployment*), or a topic of an agent whose branch is being deployed (also one that is under recently finished: the agent has stopped, the
+branch is still on its way; the deployment is found by the branch, by the pull request, or by the last commit in the agent's folder). The card shows
+project and deployment (`IMS · Backend`) behind the branch, its state (deploying, queued, needs approval) and the progress as a bar with a percentage,
+taken from the deployment monitor. When the deployment is over the topic goes to review. A topic that says it waits for a deployment while none runs
+for it is a line in the normal Waiting list.
 
 ## Keys
 
@@ -33,7 +46,7 @@ The list is for the mouse: **click a card** to show its agent in herdr (on anoth
 | `c` | dismiss a review card: it closes, and opens again as the work card when its agent works again |
 | `s` | start on a free agent: its title and description are typed into that agent's pane |
 | `t` | [Steal & Transfer](steal-and-transfer.md): hand the topic and its branch from its agent to another one (asks first; warns when the target belongs to another project) |
-| `1` (`y`) | the button of a review topic's card, *Review ansehen* (`bhote review --look`): focuses the topic's agent; the topic stays in review. A click on the button does the same |
+| `1` (`y`) | *Review ansehen* for the selected review topic (`bhote review --look`): focuses the topic's agent; the topic stays in review |
 | `a` | suggestions: what the running agents work on (their task) and is not a topic yet |
 | `w` | the setup wizard's new steps, when the head says *New Features Available* |
 | `,` | settings (the full key list is under *Hotkeys* there; *Connections* holds the data location, remote agents, the Slack monitor and the machine codes; *Setup wizard* runs the wizard again) · `S` welcome screen · `q` quit |
