@@ -467,6 +467,7 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
         for i in 0..ts.len() {
             let t = ts[i].clone();
             if !matches!(t.status.as_str(), "now" | "review" | "testing" | "finished") || t.ap.is_empty() || t.br.is_empty() { continue; }
+            if t.status == "finished" && t.upd + 600 < at(0).parse::<u64>().unwrap_or(0) { continue; }   // (finished long before this deployment began: an old topic of that agent, not its work)
             let pn = if t.pj.is_empty() { String::new() } else { ps.iter().find(|x| x.id == t.pj).map(|x| x.name.clone()).unwrap_or_default() };
             if !pn.is_empty() && pn != p { continue; }
             if t.br != nt {

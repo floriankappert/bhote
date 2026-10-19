@@ -1820,25 +1820,25 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 3 )); dw_set dw2 "$d"; printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"; fi
     fi
     if [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
-        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 8 )) pf pi bf="" be=""
+        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 10 )) pf pi bf="" be=""
         [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
             pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
             for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
+            printf '%s%s%s  %s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
     fi
     if [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
         local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
         while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
         [ "$tw" -gt 10 ] && tw=10
-        pw=$(( w - 8 - tw - 1 ))
+        pw=$(( w - 10 - tw - 1 ))
         while IFS= read -r tl; do
             td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
             [ "$tt" -gt 0 ] && [ "$pw" -gt 3 ] || continue
             clip_set tn "$tsn" "$tw"; printf -v tn '%-*s' "$tw" "$tn"
             pf=$(( (td * pw + tt / 2) / tt )); [ "$pf" -gt "$pw" ] && pf=$pw
             bf=""; be=""; for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s%s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
+            printf '%s%s%s  %s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
         done <<< "$TI_TBARS"
     fi
 }
@@ -4788,6 +4788,7 @@ deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, an
         case "$nt" in *"(#"[0-9]*")") prn=${nt##*"(#"}; prn=${prn%")"} ;; "Merge pull request #"[0-9]*) prn=${nt#"Merge pull request #"}; prn=${prn%%[!0-9]*} ;; esac
         for (( i = 0; i < T_N; i++ )); do
             case "${T_STATUS[$i]}" in now|review|testing|finished) ;; *) continue ;; esac     # (finished: its agent has stopped, the branch is still on its way)
+            [ "${T_STATUS[$i]}" = finished ] && [ "$(num_or "${T_UPD[$i]}" 0)" -lt $(( $(num_or "$t" 0) - 600 )) ] && continue   # (finished long before this deployment began: an old topic of that agent, not its work)
             [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] || continue
             pn=""; [ -n "${T_PJ[$i]}" ] && { projects_load; pn=$(project_name "${T_PJ[$i]}"); }
             [ -z "$pn" ] || [ "$pn" = "$p" ] || continue

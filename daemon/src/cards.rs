@@ -276,25 +276,25 @@ impl<'a> Cards<'a> {
         }
         if !o.prog.is_empty() {
             let mut it = o.prog.split(' '); let pd: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0); let pt: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-            let pw = w - 8;
+            let pw = w - 10;
             if pt > 0 && pw > 3 {
                 let mut pf = (pd * pw + pt / 2) / pt; if pf > pw { pf = pw; }
                 let (bf, be): (String, String) = ("■".repeat(pf as usize), "■".repeat((pw - pf) as usize));
-                out.push_str(&format!("{}{}{}{}{}{}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, g("ORANGE"), bf, g("MUTED"), be, x, bg, gc, pd * 100 / pt, format!("{}{}", x, bg), x));
+                out.push_str(&format!("{}{}{}  {}{}{}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, g("ORANGE"), bf, g("MUTED"), be, x, bg, gc, pd * 100 / pt, format!("{}{}", x, bg), x));
             }
         }
         if !o.tbars.is_empty() {
             let lines: Vec<&str> = o.tbars.split('\n').collect();
             let mut tw0 = 0usize;
             for tl in &lines { let tn = tl.splitn(3, ' ').nth(2).unwrap_or(""); tw0 = tw0.max(tn.chars().count()); }
-            let tw0 = tw0.min(10) as i64; let pw = w - 8 - tw0 - 1;
+            let tw0 = tw0.min(10) as i64; let pw = w - 10 - tw0 - 1;
             for tl in &lines {
                 let mut p = tl.splitn(3, ' '); let td: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tt: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tsn = p.next().unwrap_or("");
                 if !(tt > 0 && pw > 3) { continue; }
                 let tn = clip(tsn, tw0); let tn = format!("{:<width$}", tn, width = tw0 as usize);
                 let mut pf = (td * pw + tt / 2) / tt; if pf > pw { pf = pw; }
                 let (bf, be) = ("■".repeat(pf as usize), "■".repeat((pw - pf) as usize));
-                out.push_str(&format!("{}{}{}{}{} {}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, gc, tn, g("ORANGE"), bf, g("MUTED"), be, gc, td * 100 / tt, format!("{}{}", x, bg), x));
+                out.push_str(&format!("{}{}{}  {}{} {}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, gc, tn, g("ORANGE"), bf, g("MUTED"), be, gc, td * 100 / tt, format!("{}{}", x, bg), x));
             }
         }
         out

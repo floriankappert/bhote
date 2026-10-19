@@ -714,6 +714,8 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_new "Went back" "" ""; hf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$hf" agent_pane w3:p8; topic_set "$hf" agent_machine "$HOST"; topic_set "$hf" agent_branch wip/own-branch; topic_set "$hf" status finished
   printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}feat-q (#77)${US}https://ci/77" > "$SHARED_DIR/deploys.list"
   deploy_sync; [ "$(topic_get "$hf" status)" = waiting ] && [ "$(topic_get "$hf" deploy_wait)" = 1 ] || exit 31
+  topic_set "$hf" status finished; topic_set "$hf" deploy_wait ""; sed -i.bak 's/^updated=.*/updated=1000000000/' "$hf"; rm -f "$hf.bak"; topics_load   # (finished long before the deployment began)
+  printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}feat-q (#77)${US}https://ci/77" > "$SHARED_DIR/deploys.list"; deploy_sync; [ "$(topic_get "$hf" status)" = finished ] || exit 33   # an old finished topic of that agent is not what is deployed
   topic_set "$hf" status finished; topic_set "$hf" deploy_wait ""; printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}feat-other (#78)${US}https://ci/78" > "$SHARED_DIR/deploys.list"
   deploy_sync; [ "$(topic_get "$hf" status)" = finished ] || exit 32                                              # (another pull request: it stays)
   # a topic with a branch waits for the deployment of that branch, not for the newest one of the project (also when it was bound to another one before)
