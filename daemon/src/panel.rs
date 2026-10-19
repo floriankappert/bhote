@@ -398,7 +398,7 @@ impl Panel {
     fn tick(&mut self) {
         self.keep_collector();
         let sec = store::now();
-        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; self.act(&["clamp"], "clamp", false); } }   // (not once a second: a pane that is too narrow is widened at once)
+        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { self.act(&["clamp"], "clamp", false); } } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
             if !self.pane_id.is_empty() {
