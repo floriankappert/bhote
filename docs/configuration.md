@@ -18,7 +18,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AGENTS_VIA` | `herdr` | Agents through | Where they come from: `herdr` (its saved machines; herdr asks them over its ssh connection) or `kharka` (what [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes on every machine; no ssh between the machines). See [agents through kharka](data-and-sync.md#agents-through-kharka). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
 | `BHOTED` | `auto` | Rust daemon | `auto`: the daemon `bhoted` keeps the topic index current when the binary is found (next to the script in `daemon/target/release`, or on the PATH); `off`: bash only. |
-| `PANEL_MIN_WIDTH` | `46` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
+| `PANEL_MIN_WIDTH` | `46` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). The panels of all tabs and workspaces follow the width of the one you work in (a second after a resize), so they are always equally wide. |
 | `PANEL_MAX_WIDTH` | `64` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
 | `REMOTE_EVERY` | `5` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |

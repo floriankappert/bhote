@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- All panels are as wide as the one you work in: when you make a panel wider or narrower, the panels of the other tabs and workspaces follow after a second (inside `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH`), so a click lands on the same column everywhere. Only the panel of the tab in front leads.
 - Rust daemon `bhoted` (step 1 of docs/rust-rewrite.md): keeps the topic index current for every panel (inotify on Linux), started by the lead collector, setting `BHOTED=auto|off`; on Linux it also collects this machine's agents (same files as before), looks at the other machines' agents through kharka (`AGENTS_VIA=kharka`) and fetches the deployment and test lists (same lists as before, four to ten times faster) and, with `BHOTED_FOLLOW=shadow|on`, ten follow-ups of the collector (shadow only compares; `tools/shadow-report.sh`), and draws the main view of the panel (`BHOTED_FRAME`: cards, lines, done area, monitors, the windows and the click maps, and the screen made of it; the same bytes as before, a redraw 130 ms -> 29 ms, a frame of navigation 99 ms -> about 17 ms); without the binary bhote works as before. The collector's and the dog's pauses no longer start a process (`nap`).
 
 ### Added (continued)

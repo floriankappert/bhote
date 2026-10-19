@@ -88,7 +88,7 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
-PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
+PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
@@ -2352,21 +2352,45 @@ find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1
 # The panel's pane in herdr stays between PANEL_MIN_WIDTH and PANEL_MAX_WIDTH: after a resize has settled (a dragged divider,
 # a smaller window) the split is moved back (pane.resize takes a share of the split). Only when the panel is the right part
 # of a split; the agent next to it keeps at least 40 columns.
-panel_width_clamp() {
-    local p=${HERDR_PANE_ID:-} lo hi w sw want dir amt
-    case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
-    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
-    read -r w sw <<< "$(herdr pane layout --pane "$p" 2>/dev/null | jq -r --arg p "$p" '
+panel_geom() {  # panel_geom <pane>: PG_W PG_SW = the pane's width and the width of the split it is the right part of (0 0: not a right part)
+    local w sw; PG_W=0; PG_SW=0
+    read -r w sw <<< "$(herdr pane layout --pane "$1" 2>/dev/null | jq -r --arg p "$1" '
         ([.result.layout.panes[] | select(.pane_id == $p)][0].rect) as $r
         | ([.result.layout.splits[] | select(.direction == "right" and (((.rect.x + .rect.width * .ratio) - $r.x) | fabs) <= 2
               and .rect.y <= $r.y and (.rect.y + .rect.height) >= ($r.y + $r.height))][0].rect.width // 0) as $sw
         | "\($r.width // 0) \($sw)"' 2>/dev/null)"
-    num_set w "$w" 0; num_set sw "$sw" 0; [ "$w" -gt 0 ] && [ "$sw" -gt 0 ] || return 0
-    if [ "$w" -gt "$hi" ]; then want=$hi; dir=right
-    elif [ "$w" -lt "$lo" ]; then want=$lo; dir=left; [ $(( sw - want )) -ge 40 ] || return 0
-    else return 0; fi
-    amt=$(LC_ALL=C awk -v a="$w" -v b="$want" -v s="$sw" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
+    num_set w "$w" 0; num_set sw "$sw" 0; PG_W=$w; PG_SW=$sw
+}
+panel_set_width() {  # panel_set_width <pane> <want>: moves the split so the pane is <want> columns wide (the agent next to it keeps 40); 0: done or not possible
+    local p=$1 want=$2 amt dir
+    panel_geom "$p"; [ "$PG_W" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 1
+    [ "$PG_W" = "$want" ] && return 1
+    if [ "$PG_W" -gt "$want" ]; then dir=right; else dir=left; [ $(( PG_SW - want )) -ge 40 ] || return 1; fi
+    amt=$(LC_ALL=C awk -v a="$PG_W" -v b="$want" -v s="$PG_SW" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
     herdr pane resize --pane "$p" --direction "$dir" --amount "$amt" >/dev/null 2>&1
+}
+panel_width_clamp() {
+    local p=${HERDR_PANE_ID:-} lo hi w want
+    case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
+    panel_geom "$p"; w=$PG_W; [ "$w" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 0
+    if [ "$w" -gt "$hi" ]; then want=$hi; elif [ "$w" -lt "$lo" ]; then want=$lo; else want=""; fi
+    if [ -n "$want" ]; then panel_set_width "$p" "$want"; return 0; fi      # (the resize reaches this panel again: the others follow then)
+    panel_width_sync "$p" "$w"
+}
+# All panels are as wide as the one you are working in (a panel made wider or narrower by hand): the panels of the other tabs and
+# workspaces follow. Only the panel of the tab you look at leads, so the panels never pull against each other.
+panel_width_sync() {  # panel_width_sync <this pane> <its width>
+    local p=$1 w=$2 lines tab q focused=0 lo hi want
+    lines=$(herdr pane list 2>/dev/null | jq -r '.result.panes[] | [.pane_id, .tab_id, (.label // ""), (.agent // ""), (.focused | tostring)] | map(gsub("[|\u0001-\u001f]"; "")) | join("|")' 2>/dev/null) || return 0
+    tab=$(printf '%s\n' "$lines" | awk -F'|' -v p="$p" '$1 == p { print $2 }')
+    [ -n "$tab" ] && [ -n "$(printf '%s\n' "$lines" | awk -F'|' -v t="$tab" '$2 == t && $5 == "true"')" ] || return 0   # (the tab is not the one in front: it follows)
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
+    while IFS='|' read -r q _ lbl ag _; do
+        [ "$q" != "$p" ] && [ "$lbl" = bhote ] && [ -z "$ag" ] || continue
+        case "$q" in *[!A-Za-z0-9:_-]*) continue ;; esac
+        panel_set_width "$q" "$w"
+    done <<< "$lines"
 }
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot). So on a Mac, with the agents from kharka, bhote types herdr's own key for that agent's row into the
