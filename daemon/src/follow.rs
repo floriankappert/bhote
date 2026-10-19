@@ -442,6 +442,16 @@ fn branch_pr_number(c: &Ctx, slug: &str, branch: &str) -> String {
     let _ = fs::create_dir_all(f.parent().unwrap()); let _ = fs::write(&f, &n); n
 }
 
+/// The pull request number in the title of the last commit in the folder of this machine's agent (empty: none)
+fn agent_head_pr(c: &Ctx, pane: &str) -> String {
+    let cwd = crate::proc::read_cap(c.env.shared.join("agents.cwd")).unwrap_or_default().lines().find_map(|l| { let mut p = l.splitn(2, US); if p.next() == Some(pane) { p.next().map(|x| x.to_string()) } else { None } }).unwrap_or_default();
+    if cwd.is_empty() { return String::new(); }
+    let subj = crate::proc::run("git", &["-C", &cwd, "log", "-1", "--format=%s"], 10, None).filter(|o| o.0 == 0).map(|o| String::from_utf8_lossy(&o.1).trim().to_string()).unwrap_or_default();
+    let n: String = if subj.ends_with(')') && subj.contains("(#") { subj[subj.rfind("(#").unwrap() + 2..].trim_end_matches(')').to_string() }
+        else if let Some(r) = subj.strip_prefix("Merge pull request #") { r.chars().take_while(|ch| ch.is_ascii_digit()).collect() } else { String::new() };
+    if n.bytes().all(|b| b.is_ascii_digit()) { n } else { String::new() }
+}
+
 pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
     let Ok(list) = crate::proc::read_cap(c.env.shared.join("deploys.list")) else { return }; if list.is_empty() { return; }
     let n = now().to_string(); let ps = projects_full(&c.env.topics);
@@ -460,10 +470,14 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
             let pn = if t.pj.is_empty() { String::new() } else { ps.iter().find(|x| x.id == t.pj).map(|x| x.name.clone()).unwrap_or_default() };
             if !pn.is_empty() && pn != p { continue; }
             if t.br != nt {
-                if prn.is_empty() || t.pj.is_empty() { continue; }
-                let slug = ps.iter().find(|x| x.id == t.pj).and_then(|x| x.repos.split(',').find_map(|k| k.strip_prefix("github.com/").filter(|r| r.contains('/')).map(|r| r.to_string())));
-                let Some(slug) = slug else { continue };
-                if branch_pr_number(c, &slug, &t.br) != prn { continue; }
+                let mut ok = false;
+                if !prn.is_empty() && !t.pj.is_empty() {
+                    let slug = ps.iter().find(|x| x.id == t.pj).and_then(|x| x.repos.split(',').find_map(|k| k.strip_prefix("github.com/").filter(|r| r.contains('/')).map(|r| r.to_string())));
+                    if let Some(slug) = slug { ok = branch_pr_number(c, &slug, &t.br) == prn; }
+                }
+                // or the last commit in the agent's folder (the merge of that pull request: the agent went back to its own branch)
+                if !ok && !prn.is_empty() && (t.am.is_empty() || t.am == c.host) { ok = agent_head_pr(c, &t.ap) == prn; }
+                if !ok { continue; }
             }
             s.set(&t.file, "status", "waiting"); s.set(&t.file, "waiting_for", &format!("Deployment {}", lb)); s.set(&t.file, "waiting_since", &n);
             s.set(&t.file, "deploy_wait", "1"); s.set(&t.file, "deploy_url", u); s.set(&t.file, "deploy_since", &n);

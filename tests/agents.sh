@@ -701,6 +701,14 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_set "$bf" status now; [ -z "$(topic_get "$bf" deploy_wait)" ] || exit 14                                  # leaving the wait ends it
   topic_set "$bf" status finished; deploy_sync; [ "$(topic_get "$bf" status)" = waiting ] && [ "$(topic_get "$bf" deploy_wait)" = 1 ] || exit 30   # (its agent has stopped: the branch is still on its way, not "recently finished")
   topic_set "$bf" status now
+  # the agent went back to its own branch after merging: the last commit in its folder is the merge of the pull request that is being deployed
+  hd=$T/headrepo; mkdir -p "$hd"; git -C "$hd" init -q . && git -C "$hd" -c user.name=t -c user.email=t@t commit -q --allow-empty -m "Merge pull request #77 from acme/feat-q"
+  printf '%s\n' "w3:p8${US}$hd" > "$T/head.cwd"; AGENT_CWD=$T/head.cwd
+  topic_new "Went back" "" ""; hf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$hf" agent_pane w3:p8; topic_set "$hf" agent_machine "$HOST"; topic_set "$hf" agent_branch wip/own-branch; topic_set "$hf" status finished
+  printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}feat-q (#77)${US}https://ci/77" > "$SHARED_DIR/deploys.list"
+  deploy_sync; [ "$(topic_get "$hf" status)" = waiting ] && [ "$(topic_get "$hf" deploy_wait)" = 1 ] || exit 31
+  topic_set "$hf" status finished; topic_set "$hf" deploy_wait ""; printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}1${US}2${US}feat-other (#78)${US}https://ci/78" > "$SHARED_DIR/deploys.list"
+  deploy_sync; [ "$(topic_get "$hf" status)" = finished ] || exit 32                                              # (another pull request: it stays)
   # a topic with a branch waits for the deployment of that branch, not for the newest one of the project (also when it was bound to another one before)
   topic_new "Mine" "" ""; mf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mf" project "$pid"; topic_set "$mf" agent_branch fix/cancellation-service-until-end; deploy_wait_set "$mf"; now=$(date +%s)
   printf '%s\n' "$now${US}IMS${US}Backend${US}running${US}64${US}70${US}feat/contract-sheet-catalogue-g…${US}https://ci/7" > "$SHARED_DIR/deploys.list"

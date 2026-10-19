@@ -4767,10 +4767,18 @@ project_gh_slug() {  # project_gh_slug <project id>: owner/repo of its first Git
     done
     return 1
 }
+agent_head_pr_set() {  # agent_head_pr_set <var> <pane>: the pull request number in the title of the last commit in the folder of this machine's agent (empty: none)
+    local _c="" _p _s="" _n=""
+    [ -r "$AGENT_CWD" ] && while IFS=$US read -r _p _c; do [ "$_p" = "$2" ] && break; _c=""; done < "$AGENT_CWD"
+    [ -n "$_c" ] && _s=$(git -C "$_c" log -1 --format=%s 2>/dev/null)
+    case "$_s" in *"(#"[0-9]*")") _n=${_s##*"(#"}; _n=${_n%")"} ;; "Merge pull request #"[0-9]*) _n=${_s#"Merge pull request #"}; _n=${_n%%[!0-9]*} ;; esac
+    case "$_n" in *[!0-9]*) _n="" ;; esac
+    printf -v "$1" '%s' "$_n"
+}
 deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, and when that is over it goes to review (ok: check production; failed:
     # what went wrong). Runs in the collector of a machine with the deployment monitor.
     [ -s "$SHARED_DIR/deploys.list" ] || return 0
-    local i f note ic t p lb st d tot nt u pn now prn sl; now=$(date +%s)
+    local i f note ic t p lb st d tot nt u pn now prn sl ok hp; now=$(date +%s)
     topics_load
     while IFS=$US read -r t p lb st d tot nt u; do        # a deployment under way of the branch an agent's topic is on: that topic waits for it
         case "$st" in running|queued|approval) ;; *) continue ;; esac
@@ -4782,10 +4790,11 @@ deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, an
             [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] || continue
             pn=""; [ -n "${T_PJ[$i]}" ] && { projects_load; pn=$(project_name "${T_PJ[$i]}"); }
             [ -z "$pn" ] || [ "$pn" = "$p" ] || continue
-            if [ "${T_BR[$i]}" != "$nt" ]; then                                    # not by branch name: by the pull request of the agent's branch
-                [ -n "$prn" ] && [ -n "${T_PJ[$i]}" ] || continue
-                sl=$(project_gh_slug "${T_PJ[$i]}") || continue
-                [ "$(branch_pr_number "$sl" "${T_BR[$i]}")" = "$prn" ] || continue
+            if [ "${T_BR[$i]}" != "$nt" ]; then                                    # not by branch name: by the pull request of the agent's branch,
+                ok=0                                                               # or by the last commit in its folder (the merge of that pull request: the agent has gone back to its own branch)
+                if [ -n "$prn" ] && [ -n "${T_PJ[$i]}" ] && sl=$(project_gh_slug "${T_PJ[$i]}") && [ "$(branch_pr_number "$sl" "${T_BR[$i]}")" = "$prn" ]; then ok=1; fi
+                if [ "$ok" = 0 ] && [ -n "$prn" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ]; then agent_head_pr_set hp "${T_AP[$i]}"; [ "$hp" = "$prn" ] && ok=1; fi
+                [ "$ok" = 1 ] || continue
             fi
             f=${T_FILE[$i]}
             topic_set "$f" status waiting; topic_set "$f" waiting_for "Deployment $lb"; topic_set "$f" waiting_since "$now"
