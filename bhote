@@ -24,7 +24,7 @@ fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.8.0}
-LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.1.3 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.1.4 for the next build
+LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.2 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.2.1 for the next build
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=4
@@ -122,8 +122,8 @@ TEST_STATUS_DIR|~/.cache/bhote/test-status|text|Folder with live test status fil
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends its turn with a question gets a review topic of its own (the question is its description); it goes when the agent works again
-DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monitor (the checkboxes in its caption): their entries are not shown
-TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor (the checkboxes in its caption): their entries and the local runs of their worktrees are not shown
+DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monitor: their entries are not shown
+TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor: their entries and the local runs of their worktrees are not shown
 KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
 CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of the agent: the band above the prompt and the pane (/topic pane). Off: it draws nothing and asks bhote for nothing
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
@@ -2621,6 +2621,10 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
 # ── the settings screen (","). Rows: the remote switch, one row per saved machine, the intervals, the animation.
 # ↑/↓ (or k/j) choose, space or enter switches, ←/→ change a number, "," or esc goes back. Every change is saved at once.
 SET_ROWS=()
+settings_proj_rows() {  # settings_proj_rows <deploys|tests> <label>: one switch per project that has a CI (the project filter of that monitor)
+    local pn; mon_projects_ci
+    for pn in "${MPC[@]}"; do SET_ROWS[${#SET_ROWS[@]}]="mproj|$1$US${pn//|/}|$2: ${pn//|/}"; done
+}
 settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or the connections page (SET_PAGE=connections)
     if [ "${SET_PAGE:-main}" = connections ]; then           # everything that reaches beyond this machine
         SET_ROWS=("choice|STORE|Data location")
@@ -2654,12 +2658,14 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         if [ "$(cfg_get DEPLOY_MONITOR off)" = on ]; then
             SET_ROWS[${#SET_ROWS[@]}]="sbool|DEPLOY_GITHUB|GitHub Actions"; SET_ROWS[${#SET_ROWS[@]}]="sbool|DEPLOY_CIRCLECI|CircleCI"
             SET_ROWS[${#SET_ROWS[@]}]="num|DEPLOY_EVERY|Deploy interval (s)"
+            settings_proj_rows deploys Deployments
         fi
         SET_ROWS[${#SET_ROWS[@]}]="bool|TEST_MONITOR|Test monitor"
         if [ "$(cfg_get TEST_MONITOR off)" = on ]; then
             SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_LOCAL|Local runs"; SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_GITHUB|GitHub Actions"
             SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_CIRCLECI|CircleCI"; SET_ROWS[${#SET_ROWS[@]}]="text|TEST_STATUS_DIR|Status files"
             SET_ROWS[${#SET_ROWS[@]}]="num|TEST_EVERY|Test interval (s)"
+            settings_proj_rows tests Tests
         fi
         { [ "$(cfg_get DEPLOY_MONITOR off)" = on ] || [ "$(cfg_get TEST_MONITOR off)" = on ]; } && SET_ROWS[${#SET_ROWS[@]}]="num|MONITOR_ROWS|Entries shown"
         machine_codes_load; local mi                            # the machines' codes (MAC|name in the agent list)
@@ -2733,6 +2739,8 @@ bhote_settings() {
                   case "$v" in remote) cfg_var v STORE_MACHINE '?'; vp="‹ $v ›" ;; kharka) vp="‹ kharka ›" ;; *) vp="‹ local ›" ;; esac; vc="${C}${vp}${X}" ;;
             machine) ind=2; cfg_var off MACHINES_OFF ""
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
+            mproj) ind=2; cfg_var off "$(mon_off_key "${key%%$US*}")" ""
+                  if mon_list_in "$off" "${key#*$US}"; then vp="[ ]"; vc="${D}[ ]${X}"; else vp="[x]"; vc="${GREEN}[x]${X}"; fi ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
             link|projnew|pact) vp="›"; vc="${D}›${X}" ;;
             projrow) local pf2 pr pw np=0; pf2="$TOPIC_DIR/$key.topic"; pr=$(topic_get "$pf2" repos); pw=$(topic_get "$pf2" workspaces)
@@ -2912,6 +2920,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
                 bool|sbool) setting_row "$key"; cur=${S_DEF:-off}
                       [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
+                mproj) mon_proj_toggle "${key%%$US*}" "${key#*$US}" ;;
                 machine) off=$(cfg_get MACHINES_OFF '')
                       case ",$off,"  in
                           *",$key,"*) local x out="" IFS=,; for x in $off; do [ "$x" = "$key" ] || out=${out:+$out,}$x; done; unset IFS
@@ -4451,10 +4460,9 @@ mon_list_shown() {  # mon_list_shown <deploys|tests>: the file the monitor block
     while IFS= read -r line; do rest=${line#*$US}; pj=${rest%%$US*}; mon_hidden "$off" "$pj" || printf '%s\n' "$line" >> "$f"; done < "$SHARED_DIR/$kind.list"
     printf '%s' "$f"
 }
-mon_chip_toggle() {  # mon_chip_toggle <deploys|tests> <n>: switch the n-th project's checkbox in that monitor's caption
-    local kind=$1 n=$2 k off name new="" e found=0 IFS=,
-    mon_projects_ci; name=${MPC[$(( n - 1 ))]:-}; [ -n "$name" ] || return 0
-    name=${name//,/ }; k=$(mon_off_key "$kind"); cfg_var off "$k" ""
+mon_proj_toggle() {  # mon_proj_toggle <deploys|tests> <project name>: switch that project on or off in that monitor (the settings)
+    local kind=$1 name=${2//,/ } k off new="" e found=0 IFS=,
+    k=$(mon_off_key "$kind"); cfg_var off "$k" ""
     for e in $off; do [ -n "$e" ] || continue; if [ "$e" = "$name" ]; then found=1; else new="$new${new:+,}$e"; fi; done
     [ "$found" = 1 ] || new="$new${new:+,}$name"
     cfg_set "$k" "$new"
@@ -4471,36 +4479,6 @@ mon_abbr_set() {  # mon_abbr_set <var> <project name> <abbreviations taken, spac
     for c in "${cand[@]}"; do [ -n "$c" ] || continue; case " $3 " in *" $c "*) ;; *) printf -v "$1" '%s' "$c"; return 0 ;; esac; done
     for (( i = 2; i < 10; i++ )); do c="${flat:0:2}$i"; case " $3 " in *" $c "*) ;; *) printf -v "$1" '%s' "$c"; return 0 ;; esac; done
     printf -v "$1" '%s' "${flat:0:3}"
-}
-mon_caption() {  # mon_caption <deploys|tests> <text>: the caption row of a monitor, with a checkbox for each project that has a CI (☑ shown, ☐ switched
-    # off), as many as fit on the row, the rest in rows below. A click on a checkbox switches that project; the ref carries each checkbox's columns
-    # (<ref>!from!to!from!to…: the button numbers of mouse_event), the rest of the row still toggles the small view.
-    local kind=$1 text=$2 W=$(( ${#RULE_LINE} + 2 )) n i k name cw gw off ck gap need from cur limit empty=1 rown=0 row="" ranges="" end0=-1 dn lead
-    local rows=() rranges=() taken=""
-    mon_projects_ci; n=${#MPC[@]}
-    if [ "$n" -eq 0 ] || section_compact "$kind"; then dash_caption "$text" "$kind"; return; fi
-    cfg_var off "$(mon_off_key "$kind")" ""; dw_set gw "☑"
-    cur=$(( 6 + ${#text} )); limit=$(( W - 5 ))
-    for (( i = 0; i < n; i++ )); do
-        mon_abbr_set name "${MPC[$i]}" "$taken"; taken="$taken $name"; dw_set cw "$name"; cw=$(( gw + 1 + cw ))
-        if mon_list_in "$off" "${MPC[$i]//,/ }"; then ck="${D}☐ ${name}${X}"; else ck="${GREEN}☑${X} ${L}${name}${X}"; fi
-        gap=""; need=$cw; [ "$empty" = 0 ] && { gap="  "; need=$(( cw + 2 )); }
-        if [ $(( cur + need )) -gt "$limit" ] && { [ "$empty" = 0 ] || [ "$rown" = 0 ]; }; then   # does not fit: this row ends here, the next one starts indented
-            [ "$rown" = 0 ] && end0=$cur
-            rows[$rown]=$row; rranges[$rown]=$ranges; rown=$(( rown + 1 ))
-            row=""; ranges=""; cur=4; limit=$(( W - 2 )); empty=1; gap=""; need=$cw
-            for (( k = 0; k < i; k++ )); do ranges="$ranges!0!0"; done            # (the checkboxes before keep their numbers)
-        fi
-        from=$(( cur + ${#gap} + 1 )); row="$row$gap$ck"; cur=$(( cur + need )); empty=0; ranges="$ranges!$from!$(( from + cw - 1 ))"
-    done
-    rows[$rown]=$row; rranges[$rown]=$ranges; [ "$rown" = 0 ] && end0=$cur
-    lead=""; [ -n "${rows[0]}" ] && lead=" ${rows[0]}"
-    dn=$(( W - end0 - 3 )); [ "$dn" -lt 1 ] && dn=1
-    printf '\035cap:%s%s\035  %s┈┈%s %s%s%s%s %s%s%s %s↕%s\n' "$kind" "${rranges[0]}" "$MUTED" "$X" "$D" "$text" "$X" "$lead" "$MUTED" "${DASH_LINE:0:$dn}" "$X" "$D" "$X"
-    for (( i = 1; i <= rown; i++ )); do
-        [ -n "${rows[$i]}" ] && printf '\035pf:%s%s\035    %s\n' "$kind" "${rranges[$i]}" "${rows[$i]}"
-    done
-    return 0
 }
 dash_caption() {  # dash_caption <text> [done|deploys|tests|agents]: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests, Agents); with a section the row has a ↕ at the
     # right end: on done, deploys and tests a click anywhere on the row switches the section to counts only and back (ref cap:<section>); on agents only the
@@ -4775,8 +4753,8 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     [ -s "$SHARED_DIR/$kind.list" ] || return 0
     [ -n "${NOW:-}" ] || NOW=$(date +%s)
     local lst; lst=$(mon_list_shown "$kind")
-    mon_caption "$kind" "$cap"
-    [ -s "$lst" ] || return 0                                  # (every project of it is switched off: only the caption with its checkboxes)
+    dash_caption "$cap" "$kind"
+    [ -s "$lst" ] || return 0                                  # (every project of it is switched off in the settings: only the caption)
     if section_compact "$kind"; then                            # counts only: what runs now, and how many of the last 10 failed
         local run=0 bad=0 fixed=0 seen=0 okk=$'\n'
         while IFS=$US read -r t pj lb st _; do               # (newest first: a failure is resolved when a newer run of the same project and name went through)
@@ -5913,7 +5891,7 @@ bhote_main() {
                 TOPIC) [ "$view" = main ] && { case "$CLICK_T" in pf:*) ;; cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; if topic_is_card "$CLICK_T"; then topic_jump click || { view=menu; MENU_IDX=0; }; else view=menu; MENU_IDX=0; fi ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
                 CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*|pf:*) ;; *) SEL_ID=$CLICK_T; view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # the right button: the topic's page
                 AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ↕ on the divider: counts only, and back
-                ACT) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) mon_chip_toggle "${CLICK_T#*:}" "${CLICK_N:-1}" ;; *) SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}" ;; esac; redraw=1; } ;;   # a click on the button of a review card
+                ACT) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) ;; *) SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}" ;; esac; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
                 OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*|pf:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;

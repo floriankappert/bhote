@@ -342,7 +342,7 @@ FLASH_MSG=""; PATH=$T/hb:$PATH KEYS_OS_LOCAL=Darwin HERDR_CONFIG_OWN=$T/herdr.to
 rm -f "$T/osa.out"; FLASH_MSG=""; PATH=$T/hb:$PATH KEYS_OS_LOCAL=Linux HERDR_CONFIG_OWN=$T/herdr.toml BHOTE_OSASCRIPT=$T/osa agent_jump Box w2:p2
 [ -n "$FLASH_MSG" ] && [ ! -e "$T/osa.out" ] && ok "jump: elsewhere nothing typed, the note says how to get there" || bad "linux jump: '$FLASH_MSG'"
 # the panel clicked in runs on another machine than the window (a Mac attached to this herdr): it asks through bhote.jump/<node>
-for (( i = 0; i < 50; i++ )); do v=$("$REAL_KHARKA" --socket "$T/b.sock" get bhote.jump/a 2>/dev/null); [ -n "$v" ] && break; sleep 0.1; done
+for (( i = 0; i < 50; i++ )); do v=$("$REAL_KHARKA" --socket "$T/b.sock" get bhote.jump/a 2>/dev/null); case "$v" in *'"w2:p2"'*) break ;; esac; sleep 0.1; done   # (the one from the jump on w1:p1 above may still be there: wait for this one)
 printf '%s' "$v" | jq -e '.machine == "Box" and .pane == "w2:p2" and .host == "a" and (.at | type == "number")' >/dev/null \
     && ok "jump: elsewhere the click asks the other machines (bhote.jump/<node>: the agent, this herdr's host)" || bad "bhote.jump/a: $v"
 printf '#!/bin/sh\ncase "$2" in *"front window"*) cat "%s/title" ;; *) printf "%%s\\n" "$2" > "%s/osa.out" ;; esac\n' "$T" "$T" > "$T/osa"

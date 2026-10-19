@@ -58,7 +58,7 @@ pub fn init_locale() { unsafe { setlocale(6, b"\0".as_ptr() as *const _); } }   
 pub fn coll(a: &str, b: &str) -> std::cmp::Ordering {
     match (std::ffi::CString::new(a), std::ffi::CString::new(b)) { (Ok(x), Ok(y)) => unsafe { strcoll(x.as_ptr(), y.as_ptr()) }.cmp(&0), _ => a.cmp(b) }
 }
-pub struct Project { pub id: String, pub name: String, pub ci: bool }
+pub struct Project { pub id: String, pub name: String }
 /// projects_load (the names, by name) with whether the record has a CI (mon_projects_ci)
 pub fn projects(c: &Ctx) -> Vec<Project> {
     let mut v = Vec::new();
@@ -67,9 +67,9 @@ pub fn projects(c: &Ctx) -> Vec<Project> {
     files.sort();
     for p in files {
         let txt = crate::proc::read_cap(&p).unwrap_or_default();
-        let (mut name, mut del, mut kd, mut ci) = (String::new(), "0".to_string(), String::new(), None::<String>);
-        for l in txt.lines() { if let Some(i) = l.find('=') { let (k, val) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = val.to_string(), "deleted" => del = val.to_string(), "kind" => kd = val.to_string(), "ci" if ci.is_none() => ci = Some(val.chars().filter(|c| !c.is_control()).collect()), _ => {} } } }
-        if kd == "project" && del != "1" && !name.is_empty() { v.push(Project { id: p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), name: name.chars().filter(|c| !c.is_control()).collect(), ci: ci.map_or(false, |x| !x.is_empty()) }); }
+        let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
+        for l in txt.lines() { if let Some(i) = l.find('=') { let (k, val) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = val.to_string(), "deleted" => del = val.to_string(), "kind" => kd = val.to_string(), _ => {} } } }
+        if kd == "project" && del != "1" && !name.is_empty() { v.push(Project { id: p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(), name: name.chars().filter(|c| !c.is_control()).collect() }); }
     }
     v.sort_by(|a, b| coll(&a.name, &b.name));
     v
@@ -126,41 +126,6 @@ fn dash_caption(c: &Ctx, text: &str, section: &str, hover_btn: bool) -> String {
 
 fn compact(c: &Ctx, kind: &str) -> bool { c.cfg(&format!("{}_COMPACT", uc(kind)), "off") == "on" }
 
-fn mon_caption(c: &Ctx, kind: &str, text: &str, ps: &[Project]) -> String {
-    let w = c.rule_len() + 2;
-    let mpc: Vec<&Project> = ps.iter().filter(|p| p.ci).collect();
-    let n = mpc.len();
-    if n == 0 || compact(c, kind) { return dash_caption(c, text, kind, false); }
-    let off = c.cfg(if kind == "deploys" { "DEPLOY_PROJECTS_OFF" } else { "TEST_PROJECTS_OFF" }, "");
-    let gw = dw("☑");
-    let (mut cur, mut limit) = (6 + text.chars().count() as i64, w - 5);
-    let (mut rows, mut rranges): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
-    let (mut row, mut ranges) = (String::new(), String::new());
-    let (mut empty, mut taken, mut end0) = (true, String::new(), -1i64);
-    for (i, p) in mpc.iter().enumerate() {
-        let name = abbr(&p.name, &taken); taken.push(' '); taken.push_str(&name);
-        let cw = gw + 1 + dw(&name);
-        let ck = if list_in(&off, &p.name.replace(',', " ")) { format!("{}☐ {}{}", c.c.g("D"), name, c.c.g("X")) } else { format!("{}☑{} {}{}{}", c.c.g("GREEN"), c.c.g("X"), c.c.g("L"), name, c.c.g("X")) };
-        let (mut gap, mut need) = (String::new(), cw);
-        if !empty { gap = "  ".into(); need = cw + 2; }
-        if cur + need > limit && (!empty || rows.is_empty()) {
-            if rows.is_empty() { end0 = cur; }
-            rows.push(std::mem::take(&mut row)); rranges.push(std::mem::take(&mut ranges));
-            cur = 4; limit = w - 2; empty = true; gap.clear(); need = cw;
-            for _ in 0..i { ranges.push_str("!0!0"); }
-        }
-        let from = cur + gap.chars().count() as i64 + 1; row.push_str(&gap); row.push_str(&ck); cur += need; empty = false; ranges.push_str(&format!("!{}!{}", from, from + cw - 1));
-    }
-    let rown = rows.len();
-    rows.push(row); rranges.push(ranges);
-    if rown == 0 { end0 = cur; }
-    let lead = if rows[0].is_empty() { String::new() } else { format!(" {}", rows[0]) };
-    let dn = (w - end0 - 3).max(1);
-    let mut out = format!("{}cap:{}{}{}  {}┈┈{} {}{}{}{} {}{}{} {}↕{}\n", RS_REF, kind, rranges[0], RS_REF, c.c.g("MUTED"), c.c.g("X"), c.c.g("D"), text, c.c.g("X"), lead, c.c.g("MUTED"), chars_to(&c.dash(c.rule_len()), dn as usize), c.c.g("X"), c.c.g("D"), c.c.g("X"));
-    for i in 1..=rown { if !rows[i].is_empty() { out.push_str(&format!("{}pf:{}{}{}    {}\n", RS_REF, kind, rranges[i], RS_REF, rows[i])); } }
-    out
-}
-
 fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
     let cap = if kind == "deploys" { "Deployments" } else { "Tests" };
     let list = c.shared.join(format!("{}.list", kind));
@@ -168,7 +133,7 @@ fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
     let off = c.cfg(if kind == "deploys" { "DEPLOY_PROJECTS_OFF" } else { "TEST_PROJECTS_OFF" }, "");
     let all = crate::proc::read_cap(&list).unwrap_or_default();
     let lines: Vec<&str> = all.lines().filter(|l| { if off.is_empty() { return true; } let pj = l.split(US).nth(1).unwrap_or(""); !hidden(&off, pj, ps) }).collect();
-    let mut out = mon_caption(c, kind, cap, ps);
+    let mut out = dash_caption(c, cap, kind, false);
     if lines.is_empty() { return out; }
     let g = |k: &str| c.c.g(k).to_string();
     if compact(c, kind) {

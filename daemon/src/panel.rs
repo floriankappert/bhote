@@ -311,7 +311,7 @@ impl Panel {
                 if let Some(r) = rng {
                     let nums: Vec<i64> = r.split('!').filter_map(|v| v.parse().ok()).collect();
                     for (n, ch) in nums.chunks(2).enumerate() { if ch.len() == 2 && x >= ch[0] && x <= ch[1] {
-                        if id.starts_with("cap:") || id.starts_with("pf:") { self.chip_toggle(id.split_once(':').map_or("", |p| p.1), n as i64 + 1); } else { self.sel_id = id.clone(); self.act(&["review", &id, &(n + 1).to_string()], "review", false); }
+                        if !id.starts_with("cap:") { self.sel_id = id.clone(); self.act(&["review", &id, &(n + 1).to_string()], "review", false); }
                         self.redraw = true; return;
                     } }
                 }
@@ -339,18 +339,6 @@ impl Panel {
     }
     fn is_card(&self, id: &str) -> bool { self.with_cards(|c| c.ts().iter().find(|t| t.id == id).map_or(false, |t| matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1"))) }
     fn section_toggle(&mut self, kind: &str) { let k = format!("{}_COMPACT", kind.to_uppercase()); let on = self.c(&k, "off") == "on"; self.cfg_set(&k, if on { "off" } else { "on" }); }
-    /// mon_chip_toggle: the n-th project's checkbox in that monitor's caption
-    fn chip_toggle(&mut self, kind: &str, n: i64) {
-        let ctx = Ctx { cols: self.cols as i64, now: 0, shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(HashMap::new()) };
-        let names: Vec<String> = ui::projects(&ctx).into_iter().filter(|p| p.ci).map(|p| p.name).collect();
-        let Some(name) = names.get((n - 1).max(0) as usize).map(|s| s.replace(',', " ")) else { return };
-        let key = if kind == "deploys" { "DEPLOY_PROJECTS_OFF" } else { "TEST_PROJECTS_OFF" };
-        let off = self.c(key, ""); let mut found = false; let mut new: Vec<String> = Vec::new();
-        for e in off.split(',') { if e.is_empty() { continue; } if e == name { found = true; } else { new.push(e.to_string()); } }
-        if !found { new.push(name); }
-        self.cfg_set(key, &new.join(","));
-    }
-
     // ── keys ──────────────────────────────────────────────────────────────────────────────────────────────────
     fn key(&mut self, term: &mut Term, c: char) -> bool {
         let mut live = Live { env: &self.env(), notify_on: false, n: 0 };
