@@ -31,6 +31,37 @@ wide, with a small sheepdog that guards the herd.
 - **Omarchy bar widget**, themes (terminal colours, Catppuccin or Dracula, each role overridable), a **setup wizard** and the Claude skill `/bhote-install`.
 - A **CLI** (every command with `--json`) to create and close topics from scripts and agents.
 
+## The Rust daemon (optional)
+
+bhote is still one bash script and runs without anything else. Next to it there is a small Rust program, `bhoted` (`daemon/`), that
+takes over what costs time in bash: agents of all machines, the topic store, the monitors, the follow-ups, building the frame, and, if you
+switch it on (`BHOTED_PANEL=on`), the panel itself (keys, mouse, drawing). One daemon runs per machine; the panels and the collector start it. Without the binary, or with
+`BHOTED=off`, everything runs in bash as before. Measured on a busy machine: load 10.6 down to 0.8, a frame 90 ms down to 3 ms, an idle panel 0.2 % of a core.
+
+```mermaid
+flowchart LR
+    subgraph machine[One machine]
+        herdr[herdr<br/>panes, agents] --> d
+        gh[GitHub Actions<br/>CircleCI] --> d
+        d{{bhoted daemon<br/>agents · monitors · follow-ups · index}}
+        d <-->|files, written atomically| files[(topics/*.topic<br/>agent and monitor lists<br/>topic index)]
+        files --> p1[bhoted panel<br/>tab 1]
+        files --> p2[bhoted panel<br/>tab 2]
+        p1 -.->|settings, topic page, wizard| sh[bhote script<br/>bash views, CLI, hooks]
+        sh <--> files
+    end
+    d <-->|merge, newer wins| k[(kharka<br/>every machine)]
+    d -->|agents of other machines| k
+```
+
+- **Files are the interface.** A bash script cannot talk to a socket without starting a process, and a process per read is what made bhote slow.
+  The daemon writes snapshots (topic index, agent and monitor lists) that panels read; the CLI and the bash views keep working on the same plain `*.topic` files.
+- **The panel can be Rust, the rest stays reachable.** With `BHOTED_PANEL=on` `bhoted panel` draws the main view and handles keys and mouse; settings, the setup wizard and the topic page
+  run as the script's own views on the same terminal and hand back when done.
+- **It builds on every machine** (Linux and macOS, needs a Rust toolchain: `cd daemon && cargo build --release`) and is checked against the bash functions byte for byte
+  (`tests/frame.sh`, `follow.sh`, `sync.sh`, `panel.py`, a fuzz test). Switches: `BHOTED`, `BHOTED_FRAME`, `BHOTED_FOLLOW`, `BHOTED_PANEL` ([configuration](docs/configuration.md)).
+  The plan, the steps and the measurements are in **[docs/rust-rewrite.md](docs/rust-rewrite.md)**.
+
 ## Requirements
 
 - macOS or Linux, bash 3.2 or newer (the bash that ships with macOS is enough)
