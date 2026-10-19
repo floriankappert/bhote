@@ -289,34 +289,29 @@ case "$blk" in *"Web · unit"*"12 runs"*) case "$blk" in *"Web · unit ("*) bad 
 # the branch of a local run: from the folder of an agent that works in that worktree
 wt=$T/wtree/ims-wt9; mkdir -p "$wt"; git -C "$wt" init -q . && git -C "$wt" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one && git -C "$wt" checkout -q -b feat/live
 printf '%s\n' "w1:p1${US}$wt" > "$T/agent.cwd"; ( AGENT_CWD=$T/agent.cwd; tree_branch_set b ims-wt9; [ "$b" = feat/live ] && tree_branch_set b nothere && [ -z "$b" ] ) && ok "tests: the branch of a worktree comes from the folder of the agent in it" || bad "tree_branch_set"
-# a checkbox for each project with a CI in the caption (☑ shown, ☐ off): a click on it switches the project, the entries of a switched-off project
-# (and the local runs of its worktrees: IMS-wt1 is IMS) are not shown; what does not fit goes to a row below; the ref carries the columns
+# the project filter lives in the settings (one switch for each project with a CI); the caption has no checkboxes. The entries of a switched-off
+# project (and the local runs of its worktrees: Web-wt1 is Web) are not shown
 t1=$(date +%s); { printf '%s\n' "$(( t1 - 1 ))${US}Web${US}Backend${US}ok${US}${US}${US}fix/a${US}ua" "$(( t1 - 2 ))${US}Rails${US}Production${US}ok${US}${US}${US}fix/b${US}ub" \
     "$(( t1 - 3 ))${US}Web-wt1${US}server${US}ok${US}${US}${US}x${US}uc"; } > "$SHARED_DIR/deploys.list"
 nc() { LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
 blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 )
-cap=$(printf '%s\n' "$blk" | head -1)
-case "$cap" in *"$(printf '\035cap:deploys!')"*) ok "checkboxes: the caption ref carries their columns" ;; *) bad "caption ranges: $cap" ;; esac
-plain=$(printf '%s\n' "$cap" | tr -d '\035' | sed 's/^cap:deploys![0-9!]*//' | nc); case "$plain" in *"☑ IMS"*"☑ RAI"*"☑ WEB"*"↕"*) ok "checkboxes: one for each project with a CI, all shown, on the caption row" ;; *) bad "chips: $plain" ;; esac
-case "$plain" in *Plain*) bad "a project without CI has a checkbox: $plain" ;; *) ok "checkboxes: none for a project without CI" ;; esac
-# the columns in the ref are the columns of the checkbox on the screen (1 based): the first range starts on its ☑
-rng=$(printf '%s' "$cap" | sed 's/^\x1d[^!]*!\([0-9]*\)!\([0-9]*\).*/\1 \2/' | head -c 20); set -- $rng
-ch=$(printf '%s' "$plain" | python3 -c 'import sys; s=sys.stdin.read(); i=int(sys.argv[1]); print(s[i-1:i+1])' "$1" 2>/dev/null)
-case "$ch" in "☑ ") ok "checkboxes: the first range starts on its box" ;; *) bad "range $1-$2 is [$ch] in: $plain" ;; esac
-mon_chip_toggle deploys 3                                   # (the projects by name: IMS, Rails, Web)
-[ "$(cfg_get DEPLOY_PROJECTS_OFF)" = Web ] && ok "checkboxes: a click switches that project off (setting DEPLOY_PROJECTS_OFF)" || bad "off list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
+cap=$(printf '%s\n' "$blk" | head -1); plain=$(printf '%s\n' "$cap" | tr -d '\035' | nc)
+case "$plain" in *"☑"*|*"☐"*) bad "the caption still has checkboxes: $plain" ;; *"Deployments"*"↕"*) ok "caption: no project checkboxes, the ↕ stays" ;; *) bad "caption: $plain" ;; esac
+case "$cap" in "$(printf '\035cap:deploys\035')"*) ok "caption: a click still toggles the small view (ref cap:deploys)" ;; *) bad "caption ref: $cap" ;; esac
+printf '%s\n' "$blk" | grep -q "$(printf '\035pf:')" && bad "rows of checkboxes below the caption" || ok "caption: no row of checkboxes below"
+SET_PAGE=connections; SET_ROWS=(); settings_proj_rows deploys Deployments
+[ "${#SET_ROWS[@]}" = 3 ] && [ "${SET_ROWS[0]}" = "mproj|deploys${US}IMS|Deployments: IMS" ] && ok "settings: a switch for each project with a CI (IMS, Rails, Web)" || bad "settings rows: ${SET_ROWS[*]}"
+mon_proj_toggle deploys Web
+[ "$(cfg_get DEPLOY_PROJECTS_OFF)" = Web ] && ok "settings: a switch turns that project off (DEPLOY_PROJECTS_OFF)" || bad "off list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
 blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 | nc )
-case "$blk" in *"☐ WEB"*"☑"*|*"☑"*"☐ WEB"*) ok "checkboxes: the box of a project that is off is empty" ;; *) bad "off box: $blk" ;; esac
-case "$blk" in *"Web · Backend"*|*"Web-wt1"*) bad "entries of a switched-off project still shown: $blk" ;; *"Rails · Production"*) ok "checkboxes: its entries (and its worktrees') are gone, the others stay" ;; *) bad "off entries: $blk" ;; esac
-mon_chip_toggle deploys 1; mon_chip_toggle deploys 3
-[ "$(cfg_get DEPLOY_PROJECTS_OFF)" = IMS ] && ok "checkboxes: the second click switches it on again, another project off" || bad "toggle list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
-mon_chip_toggle deploys 1; [ -z "$(cfg_get DEPLOY_PROJECTS_OFF)" ] && ok "checkboxes: all switched on: an empty list" || bad "empty list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
-mon_chip_toggle deploys 1; mon_chip_toggle deploys 2; mon_chip_toggle deploys 3
+case "$blk" in *"Web · Backend"*|*"Web-wt1"*) bad "entries of a switched-off project still shown: $blk" ;; *"Rails · Production"*) ok "filter: its entries (and its worktrees') are gone, the others stay" ;; *) bad "off entries: $blk" ;; esac
+mon_proj_toggle deploys IMS; mon_proj_toggle deploys Web
+[ "$(cfg_get DEPLOY_PROJECTS_OFF)" = IMS ] && ok "settings: the second switch turns it on again, another project off" || bad "toggle list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
+mon_proj_toggle deploys IMS; [ -z "$(cfg_get DEPLOY_PROJECTS_OFF)" ] && ok "settings: all switched on: an empty list" || bad "empty list: [$(cfg_get DEPLOY_PROJECTS_OFF)]"
+mon_proj_toggle deploys IMS; mon_proj_toggle deploys Rails; mon_proj_toggle deploys Web
 blk=$( COLS=70; RULE_LINE=$(hline 65); DASH_LINE=$(dline 65); monitor_block deploys 4 | nc )
-[ "$(printf '%s\n' "$blk" | grep -c "·")" = 0 ] && printf '%s\n' "$blk" | head -1 | grep -q "Deployments" && ok "checkboxes: with every project off only the caption stays (to switch them on again)" || bad "all off: $blk"
-mon_chip_toggle deploys 1; mon_chip_toggle deploys 2; mon_chip_toggle deploys 3
-blk=$( COLS=36; RULE_LINE=$(hline 31); DASH_LINE=$(dline 31); monitor_block deploys 4 )
-printf '%s\n' "$blk" | grep -q "$(printf '\035pf:deploys!')" && ok "checkboxes: what does not fit goes to a row below (ref pf:, the box numbers go on)" || bad "no second row: $(printf '%s\n' "$blk" | nc)"
+[ "$(printf '%s\n' "$blk" | grep -c "·")" = 0 ] && printf '%s\n' "$blk" | head -1 | grep -q "Deployments" && ok "filter: with every project off only the caption stays" || bad "all off: $blk"
+mon_proj_toggle deploys IMS; mon_proj_toggle deploys Rails; mon_proj_toggle deploys Web
 # a failure that a newer run of the same project and name made good is "resolved", in the small view and in the list
 { printf '%s\n' "$(( t0 - 1 ))${US}Web${US}Backend${US}ok${US}${US}${US}fix/n1${US}u1" "$(( t0 - 2 ))${US}Web${US}Backend${US}failed${US}${US}${US}fix/n2${US}u2" \
     "$(( t0 - 3 ))${US}Web${US}Frontend${US}failed${US}${US}${US}fix/n3${US}u3" "$(( t0 - 4 ))${US}Web${US}Backend${US}running${US}1${US}4${US}fix/n4${US}u4"; } > "$SHARED_DIR/deploys.list"
@@ -360,8 +355,8 @@ cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
   lab() ( BHOTE_SOURCE_ONLY=1; . "$vd/bhote"; version_label_set; printf '%s' "$VERSION_LABEL" )
   [ "$(lab)" = "$VERSION" ] || exit 1
   echo '# a local change' >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
-  [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = "0.9.1.3 Preview" ] || exit 2
-  exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.1.3 Preview)" || bad "version label: step $?"
+  [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = "0.9.2 Preview" ] || exit 2
+  exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.2 Preview)" || bad "version label: step $?"
 # the monitor bar is built from whole cells, also where the shell counts bytes (bash 3.2 / macOS without a UTF-8 locale cut ■ in half: ��)
 ( export LC_ALL=C; mon_bar_set b 7 10 5; [ "$MB_ON" = "■■■■" ] && [ "$MB_OFF" = "■" ] && [ "$b" = "■■■■■" ] ) \
     && ok "monitor bar: filled and empty cells are whole characters (also in the C locale)" || bad "monitor bar cells: on=$MB_ON off=$MB_OFF"

@@ -43,7 +43,7 @@ class Panel:
     def __init__(self, cols=70, rows=40, cfg="", topics=None):
         self.T = tempfile.mkdtemp(); T = self.T
         for d in ("data/topics", "shared", "home"): os.makedirs(f"{T}/{d}")
-        open(f"{T}/config", "w").write("BHOTED_PANEL=on\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
+        open(f"{T}/config", "w").write("BHOTED_PANEL=on\nCARD_GROUPING=status\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
         self.now = int(time.time())
         for t in (topics or DEFAULT):
             self.topic(**t)
@@ -159,12 +159,15 @@ p.send("x")
 st = p.get("1002-1", "status")
 ok("click on a line, x: the topic is done") if st == "done" else bad(f"x: status of 1002-1 is {st}")
 
-# 3) a button of a review card (no agent: the topic goes on now)
-y = p.fresh_row("[1] Ok"); line = p.screen()[y - 1]; x = line.index("[1] Ok") + 2
-p.click(x, y)
+# 3) the card of a review topic has no question under it any more: the key 1 (the first answer) goes on with the topic
+y = p.fresh_row("First review")
+sc = "\n".join(p.screen())
+bad("the review card still shows its question or buttons") if "Check it" in sc or "[1] Ok" in sc else ok("a review card has no question or buttons under it")
+p.click(10, y)
+p.send("1", 1.0)
 time.sleep(1.0)
 st = p.get("1000-1", "status")
-ok("click on a review button: the topic goes on") if st == "now" else bad(f"review button: status is {st}")
+ok("click on a review card, key 1: the topic goes on") if st == "now" else bad(f"review key 1: status is {st}")
 
 # 4) a line to type into: n, then a title
 p.send("n", 0.5)
@@ -191,6 +194,14 @@ os.write(p.fd, (f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m" * 2).encode())   # a double cl
 menu = p.expect("ACTIONS", 10)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("double click: the topic's menu (the script's view), Esc: back on the list") if (menu and back) else bad(f"menu round trip (menu={menu}, back={back})")
+
+# 7b) a review card too: two clicks a quarter of a second apart (the first one must not have taken the focus away yet) open its page
+p.out = b""; p.expect("Agents", 2)
+y = p.fresh_row("First review")
+os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode()); time.sleep(0.25); os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode())
+menu = p.expect("ACTIONS", 10)
+p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
+ok("double click on a review card: its page") if (menu and back) else bad(f"review double click (menu={menu}, back={back})")
 
 # 8) settings (the script's view) and back
 p.out = b""; os.write(p.fd, b","); sets = p.expect("ettings", 8) or p.expect("SETTINGS", 1)

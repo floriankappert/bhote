@@ -31,7 +31,7 @@
 <rect x="190.0" y="159" width="94.6" height="19" fill="#313244"/>
 <rect x="284.6" y="159" width="111.8" height="19" fill="#313244"/>
 <text x="35.2" y="173" xml:space="preserve" fill="#bac2de">∟ </text>
-<text x="52.4" y="173" xml:space="preserve" fill="#89b4fa">ready for review</text>
+<text x="52.4" y="173" xml:space="preserve" fill="#89b4fa">review</text>
 <text x="190.0" y="173" xml:space="preserve" fill="#bac2de"> · just now</text>
 <text x="35.2" y="230" xml:space="preserve" fill="#d97757">NOW</text>
 <text x="35.2" y="249" xml:space="preserve" fill="#a6adc8" font-weight="bold">Checkout: retry failed payments</text>

@@ -24,7 +24,7 @@ fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.8.0}
-LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.1.3 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.1.4 for the next build
+LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.2 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.2.1 for the next build
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=4
@@ -88,7 +88,7 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
-PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40)
+PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
@@ -122,8 +122,8 @@ TEST_STATUS_DIR|~/.cache/bhote/test-status|text|Folder with live test status fil
 HERDR_KEYS_MACHINE|any|text|The machine whose herdr you type into (its keyboard): the keys shown in the panel (jump key, prefix) are read from the herdr config.toml of that machine. any: this machine
 UPDATE_CHECK|on|bool|Look on GitHub every few hours for a newer bhote and say so (settings, head of the panel) with the command that updates it
 AUTO_REVIEW|on|bool|An agent that has no topic and waits for an answer or ends its turn with a question gets a review topic of its own (the question is its description); it goes when the agent works again
-DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monitor (the checkboxes in its caption): their entries are not shown
-TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor (the checkboxes in its caption): their entries and the local runs of their worktrees are not shown
+DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monitor: their entries are not shown
+TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor: their entries and the local runs of their worktrees are not shown
 KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
 CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of the agent: the band above the prompt and the pane (/topic pane). Off: it draws nothing and asks bhote for nothing
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
@@ -137,6 +137,7 @@ FIND_KEY||text|The herdr key that opens the search popup: find a topic or an age
 JUMP_KEY||text|The herdr key that jumps between the agent and this panel (e.g. prefix+t; off removes it); written into the herdr config.toml
 AGENT_ROWS||int:1:200|Height of the agent area in rows (empty: automatic)
 TOPICS_SCOPE|all|enum:all:project|Which topics the panel lists: all, or those of its project (the project of the agent in its herdr tab; topics without a project are always there)
+CARD_GROUPING|ungrouped|enum:ungrouped:status|How the agent cards are listed: ungrouped (one list, in the order of the agents in herdr, no headings) or status (NOW, TESTING, DEPLOYING and so on, with headings)
 DONE_MAX|4|int:0:999|The last done topics shown above the agents (0: none)
 ARCHIVE_DAYS|7|int:0:3650|Done, next, waiting and parked topics untouched for this many days are archived: gone from the panel, still in the search (0: never)
 HOST_LABEL||text|How this machine is called in agent lists (default: Mac on macOS, else the host name)
@@ -298,6 +299,7 @@ kharka_follow_read() {  # kharka_follow_read <fifo> <watch pid> <collector pid> 
         if IFS= read -r -t 5 line; then
             case "$line" in                                    # (a line starts with the key: {"entry":{"key":"…)
                 *'{"key":"bhote.jump/'*) jump_request "$line" & ;;
+                *'{"key":"bhote.width/'*) width_request "$line" & ;;
                 *'{"key":"bhote.'*) [ "${4:-bhote.}" = herdr/ ] || { : > "$STORE_DIRTY"; poke; } ;;
                 *'{"key":"herdr/'*) [ "${4:-bhote.}" = bhote. ] || { : > "$SHARED_DIR/remote.due"; poke; } ;;
             esac
@@ -536,7 +538,7 @@ topics_plan() {  # what the panel lists, for the frame and the keys: PLAN_VIS[i]
         in_scope "$i" || continue
         case "$st" in
             review|now|testing|finished) PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue ;;
-            waiting) [ "${T_DEP[$i]:-}" = 1 ] && { PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue; } ;;   # waiting for a deployment: a card of its own group
+            waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && { PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue; } ;;   # waiting for a deployment: a card of its own group
         esac
         if topic_archived "$i"; then PLAN_ARCH=$(( PLAN_ARCH + 1 )); continue; fi
         if [ "$st" != "$g" ]; then                                # a group ends: an open one gets its "show less"
@@ -562,7 +564,19 @@ sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the
     local i; SEL_IDX=0
     case "${SEL_ID:-}" in more:*) SEL_IDX=-1; return ;; esac
     for (( i = 0; i < T_N; i++ )); do [ "${T_ID[$i]}" = "${SEL_ID:-}" ] && { SEL_IDX=$i; return; }; done
+    sel_active_idx && return                                   # nothing chosen: the active card, the one of the agent in this panel's tab
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; return; }; done
+}
+sel_active_idx() {  # sel_active_idx: SEL_IDX = the first card of an agent of this machine that sits in this panel's tab (the agent you are working with); 1: none
+    local tab=${HERDR_TAB_ID:-} panes=" " m p t rest i; [ -n "$tab" ] && [ -r "$AGENT_META_L" ] || return 1
+    while IFS=$US read -r m p t rest; do [ "$t" = "$tab" ] && panes="$panes$p "; done < "$AGENT_META_L"
+    [ "$panes" != " " ] || return 1
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in review|now|testing|finished) ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] || continue ;; *) continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ] && in_scope "$i" || continue
+        case "$panes" in *" ${T_AP[$i]} "*) SEL_IDX=$i; return 0 ;; esac
+    done
+    return 1
 }
 topics_ordered() { local i; topics_load; for (( i = 0; i < T_N; i++ )); do printf '%s\n' "${T_FILE[$i]}"; done; }
 sel_file() {   # (the arrays of the last frame; ui_load reloads after every change); a "+N more" row is no topic
@@ -1149,7 +1163,7 @@ ui_load() {
         [ -r "$f" ] && while IFS= read -r line; do [ -n "$line" ] && { AG_LINES[$AG_N]=$line; AG_N=$(( AG_N + 1 )); }; done < "$f"
     done
     AGENTS=$AG_N
-    topics_load
+    topics_load; deploy_cards_prune
     projects_load; current_project; cfg_var U_SCOPE TOPICS_SCOPE all
     if [ "$U_SCOPE" = project ] && [ -n "${CUR_PROJ:-}" ]; then topics_projects; else T_EPJ=(); fi   # (each topic's project: only the project scope asks for it, and it takes 15 ms)
 }
@@ -1433,7 +1447,8 @@ agent_cards() {  # a working agent of this machine without a topic gets a card o
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
         [ "${T_AN[$i]}" = 1 ] && continue
-        case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;; esac
+        case "${T_STATUS[$i]}" in now|testing|finished|review|next) owned="$owned${T_AP[$i]}"$'\n' ;;
+            waiting) [ "${T_DEP[$i]:-}" = 1 ] && owned="$owned${T_AP[$i]}"$'\n' ;; esac   # (waiting for a deployment: it is a card, the agent has one: no second card that deploy_sync would take again)
     done
     for (( i = 0; i < T_N; i++ )); do
         [ "${T_AM[$i]}" = "$HOST" ] && [ -n "${T_AP[$i]}" ] || continue
@@ -1710,49 +1725,22 @@ wrap_lines() {  # wrap_lines <array var> <width> <max lines> <text>: the text in
     [ "$_more" = 1 ] && { clip_set _line "$_line $_word" "$_w"; [ "${_line: -1}" = "…" ] || _line="${_line:0:$(( ${#_line} - 1 ))}…"; }
     [ -n "$_line" ] && eval "${_v}[$_n]=\$_line"
 }
-# One entry: the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected one
-# gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can
-# find it for scrolling (and strips it). Done entries are one muted line. With TI_REF set every line starts with \035id\035
-# before that: bhote_view strips it too and notes the row, so that a click selects the topic (TOPIC_MAP).
+# One entry of the picker (no card): the title, the description below it, then the elbow line with the meta (who/what, how long ago). The selected
+# one gets the highlighted bar over all its lines (no pointer); its first line starts with an invisible \001 so that bhote_view can find it for
+# scrolling (and strips it). With TI_REF set every line starts with \035id\035 before that: bhote_view strips it too and notes the row, so that a click
+# selects the topic (TOPIC_MAP).
 topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> [compact 1] [branch]
     # The meta line "∟ who · state · time": who in blue, the state in its own colour, the time grey. The description is italic.
-    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n rm=""
+    local w=$(( ${COLS:-44} - 2 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 room n rm="" tw dw2 bl="  "
     [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
-    local tw dw2
     clip_set t "$5" $(( w - 3 )); clip_set d "$6" $(( w - 3 )); dw_set tw "$t"; dw_set dw2 "$d"
-    local bl="  " gap=${TI_FRAME:-0} bar=""        # TI_FRAME (the panel's list): every entry is a card, the selected one a lighter card
-    local hov=0
-    if [ "$gap" = 1 ]; then bg=$CARDBG; bar=${TI_BAR:-${2:-$D}}; [ -n "${TI_REF:-}" ] && [ "$TI_REF" = "${HOVER_ID:-}" ] && { bg=$CARDHOV; hov=1; }; fi   # (hovered: a step lighter)
-    if [ "$hov" = 1 ] && [ "$1" != 1 ]; then dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL; fi          # (and its small text readable on the lighter ground)
     if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
         bg=$SELBG; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac   # muted (done) titles: readable
-        [ "$gap" = 1 ] && bg=$CARDSEL
     fi
-    [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
-    [ "$gap" = 1 ] && bl="${bar}▌${X}${bg} "                 # the status colour as a bar on the left edge (review blue, now orange, waiting yellow)
-    if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▄; fi
-    local ag=0 trm="$rm"; [ -n "${TI_AGN:-}" ] && ag=1                  # an agent's card (now, testing): drawn like herdr's agent card, see below
-    local spk=n; [ "$bg" = "$CARDSEL" ] || [ "$bg" = "$SELBG" ] && spk=s; [ "$bg" = "$CARDHOV" ] && spk=h   # (the ground under a dancing star)
-    if [ "$ag" = 1 ]; then
-        # herdr's agent card: the state's icon, "machine · agent", and under it "∟ what it works on" (here: the topic). The state is the icon, so no meta line.
-        local am an aw mcol; machine_fg_set mcol
-        clip_set am "${TI_AGM:-}" 12; clip_set an "$TI_AGN" $(( w - 2 - 2 - ${#am} - 3 - 1 )); dw_set aw "$am · $an"
-        [ -n "$am" ] && am="$mcol$BOLD$am$X$bg$gc · " || aw=$(( aw - 3 ))
-        printf '%s%s%s%s%s%s %s%s%s%s%*s' "${TI_SPIN:+$'\034'$spk$'\034'}" "$trm" "$mk" "$bg" "$bl" "${TI_AGIC:-${gc}○}" "$am" "$BOLD$tc" "$an" "$X$bg" $(( w - 2 - 2 - aw )) ""
-        printf '%s\n' "$X"
-        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
-        printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
-        if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
-            clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"                  # (indented like the rows above: under the icon's text)
-            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
-        fi
-    else printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"; fi
-    if [ "$ag" = 1 ]; then                                      # an agent's card: everything under the task starts under its text (column 5)
-        [ -n "$d" ] && { clip_set d "$6" $(( w - 5 )); dw_set dw2 "$d"; printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 4 - dw2 )) "" "$X"; }
-    else [ -n "$d" ] && printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"; fi
-    if [ "$ag" != 1 ] || [ "${TI_AGMETA:-}" = 1 ]; then       # (an agent's card says its state with the icon; the meta line only for what the icon does not say)
-    [ -n "$who$st$tm" ] || { if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi; return 0; }
+    printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+    [ -n "$d" ] && printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"
+    [ -n "$who$st$tm" ] || { [ "${9:-}" != 1 ] && printf '\n'; return 0; }
     room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
     local ww sw; [ -n "$who" ] && clip_set who "$who" "$room"; dw_set ww "$who"; dw_set sw "$st"
     n=$(( ww + sw + ${#tm} + (ww > 0 && sw > 0 ? 3 : 0) + (${#tm} > 0 && ww + sw > 0 ? 3 : 0) ))
@@ -1761,93 +1749,118 @@ topic_item() {  # topic_item <selected 0|1> <state colour> <time> <title colour>
         if [ -n "$who" ]; then clip_set st "$st" $(( room - ww - 3 )); else clip_set st "$st" "$room"; fi
         dw_set sw "$st"; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) ))
     fi
-    if [ "$ag" = 1 ]; then printf '%s%s%s%s  ' "$rm" "$bg" "$bl" "$gc"; else printf '%s%s%s%s∟ ' "$rm" "$bg" "$bl" "$gc"; fi   # (an agent's card: no marker, the text under the task's)
+    printf '%s%s%s%s∟ ' "$rm" "$bg" "$bl" "$gc"
     [ -n "$who" ] && printf '%s%s' "$wc" "$who"
     [ -n "$who" ] && [ -n "$st" ] && printf '%s · ' "$gc"
     [ -n "$st" ] && printf '%s%s' "$mc" "$st"
     [ -n "$tm" ] && { [ -n "$who$st" ] && printf '%s · ' "$gc"; printf '%s%s' "$gc" "$tm"; }
     printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
-    fi
     if [ -n "${10:-}" ]; then                                  # the agent's git branch, a line of its own
-        local bt bw bi=""; [ "$ag" = 1 ] && bi="  "
-        clip_set bt "${10}" $(( w - 6 - ${#bi} )); dw_set bw "$bt"
-        printf '%s%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$bi" "$gc" "$bt" "$X$bg" $(( w - 4 - ${#bi} - bw )) "" "$X"
+        local bt bw
+        clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
+        printf '%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
     fi
-    if [ "$gap" = 1 ] && [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
-        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 8 )) pf pi bf="" be=""
+    [ "${9:-}" != 1 ] && printf '\n'
+}
+# A card of the panel (review, now, testing, deploying, finished), the same for all of them, three rows:
+#   with an agent:     <icon> <machine> · <agent>          <state · age>      a card without one:  <title>
+#                      ∟ <what it works on>                                                        ∟ <who> · <state> · <age>
+#                      ⎇ <branch>                                                                  ⎇ <branch>
+# plus what the agent does right now (working: one orange row under the task), the bars of a running deployment or test, and, when the card is
+# chosen, its description. No frame and no ground (only the chosen card and the one under the pointer have one): the status colour is a bar on the
+# left edge, the gap between two cards is a blank row (the loop prints it).
+# The selected card has the highlighted ground, its first row starts with an invisible \001 (bhote_view finds it for scrolling); with TI_REF set every
+# row starts with \035id\035 so that a click anywhere on the card selects it.
+ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <title> <description> <who> <state> <unused> [branch]
+    local w=$(( ${COLS:-44} - 2 )) cw=$(( ${COLS:-44} - 4 )) bg="" mk="" t d tc=$4 dc=$DESC mc=${2:-$D} gc=$D wc=$BLUE who=$7 st=$8 tm=$3 rm="" hov=0 bar=${TI_BAR:-${2:-$D}} bl room n tw dw2
+    [ -n "${TI_REF:-}" ] && rm=$'\035'"$TI_REF"$'\035'
+    [ -n "${TI_REF:-}" ] && [ "$TI_REF" = "${HOVER_ID:-}" ] && { bg=$CARDHOV; hov=1; }       # (hovered: a step lighter)
+    if [ "$hov" = 1 ] && [ "$1" != 1 ]; then dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL; fi   # (and its small text readable on the lighter ground)
+    if [ "$1" = 1 ]; then                                      # the selection: its own, brighter text colours (contrast on the bar)
+        bg=$CARDSEL; mk=$'\001'; dc=$DESCSEL; gc=$DSEL; [ "$mc" = "$D" ] && mc=$DSEL
+        case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac
+    fi
+    [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
+    [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && { tc=$D; gc=$MUTED; mc=$MUTED; }   # (an idle agent: all text dimmed, it is not what matters now)
+    bl="${bar}▌${X}${bg} "
+    if [ -n "${TI_AGN:-}" ]; then
+        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol; [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && mcol=$MUTED
+        clip_set am "${TI_AGM:-}" 12; dw_set amw "$am"; lead=2; [ -n "$am" ] && lead=$(( 2 + amw + 3 ))
+        [ -n "$tm" ] && { rtp=$tm; rtc="$gc$tm"; }                  # the age on the left, the state on the right of it, and a space behind it
+        [ -n "$st" ] && { rtp="$rtp${rtp:+ · }$st"; rtc="$rtc${rtc:+$gc · }$mc$st"; }
+        [ -n "$rtp" ] && { rtp="$rtp "; rtc="$rtc "; }
+        dw_set rw "$rtp"; navail=$(( cw - lead - (rw > 0 ? rw + 2 : 0) ))
+        if [ "$navail" -lt 8 ] && [ -n "$tm" ]; then              # no room: the age goes first, then the state
+            tm=""; rtp=""; rtc=""; [ -n "$st" ] && { rtp="$st "; rtc="$mc$st "; }
+            dw_set rw "$rtp"; navail=$(( cw - lead - (rw > 0 ? rw + 2 : 0) ))
+        fi
+        if [ "$navail" -lt 8 ]; then rtp=""; rtc=""; rw=0; navail=$(( cw - lead )); fi
+        clip_set an "$TI_AGN" "$navail"; dw_set anw "$an"
+        [ -n "$am" ] && amc="$mcol$BOLD$am$X$bg$gc · "
+        icon=${TI_AGIC:-${gc}○}
+        printf '%s%s%s%s%s%s %s%s%s%s%*s%s%s\n' "${TI_SPIN:+$'\034'$(ti_spk "$bg")$'\034'}" "$rm" "$mk" "$bg" "$bl" "$icon" "$amc" "$BOLD$tc" "$an" "$X$bg" $(( cw - lead - anw - rw )) "" "$rtc" "$X"
+        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
+        [ -n "$t" ] && printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
+        if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
+            clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"
+            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
+        fi
+        local brp=""; [ -n "${10:-}" ] && brp="⎇ ${10}"; [ -n "$who" ] && brp="$brp${brp:+ · }$who"   # (who: where it hands over to, or the deployment's project)
+        if [ -n "$brp" ]; then
+            local bw; clip_set brp "$brp" $(( w - 4 )); dw_set bw "$brp"
+            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$brp" "$X$bg" $(( w - 4 - bw )) "" "$X"
+        fi
+        if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 4 )); dw_set dw2 "$d"; printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 4 - dw2 )) "" "$X"; fi
+    else
+        clip_set t "$5" $(( w - 3 )); dw_set tw "$t"
+        printf '%s%s%s%s%s%s%s%*s%s\n' "$rm" "$mk" "$bg" "$bl" "$tc" "$t" "$X$bg" $(( w - 2 - tw )) "" "$X"
+        if [ -n "$who$st$tm" ]; then
+    room=$(( w - 4 ))                                          # too long: the time goes first, then the state is cut, then who
+    local ww sw; [ -n "$who" ] && clip_set who "$who" "$room"; dw_set ww "$who"; dw_set sw "$st"
+    n=$(( ww + sw + ${#tm} + (ww > 0 && sw > 0 ? 3 : 0) + (${#tm} > 0 && ww + sw > 0 ? 3 : 0) ))
+    if [ "$n" -gt "$room" ]; then tm=""; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) )); fi
+    if [ "$n" -gt "$room" ]; then
+        if [ -n "$who" ]; then clip_set st "$st" $(( room - ww - 3 )); else clip_set st "$st" "$room"; fi
+        dw_set sw "$st"; n=$(( ww + sw + (ww > 0 && sw > 0 ? 3 : 0) ))
+    fi
+    printf '%s%s%s%s∟ ' "$rm" "$bg" "$bl" "$gc"
+    [ -n "$who" ] && printf '%s%s' "$wc" "$who"
+    [ -n "$who" ] && [ -n "$st" ] && printf '%s · ' "$gc"
+    [ -n "$st" ] && printf '%s%s' "$mc" "$st"
+    [ -n "$tm" ] && { [ -n "$who$st" ] && printf '%s · ' "$gc"; printf '%s%s' "$gc" "$tm"; }
+    printf '%s%*s%s\n' "$X$bg" $(( room - n )) "" "$X"
+        fi
+        if [ -n "${10:-}" ]; then
+            local bt bw; clip_set bt "${10}" $(( w - 6 )); dw_set bw "$bt"
+            printf '%s%s%s%s⎇ %s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$bt" "$X$bg" $(( w - 4 - bw )) "" "$X"
+        fi
+        if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 3 )); dw_set dw2 "$d"; printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"; fi
+    fi
+    if [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
+        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 10 )) pf pi bf="" be=""
         [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
             pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
             for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s%s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
+            printf '%s%s%s  %s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
         }
     fi
-    if [ "$gap" = 1 ] && [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
+    if [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
         local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
         while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
-        [ "$tw" -gt 10 ] && tw=10
-        pw=$(( w - 8 - tw - 1 ))
+        [ "$tw" -gt 13 ] && tw=13
+        pw=$(( w - 10 - tw - 1 ))
         while IFS= read -r tl; do
             td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
             [ "$tt" -gt 0 ] && [ "$pw" -gt 3 ] || continue
             clip_set tn "$tsn" "$tw"; printf -v tn '%-*s' "$tw" "$tn"
             pf=$(( (td * pw + tt / 2) / tt )); [ "$pf" -gt "$pw" ] && pf=$pw
             bf=""; be=""; for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s%s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
+            printf '%s%s%s  %s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
         done <<< "$TI_TBARS"
     fi
-    if [ "$gap" = 1 ] && [ -n "${11:-}${12:-}" ]; then ti_subcard "$rm" "$bg" "${11:-}" "${12:-}" "${TI_REF:-}" "$w" "$bl"; fi
-    if [ "$gap" = 1 ]; then ti_edge "$rm" "$bg" ▀; TI_OPEN=1; elif [ "${9:-}" != 1 ]; then printf '\n'; fi
 }
-# Cards: the row above an entry is its top edge, a lower half block (▄) in the card colour, the row below its bottom edge, an upper
-# half block (▀): half a row of air inside the card on both sides, and the other halves of the two rows between two cards are the
-# gap. The edge rows belong to the card (a click on them selects it).
-ti_edge() {  # ti_edge <ref marker> <card background> <▄|▀>
-    local _s; printf -v _s '%*s' $(( ${COLS:-44} - 2 )) ''; _s=${_s// /$3}
-    printf '%s%s%s%s\n' "$1" "${2//\[48;/[38;}" "$_s" "$X"
-}
-# The card under a review topic: what the agent did (a few lines, a card of its own, a step lighter) and, docked to its bottom
-# edge on the right, the button with the action (key y). The button row's ref carries its columns, "<id>!<from>!<to>" (1-based),
-# so that a click on it can be told from a click on the card.
-ti_subcard() {  # ti_subcard <ref marker> <card bg> <note> <ask: labels joined by ¦> <topic id> <card width> <left edge: the bar>
-    local rm=$1 bg=$2 note=$3 ask=$4 id=$5 w=$6 bl=$7 sub=$CARDSUB sfg lines=() l lw pad sw=$(( $6 - 4 )) iw=$(( $6 - 6 ))
-    sfg=${sub//\[48;/[38;}
-    local edge; printf -v edge '%*s' "$sw" ''; edge=${edge// /▄}
-    printf '%s%s%s%s%s%s%s  %s\n' "$rm" "$bg" "$bl" "$sfg" "$edge" "$X" "$bg" "$X"                   # (the top edge: half a row of air above the text)
-    if [ -n "$note" ]; then
-        wrap_lines lines "$iw" 3 "$note"
-        for l in "${lines[@]}"; do
-            dw_set lw "$l"; printf -v pad '%*s' $(( iw - lw )) ''
-            printf '%s%s%s%s %s%s%s %s%s  %s\n' "$rm" "$bg" "$bl" "$sub" $'\033[38;2;238;240;250m' "$l" "$pad" "$X" "$bg" "$X"   # (brighter than the other text: it sits on the darkest ground)
-        done
-    fi
-    if [ -n "$ask" ]; then                                       # up to three buttons, flush right: side by side with two columns between them, else one under the other
-        local labs=() rest=$ask lab n=0 i tot=0 gapw=2 bws=() texts=() btnbg row gp start ranges rid k
-        while [ -n "$rest" ] && [ "$n" -lt 3 ]; do lab=${rest%%¦*}; labs[$n]=$lab; n=$(( n + 1 )); [ "$rest" = "$lab" ] && break; rest=${rest#*¦}; done
-        for (( i = 0; i < n; i++ )); do
-            lab=${labs[$i]}; clip_set lab "$lab" $(( sw - 6 )); texts[$i]=" [$(( i + 1 ))] $lab "; dw_set lw "${texts[$i]}"; bws[$i]=$lw; tot=$(( tot + lw ))
-        done
-        tot=$(( tot + gapw * (n - 1) ))
-        case "$BLUE" in *"[38;"*) btnbg=${BLUE//\[38;/[48;} ;; *) btnbg=${BLUE//\[3/[4} ;; esac     # the button has the colour of review (the fg of BLUE as a background)
-        btnbg="$btnbg"$'\033[1;38;2;24;24;37m'
-        if [ "$tot" -le "$sw" ]; then                             # side by side: one row, the ref carries every button's columns
-            start=$(( 2 + sw - tot )); ranges=""; printf -v pad '%*s' $(( sw - tot )) ''; row=$pad
-            for (( i = 0; i < n; i++ )); do
-                [ "$i" -gt 0 ] && { printf -v gp '%*s' "$gapw" ''; row="$row$gp"; start=$(( start + gapw )); }
-                row="$row$btnbg${texts[$i]}$X$bg"; ranges="$ranges!$(( start + 1 ))!$(( start + bws[i] ))"; start=$(( start + bws[i] ))
-            done
-            rid=""; [ -n "$id" ] && rid=$'\035'"$id$ranges"$'\035'
-            printf '%s%s%s%s%s  %s\n' "$rid" "$bg" "$bl" "$row" "$X$bg" "$X"
-        else                                                      # too wide: a row each (the labels stay whole); the filler pairs 0!0 keep the button's number in the ref
-            for (( i = 0; i < n; i++ )); do
-                printf -v pad '%*s' $(( sw - bws[i] )) ''; ranges=""; for (( k = 0; k < i; k++ )); do ranges="$ranges!0!0"; done
-                ranges="$ranges!$(( 2 + sw - bws[i] + 1 ))!$(( 2 + sw ))"
-                rid=""; [ -n "$id" ] && rid=$'\035'"$id$ranges"$'\035'
-                printf '%s%s%s%s%s%s%s%s  %s\n' "$rid" "$bg" "$bl" "$pad" "$btnbg" "${texts[$i]}" "$X" "$bg" "$X"
-            done
-        fi
-    else
-        printf '%s%s%s%s%s%s%s  %s\n' "$rm" "$bg" "$bl" "$sfg" "${edge//▄/▀}" "$X" "$bg" "$X"
-    fi
+ti_spk() {  # ti_spk <card background>: the ground under a dancing star (n normal, s selected, h hovered), printed
+    case "$1" in "$CARDSEL"|"$SELBG") printf s ;; "$CARDHOV") printf h ;; *) printf n ;; esac
 }
 agent_task_set() {  # agent_task_set <var> <machine> <pane>: what the agent works on, as herdr shows it (its task token), from the last agent lists
     local _i _m _id _st _nm _tk=""
@@ -1879,7 +1892,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
         testing) who=${T_AG[$i]}; state="tests running"; sc=$C; ago_set tm "${T_UPD[$i]:-$NOW}" ;;   # the agent stopped, a test suite runs (also in the background)
         waiting) who="for ${T_WFOR[$i]:-?}"; ago_set tm "${T_WSINCE[$i]:-$NOW}"; [ -n "${T_AG[$i]}" ] && { state="${T_AG[$i]} waits"; sc=$Y; }
                  [ -n "${T_SL[$i]}" ] && { state="Slack monitor (${T_SL[$i]})"; sc=$S; } ;;   # a pinned Slack channel is watched
-        review) who=${T_AG[$i]}; state="ready for review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
+        review) who=${T_AG[$i]}; state="review"; sc=$BLUE; ago_set tm "${T_UPD[$i]:-$NOW}"
                 [ -n "${T_SM[$i]}" ] && { who="slack"; state=${T_SM[$i]//¶/}; state=${state//\`/}; state=${state//\*/}
                     while [ "${state/  / }" != "$state" ]; do state=${state//  / }; done; sc=$S; } ;;   # an answer in Slack
         next|later) ago_set tm "${T_UPD[$i]:-$NOW}" ;;
@@ -1911,17 +1924,19 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     # cards: the cards (review, now, testing, deploying, finished), lists: the lines (next, waiting, later) and the archive note; the frame puts the
     # cards on top and the lists at the bottom, above Done. Without an argument: both, in order (the tests).
     case "${1:-all}" in cards|lists) bhoted_block "$1" && return 0 ;; esac   # (the daemon draws it: the same bytes, much faster)
-    local mode=${1:-all} i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rn ra rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGMETA TI_AGTASK TI_PROG TI_NOW TI_SPIN
+    local mode=${1:-all} i prev="" st gk label lc tc age ast desc cp sl who state tm sc open=0 TI_REF TI_BAR rline pn TI_AGN TI_TBARS TI_AGM TI_AGIC TI_AGTASK TI_PROG TI_NOW TI_SPIN
     sel_index; topics_plan
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && open=$(( open + 1 )); done
     if [ "$mode" != lists ] && [ "${U_SCOPE:-all}" = project ] && [ -n "${CUR_PROJ:-}" ]; then   # which project this panel lists
         printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
     fi
     [ "$open" -gt 0 ] || [ "$mode" = lists ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
-    local TI_FRAME=1 TI_OPEN=0
-    for (( i = 0; i < T_N; i++ )); do
+    local grp seq=() it; cfg_var grp CARD_GROUPING ungrouped; cards_sequence "$mode" "$grp"
+    for it in ${seq[@]+"${seq[@]}"}; do
+        case "$it" in a*) idle_card "${it#a}"; continue ;; esac   # (an idle agent without a card, in the order of the agents)
+        i=$it
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""; TI_TBARS=""
-        gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && gk=deploying   # (the group: waiting for a deployment is its own)
+        gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         case "$gk" in next|waiting|later) [ "$mode" = cards ] && continue ;; *) [ "$mode" = lists ] && continue ;; esac   # (cards on top, the lines at the bottom)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
@@ -1936,11 +1951,10 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
             [ -n "${PLAN_AFTER[$i]:-}" ] && more_row "${PLAN_AFTER[$i]}" 0                      # an open group: "show less" after the last
             continue ;;
         esac
-        if [ "$gk" != "$prev" ]; then
-            case "$gk" in deploying) label="WAITING FOR DEPLOYMENT"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac
-            printf '\n'                                                  # (a card brings its own edges, the caption its blank row)
-            printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
-        fi
+        case "$gk" in deploying) label="DEPLOYING"; lc=$Y ;; finished) label="RECENTLY FINISHED"; lc=$GREEN ;; now) label=NOW; lc=$ORANGE ;; testing) label=TESTING; lc=$C ;; next) label=NEXT; lc=$S ;; waiting) label=WAITING; lc=$Y ;; review) label=REVIEW; lc=$BLUE ;; later) label=LATER; lc=$R ;; done) label=DONE; lc=$GREEN ;; esac    # (the label and the colour of the group; the bar of the card has the colour)
+        if [ "$grp" != status ]; then printf '\n'                       # ungrouped: no heading, a blank row between the cards
+        elif [ "$gk" != "$prev" ]; then printf '\n'; printf '  %s%s%s\n' "$lc" "$label" "$X"; prev=$gk
+        else printf '\n'; fi                                            # (the gap between two cards of a group: a blank row)
         topic_meta "$i"; [ "$gk" = deploying ] && deploy_card_set "$i"
         who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
@@ -1948,27 +1962,86 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; [ "$i" = "$SEL_IDX" ] && sl=1; TI_REF=${T_ID[$i]}
-        rn=""; ra=""; TI_BAR=$lc                                 # (the bar on the card has the colour of its group: review blue, now orange, next teal, waiting yellow)
-        if [ "$st" = review ]; then                              # the card the agent put under it (summary and the action's button)
-            while IFS= read -r rline; do case "$rline" in review_note=*) rn=${rline#*=} ;; review_ask=*) ra=${rline#*=} ;; esac; done < "${T_FILE[$i]}"
-            rn=${rn//[[:cntrl:]]/}; ra=${ra//[[:cntrl:]]/}
-        fi
-        TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGMETA=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
+        TI_BAR=$lc                                 # (the bar on the card has the colour of its group: review blue, now orange, next teal, waiting yellow)
+        TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
         if [ "$st" = testing ] && [ -n "${T_AP[$i]}" ]; then     # the bars of the suites that run (tests_sync writes them, one line each: done total suite)
             _tp=${T_AM[$i]:-$HOST}_${T_AP[$i]}; _tp=$SHARED_DIR/testprog/${_tp//[^A-Za-z0-9_-]/_}
             [ -r "$_tp" ] && while IFS= read -r rline; do TI_TBARS="$TI_TBARS${TI_TBARS:+$'\n'}${rline//[[:cntrl:]]/}"; done < "$_tp"
         fi
-        case "$st" in now|testing|finished)                      # a card of an agent at work (finished: its agent has stopped): like herdr's agent card (icon, machine · agent, ∟ the topic)
-            if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ]; then
+        [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] && case "$gk" in now|testing|finished|review) ci_bars_set "${T_BR[$i]}" "${T_PJ[$i]}" ;; esac   # (the CI test jobs that run for its branch: a bar each)
+        case "$gk" in now|testing|finished|review|deploying)     # a card with an agent (finished: it has stopped; review, deploying: the agent of the topic): icon, machine · agent, ∟ what it works on
+            if [ -n "${T_AP[$i]}" ] && [ -n "${T_AG[$i]}" ] && { [ "$gk" != review ] || [ -z "${T_SM[$i]}" ]; }; then
                 TI_AGM=${T_AM[$i]:-$HOST}; TI_AGN=${T_AG[$i]}; agent_state_set ast "$TI_AGM" "${T_AP[$i]}"; agent_task_set TI_AGTASK "$TI_AGM" "${T_AP[$i]}"
                 [ "$st" = finished ] && ast=finished
                 case "$ast" in finished) TI_AGIC="${GREEN}✓" ;; working|testing) TI_AGIC="${ORANGE}${SPIN_CH:-✶}"; TI_SPIN=1; agent_now_set TI_NOW "$TI_AGM" "${T_AP[$i]}" ;; blocked) TI_AGIC="${NN}◉" ;; done) TI_AGIC="${GREEN}✓" ;; gone|off-*) TI_AGIC="${D}◌" ;; *) TI_AGIC="${D}○" ;; esac
-                case "$state" in working) ;; finished) TI_AGMETA=1; who="" ;; handing\ over) TI_AGMETA=1 ;; "finished · x = done") TI_AGMETA=1; who="" ;; *) TI_AGMETA=1; who="" ;; esac   # (the icon says working; the rest the line adds)
+                case "$gk:$state" in deploying:*|*:"handing over") ;; *) who="" ;; esac   # (the agent's name is in the first row; who stays for where it hands over to, and the deployment's project)
             fi ;;
         esac
-        topic_item "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR" "$rn" "$ra"
+        [ "$st" = now ] && case "$state" in finished|"finished · x = done") TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
+        ti_card "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
     done
+    [ "$mode" = lists ] || [ "$grp" != status ] || idle_cards       # (grouped: the group IDLE at the end; ungrouped: they are in the sequence)
     TI_AGN=""
+}
+cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topics_block goes through. Grouped: the topics in their order. Ungrouped: the cards in the
+    # order of the agents (as herdr lists them: the agent list; the other machines above this one), an agent's cards, or a card "a<index>" for an idle one without a card; then the cards that have no agent in
+    # that list; then (mode all) the lines. Every entry is a topic index.
+    local mode=$1 grp=$2 i k m id st used=$'\n' c any
+    seq=(); T_CARD=()
+    if [ "$grp" = status ] || [ "$mode" = lists ]; then for (( i = 0; i < T_N; i++ )); do seq[$i]=$i; done; return 0; fi
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in review|now|testing|finished) T_CARD[$i]=1 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && T_CARD[$i]=1 ;; esac
+    done
+    local pass
+    for pass in 0 1; do for (( k = 0; k < AG_N; k++ )); do          # the other machines above this one (pass 0), then this machine's agents
+        IFS=$US read -r m id st _ <<< "${AG_LINES[$k]}"; any=0
+        [ "$pass" = 0 ] && [ "$m" = "$HOST" ] && continue; [ "$pass" = 1 ] && [ "$m" != "$HOST" ] && continue
+        for (( i = 0; i < T_N; i++ )); do
+            [ -n "${T_CARD[$i]:-}" ] && [ "${T_AP[$i]}" = "$id" ] && [ "${T_AM[$i]:-$HOST}" = "$m" ] || continue
+            seq[${#seq[@]}]=$i; used="$used$i"$'\n'; any=1
+        done
+        [ "$any" = 0 ] && [ "${st:-idle}" = idle ] && seq[${#seq[@]}]="a$k"
+    done; done
+    for (( i = 0; i < T_N; i++ )); do [ -n "${T_CARD[$i]:-}" ] && case "$used" in *$'\n'"$i"$'\n'*) ;; *) seq[${#seq[@]}]=$i ;; esac; done   # (no agent in the list)
+    [ "$mode" = cards ] && return 0
+    for (( i = 0; i < T_N; i++ )); do [ -z "${T_CARD[$i]:-}" ] && seq[${#seq[@]}]=$i; done
+}
+idle_card() {  # idle_card <agent index>: the card of an idle agent without a card (see idle_cards): two rows, a click shows the agent (ref agent:<machine>/<pane>)
+    local m id st name task TI_REF TI_BAR
+    IFS=$US read -r m id st name task <<< "${AG_LINES[$1]}"
+    case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
+    printf '\n'
+    TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+    TI_DIM=1; ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
+}
+ci_bars_set() {  # ci_bars_set <branch> <project id>: TI_TBARS gets a line "done total name" for each CI test job that runs for that branch (at most two bars on a card)
+    [ -s "$SHARED_DIR/tests.list" ] || return 0
+    local t p lb st d tot note rest pn="" n=0 br; [ -n "$2" ] && pn=$(project_name "$2")
+    n=$(printf '%s' "$TI_TBARS" | grep -c .)
+    while IFS=$US read -r t p lb st d tot note rest; do
+        [ "$st" = running ] && [ "$n" -lt 2 ] || continue
+        br=${note%%"|~|"*}; [ "$br" = "$1" ] || continue
+        [ -z "$pn" ] || [ "$p" = "$pn" ] || continue
+        case "$d$tot" in ''|*[!0-9]*) continue ;; esac
+        TI_TBARS="$TI_TBARS${TI_TBARS:+$'\n'}$d $tot ${lb//[[:cntrl:]]/}"; n=$(( n + 1 ))
+    done < "$SHARED_DIR/tests.list"
+}
+idle_cards() {  # the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
+    # one card each (the agent, and its last task); a click on it shows the agent in herdr (ref agent:<machine>/<pane>)
+    local i m id st name task used=$'\n' first=1 TI_REF TI_BAR
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in review|now|testing|finished) ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] || continue ;; *) continue ;; esac
+        [ -n "${T_AP[$i]}" ] && used="$used${T_AM[$i]:-$HOST}$US${T_AP[$i]}"$'\n'
+    done
+    for (( i = 0; i < AG_N; i++ )); do
+        IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+        [ "${st:-idle}" = idle ] || continue
+        case "$used" in *$'\n'"$m$US$id"$'\n'*) continue ;; esac
+        case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
+        if [ "$first" = 1 ]; then printf '\n  %sIDLE%s\n' "$D" "$X"; first=0; else printf '\n'; fi
+        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+        TI_DIM=1; ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
+    done
 }
 done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine
     local _m=${T_AM[$1]:-}; DONE_MC=""; [ -n "$_m" ] || return 0
@@ -2019,7 +2092,7 @@ archived_count() {  # archived_count: the topics that are not shown any more bec
         st=${T_STATUS[$i]}
         [ "$st" = later ] && [ "${T_DM[$i]:-}" = 1 ] && continue
         in_scope "$i" || continue
-        case "$st" in review|now|testing|finished) continue ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && continue ;; esac
+        case "$st" in review|now|testing|finished) continue ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && continue ;; esac
         topic_archived "$i" && n=$(( n + 1 ))
     done
     printf '%s' "$n"
@@ -2082,7 +2155,7 @@ agents_counts() {  # agents_counts: this and the other machines' agents as numbe
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st _ <<< "${AG_LINES[$i]}"
-        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac
+        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; idle|"") ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac   # (an idle agent is on a card: its own, or in the group IDLE)
     done
 }
 agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), two columns;
@@ -2099,17 +2172,19 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         local ac=$ORANGE ab="$BOLD$ORANGE"; [ "$AC_ACTIVE" -gt 0 ] || { ac=$D; ab=$D; }       # (none active: no colour)
         printf '  %s✶%s %s%d active%s' "$ac" "$X" "$ab" "$AC_ACTIVE" "$X"
         [ "$AC_NEEDS" -gt 0 ] && printf ' %s·%s %s◉ %d need you%s' "$D" "$X" "$NN" "$AC_NEEDS" "$X"
-        printf ' %s·%s %s○ %d inactive%s\n' "$D" "$X" "$D" "$AC_INACTIVE" "$X"
+        [ "$AC_INACTIVE" -gt 0 ] && printf ' %s·%s %s○ %d inactive%s' "$D" "$X" "$D" "$AC_INACTIVE" "$X"
+        printf '\n'
         echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
     fi
     if [ "$AG_N" = 0 ]; then                                     # no agents: no clickable row and no star to dance (no old map stays)
         echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
     fi
     # each agent's project (from the collected tokens), the machines, the projects in their order
-    local apj=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
+    local apj=() aidle=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
     local metas; metas_read metas
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+        aidle[$i]=""; [ "${st:-idle}" = idle ] && aidle[$i]=1       # (an idle agent is on a card: its own, or in the group IDLE; here only the others)
         apj[$i]=""; case "$metas" in *$'\n'"$m$US$id$US"*) local rest=${metas#*$'\n'"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
         for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done; [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
         [ "$m" = "$HOST" ] && hosted=1
@@ -2124,13 +2199,14 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     agentnum_load
     for pm in "${order[@]}"; do
         local cnt=0; for (( i = 0; i < AG_N; i++ )); do
+            [ -z "${aidle[$i]}" ] || continue
             if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null || cnt=$(( cnt + 1 )); else [ "${apj[$i]}" = "$pm" ] && cnt=$(( cnt + 1 )); fi
         done
         [ "$cnt" -gt 0 ] || continue
         local cap cw2 rest2 pname pmach=() npm=0; if [ "$pm" = "-" ]; then pname="no project"; else pname=$(project_name "$pm"); fi
         for mm in "${machines[@]}"; do                         # the machines this project runs on: one only? then it goes into the caption
             for (( i = 0; i < AG_N; i++ )); do
-                [ "${AG_LINES[$i]%%$US*}" = "$mm" ] || continue
+                [ "${AG_LINES[$i]%%$US*}" = "$mm" ] && [ -z "${aidle[$i]}" ] || continue
                 if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
                 pmach[$npm]=$mm; npm=$(( npm + 1 )); break
             done
@@ -2148,7 +2224,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
             pre0=""; [ "$nm" -gt 1 ] && machine_code_set pre0 "$mm"   # MAC/w3:a1|name: the agent (the machine's code in front when it is on another machine)
             for (( i = 0; i < AG_N; i++ )); do
                 IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-                [ "$m" = "$mm" ] || continue
+                [ "$m" = "$mm" ] && [ -z "${aidle[$i]}" ] || continue
                 if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
                 pre=""; plen=0; [ -n "$pre0" ] && { agent_pane_code_set pre "$m" "$id"; [ -n "$pre" ] && { pre="$pre|"; dw_set plen "$pre"; }; }
                 raw=$st; off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
@@ -2352,21 +2428,88 @@ find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1
 # The panel's pane in herdr stays between PANEL_MIN_WIDTH and PANEL_MAX_WIDTH: after a resize has settled (a dragged divider,
 # a smaller window) the split is moved back (pane.resize takes a share of the split). Only when the panel is the right part
 # of a split; the agent next to it keeps at least 40 columns.
-panel_width_clamp() {
-    local p=${HERDR_PANE_ID:-} lo hi w sw want dir amt
-    case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
-    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
-    read -r w sw <<< "$(herdr pane layout --pane "$p" 2>/dev/null | jq -r --arg p "$p" '
+panel_geom() {  # panel_geom <pane>: PG_W PG_SW = the pane's width and the width of the split it is the right part of (0 0: not a right part)
+    local w sw; PG_W=0; PG_SW=0
+    read -r w sw <<< "$(herdr pane layout --pane "$1" 2>/dev/null | jq -r --arg p "$1" '
         ([.result.layout.panes[] | select(.pane_id == $p)][0].rect) as $r
         | ([.result.layout.splits[] | select(.direction == "right" and (((.rect.x + .rect.width * .ratio) - $r.x) | fabs) <= 2
               and .rect.y <= $r.y and (.rect.y + .rect.height) >= ($r.y + $r.height))][0].rect.width // 0) as $sw
         | "\($r.width // 0) \($sw)"' 2>/dev/null)"
-    num_set w "$w" 0; num_set sw "$sw" 0; [ "$w" -gt 0 ] && [ "$sw" -gt 0 ] || return 0
-    if [ "$w" -gt "$hi" ]; then want=$hi; dir=right
-    elif [ "$w" -lt "$lo" ]; then want=$lo; dir=left; [ $(( sw - want )) -ge 40 ] || return 0
-    else return 0; fi
-    amt=$(LC_ALL=C awk -v a="$w" -v b="$want" -v s="$sw" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
+    num_set w "$w" 0; num_set sw "$sw" 0; PG_W=$w; PG_SW=$sw
+}
+panel_set_width() {  # panel_set_width <pane> <want>: moves the split so the pane is <want> columns wide (the agent next to it keeps 40); 0: done or not possible
+    local p=$1 want=$2 amt dir
+    panel_geom "$p"; [ "$PG_W" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 1
+    [ "$PG_W" = "$want" ] && return 1
+    if [ "$PG_W" -gt "$want" ]; then dir=right; else dir=left; [ $(( PG_SW - want )) -ge 40 ] || return 1; fi
+    amt=$(LC_ALL=C awk -v a="$PG_W" -v b="$want" -v s="$PG_SW" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
     herdr pane resize --pane "$p" --direction "$dir" --amount "$amt" >/dev/null 2>&1
+}
+panel_width_clamp() {  # panel_width_clamp [adopt]: adopt = the size changed because the layout was worked out again (the workspace was shown, a sync moved the
+    # split of a hidden one), not because you dragged: the panel takes the width the panels have (panel.width) instead of leading with its own
+    local p=${HERDR_PANE_ID:-} lo hi w want kw
+    case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
+    if [ "${1:-}" = adopt ]; then
+        { read -r kw _ < "$SHARED_DIR/panel.width"; } 2>/dev/null; num_set kw "${kw:-}" 0
+        if [ "$kw" -gt 0 ]; then [ "$kw" -lt "$lo" ] && kw=$lo; [ "$kw" -gt "$hi" ] && kw=$hi; panel_set_width "$p" "$kw"; return 0; fi
+    fi
+    panel_geom "$p"; w=$PG_W; [ "$w" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 0
+    if [ "$w" -gt "$hi" ]; then want=$hi; elif [ "$w" -lt "$lo" ]; then want=$lo; else want=""; fi
+    if [ -n "$want" ]; then panel_set_width "$p" "$want"; return 0; fi      # (the resize reaches this panel again: the others follow then)
+    panel_width_sync "$p" "$w"
+}
+# All panels are as wide as the one you are working in (a panel made wider or narrower by hand): the panels of the other tabs and
+# workspaces follow. Only the panel of the tab you look at leads, so the panels never pull against each other.
+panel_width_sync() {  # panel_width_sync <this pane> <its width>
+    local p=$1 w=$2 lines tab q focused=0 lo hi want
+    lines=$(herdr pane list 2>/dev/null | jq -r '.result.panes[] | [.pane_id, .tab_id, (.label // ""), (.agent // ""), (.focused | tostring)] | map(gsub("[|\u0001-\u001f]"; "")) | join("|")' 2>/dev/null) || return 0
+    tab=$(printf '%s\n' "$lines" | awk -F'|' -v p="$p" '$1 == p { print $2 }')
+    [ -n "$tab" ] && [ -n "$(printf '%s\n' "$lines" | awk -F'|' -v t="$tab" '$2 == t && $5 == "true"')" ] || return 0   # (the tab is not the one in front: it follows)
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
+    while read -r q; do
+        [ "$q" != "$p" ] || continue
+        panel_set_width "$q" "$w"
+    done <<< "$(panel_pane_ids)"
+    panel_width_publish "$w"
+}
+# The panels of this machine: panes that carry the label bhote or the title Bhote and no agent (what the plugin makes), and every pane whose
+# panel is running here (it registers itself in $SHARED_DIR/panels/<pane>; a panel started by hand has neither label nor title).
+panel_pane_ids() {
+    { herdr pane list 2>/dev/null | jq -r '.result.panes[] | select(((.agent // "") == "") and ((.label // "") == "bhote" or (.terminal_title_stripped // "") == "Bhote")) | .pane_id' 2>/dev/null
+      local f pid; for f in "$SHARED_DIR"/panels/*; do
+          [ -f "$f" ] || continue; pid=""; { read -r pid < "$f"; } 2>/dev/null
+          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then basename "$f"; else rm -f "$f"; fi
+      done; } | LC_ALL=C sort -u | while read -r q; do case "$q" in ''|*[!A-Za-z0-9:_-]*) ;; *) printf '%s\n' "$q" ;; esac; done
+}
+panel_register() {  # panel_register: this panel's pane and process, for panel_pane_ids
+    case "${HERDR_PANE_ID:-}" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
+    mkdir -p "$SHARED_DIR/panels" 2>/dev/null && printf '%s\n' "$$" > "$SHARED_DIR/panels/$HERDR_PANE_ID"
+}
+# The width goes to the other machines through kharka (bhote.width/<this node>), when the collector follows kharka: a panel made wider on
+# Linux makes the panels on the Mac as wide, and back. PANEL_WIDTH_FILE holds "<width> <ms>" of the last width this machine knows (set
+# here or taken from another machine): a width that equals it is not sent again, so the machines never answer each other for ever.
+panel_width_publish() {  # panel_width_publish <width>
+    local w=$1 kw me lw lat now
+    kharka_follow_want kw; [ "$kw" = none ] && return 0
+    { read -r lw lat < "$SHARED_DIR/panel.width"; } 2>/dev/null; [ "${lw:-}" = "$w" ] && return 0
+    kharka_self_set me || return 0
+    now=$(( $(date +%s) * 1000 )); printf '%s %s\n' "$w" "$now" > "$SHARED_DIR/panel.width"
+    jq -cn --argjson w "$w" --argjson at "$now" '{width: $w, at: $at}' | kharka_run put "bhote.width/$me" - >/dev/null 2>&1
+}
+width_request() {  # width_request <watch line>: another machine's panels were made wider or narrower (panel_width_publish): ours follow
+    local me from w at lw lat q lo hi lines lbl ag
+    kharka_self_set me || return 0
+    IFS=$'\t' read -r from w at < <(printf '%s' "$1" | jq -r '.entry // . | select(.deleted != true) | [(.key | sub("^bhote.width/"; "")),
+        (.value.width // 0), (.value.at // 0)] | map(tostring | gsub("[\t\n]"; "")) | @tsv' 2>/dev/null)
+    [ -n "$from" ] && [ "$from" != "$me" ] || return 0
+    case "$w$at" in *[!0-9]*|'') return 0 ;; esac
+    { read -r lw lat < "$SHARED_DIR/panel.width"; } 2>/dev/null
+    [ "$at" -gt "${lat:-0}" ] || return 0                       # (a newer width only: a watch that starts again replays the old ones)
+    cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
+    [ "$w" -lt "$lo" ] && w=$lo; [ "$w" -gt "$hi" ] && w=$hi
+    printf '%s %s\n' "$w" "$at" > "$SHARED_DIR/panel.width"
+    while read -r q; do panel_set_width "$q" "$w"; done <<< "$(panel_pane_ids)"
 }
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot). So on a Mac, with the agents from kharka, bhote types herdr's own key for that agent's row into the
@@ -2377,7 +2520,7 @@ topic_is_card() {  # topic_is_card <id>: 0 for a card (review, now, testing, fin
     # waiting, later, done) open their page
     local i; for (( i = 0; i < T_N; i++ )); do
         [ "${T_ID[$i]}" = "$1" ] || continue
-        case "${T_STATUS[$i]}" in review|now|testing|finished) return 0 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && return 0 ;; esac
+        case "${T_STATUS[$i]}" in review|now|testing|finished) return 0 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && return 0 ;; esac
         return 1
     done
     return 1
@@ -2621,6 +2764,10 @@ set_row() {  # set_row <selected 0|1> <label> <value, plain> <value, coloured> [
 # ── the settings screen (","). Rows: the remote switch, one row per saved machine, the intervals, the animation.
 # ↑/↓ (or k/j) choose, space or enter switches, ←/→ change a number, "," or esc goes back. Every change is saved at once.
 SET_ROWS=()
+settings_proj_rows() {  # settings_proj_rows <deploys|tests> <label>: one switch per project that has a CI (the project filter of that monitor)
+    local pn; mon_projects_ci
+    for pn in "${MPC[@]}"; do SET_ROWS[${#SET_ROWS[@]}]="mproj|$1$US${pn//|/}|$2: ${pn//|/}"; done
+}
 settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or the connections page (SET_PAGE=connections)
     if [ "${SET_PAGE:-main}" = connections ]; then           # everything that reaches beyond this machine
         SET_ROWS=("choice|STORE|Data location")
@@ -2654,12 +2801,14 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         if [ "$(cfg_get DEPLOY_MONITOR off)" = on ]; then
             SET_ROWS[${#SET_ROWS[@]}]="sbool|DEPLOY_GITHUB|GitHub Actions"; SET_ROWS[${#SET_ROWS[@]}]="sbool|DEPLOY_CIRCLECI|CircleCI"
             SET_ROWS[${#SET_ROWS[@]}]="num|DEPLOY_EVERY|Deploy interval (s)"
+            settings_proj_rows deploys Deployments
         fi
         SET_ROWS[${#SET_ROWS[@]}]="bool|TEST_MONITOR|Test monitor"
         if [ "$(cfg_get TEST_MONITOR off)" = on ]; then
             SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_LOCAL|Local runs"; SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_GITHUB|GitHub Actions"
             SET_ROWS[${#SET_ROWS[@]}]="sbool|TEST_CIRCLECI|CircleCI"; SET_ROWS[${#SET_ROWS[@]}]="text|TEST_STATUS_DIR|Status files"
             SET_ROWS[${#SET_ROWS[@]}]="num|TEST_EVERY|Test interval (s)"
+            settings_proj_rows tests Tests
         fi
         { [ "$(cfg_get DEPLOY_MONITOR off)" = on ] || [ "$(cfg_get TEST_MONITOR off)" = on ]; } && SET_ROWS[${#SET_ROWS[@]}]="num|MONITOR_ROWS|Entries shown"
         machine_codes_load; local mi                            # the machines' codes (MAC|name in the agent list)
@@ -2678,7 +2827,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
         for (( ai = 0; ai < AG_N; ai++ )); do IFS=$US read -r am ap ast an at <<< "${AG_LINES[$ai]}"; SET_ROWS[${#SET_ROWS[@]}]="pagent|$am$US$ap|$an · $am"; done
         SET_ROWS[${#SET_ROWS[@]}]="pact|delete|Delete this project"; return
     fi
-    SET_ROWS=("link|CONNECTIONS|Connections" "link|PROJECTS|Projects" "enum|TOPICS_SCOPE|Topics shown" "link|SETUP|Setup wizard")
+    SET_ROWS=("link|CONNECTIONS|Connections" "link|PROJECTS|Projects" "enum|TOPICS_SCOPE|Topics shown" "enum|CARD_GROUPING|Agent cards: grouping/sorting" "link|SETUP|Setup wizard")
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
@@ -2733,6 +2882,8 @@ bhote_settings() {
                   case "$v" in remote) cfg_var v STORE_MACHINE '?'; vp="‹ $v ›" ;; kharka) vp="‹ kharka ›" ;; *) vp="‹ local ›" ;; esac; vc="${C}${vp}${X}" ;;
             machine) ind=2; cfg_var off MACHINES_OFF ""
                   case ",$off,"  in *",$key,"*) vp="[ ]"; vc="${D}[ ]${X}" ;; *) vp="[x]"; vc="${GREEN}[x]${X}" ;; esac ;;
+            mproj) ind=2; cfg_var off "$(mon_off_key "${key%%$US*}")" ""
+                  if mon_list_in "$off" "${key#*$US}"; then vp="[ ]"; vc="${D}[ ]${X}"; else vp="[x]"; vc="${GREEN}[x]${X}"; fi ;;
             num) setting_row "$key"; def=$S_DEF; cfg_var v "$key" "$def"; vp=$v; vc="${C}${v}${X}" ;;
             link|projnew|pact) vp="›"; vc="${D}›${X}" ;;
             projrow) local pf2 pr pw np=0; pf2="$TOPIC_DIR/$key.topic"; pr=$(topic_get "$pf2" repos); pw=$(topic_get "$pf2" workspaces)
@@ -2912,6 +3063,7 @@ settings_key() {  # settings_key <key as read>  (an arrow arrives as ESC [ A/B/C
             [ "$k" = LEFT ] || [ "$k" = RIGHT ] || case "$kind" in
                 bool|sbool) setting_row "$key"; cur=${S_DEF:-off}
                       [ "$(cfg_get "$key" $cur)" = on ] && cfg_set "$key" off || cfg_set "$key" on ;;
+                mproj) mon_proj_toggle "${key%%$US*}" "${key#*$US}" ;;
                 machine) off=$(cfg_get MACHINES_OFF '')
                       case ",$off,"  in
                           *",$key,"*) local x out="" IFS=,; for x in $off; do [ "$x" = "$key" ] || out=${out:+$out,}$x; done; unset IFS
@@ -3026,7 +3178,7 @@ ask_drain() {  # throw away input that is still waiting (the rest of a multi-lin
 }
 # The divider above the agents carries the ↕ button (a click: counts only). Its row is written by the frame
 # (bhote_view runs in a subshell, so it leaves it in a file); the agent area's height is AGENT_ROWS in the config.
-MOUSE_ON=$'\033[?1003h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1006l'; HOVER_ID=""   # (1003: also motion without a button, for the hover on the cards)
+MOUSE_ON=$'\033[?1002h\033[?1006h'; MOUSE_OFF=$'\033[?1003l\033[?1002l\033[?1006l'; HOVER_ID=""   # (1002: presses, the wheel and motion with a button down (a drag); no hover: motion without a button is not reported)
 # Terminals report presses, not double clicks: a second press on the same topic within half a second is one (OPEN: its page).
 # Milliseconds from perl (bash 3.2 has no EPOCHREALTIME); without perl only two presses in the same second count.
 CLICK_LAST=""; CLICK_AT=0
@@ -3070,10 +3222,8 @@ mouse_event() {  # mouse_event <b;x;y> <M|m>: sets MOUSE_KEY (ITEM/AGENT/TOPIC/O
     if [ "$2" = M ] && [ "$b" = 0 ] && { [ "$div" = 0 ] || [ "$y" -lt "$div" ]; }; then   # above it: a topic?
         local r t; while IFS=$'\036' read -r r t; do
             [ "$r" = "$y" ] && [ -n "$t" ] && {
-                case "$t" in
-                *"!"*) local rng=${t#*!}; CLICK_T=${t%%!*}; t=$CLICK_T                      # the button of a review card: its columns are in the ref
-                    local bn=1 b1 b2; while [ -n "$rng" ]; do b1=${rng%%!*}; rng=${rng#*!}; b2=${rng%%!*}; case "$rng" in *!*) rng=${rng#*!} ;; *) rng="" ;; esac   # from, to, from, to ...
-                        [ "$x" -ge "$b1" ] && [ "$x" -le "$b2" ] && { CLICK_N=$bn; MOUSE_KEY=ACT; return; }; bn=$(( bn + 1 )); done ;; *) CLICK_T=$t ;; esac
+                CLICK_T=$t
+                case "$t" in agent:*) CLICK_M=${t#agent:}; CLICK_P=${CLICK_M##*/}; CLICK_M=${CLICK_M%/*}; MOUSE_KEY=AGENT; return ;; esac   # (an idle agent's card: show the agent)
                 MOUSE_KEY=TOPIC; click_twice "$t" && MOUSE_KEY=OPEN; return; }
         done 2>/dev/null < "$RUN_DIR/tmap"
     fi
@@ -4451,10 +4601,9 @@ mon_list_shown() {  # mon_list_shown <deploys|tests>: the file the monitor block
     while IFS= read -r line; do rest=${line#*$US}; pj=${rest%%$US*}; mon_hidden "$off" "$pj" || printf '%s\n' "$line" >> "$f"; done < "$SHARED_DIR/$kind.list"
     printf '%s' "$f"
 }
-mon_chip_toggle() {  # mon_chip_toggle <deploys|tests> <n>: switch the n-th project's checkbox in that monitor's caption
-    local kind=$1 n=$2 k off name new="" e found=0 IFS=,
-    mon_projects_ci; name=${MPC[$(( n - 1 ))]:-}; [ -n "$name" ] || return 0
-    name=${name//,/ }; k=$(mon_off_key "$kind"); cfg_var off "$k" ""
+mon_proj_toggle() {  # mon_proj_toggle <deploys|tests> <project name>: switch that project on or off in that monitor (the settings)
+    local kind=$1 name=${2//,/ } k off new="" e found=0 IFS=,
+    k=$(mon_off_key "$kind"); cfg_var off "$k" ""
     for e in $off; do [ -n "$e" ] || continue; if [ "$e" = "$name" ]; then found=1; else new="$new${new:+,}$e"; fi; done
     [ "$found" = 1 ] || new="$new${new:+,}$name"
     cfg_set "$k" "$new"
@@ -4471,36 +4620,6 @@ mon_abbr_set() {  # mon_abbr_set <var> <project name> <abbreviations taken, spac
     for c in "${cand[@]}"; do [ -n "$c" ] || continue; case " $3 " in *" $c "*) ;; *) printf -v "$1" '%s' "$c"; return 0 ;; esac; done
     for (( i = 2; i < 10; i++ )); do c="${flat:0:2}$i"; case " $3 " in *" $c "*) ;; *) printf -v "$1" '%s' "$c"; return 0 ;; esac; done
     printf -v "$1" '%s' "${flat:0:3}"
-}
-mon_caption() {  # mon_caption <deploys|tests> <text>: the caption row of a monitor, with a checkbox for each project that has a CI (☑ shown, ☐ switched
-    # off), as many as fit on the row, the rest in rows below. A click on a checkbox switches that project; the ref carries each checkbox's columns
-    # (<ref>!from!to!from!to…: the button numbers of mouse_event), the rest of the row still toggles the small view.
-    local kind=$1 text=$2 W=$(( ${#RULE_LINE} + 2 )) n i k name cw gw off ck gap need from cur limit empty=1 rown=0 row="" ranges="" end0=-1 dn lead
-    local rows=() rranges=() taken=""
-    mon_projects_ci; n=${#MPC[@]}
-    if [ "$n" -eq 0 ] || section_compact "$kind"; then dash_caption "$text" "$kind"; return; fi
-    cfg_var off "$(mon_off_key "$kind")" ""; dw_set gw "☑"
-    cur=$(( 6 + ${#text} )); limit=$(( W - 5 ))
-    for (( i = 0; i < n; i++ )); do
-        mon_abbr_set name "${MPC[$i]}" "$taken"; taken="$taken $name"; dw_set cw "$name"; cw=$(( gw + 1 + cw ))
-        if mon_list_in "$off" "${MPC[$i]//,/ }"; then ck="${D}☐ ${name}${X}"; else ck="${GREEN}☑${X} ${L}${name}${X}"; fi
-        gap=""; need=$cw; [ "$empty" = 0 ] && { gap="  "; need=$(( cw + 2 )); }
-        if [ $(( cur + need )) -gt "$limit" ] && { [ "$empty" = 0 ] || [ "$rown" = 0 ]; }; then   # does not fit: this row ends here, the next one starts indented
-            [ "$rown" = 0 ] && end0=$cur
-            rows[$rown]=$row; rranges[$rown]=$ranges; rown=$(( rown + 1 ))
-            row=""; ranges=""; cur=4; limit=$(( W - 2 )); empty=1; gap=""; need=$cw
-            for (( k = 0; k < i; k++ )); do ranges="$ranges!0!0"; done            # (the checkboxes before keep their numbers)
-        fi
-        from=$(( cur + ${#gap} + 1 )); row="$row$gap$ck"; cur=$(( cur + need )); empty=0; ranges="$ranges!$from!$(( from + cw - 1 ))"
-    done
-    rows[$rown]=$row; rranges[$rown]=$ranges; [ "$rown" = 0 ] && end0=$cur
-    lead=""; [ -n "${rows[0]}" ] && lead=" ${rows[0]}"
-    dn=$(( W - end0 - 3 )); [ "$dn" -lt 1 ] && dn=1
-    printf '\035cap:%s%s\035  %s┈┈%s %s%s%s%s %s%s%s %s↕%s\n' "$kind" "${rranges[0]}" "$MUTED" "$X" "$D" "$text" "$X" "$lead" "$MUTED" "${DASH_LINE:0:$dn}" "$X" "$D" "$X"
-    for (( i = 1; i <= rown; i++ )); do
-        [ -n "${rows[$i]}" ] && printf '\035pf:%s%s\035    %s\n' "$kind" "${rranges[$i]}" "${rows[$i]}"
-    done
-    return 0
 }
 dash_caption() {  # dash_caption <text> [done|deploys|tests|agents]: ┈┈ Text ┈┈┈┈┈ in grey (Done, Deployments, Tests, Agents); with a section the row has a ↕ at the
     # right end: on done, deploys and tests a click anywhere on the row switches the section to counts only and back (ref cap:<section>); on agents only the
@@ -4530,7 +4649,7 @@ mon_age_set() {  # mon_age_set <var> <epoch>: the same as mon_age, without a sub
     local a; num_set a "$2" "$NOW"; a=$(( NOW - a )); [ "$a" -lt 0 ] && a=0
     if [ "$a" -lt 60 ]; then printf -v "$1" '%ds' "$a"; elif [ "$a" -lt 3600 ]; then printf -v "$1" '%dm' $(( a / 60 )); elif [ "$a" -lt 86400 ]; then printf -v "$1" '%dh' $(( a / 3600 )); else printf -v "$1" '%dd' $(( a / 86400 )); fi
 }
-# A topic that waits for a deployment (status waiting, deploy_wait=1; own group WAITING FOR DEPLOYMENT) follows one entry of deploys.list:
+# A topic that waits for a deployment (status waiting, deploy_wait=1; own group DEPLOYING, a card like testing) follows one entry of deploys.list:
 # deploy_url is the entry it is bound to, deploy_match (optional) the label it may bind to (Backend, Production), deploy_since when the
 # wait began. Unbound it looks for the newest entry of its project (and label) that is under way, or that began after deploy_since.
 agent_reopen_pick() {  # agent_reopen_pick <session> <pane> <machine> <strict 0|1>: REOPEN_IDX = the ONE recently finished or dismissed card of this agent that
@@ -4699,6 +4818,14 @@ deploy_lookup() {  # deploy_lookup <topic file>: 0 and DL_* (state, done, total,
     done < "$SHARED_DIR/deploys.list"
     return 1
 }
+deploy_cards_prune() {  # the screen only: a topic that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows (a running one,
+    # one just begun, or one that is over and not yet seen); without one it is a line in the normal Waiting list (the collector still looks for it: deploy_sync)
+    local i; T_DNO=(); [ "${T_N:-0}" -gt 0 ] || return 0
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] || continue
+        deploy_lookup "${T_FILE[$i]}" || T_DNO[$i]=1             # (T_DEP stays: deploy_sync looks for the deployment)
+    done
+}
 deploy_card_set() {  # deploy_card_set <topic index>: the card of a topic waiting for a deployment: TM_WHO, TM_ST, TM_SC, TI_PROG ("done total": a running one)
     TI_PROG=""
     if deploy_lookup "${T_FILE[$1]}"; then
@@ -4726,10 +4853,29 @@ project_gh_slug() {  # project_gh_slug <project id>: owner/repo of its first Git
     done
     return 1
 }
+agent_head_pr_set() {  # agent_head_pr_set <var> <pane>: the pull request number in the title of the last commit in the folder of this machine's agent (empty: none)
+    local _c="" _p _s="" _n=""
+    [ -r "$AGENT_CWD" ] && while IFS=$US read -r _p _c; do [ "$_p" = "$2" ] && break; _c=""; done < "$AGENT_CWD"
+    [ -n "$_c" ] && _s=$(git -C "$_c" log -1 --format=%s 2>/dev/null)
+    case "$_s" in *"(#"[0-9]*")") _n=${_s##*"(#"}; _n=${_n%")"} ;; "Merge pull request #"[0-9]*) _n=${_s#"Merge pull request #"}; _n=${_n%%[!0-9]*} ;; esac
+    case "$_n" in *[!0-9]*) _n="" ;; esac
+    printf -v "$1" '%s' "$_n"
+}
+deploy_agent_newest() {  # deploy_agent_newest <topic index>: 0 when no other topic of the same agent (machine and pane) that is at work, in review, finished or waits
+    # for a deployment is newer (by its last change; at the same time the first one wins)
+    local i=$1 j ui uj am=${T_AM[$1]:-$HOST}; ui=$(num_or "${T_UPD[$i]}" 0)
+    for (( j = 0; j < T_N; j++ )); do
+        [ "$j" != "$i" ] && [ "${T_AP[$j]}" = "${T_AP[$i]}" ] && [ "${T_AM[$j]:-$HOST}" = "$am" ] || continue
+        case "${T_STATUS[$j]}" in now|review|testing|finished) ;; waiting) [ "${T_DEP[$j]:-}" = 1 ] || continue ;; *) continue ;; esac
+        uj=$(num_or "${T_UPD[$j]}" 0)
+        { [ "$uj" -gt "$ui" ] || { [ "$uj" = "$ui" ] && [ "$j" -lt "$i" ]; }; } && return 1
+    done
+    return 0
+}
 deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, and when that is over it goes to review (ok: check production; failed:
     # what went wrong). Runs in the collector of a machine with the deployment monitor.
     [ -s "$SHARED_DIR/deploys.list" ] || return 0
-    local i f note ic t p lb st d tot nt u pn now prn sl; now=$(date +%s)
+    local i f note ic t p lb st d tot nt u pn now prn sl ok hp; now=$(date +%s)
     topics_load
     while IFS=$US read -r t p lb st d tot nt u; do        # a deployment under way of the branch an agent's topic is on: that topic waits for it
         case "$st" in running|queued|approval) ;; *) continue ;; esac
@@ -4737,14 +4883,17 @@ deploy_sync() {  # a topic waiting for a deployment: binds to its deployment, an
         prn=""   # CircleCI deploys main: the note is the commit's title: "… (#123)" (squash) or "Merge pull request #123 from …" is the merged pull request
         case "$nt" in *"(#"[0-9]*")") prn=${nt##*"(#"}; prn=${prn%")"} ;; "Merge pull request #"[0-9]*) prn=${nt#"Merge pull request #"}; prn=${prn%%[!0-9]*} ;; esac
         for (( i = 0; i < T_N; i++ )); do
-            case "${T_STATUS[$i]}" in now|review|testing) ;; *) continue ;; esac
+            case "${T_STATUS[$i]}" in now|review|testing|finished) ;; *) continue ;; esac     # (finished: its agent has stopped, the branch is still on its way)
+            deploy_agent_newest "$i" || continue                       # (one topic per agent: its newest; the older ones of that agent are not what is deployed)
+            [ "${T_STATUS[$i]}" = finished ] && [ "$(num_or "${T_UPD[$i]}" 0)" -lt $(( $(num_or "$t" 0) - 600 )) ] && continue   # (finished long before this deployment began: an old topic of that agent, not its work)
             [ -n "${T_AP[$i]}" ] && [ -n "${T_BR[$i]}" ] || continue
             pn=""; [ -n "${T_PJ[$i]}" ] && { projects_load; pn=$(project_name "${T_PJ[$i]}"); }
             [ -z "$pn" ] || [ "$pn" = "$p" ] || continue
-            if [ "${T_BR[$i]}" != "$nt" ]; then                                    # not by branch name: by the pull request of the agent's branch
-                [ -n "$prn" ] && [ -n "${T_PJ[$i]}" ] || continue
-                sl=$(project_gh_slug "${T_PJ[$i]}") || continue
-                [ "$(branch_pr_number "$sl" "${T_BR[$i]}")" = "$prn" ] || continue
+            if [ "${T_BR[$i]}" != "$nt" ]; then                                    # not by branch name: by the pull request of the agent's branch,
+                ok=0                                                               # or by the last commit in its folder (the merge of that pull request: the agent has gone back to its own branch)
+                if [ -n "$prn" ] && [ -n "${T_PJ[$i]}" ] && sl=$(project_gh_slug "${T_PJ[$i]}") && [ "$(branch_pr_number "$sl" "${T_BR[$i]}")" = "$prn" ]; then ok=1; fi
+                if [ "$ok" = 0 ] && [ -n "$prn" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ]; then agent_head_pr_set hp "${T_AP[$i]}"; [ "$hp" = "$prn" ] && ok=1; fi
+                [ "$ok" = 1 ] || continue
             fi
             f=${T_FILE[$i]}
             topic_set "$f" status waiting; topic_set "$f" waiting_for "Deployment $lb"; topic_set "$f" waiting_since "$now"
@@ -4775,8 +4924,8 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     [ -s "$SHARED_DIR/$kind.list" ] || return 0
     [ -n "${NOW:-}" ] || NOW=$(date +%s)
     local lst; lst=$(mon_list_shown "$kind")
-    mon_caption "$kind" "$cap"
-    [ -s "$lst" ] || return 0                                  # (every project of it is switched off: only the caption with its checkboxes)
+    dash_caption "$cap" "$kind"
+    [ -s "$lst" ] || return 0                                  # (every project of it is switched off in the settings: only the caption)
     if section_compact "$kind"; then                            # counts only: what runs now, and how many of the last 10 failed
         local run=0 bad=0 fixed=0 seen=0 okk=$'\n'
         while IFS=$US read -r t pj lb st _; do               # (newest first: a failure is resolved when a newer run of the same project and name went through)
@@ -5740,7 +5889,7 @@ panel_setup() {  # the wizard from inside the panel: a normal terminal for it, t
     stty -echo -icanon min 1 time 0 </dev/tty 2>/dev/null; printf '\033[?25l%s' "$MOUSE_ON"; trap 'anim=1' USR1; term_size
 }
 bhote_main() {
-    local f pf chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0
+    local f pf chk seq tmo _sa _ss view=${BHOTE_VIEW:-splash} key rows m1 m2 last_m="" k2 k3 anim=0 rc MENU_IDX=0 resize=0 _cl
     harden_perms; bhote_info
     if [ -n "${BHOTE_COLLECTOR_ONLY:-}" ]; then               # the collector alone (the Rust panel runs it for itself): until that panel is gone
         trap 'rm -rf "$RUN_DIR"; exit 0' TERM INT HUP
@@ -5771,12 +5920,14 @@ bhote_main() {
     cleanup() {
         trap '' INT TERM HUP QUIT USR1 WINCH                  # once, and not interrupted by the next signal
         kill $pids 2>/dev/null
+        [ -n "${BHOTE_DELEGATE:-}" ] || rm -f "$SHARED_DIR/panels/${HERDR_PANE_ID:-none}" 2>/dev/null
         [ -n "$stty_saved" ] && stty "$stty_saved" </dev/tty 2>/dev/null
         lock_drop "$SHARED_DIR/collector.lock" "$$"; lock_drop "$SHARED_DIR/sync.lock" "$$"; lock_drop "$SHARED_DIR/setup.lock" "$$"
         rm -rf "$RUN_DIR"
         printf '%s\033[0m\033[?25h\033[?1049l\033]2;\007' "$MOUSE_OFF" 2>/dev/null   # mouse off, colours, cursor, normal screen, title
     }
     trap 'cleanup; exit 0' INT TERM HUP QUIT EXIT
+    [ -n "${BHOTE_DELEGATE:-}" ] || panel_register
     trap 'redraw=1; resize=1; CLAMP_AT=$(( SECONDS + 1 ))' WINCH       # (the width is checked once the resizing has settled)
     CLAMP_AT=$(( SECONDS + 2 ))
     trap 'anim=1' USR1
@@ -5801,7 +5952,7 @@ bhote_main() {
         if [ "$redraw" = 1 ] && [ -z "$key" ] && [ "${TAB_VISIBLE:-1}" = 0 ] && [ "$view" = main ]; then redraw=0; DIRTY=1   # (its tab is not shown: it draws when it is; DIRTY says there is something to draw)
         elif [ "$redraw" = 1 ] && [ -n "$key" ] && input_pending; then :   # more input waits (key repeat, a drag): handle it first, draw once
         elif [ "$redraw" = 1 ]; then
-            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; }
+            redraw=0; anim=0; [ "$resize" = 1 ] && { resize=0; term_size; cfg_var _cl PANEL_MIN_WIDTH 46; [ "$REAL_COLS" -lt "$_cl" ] && CLAMP_AT=$SECONDS; [ "${TAB_VISIBLE:-1}" = 0 ] && CLAMP_ADOPT=adopt; }   # (a pane that is too narrow is widened at once)
             [ "$view" = splash ] && ! splash_fits && view=main
             { read -r DOG_IDX _ < "$ANIM_FILE"; } 2>/dev/null || DOG_IDX=0
             DRAWN_IDX=$DOG_IDX; DRAWN_BLINK=on
@@ -5910,12 +6061,11 @@ bhote_main() {
             case "$key" in
                 "") ;;
                 AGENT) [ "$view" = main ] && { agent_jump "$CLICK_M" "$CLICK_P"; redraw=1; } ;;
-                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in pf:*) ;; cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; if topic_is_card "$CLICK_T"; then topic_jump click || { view=menu; MENU_IDX=0; }; else view=menu; MENU_IDX=0; fi ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
-                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*|pf:*) ;; *) SEL_ID=$CLICK_T; view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # the right button: the topic's page
+                TOPIC) [ "$view" = main ] && { case "$CLICK_T" in cap:*) section_toggle "${CLICK_T#cap:}" ;; more:*) SEL_ID=$CLICK_T; toggle_expand "${CLICK_T#more:}" ;; *) SEL_ID=$CLICK_T; if topic_is_card "$CLICK_T"; then topic_jump click || { view=menu; MENU_IDX=0; }; else view=menu; MENU_IDX=0; fi ;; esac; redraw=1; } ;;      # a click on a topic selects it and shows its agent in herdr (as a click on the agent does)
+                CTX) [ "$view" = main ] && { case "$CLICK_T" in ''|more:*|cap:*|agent:*) ;; *) SEL_ID=$CLICK_T; view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # the right button: the topic's page
                 AGMENU) if [ "$view" = main ]; then if [ "$(cfg_get AGENTS_COMPACT off)" = on ]; then cfg_set AGENTS_COMPACT off; else cfg_set AGENTS_COMPACT on; fi; redraw=1; fi ;;   # the ↕ on the divider: counts only, and back
-                ACT) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) mon_chip_toggle "${CLICK_T#*:}" "${CLICK_N:-1}" ;; *) SEL_ID=$CLICK_T; review_act "$(topic_file_of "$CLICK_T")" "${CLICK_N:-1}" ;; esac; redraw=1; } ;;   # a click on the button of a review card
                 y|Y|1|2|3) if [ "$view" = main ]; then f=$(sel_file); k=${key#[yY]}; [ -n "$f" ] && review_act "$f" "${k:-${key/[yY]/1}}"; redraw=1; fi ;;   # (y = the first button)
-                OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*|pf:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*|pf:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
+                OPEN) [ "$view" = main ] && { case "$CLICK_T" in cap:*) ;; *) SEL_ID=$CLICK_T ;; esac; case "$CLICK_T" in more:*|cap:*) ;; *) view=menu; MENU_IDX=0 ;; esac; redraw=1; } ;;   # a double click: the topic's page
                 q|Q) exit 0 ;;
                 s) if [ "$view" = main ] && [ -n "$(sel_file)" ]; then PICK_MODE=start; view=pick; PICK_IDX=0; else view=main; fi; redraw=1 ;;
                 t|T) if [ "$view" = main ] && f=$(sel_file) && [ -n "$f" ] && [ -n "$(topic_get "$f" agent_pane)" ]; then PICK_MODE=transfer; PICK_IDX=1; view=pick; redraw=1; fi ;;
@@ -5946,7 +6096,7 @@ bhote_main() {
         # Every 2 seconds, when no key was read: did the agent lists, the topics or the sync state change? (Not tied to a read
         # timeout: the animation wakes the loop all the time, and bash 3.2 returns 1 from a timed-out read, bash 4+ more than 128.)
         if [ -n "$FLASH_MSG" ] && [ "$SECONDS" -ge "$FLASH_UNTIL" ]; then FLASH_MSG=""; redraw=1; fi
-        if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ) & fi
+        if [ -n "${CLAMP_AT:-}" ] && [ "$SECONDS" -ge "$CLAMP_AT" ]; then CLAMP_AT=""; ( panel_width_clamp ${CLAMP_ADOPT:-} ) & CLAMP_ADOPT=""; fi
         if [ -z "$key" ]; then                                 # the agent lists changed (the collector counts a revision up): at once
             local _rev=""; { read -r _rev < "$SHARED_DIR/agents.rev"; } 2>/dev/null
             if [ "$_rev" != "${AG_REV:-}" ]; then AG_REV=$_rev; case "$view" in main) redraw=1 ;; esac; fi
@@ -6078,7 +6228,7 @@ act_slack() {                                                                   
     else FLASH_MSG="✗ ${perr#bhote: }"; fi
     printf '%s' "$FLASH_MSG"
 }
-act_clamp() { panel_width_clamp; }                                                         # (the width of the panel pane is kept between the two settings)
+act_clamp() { panel_width_clamp "$@"; }                                                         # (the width of the panel pane is kept between the two settings)
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
     [ -n "${CLAUDECODE:-}" ] && return 0

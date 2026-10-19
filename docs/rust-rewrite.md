@@ -112,7 +112,7 @@ view. A Rust panel would have to take those over as well; that is a different, b
 `BHOTED_PANEL=on` (off by default) makes `bhote` replace itself with `bhoted panel`. The Rust panel owns the terminal (raw mode, the
 alternate screen, SGR mouse with motion, the resize signal, Ctrl-C and a closed terminal clean up, also after a panic), reads
 keys and mouse reports into events, draws the main view in-process (no process per block, no files for the maps), and does what
-a click or a key does: select, expand "+N more", the section toggles and project checkboxes, the review card's buttons, jump
+a click or a key does: select, expand "+N more", the section toggles, jump
 to an agent, check off (x), dismiss (c), edit title or description (e, d), new topic (n), with a small line editor on the last
 row. What still needs the script is run through `bhote __act <name>` (jump to an agent or a topic's agent, answer a review: the
 herdr and kharka calls) or as a view: the topic's menu (double click, right button, →), settings (,), the wizard (w and the

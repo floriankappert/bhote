@@ -107,7 +107,7 @@ pub fn agent_cards(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
     for r in local.iter().filter(|r| r.m == c.host) {
         match r.st.as_str() { "working" | "testing" => { work.push(&r.id); if !cd.join(key(&r.id)).exists() { touch_state(&cd, &key(&r.id), &n.to_string()); } } _ => rm_state(&cd, &key(&r.id)) }
     }
-    let owned: Vec<&str> = ts.iter().filter(|t| t.am == c.host && !t.ap.is_empty() && t.an != "1" && matches!(t.status.as_str(), "now" | "testing" | "finished" | "review" | "next")).map(|t| t.ap.as_str()).collect();
+    let owned: Vec<&str> = ts.iter().filter(|t| t.am == c.host && !t.ap.is_empty() && t.an != "1" && (matches!(t.status.as_str(), "now" | "testing" | "finished" | "review" | "next") || (t.status == "waiting" && t.dep == "1"))).map(|t| t.ap.as_str()).collect();   // (waiting for a deployment: a card, the agent has one: no second card that deploy_sync would take again)
     let mut cards: Vec<String> = Vec::new();
     for t in ts {
         if !(t.am == c.host && !t.ap.is_empty()) || t.an != "1" { continue; }
@@ -442,6 +442,16 @@ fn branch_pr_number(c: &Ctx, slug: &str, branch: &str) -> String {
     let _ = fs::create_dir_all(f.parent().unwrap()); let _ = fs::write(&f, &n); n
 }
 
+/// The pull request number in the title of the last commit in the folder of this machine's agent (empty: none)
+fn agent_head_pr(c: &Ctx, pane: &str) -> String {
+    let cwd = crate::proc::read_cap(c.env.shared.join("agents.cwd")).unwrap_or_default().lines().find_map(|l| { let mut p = l.splitn(2, US); if p.next() == Some(pane) { p.next().map(|x| x.to_string()) } else { None } }).unwrap_or_default();
+    if cwd.is_empty() { return String::new(); }
+    let subj = crate::proc::run("git", &["-C", &cwd, "log", "-1", "--format=%s"], 10, None).filter(|o| o.0 == 0).map(|o| String::from_utf8_lossy(&o.1).trim().to_string()).unwrap_or_default();
+    let n: String = if subj.ends_with(')') && subj.contains("(#") { subj[subj.rfind("(#").unwrap() + 2..].trim_end_matches(')').to_string() }
+        else if let Some(r) = subj.strip_prefix("Merge pull request #") { r.chars().take_while(|ch| ch.is_ascii_digit()).collect() } else { String::new() };
+    if n.bytes().all(|b| b.is_ascii_digit()) { n } else { String::new() }
+}
+
 pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
     let Ok(list) = crate::proc::read_cap(c.env.shared.join("deploys.list")) else { return }; if list.is_empty() { return; }
     let n = now().to_string(); let ps = projects_full(&c.env.topics);
@@ -456,14 +466,22 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
         else if let Some(r) = nt.strip_prefix("Merge pull request #") { prn = r.chars().take_while(|ch| ch.is_ascii_digit()).collect(); }
         for i in 0..ts.len() {
             let t = ts[i].clone();
-            if !matches!(t.status.as_str(), "now" | "review" | "testing") || t.ap.is_empty() || t.br.is_empty() { continue; }
+            if !matches!(t.status.as_str(), "now" | "review" | "testing" | "finished") || t.ap.is_empty() || t.br.is_empty() { continue; }
+            if t.status == "finished" && t.upd + 600 < at(0).parse::<u64>().unwrap_or(0) { continue; }
+            // one topic per agent: its newest (by its last change; at the same time the first one wins); the older ones of that agent are not what is deployed
+            let am = |x: &Topic| if x.am.is_empty() { c.host.clone() } else { x.am.clone() };
+            if ts.iter().enumerate().any(|(j, o)| j != i && o.ap == t.ap && am(o) == am(&t) && (matches!(o.status.as_str(), "now" | "review" | "testing" | "finished") || (o.status == "waiting" && o.dep == "1")) && (o.upd > t.upd || (o.upd == t.upd && j < i))) { continue; }   // (finished long before this deployment began: an old topic of that agent, not its work)
             let pn = if t.pj.is_empty() { String::new() } else { ps.iter().find(|x| x.id == t.pj).map(|x| x.name.clone()).unwrap_or_default() };
             if !pn.is_empty() && pn != p { continue; }
             if t.br != nt {
-                if prn.is_empty() || t.pj.is_empty() { continue; }
-                let slug = ps.iter().find(|x| x.id == t.pj).and_then(|x| x.repos.split(',').find_map(|k| k.strip_prefix("github.com/").filter(|r| r.contains('/')).map(|r| r.to_string())));
-                let Some(slug) = slug else { continue };
-                if branch_pr_number(c, &slug, &t.br) != prn { continue; }
+                let mut ok = false;
+                if !prn.is_empty() && !t.pj.is_empty() {
+                    let slug = ps.iter().find(|x| x.id == t.pj).and_then(|x| x.repos.split(',').find_map(|k| k.strip_prefix("github.com/").filter(|r| r.contains('/')).map(|r| r.to_string())));
+                    if let Some(slug) = slug { ok = branch_pr_number(c, &slug, &t.br) == prn; }
+                }
+                // or the last commit in the agent's folder (the merge of that pull request: the agent went back to its own branch)
+                if !ok && !prn.is_empty() && (t.am.is_empty() || t.am == c.host) { ok = agent_head_pr(c, &t.ap) == prn; }
+                if !ok { continue; }
             }
             s.set(&t.file, "status", "waiting"); s.set(&t.file, "waiting_for", &format!("Deployment {}", lb)); s.set(&t.file, "waiting_since", &n);
             s.set(&t.file, "deploy_wait", "1"); s.set(&t.file, "deploy_url", u); s.set(&t.file, "deploy_since", &n);

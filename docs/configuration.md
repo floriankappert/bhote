@@ -18,7 +18,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AGENTS_VIA` | `herdr` | Agents through | Where they come from: `herdr` (its saved machines; herdr asks them over its ssh connection) or `kharka` (what [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) writes on every machine; no ssh between the machines). See [agents through kharka](data-and-sync.md#agents-through-kharka). |
 | `MACHINES_OFF` | | one row per machine | Comma-separated labels that stay out even with `REMOTE_AGENTS=on`. |
 | `BHOTED` | `auto` | Rust daemon | `auto`: the daemon `bhoted` keeps the topic index current when the binary is found (next to the script in `daemon/target/release`, or on the PATH); `off`: bash only. |
-| `PANEL_MIN_WIDTH` | `46` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). |
+| `PANEL_MIN_WIDTH` | `46` | Panel width min | The narrowest the panel's herdr pane may get; after a resize a narrower one is widened again (the agent next to it keeps at least 40 columns). The panels of all tabs and workspaces follow the width of the one you work in (a second after a resize), so they are always equally wide. |
 | `PANEL_MAX_WIDTH` | `64` | Panel width max | The widest it may get; a wider one is narrowed again. Also the widest the panel draws. |
 | `LOCAL_EVERY` | `3` | Local interval (s) | Seconds between two queries of this machine's agents. |
 | `REMOTE_EVERY` | `5` | Remote interval (s) | Seconds between two queries of the other machines (and the regular sync). |
@@ -45,7 +45,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TEST_STATUS_DIR` | `~/.cache/bhote/test-status` | Status files | Folder with live test status files (one JSON per suite, format in [Monitors](monitors.md)). |
 | `UPDATE_CHECK` | `on` | Check for updates | The collector asks GitHub for the newest `vX.Y.Z` tag every 6 hours. A newer version shows in Settings and in the head of the panel with the command that updates it (`brew update && brew upgrade bhote`, `git -C <checkout> pull`, …). `bhote update` asks right now. |
 | `AUTO_REVIEW` | `on` | Review topic for a question | An agent that has no topic and waits for an answer (herdr status *blocked*) or ends its turn with a question (its last line ends with “?”) gets a review topic “Question from <agent>” with the question as its description; it goes when the agent works again. A plain “done, okay” hand-back makes no topic. A topic in work goes to review when its agent hands back and returns to now when it works again; this also holds for a topic the agent put under review itself with `bhote review`. |
-| `DEPLOY_PROJECTS_OFF` | | Projects off (deployments) | Comma-separated project names switched off in the Deployments block: the checkboxes in its caption write it. |
+| `DEPLOY_PROJECTS_OFF` | | Projects off (deployments) | Comma-separated project names switched off in the Deployments block: the switches in the settings (Connections) write it. |
 | `TEST_PROJECTS_OFF` | | Projects off (tests) | The same for the Tests block; the local runs of a project's worktrees (`IMS-wt1` is IMS) go with it. |
 | `KHARKA_WATCH_STALE` | `90` | Restart after (s) | `bhote kharka watch` restarts `herdr-kharka` when its entry in kharka (`herdr/<node>`) is older than this. |
 | `CLAUDE_MOD` | `on` | Claude Code mod (band, pane) | Whether the [Claude Code mod](claude-mod.md) shows the topic of the agent: the band above the prompt and the pane (`/topic pane`). Off: the mod stays installed but draws nothing and asks bhote for nothing (it asks as `bhote current --json --mod` and gets `{"disabled":true}`). |
@@ -59,6 +59,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTOSTART` | `on` | Auto-start with herdr | The [herdr plugin](herdr-plugin.md) opens the panel when herdr starts. |
 | `AGENT_ROWS` | automatic | settings file only | Height of the agent area in rows. |
 | `TOPICS_SCOPE` | `all` | Topics shown | `project`: the panel lists the topics of its project (the project of the agent in its herdr tab) and those without one; `all`: every topic. |
+| `CARD_GROUPING` | `ungrouped` | Agent cards: grouping/sorting | `ungrouped`: all cards (review, now, testing, deploying, finished, and the idle agents without a card) in one list, without headings, in the order of the agents in herdr; cards without an agent come after them. `status`: grouped under NOW, TESTING, DEPLOYING, RECENTLY FINISHED and so on, the idle agents as the group IDLE at the end. |
 | `DONE_MAX` | `4` | | The last done topics, shown in their own area above the agents (newest first; `0`: none). |
 | `ARCHIVE_DAYS` | `7` | Archive after days | Done, next, waiting and parked topics untouched for this many days leave the panel (a line counts them); the search and the CLI still reach them (`0`: never). |
 | `HOST_LABEL` | `Mac` on macOS, else the host name | | How this machine is called in agent lists. Should match the label other machines use for it in `herdr machine list`. |

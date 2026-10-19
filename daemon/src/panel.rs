@@ -33,8 +33,8 @@ pub struct Panel {
     sel_id: String, hover_id: String, hover_btn: bool, expanded: String,
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
-    click_last: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
-    pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>,
+    click_last: Option<(String, Instant)>, jump_at: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
+    pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
 
@@ -48,8 +48,8 @@ impl Panel {
             has_machines: envs("BHOTE_HAS_MACHINES") == "1", pane_id: envs("HERDR_PANE_ID"), tab_id: envs("HERDR_TAB_ID"),
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
-            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
-            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
+            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, jump_at: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
+            pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
         self.cfg = crate::config_read(&self.cfg_path.to_string_lossy());
@@ -233,7 +233,7 @@ impl Panel {
         else { self.act(&["flash", m, p], "flash", true); }
     }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {
-        let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[?1003l\x1b[?1006l\x1b[0m\x1b[?25h"); let _ = o.flush();
+        let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[0m\x1b[?25h"); let _ = o.flush();
         // the view runs in a child; a SIGTERM or a closed terminal for this panel ends the child as well
         if let Ok(mut ch) = Command::new("bash").arg(&self.script).env("BHOTE_DELEGATE", view).env("BHOTE_SEL_ID", &self.sel_id).env("BHOTE_ARG", arg).spawn() {
             loop {
@@ -244,7 +244,15 @@ impl Panel {
         }
         *term = Term::enter(true);
         self.reload_cfg(); self.real_cols = Term::size().0; self.real_rows = Term::size().1; self.cols = self.real_cols.min(self.num("PANEL_MAX_WIDTH", 64).max(30) as u32).max(MIN_COLS); self.rows = self.real_rows;
-        self.redraw = true; self.clamp_at = Some(Instant::now() + Duration::from_secs(1));
+        self.redraw = true; self.clamp_adopt = true; self.clamp_at = Some(Instant::now() + self.clamp_wait());   // (the size may have changed under the page: no lead)
+    }
+
+    /// How long a resize settles before the width is checked: a pane outside PANEL_MIN_WIDTH..PANEL_MAX_WIDTH (the panel of a workspace
+    /// that was just shown) is corrected at once, so it does not stay narrow for a second; any other resize waits as before
+    fn clamp_wait(&self) -> Duration {
+        let (lo, hi) = (self.num("PANEL_MIN_WIDTH", 46), self.num("PANEL_MAX_WIDTH", 64).max(30));
+        let w = self.real_cols as i64;
+        if w < lo || w > hi.max(lo) { Duration::from_millis(50) } else { Duration::from_secs(1) }
     }
 
     // ── a line to type into (ask) ─────────────────────────────────────────────────────────────────────────────
@@ -256,7 +264,7 @@ impl Panel {
             let skip = if cur > room { cur - room } else { 0 };
             let shown: String = buf.iter().skip(skip).take(room).collect();
             let mut o = std::io::stdout().lock();
-            let _ = write!(o, "\x1b[?1003l\x1b[?1006l\x1b[{};1H\x1b[0m\x1b[K{}{}\x1b[{};{}H\x1b[?25h", rows, label, shown, rows, lw + 1 + cur - skip);
+            let _ = write!(o, "\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[{};1H\x1b[0m\x1b[K{}{}\x1b[{};{}H\x1b[?25h", rows, label, shown, rows, lw + 1 + cur - skip);
             let _ = o.flush(); let _ = text;
         };
         draw(&buf, cur, self.real_rows, self.real_cols);
@@ -279,7 +287,7 @@ impl Panel {
         let s: String = buf.iter().collect(); let s: String = s.chars().filter(|c| !c.is_control()).collect();
         Some(s.trim_matches(' ').to_string())
     }
-    fn after_ask(&mut self) { let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[0m\x1b[?25l\x1b[?1003h\x1b[?1006h"); let _ = o.flush(); self.redraw = true; }
+    fn after_ask(&mut self) { let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[0m\x1b[?25l\x1b[?1002h\x1b[?1006h"); let _ = o.flush(); self.redraw = true; }
 
     // ── the mouse ─────────────────────────────────────────────────────────────────────────────────────────────
     fn ref_at(&self, y: i64) -> Option<&String> { self.tmap.iter().find(|(r, t)| *r == y && !t.is_empty()).map(|(_, t)| t) }
@@ -294,7 +302,7 @@ impl Panel {
         }
         if !press { return; }
         if b == 2 {   // the right button: the topic's menu
-            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id; self.open_menu(term); } }
+            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("agent:")) { self.sel_id = id; self.open_menu(term); } }
             return;
         }
         if b != 0 { return; }
@@ -307,24 +315,21 @@ impl Panel {
         }
         if div == 0 || y < div {   // above it: a topic?
             if let Some(t) = self.ref_at(y).cloned() {
-                let (id, rng) = match t.find('!') { Some(i) => (t[..i].to_string(), Some(t[i + 1..].to_string())), None => (t.clone(), None) };
-                if let Some(r) = rng {
-                    let nums: Vec<i64> = r.split('!').filter_map(|v| v.parse().ok()).collect();
-                    for (n, ch) in nums.chunks(2).enumerate() { if ch.len() == 2 && x >= ch[0] && x <= ch[1] {
-                        if id.starts_with("cap:") || id.starts_with("pf:") { self.chip_toggle(id.split_once(':').map_or("", |p| p.1), n as i64 + 1); } else { self.sel_id = id.clone(); self.act(&["review", &id, &(n + 1).to_string()], "review", false); }
-                        self.redraw = true; return;
-                    } }
+                let id = t.clone();
+                if let Some(rest) = id.strip_prefix("agent:") {   // an idle agent's card: show the agent
+                    if let Some((m, pane)) = rest.rsplit_once('/') { let (m, pane) = (m.to_string(), pane.to_string()); self.agent_jump(&m, &pane); }
+                    self.redraw = true; return;
                 }
                 let twice = self.click_twice(&id);
                 if twice { // a double click: the topic's page
-                    if !(id.starts_with("cap:") || id.starts_with("pf:")) { self.sel_id = id.clone(); }
-                    if !(id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("pf:")) { self.open_menu(term); }
+                    self.jump_at = None;   // (the click before it has not shown the agent yet: it would have taken the focus away from this panel)
+                    if !(id.starts_with("cap:")) { self.sel_id = id.clone(); }
+                    if !(id.starts_with("more:") || id.starts_with("cap:")) { self.open_menu(term); }
                     self.redraw = true; return;
                 }
-                if id.starts_with("pf:") {}
-                else if let Some(k) = id.strip_prefix("cap:") { let k = k.to_string(); self.section_toggle(&k); }
+                if let Some(k) = id.strip_prefix("cap:") { let k = k.to_string(); self.section_toggle(&k); }
                 else if let Some(s) = id.strip_prefix("more:") { self.sel_id = id.clone(); let s = s.to_string(); self.toggle_expand(&s); }
-                else { self.sel_id = id.clone(); if self.is_card(&id) { self.act(&["topic_jump", &id], "jump", false); } }
+                else { self.sel_id = id.clone(); if self.is_card(&id) { self.jump_at = Some((id.clone(), Instant::now() + Duration::from_millis(500))); } }   // (the agent is shown when no second click follows: a double click must reach this panel)
                 self.redraw = true; return;
             }
         }
@@ -339,18 +344,6 @@ impl Panel {
     }
     fn is_card(&self, id: &str) -> bool { self.with_cards(|c| c.ts().iter().find(|t| t.id == id).map_or(false, |t| matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1"))) }
     fn section_toggle(&mut self, kind: &str) { let k = format!("{}_COMPACT", kind.to_uppercase()); let on = self.c(&k, "off") == "on"; self.cfg_set(&k, if on { "off" } else { "on" }); }
-    /// mon_chip_toggle: the n-th project's checkbox in that monitor's caption
-    fn chip_toggle(&mut self, kind: &str, n: i64) {
-        let ctx = Ctx { cols: self.cols as i64, now: 0, shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(HashMap::new()) };
-        let names: Vec<String> = ui::projects(&ctx).into_iter().filter(|p| p.ci).map(|p| p.name).collect();
-        let Some(name) = names.get((n - 1).max(0) as usize).map(|s| s.replace(',', " ")) else { return };
-        let key = if kind == "deploys" { "DEPLOY_PROJECTS_OFF" } else { "TEST_PROJECTS_OFF" };
-        let off = self.c(key, ""); let mut found = false; let mut new: Vec<String> = Vec::new();
-        for e in off.split(',') { if e.is_empty() { continue; } if e == name { found = true; } else { new.push(e.to_string()); } }
-        if !found { new.push(name); }
-        self.cfg_set(key, &new.join(","));
-    }
-
     // ── keys ──────────────────────────────────────────────────────────────────────────────────────────────────
     fn key(&mut self, term: &mut Term, c: char) -> bool {
         let mut live = Live { env: &self.env(), notify_on: false, n: 0 };
@@ -399,21 +392,31 @@ impl Panel {
         self.collector_tries += 1; self.collector = None; self.start_collector();
         crate::proc::note(&self.shared, &format!("the collector ended: started again (try {})", self.collector_tries));
     }
+    /// This panel's pane and process in <shared>/panels/<pane>: how the width sync finds a panel that has no label (one started by hand)
+    fn register(&self) {
+        if self.pane_id.is_empty() || !self.pane_id.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
+        let dir = self.shared.join("panels"); let _ = fs::create_dir_all(&dir);
+        let f = dir.join(&self.pane_id); let me = format!("{}\n", std::process::id());
+        if fs::read_to_string(&f).map_or(true, |t| t != me) { let _ = fs::write(&f, me); }
+    }
+    fn unregister(&self) { if !self.pane_id.is_empty() { let _ = fs::remove_file(self.shared.join("panels").join(&self.pane_id)); } }
     fn tick(&mut self) {
         self.keep_collector();
         let sec = store::now();
+        if let Some((id, t)) = self.jump_at.clone() { if Instant::now() >= t { self.jump_at = None; self.act(&["topic_jump", &id], "jump", false); } }
+        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { if self.clamp_adopt { self.act(&["clamp", "adopt"], "clamp", false); } else { self.act(&["clamp"], "clamp", false); } } self.clamp_adopt = false; } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
+            self.register();
             if !self.pane_id.is_empty() {
                 if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
                     let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
                     let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
-                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; } }
+                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); } }
                     if pf != self.pane_focus { self.pane_focus = pf; self.redraw = true; }
                 }
             }
             if let Some((_, u)) = &self.flash { if Instant::now() >= *u { self.flash = None; self.redraw = true; } }
-            if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; self.act(&["clamp"], "clamp", false); } }
             if sec >= self.last_chk + 2 { self.last_chk = sec; let s = self.sig(); if s != self.files_sig { self.files_sig = s; if self.tab_visible { self.redraw = true; self.reload_cfg(); } else { self.dirty = true; } } }
             // bhote find / a jump chose a topic: select it here
             if let Ok(t) = crate::proc::read_cap(self.shared.join("select")) {
@@ -443,12 +446,15 @@ pub fn run() -> i32 {
             if crate::proc::guarded("paint", &shared, || p.paint()).is_none() { p.redraw = false; p.flash = Some(("internal error: see bhoted.log in the shared folder".into(), Instant::now() + Duration::from_secs(10))); }
         }
         else if p.redraw && !p.tab_visible { p.redraw = false; p.dirty = true; }
-        let timeout = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
+        let mut timeout: i32 = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
+        if let Some((_, t)) = &p.jump_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }
+        if let Some(t) = p.clamp_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }   // (the width check is due: do not sleep past it)
         let ev = term.next(timeout);
         let go = crate::proc::guarded("event", &shared, || handle(&mut p, &mut term, ev)).unwrap_or_else(|| { p.redraw = true; true });
         if !go { break; }
         crate::proc::guarded("tick", &shared, || { p.poll_pending(); p.tick(); });
     }
+    p.unregister();
     term.leave();
     if let Some(mut c) = p.collector.take() { let _ = c.kill(); }
     0
@@ -593,7 +599,7 @@ fn handle(p: &mut Panel, term: &mut Term, ev: Ev) -> bool {
     match ev {
         Ev::Timeout => { if p.spin_any && p.tab_visible { p.spin_tick += 1; p.redraw = true; } }
         Ev::Eof => return false,
-        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; p.clamp_at = Some(Instant::now() + Duration::from_secs(1)); }
+        Ev::Resize => { let (c, r) = Term::size(); p.real_cols = c; p.real_rows = r; p.rows = r; p.reload_cfg(); p.redraw = true; if !p.tab_visible || p.shown_at.map_or(false, |t| t.elapsed() < Duration::from_secs(3)) { p.clamp_adopt = true; } p.clamp_at = Some(Instant::now() + p.clamp_wait()); }   // (a size that changed while the tab was hidden or just shown comes from the layout, not from a drag)
         Ev::Mouse { b, x, y, press } => { if p.screen == Screen::Main { p.mouse(term, b, x, y, press) } else { p.screen_mouse(term, b, y, press) } }
         e if p.screen != Screen::Main => { if !p.screen_key(term, &e) { return false; } }
         Ev::Key(c) => { if !p.key(term, c) { return false; } }

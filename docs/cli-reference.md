@@ -101,8 +101,8 @@ Set the status: start or resume (`now`, also clears a waiting name), tests are r
 When a **waiting** topic belongs to an agent (the agent created it, see the bhote skill) and you set it to `now`, that agent
 gets a prompt: "The wait is over (<who>): <title>. Go on with: <description>". `bhote now <ref> --quiet` skips the prompt.
 
-`review` takes a **card** for the panel: `--summary <text>` (what was done, what is open, what only you can do; at most 240 characters; a
-small card under the topic) and `--look`, which adds the one button *Review ansehen*: it focuses the topic's agent, sends nothing and the
+`review` takes a **card** for the panel: `--summary <text>` (what was done, what is open, what only you can do; at most 240 characters; it is in
+`bhote show` and in the Claude mod's pane, the panel's card does not show it) and `--look`, which adds the one button *Review ansehen*: it focuses the topic's agent, sends nothing and the
 topic stays in review. There are no buttons that trigger an action, because an answer can be several things at once: `--ask <label>` (with an
 optional `--reply <text>`) is still accepted, but the card shows the same jump button instead (a note on stderr). A card goes when the topic leaves review.
 `--json` shows it as `"review": {"summary", "actions": [{"label", "reply", "jump"}]}` (`null` without a card; `reply` is `null` and `jump` is `true`).
@@ -286,7 +286,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0","build":"0.6.0"}`; from a checkout past the release tag both
-the text and `build` say the local build, `0.9.1.3 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
+the text and `build` say the local build, `0.9.2 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`
