@@ -687,6 +687,12 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 40 ] || exit 5                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "DEPLOYING" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
+  # without a deployment of its project (an agent said "waiting for a deployment" and none runs) it is no card in DEPLOYING: a line in the Waiting list
+  mv "$SHARED_DIR/deploys.list" "$SHARED_DIR/deploys.keep"; printf '%s\n' "$now${US}Other${US}Backend${US}running${US}1${US}2${US}fix/o${US}https://ci/9" > "$SHARED_DIR/deploys.list"
+  ui_load; topics_load; deploy_cards_prune; [ "${T_DNO[0]:-}" = 1 ] || exit 20
+  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "DEPLOYING" && exit 21
+  printf '%s\n' "$out" | grep -q "Payments Module" || exit 22
+  mv "$SHARED_DIR/deploys.keep" "$SHARED_DIR/deploys.list"; topics_load
   deploy_sync; [ "$(topic_get "$df" status)" = waiting ] && [ "$(topic_get "$df" deploy_url)" = https://ci/1 ] || exit 8   # bound, still under way
   printf '%s\n' "$now${US}IMS${US}Backend${US}ok${US}${US}${US}fix/x${US}https://ci/1" > "$SHARED_DIR/deploys.list"
   deploy_sync; [ "$(topic_get "$df" status)" = review ] && [ -z "$(topic_get "$df" deploy_wait)" ] && [ -z "$(topic_get "$df" deploy_url)" ] || exit 9

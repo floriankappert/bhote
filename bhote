@@ -537,7 +537,7 @@ topics_plan() {  # what the panel lists, for the frame and the keys: PLAN_VIS[i]
         in_scope "$i" || continue
         case "$st" in
             review|now|testing|finished) PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue ;;
-            waiting) [ "${T_DEP[$i]:-}" = 1 ] && { PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue; } ;;   # waiting for a deployment: a card of its own group
+            waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && { PLAN_VIS[$i]=1; SEL_LIST[${#SEL_LIST[@]}]=${T_ID[$i]}; continue; } ;;   # waiting for a deployment: a card of its own group
         esac
         if topic_archived "$i"; then PLAN_ARCH=$(( PLAN_ARCH + 1 )); continue; fi
         if [ "$st" != "$g" ]; then                                # a group ends: an open one gets its "show less"
@@ -1150,7 +1150,7 @@ ui_load() {
         [ -r "$f" ] && while IFS= read -r line; do [ -n "$line" ] && { AG_LINES[$AG_N]=$line; AG_N=$(( AG_N + 1 )); }; done < "$f"
     done
     AGENTS=$AG_N
-    topics_load
+    topics_load; deploy_cards_prune
     projects_load; current_project; cfg_var U_SCOPE TOPICS_SCOPE all
     if [ "$U_SCOPE" = project ] && [ -n "${CUR_PROJ:-}" ]; then topics_projects; else T_EPJ=(); fi   # (each topic's project: only the project scope asks for it, and it takes 15 ms)
 }
@@ -1922,7 +1922,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     local TI_FRAME=1 TI_OPEN=0
     for (( i = 0; i < T_N; i++ )); do
         st=${T_STATUS[$i]}; desc=${T_DESC[$i]:-}; tc=$TITLE; cp=0; TI_PROG=""; TI_TBARS=""
-        gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && gk=deploying   # (the group: waiting for a deployment is its own)
+        gk=$st; [ "$st" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && gk=deploying   # (the group: waiting for a deployment is its own)
         [ "$st" = done ] && continue                             # (in done_block, above the agents)
         case "$gk" in next|waiting|later) [ "$mode" = cards ] && continue ;; *) [ "$mode" = lists ] && continue ;; esac   # (cards on top, the lines at the bottom)
         in_scope "$i" || continue                                # another project's (TOPICS_SCOPE=project)
@@ -2021,7 +2021,7 @@ archived_count() {  # archived_count: the topics that are not shown any more bec
         st=${T_STATUS[$i]}
         [ "$st" = later ] && [ "${T_DM[$i]:-}" = 1 ] && continue
         in_scope "$i" || continue
-        case "$st" in review|now|testing|finished) continue ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && continue ;; esac
+        case "$st" in review|now|testing|finished) continue ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && continue ;; esac
         topic_archived "$i" && n=$(( n + 1 ))
     done
     printf '%s' "$n"
@@ -2446,7 +2446,7 @@ topic_is_card() {  # topic_is_card <id>: 0 for a card (review, now, testing, fin
     # waiting, later, done) open their page
     local i; for (( i = 0; i < T_N; i++ )); do
         [ "${T_ID[$i]}" = "$1" ] || continue
-        case "${T_STATUS[$i]}" in review|now|testing|finished) return 0 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && return 0 ;; esac
+        case "${T_STATUS[$i]}" in review|now|testing|finished) return 0 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && return 0 ;; esac
         return 1
     done
     return 1
@@ -4745,6 +4745,14 @@ deploy_lookup() {  # deploy_lookup <topic file>: 0 and DL_* (state, done, total,
         DL_STATE=$st; DL_D=$d; DL_T=$tot; DL_NOTE=$note; DL_URL=$u; DL_PJ=$p; DL_LB=$lb; DL_TIME=$t; return 0
     done < "$SHARED_DIR/deploys.list"
     return 1
+}
+deploy_cards_prune() {  # the screen only: a topic that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows (a running one,
+    # one just begun, or one that is over and not yet seen); without one it is a line in the normal Waiting list (the collector still looks for it: deploy_sync)
+    local i; T_DNO=(); [ "${T_N:-0}" -gt 0 ] || return 0
+    for (( i = 0; i < T_N; i++ )); do
+        [ "${T_STATUS[$i]}" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] || continue
+        deploy_lookup "${T_FILE[$i]}" || T_DNO[$i]=1             # (T_DEP stays: deploy_sync looks for the deployment)
+    done
 }
 deploy_card_set() {  # deploy_card_set <topic index>: the card of a topic waiting for a deployment: TM_WHO, TM_ST, TM_SC, TI_PROG ("done total": a running one)
     TI_PROG=""

@@ -28,6 +28,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
 ### Fixed
+- A topic that says it waits for a deployment is a card in DEPLOYING only while there is a deployment it follows (running, begun, or over and not yet seen). Without one (nothing deploys for its project or its branch) it is a line in the normal Waiting list, and the agent is not shown as deploying. The collector still looks for the deployment and binds the topic when it starts.
 - A topic card under NOW whose agent has stopped (herdr idle or done) says `finished` in green and now has a green bar too (it was orange, like a working agent, and looked like a fourth one at work). The group is unchanged.
 - A panel whose pane is too narrow (the panel of a workspace you just switched to, e.g. by a click on an agent card) is widened at once, after about 0.1 s instead of 1 to 2 s: the Rust panel no longer waits for its once-a-second tick or a one-second sleep, and a resize outside `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH` is not waited out.
 - One agent, one card on now/testing: when an agent had several topics there (a card for each piece of work, one session), the list showed two cards for it. Now the newest stays and the older ones are recently finished.

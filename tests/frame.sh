@@ -59,6 +59,7 @@ tp 1006-1 $((NOW-500)) title="Tests are running" status=testing agent=a6 agent_m
 tp 1007-1 $((NOW-600)) title="Finished work" status=finished agent=a7 agent_machine=$H agent_pane=w3:p2 description="All done here"
 tp 1008-1 $((NOW-700)) title="Remote agent" status=now agent=a8 agent_machine=Mac agent_pane=w4:p1
 tp 1009-1 $((NOW-800)) title="Waits for a deployment" status=waiting deploy_wait=1 project=proj-ims agent_branch=feat/cancel waiting_for="Deployment" waiting_since=$((NOW-800))
+tp 1013-1 $((NOW-800)) title="Waits and nothing is deployed" status=waiting deploy_wait=1 project=proj-ims agent_branch=other/branch waiting_for="Deployment" waiting_since=$((NOW-800))
 tp 1010-1 $((NOW-800)) title="Deployment under way" status=waiting deploy_wait=1 project=proj-ims waiting_for="Deployment" waiting_since=$((NOW-800)) deploy_url=https://ci/1
 tp 1011-1 $((NOW-800)) title="Deployment failed" status=waiting deploy_wait=1 project=proj-ims waiting_for="Deployment" waiting_since=$((NOW-800)) deploy_url=https://ci/6
 tp 1012-1 $((NOW-800)) title="Deployment done" status=waiting deploy_wait=1 project=proj-ims waiting_for="Deployment" waiting_since=$((NOW-800)) deploy_url=https://ci/5

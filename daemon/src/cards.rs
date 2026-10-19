@@ -56,8 +56,13 @@ pub struct Plan { pub vis: Vec<bool>, pub before: Vec<String>, pub after: Vec<St
 
 impl<'a> Cards<'a> {
     pub fn new(c: &'a Ctx, v: &'a View) -> Cards<'a> {
-        let ts = store::load_fast(&c.topics, &c.shared);
+        let mut ts = store::load_fast(&c.topics, &c.shared);
         let shared = c.shared.clone();
+        // a topic that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows; without one it is a line in the Waiting list
+        if ts.iter().any(|t| t.status == "waiting" && t.dep == "1") {
+            let names: HashMap<String, String> = crate::ui::projects(c).into_iter().map(|p| (p.id, p.name)).collect();
+            for t in ts.iter_mut() { if t.status == "waiting" && t.dep == "1" && deploy_lookup_pub(&shared, &c.topics, &names, t).is_none() { t.dep = String::new(); } }
+        }
         let mut ag = rows(&shared.join("agents.local")); ag.extend(rows(&shared.join("agents.remote")));
         // topics_projects: a topic's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)
         let mut metas = String::new();
