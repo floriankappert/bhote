@@ -22,6 +22,8 @@ waiting and parked topics that nobody touched for `ARCHIVE_DAYS` (7) days are ar
 the search and the CLI still reach them, and a change brings one back. A topic chosen in the search stays visible while it
 is selected.
 
+**Idle** is the last group of cards: every idle agent that has no card of its own, with its last task; a click shows the agent. The agent list at the bottom holds the others.
+
 **Recently finished** is a group of cards under now and testing: a topic whose agent stopped without a question (nothing to check; with a
 question it goes to review). It shows the agent with a green check and how long ago it finished. When the agent works again the topic is back on
 now; after `FINISHED_MINUTES` it is dismissed by itself; `c` dismisses it, `x` checks it off.

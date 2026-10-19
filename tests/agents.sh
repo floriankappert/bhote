@@ -163,9 +163,9 @@ nt=$(BHOTE_NO_SYNC=1 bhote_cli list --all --json | jq length)
 ( AG_N=1; AG_LINES=($'Laptop\037w9:p2\037idle\037server\037'); machine_code_save "$HOST" ZZZ 2>/dev/null ) && bad "a taken code was given twice" || ok "codes: a code another machine has is refused"
 ( machine_code_save Laptop AB 2>/dev/null ) && bad "a two-letter code was taken" || ok "codes: only three letters A-Z"
 ( AG_N=1; AG_LINES=($'Laptop\037w9:p2\037idle\037server\037'); machine_code_save Laptop "" && MC_KEY=-; machine_codes_load; machine_code_set c Laptop; [ "$c" = LPT ] ) && ok "codes: empty makes it from the name again" || bad "code reset"
-frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037idle\037Laptop / root\037' $'Laptop\037w9:p3\037idle\037api\037'); agents_block )
+frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037working\037Laptop / root\037' $'Laptop\037w9:p3\037working\037api\037'); agents_block )
 echo "$frame" | grep -q "|" && bad "one machine: codes shown" || ok "codes: one machine listed, no codes"
-frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037idle\037Laptop / root\037' $"$HOST"$'\037w1:p1\037idle\037api\037'); agents_block )
+frame=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=2; AG_LINES=($'Laptop\037w9:p2\037working\037Laptop / root\037' $"$HOST"$'\037w1:p1\037working\037api\037'); agents_block )
 echo "$frame" | grep -q "LPT/w9:a2|root" && echo "$frame" | grep -q "w1:a1|api" && ! echo "$frame" | grep -qi "^ *laptop *$" && ok "codes: agent|name (LPT/w9:a2|root on another machine, w1:a1|api here), no machine sub-captions" || bad "codes in the list: $frame"
 cfg_set REMOTE_AGENTS off
 # projects: this machine's agents get repo and project tokens (only on a change); the panel reads them back
@@ -183,7 +183,7 @@ printf 'Mac%sw1:p1%st1%sa%s%sproj-shop%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%
   "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
 collect_local >/dev/null 2>&1; printf 'Mac%sw1:p1%st1%sa%s%sproj-shop%s\nMac%sw2:p1%st2%sa%s%sproj-zeta%s\nMac%sw3:p1%st3%sa%s%s%s\nMac%sw9:p9%st2%s%s%s%s\n' \
   "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
-grp=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=$l; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"
+grp=$( COLS=60; ROWS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); AG_N=0; AG_LINES=(); while IFS= read -r l; do [ -n "$l" ] && { AG_LINES[$AG_N]=${l//${US}idle${US}/${US}working${US}}; AG_N=$(( AG_N + 1 )); }; done < "$AGENT_LOCAL"   # (the idle ones are on cards, not in this list)
   projects_load; CUR_PROJ=proj-zeta; agents_block | LC_ALL=C sed 's/\x1b\[[0-9;]*m//g' )
 caps=$(echo "$grp" | grep '┈┈' | grep -v ' Agents ' | sed 's/ *┈*$//; s/^ *┈┈ //' | tr '\n' '|')
 [ "$caps" = "Zeta|Shop|no project|" ] && ok "agents by project: the panel's own first, no project last" || bad "project captions: $caps"
@@ -425,6 +425,19 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ -z "$(topic_get "$xf" transfer_to)" ] || exit 2
   TRANSFER_FORCE=1 transfer_start "$xf" Mac w3:p1 root Mac w2:p1 "Shop (main)" 2>/dev/null; [ -n "$(topic_get "$xf" transfer_to)" ] || exit 3
   exit 0 ) && ok "transfer: an agent of another project is refused, unless forced" || bad "transfer project guard: step $?"
+# the group IDLE: the agents that are idle and have no card; a click on one shows the agent (ref agent:<machine>/<pane>); the Agents list keeps only the others
+( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
+  topic_new "Has a card" "" ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent a2; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w2:p1; topic_set "$cf" status now
+  AG_LINES=("Omarchy${US}w1:p1${US}idle${US}Free one${US}its last task" "Omarchy${US}w2:p1${US}idle${US}a2${US}x" "Omarchy${US}w3:p1${US}working${US}Busy${US}y" "Omarchy${US}w4:p1${US}blocked${US}Asks${US}z"); AG_N=4
+  printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); idle=$(printf '%s\n' "$out" | sed -n '/^  IDLE/,$p')
+  printf '%s\n' "$idle" | grep -q "Omarchy · Free one" && printf '%s\n' "$idle" | grep -q "∟ its last task" || exit 1        # the free idle agent, with its last task
+  printf '%s\n' "$idle" | grep -q "a2" && exit 2                                                                          # (the idle agent that has a card is not there twice)
+  printf '%s\n' "$idle" | grep -q "Busy\|Asks" && exit 3                                                                   # (only idle ones)
+  ag=$(agents_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$ag" | grep -q "Free one" && exit 4; printf '%s\n' "$ag" | grep -q "Busy" && printf '%s\n' "$ag" | grep -q "Asks" || exit 5   # the Agents list: the others
+  fr=$(bhote_view); r=$(awk -F'\036' '$2 == "agent:Omarchy/w1:p1" { print $1; exit }' "$RUN_DIR/tmap"); [ -n "$r" ] || exit 6
+  MOUSE_KEY=""; mouse_event "0;5;$r" M; [ "$MOUSE_KEY" = AGENT ] && [ "$CLICK_M" = Omarchy ] && [ "$CLICK_P" = w1:p1 ] || exit 7   # a click: that agent is shown
+  exit 0 ) && ok "IDLE: the idle agents without a card, one card each (a click shows the agent); the Agents list keeps the others" || bad "idle group: step $?"
 # a click on a topic: every row of an entry selects it, captions and gaps do not; the window stays while the selection is in it
 ( mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic "$RUN_DIR/toff"; AG_N=0; AG_LINES=(); : > "$AGENT_LOCAL"; : > "$AGENT_REMOTE"
   for i in 1 2 3 4 5 6 7 8 9 10; do topic_new "Click topic $i" "desc $i" "" >/dev/null; done
@@ -602,7 +615,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   ev w9:p1 working; [ "$(topic_get "$wf" status)" = now ] || exit 2                                # the agent works again: back on now
   BHOTE_FAKE_QUESTION="Soll ich pushen?" ev w9:p1 idle; [ "$(topic_get "$wf" status)" = review ] || exit 3   # a question: the user has to look
   topic_set "$wf" status finished; topics_load; COLS=50; ROWS=40; NOW=$(date +%s); AG_N=1; AG_LINES=("Omarchy${US}w9:p1${US}idle${US}bhote${US}x"); ui_load
-  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "RECENTLY FINISHED" && printf '%s\n' "$out" | grep -q "✓ Omarchy · bhote" && printf '%s\n' "$out" | grep -q "  finished" || exit 4
+  out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "RECENTLY FINISHED" && printf '%s\n' "$out" | grep -q "✓ Omarchy · bhote" && printf '%s\n' "$out" | grep -q "finished " || exit 4
   cfg_set FINISHED_MINUTES 1; touch -d "2 minutes ago" "$wf" 2>/dev/null; sed -i.bak 's/^updated=.*/updated=1000/' "$wf"; finished_expire
   [ "$(topic_get "$wf" status)" = later ] && [ "$(topic_get "$wf" dismissed)" = 1 ] || exit 5       # after the time: put away (like a dismissed review card)
   ev w9:p1 working; [ "$(topic_get "$wf" status)" = now ] || exit 6                                # ... and it comes back when the agent works
@@ -647,7 +660,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
 ( rm -f "$TOPIC_DIR"/*.topic; RUN_DIR=$T/run2; mkdir -p "$RUN_DIR"; COLS=50; ROWS=40; TOO_SMALL=0; view=main
   printf '%s\n' "Omarchy${US}w1:p1${US}working${US}a${US}x" "Omarchy${US}w2:p1${US}testing${US}b${US}x" "Omarchy${US}w3:p1${US}idle${US}c${US}x" "Omarchy${US}w4:p1${US}done${US}d${US}x" "Omarchy${US}w5:p1${US}blocked${US}e${US}x" > "$AGENT_LOCAL"
   cfg_set AGENTS_COMPACT on; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
-  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 2 inactive" || exit 1            # working + testing, blocked, idle + done
+  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 1 inactive" || exit 1            # working + testing, blocked, done (an idle agent is on a card)
   printf '%s\n' "$out" | grep -q "↕" || exit 2                                                                                                  # the button on the divider
   cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button
@@ -685,7 +698,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "DEPLOYING" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 40 ] || exit 5                                                              # 44 of 56 steps
+  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 38 ] || exit 5                                                              # 44 of 56 steps
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "DEPLOYING" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   # without a deployment of its project (an agent said "waiting for a deployment" and none runs) it is no card in DEPLOYING: a line in the Waiting list

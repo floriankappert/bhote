@@ -33,7 +33,7 @@ pub struct Panel {
     sel_id: String, hover_id: String, hover_btn: bool, expanded: String,
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
-    click_last: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
+    click_last: Option<(String, Instant)>, jump_at: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
@@ -48,7 +48,7 @@ impl Panel {
             has_machines: envs("BHOTE_HAS_MACHINES") == "1", pane_id: envs("HERDR_PANE_ID"), tab_id: envs("HERDR_TAB_ID"),
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
-            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
+            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, jump_at: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
             pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
@@ -302,7 +302,7 @@ impl Panel {
         }
         if !press { return; }
         if b == 2 {   // the right button: the topic's menu
-            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:")) { self.sel_id = id; self.open_menu(term); } }
+            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("agent:")) { self.sel_id = id; self.open_menu(term); } }
             return;
         }
         if b != 0 { return; }
@@ -316,15 +316,20 @@ impl Panel {
         if div == 0 || y < div {   // above it: a topic?
             if let Some(t) = self.ref_at(y).cloned() {
                 let id = t.clone();
+                if let Some(rest) = id.strip_prefix("agent:") {   // an idle agent's card: show the agent
+                    if let Some((m, pane)) = rest.rsplit_once('/') { let (m, pane) = (m.to_string(), pane.to_string()); self.agent_jump(&m, &pane); }
+                    self.redraw = true; return;
+                }
                 let twice = self.click_twice(&id);
                 if twice { // a double click: the topic's page
+                    self.jump_at = None;   // (the click before it has not shown the agent yet: it would have taken the focus away from this panel)
                     if !(id.starts_with("cap:")) { self.sel_id = id.clone(); }
                     if !(id.starts_with("more:") || id.starts_with("cap:")) { self.open_menu(term); }
                     self.redraw = true; return;
                 }
                 if let Some(k) = id.strip_prefix("cap:") { let k = k.to_string(); self.section_toggle(&k); }
                 else if let Some(s) = id.strip_prefix("more:") { self.sel_id = id.clone(); let s = s.to_string(); self.toggle_expand(&s); }
-                else { self.sel_id = id.clone(); if self.is_card(&id) { self.act(&["topic_jump", &id], "jump", false); } }
+                else { self.sel_id = id.clone(); if self.is_card(&id) { self.jump_at = Some((id.clone(), Instant::now() + Duration::from_millis(500))); } }   // (the agent is shown when no second click follows: a double click must reach this panel)
                 self.redraw = true; return;
             }
         }
@@ -398,6 +403,7 @@ impl Panel {
     fn tick(&mut self) {
         self.keep_collector();
         let sec = store::now();
+        if let Some((id, t)) = self.jump_at.clone() { if Instant::now() >= t { self.jump_at = None; self.act(&["topic_jump", &id], "jump", false); } }
         if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { if self.clamp_adopt { self.act(&["clamp", "adopt"], "clamp", false); } else { self.act(&["clamp"], "clamp", false); } } self.clamp_adopt = false; } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
@@ -441,6 +447,7 @@ pub fn run() -> i32 {
         }
         else if p.redraw && !p.tab_visible { p.redraw = false; p.dirty = true; }
         let mut timeout: i32 = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
+        if let Some((_, t)) = &p.jump_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }
         if let Some(t) = p.clamp_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }   // (the width check is due: do not sleep past it)
         let ev = term.next(timeout);
         let go = crate::proc::guarded("event", &shared, || handle(&mut p, &mut term, ev)).unwrap_or_else(|| { p.redraw = true; true });

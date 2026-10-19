@@ -170,7 +170,7 @@ impl<'a> Cards<'a> {
                 if !t.sl.is_empty() { state = format!("Slack monitor ({})", t.sl); sc = self.g("S").into(); }
             }
             "review" => {
-                who = t.ag.clone(); state = "ready for review".into(); sc = self.g("BLUE").into(); tm = ago(self.c.now, &upd);
+                who = t.ag.clone(); state = "review".into(); sc = self.g("BLUE").into(); tm = ago(self.c.now, &upd);
                 if !t.sm.is_empty() {
                     who = "slack".into();
                     let mut s: String = t.sm.replace('¶', "").replace('`', "").replace('*', "");
@@ -196,7 +196,7 @@ impl<'a> Cards<'a> {
         let (x, d_) = (g("X"), g("D"));
         let (mut tc, mut dc, mut mc, mut gc, wc) = (title_col.to_string(), g("DESC"), if state_col.is_empty() { d_.clone() } else { state_col.to_string() }, d_.clone(), g("BLUE"));
         let rm = if o.id.is_empty() { String::new() } else { format!("{}{}{}", REF, o.id, REF) };
-        let mut bg = g("CARDBG"); let mut mk = String::new();
+        let mut bg = String::new(); let mut mk = String::new();   // (no ground: only the chosen card and the one under the pointer have one)
         let mut bar = if o.bar.is_empty() { if state_col.is_empty() { d_.clone() } else { state_col.to_string() } } else { o.bar.clone() };
         let mut hov = false;
         if !o.id.is_empty() && o.id == self.v.hover_id { bg = g("CARDHOV"); hov = true; }
@@ -217,8 +217,9 @@ impl<'a> Cards<'a> {
             let (mut tm, st) = (time.to_string(), state.to_string());
             let build = |tm: &str| -> (String, String, i64) {
                 let (mut p, mut c) = (String::new(), String::new());
-                if !st.is_empty() { p = st.clone(); c = format!("{}{}", mc, st); }
-                if !tm.is_empty() { if !p.is_empty() { p.push_str(" · "); c.push_str(&format!("{} · ", gc)); } p.push_str(tm); c.push_str(&format!("{}{}", gc, tm)); }
+                if !tm.is_empty() { p = tm.to_string(); c = format!("{}{}", gc, tm); }   // the age on the left, the state on the right of it, and a space behind it
+                if !st.is_empty() { if !p.is_empty() { p.push_str(" · "); c.push_str(&format!("{} · ", gc)); } p.push_str(&st); c.push_str(&format!("{}{}", mc, st)); }
+                if !p.is_empty() { p.push(' '); c.push(' '); }
                 let rw = dw(&p); (p, c, rw)
             };
             let (mut _rtp, mut rtc, mut rw) = build(&tm);
@@ -232,7 +233,7 @@ impl<'a> Cards<'a> {
             let spin = if o.spin { format!("{}{}{}", SPIN, spk, SPIN) } else { String::new() };
             out.push_str(&format!("{}{}{}{}{}{} {}{}{}{}{}{}{}\n", spin, rm, mk, bg, bl, icon, amc, format!("{}{}", g("BOLD"), tc), an, xb, sp(cw - lead - anw - rw), rtc, x));
             let t2 = clip(if o.agtask.is_empty() { title } else { &o.agtask }, w - 5); let tw2 = dw(&t2);
-            out.push_str(&format!("{}{}{}{}∟ {}{}{}{}{}\n", rm, bg, bl, gc, tc, t2, xb, sp(w - 4 - tw2), x));
+            if !t2.is_empty() { out.push_str(&format!("{}{}{}{}∟ {}{}{}{}{}\n", rm, bg, bl, gc, tc, t2, xb, sp(w - 4 - tw2), x)); }
             if !o.now.is_empty() {
                 let t3 = clip(&o.now, w - 5); let tw3 = dw(&t3);
                 out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, g("ORANGE"), t3, xb, sp(w - 4 - tw3), x));
@@ -518,6 +519,26 @@ impl<'a> Cards<'a> {
             let title = if t.title.is_empty() { "(untitled)".to_string() } else { t.title.clone() };
             let desc = t.desc.clone();
             out.push_str(&self.card(sl, &sc, &tm, &g("TITLE"), &title, &desc, &who, &state, &br, &o));
+        }
+        if mode != "lists" { out.push_str(&self.idle_cards()); }
+        out
+    }
+
+    /// idle_cards: the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
+    /// one card each; a click on it shows the agent (ref agent:<machine>/<pane>)
+    fn idle_cards(&self) -> String {
+        let g = |k: &str| self.g(k).to_string(); let x = g("X");
+        let mut used: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+        for t in &self.ts {
+            let card = match t.status.as_str() { "review" | "now" | "testing" | "finished" => true, "waiting" => t.dep == "1", _ => false };
+            if card && !t.ap.is_empty() { used.insert((if t.am.is_empty() { self.host.clone() } else { t.am.clone() }, t.ap.clone())); }
+        }
+        let mut out = String::new(); let mut first = true;
+        for r in &self.ag {
+            if !(r.st.is_empty() || r.st == "idle") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
+            if first { out.push_str(&format!("\n  {}IDLE{}\n", g("D"), x)); first = false; } else { out.push('\n'); }
+            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("D")), agtask: r.task.clone(), ..Default::default() };
+            out.push_str(&self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
         }
         out
     }

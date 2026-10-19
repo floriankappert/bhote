@@ -195,6 +195,14 @@ menu = p.expect("ACTIONS", 10)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("double click: the topic's menu (the script's view), Esc: back on the list") if (menu and back) else bad(f"menu round trip (menu={menu}, back={back})")
 
+# 7b) a review card too: two clicks a quarter of a second apart (the first one must not have taken the focus away yet) open its page
+p.out = b""; p.expect("Agents", 2)
+y = p.fresh_row("First review")
+os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode()); time.sleep(0.25); os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode())
+menu = p.expect("ACTIONS", 10)
+p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
+ok("double click on a review card: its page") if (menu and back) else bad(f"review double click (menu={menu}, back={back})")
+
 # 8) settings (the script's view) and back
 p.out = b""; os.write(p.fd, b","); sets = p.expect("ettings", 8) or p.expect("SETTINGS", 1)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
