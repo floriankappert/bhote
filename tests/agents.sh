@@ -520,7 +520,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_new "Pushed" "" ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent a1; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w1:p1; topic_set "$cf" agent_branch fix/ci; topic_set "$cf" status now
   AG_LINES=("Omarchy${US}w1:p1${US}working${US}a1${US}x"); AG_N=1; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=60; ROWS=60; ui_load; NOW=$(date +%s)
   printf '%s\n' "$NOW${US}IMS${US}build-backend${US}running${US}0${US}1${US}fix/ci|~|${US}https://ci/1" "$NOW${US}IMS${US}build-frontend${US}running${US}0${US}1${US}other|~|${US}https://ci/2" "$NOW${US}IMS${US}server${US}ok${US}6${US}6${US}fix/ci|~|37 passed${US}" > "$SHARED_DIR/tests.list"
-  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "build-backend ■" || exit 1
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "build-b… ■" || exit 1
   printf '%s\n' "$out" | grep -q "build-frontend" && exit 2; printf '%s\n' "$out" | grep -q "server ■" && exit 3          # (another branch's job, a job that is over: no bar)
   exit 0 ) && ok "cards: a CI test job that runs for the card's branch has a bar on it" || bad "CI bars: step $?"
 # a click on a topic: every row of an entry selects it, captions and gaps do not; the window stays while the selection is in it
@@ -679,7 +679,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_set "$af" updated "$NOW"; topics_load; [ -z "$(done_block 4)" ] || exit 8                                          # (nothing done, nothing archived: no section)
   exit 0 ) && ok "done and archived: one section, ✓ done · ▤ archived on its last line" || bad "done/archived: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
-( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
+( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'; HOST=Omarchy
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"
   MACH_FG_CACHE=""; machine_fg_set v; [ "$v" = $'\033[38;2;17;34;51m' ] || exit 1                                   # (herdr's own colour)
   : > "$HERDR_CONFIG"; MACH_FG_CACHE=""; machine_fg_set v; [ "$v" = $'\033[38;2;255;62;165m' ] || exit 2             # (none there: herdr's default pink)
@@ -783,7 +783,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "DEPLOYING" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 38 ] || exit 5                                                              # 44 of 56 steps
+  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" = 5 ] || exit 5   # 44 of 56 steps: five boxes (a card with an agent has them on the right of its second row; this one has none: a row of its own)
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "DEPLOYING" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   # without a deployment of its project (an agent said "waiting for a deployment" and none runs) it is no card in DEPLOYING: a line in the Waiting list

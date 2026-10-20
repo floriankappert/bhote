@@ -872,7 +872,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     if [ "$th" = catppuccin ]; then
         R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135"); PINK=$(rgb "245;194;231"); ORANGE=$(rgb "217;119;87")   # (ORANGE: Claude's own, not Catppuccin's peach)
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
-        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;49;50;68m"; CARDHOV="${esc}[48;2;40;41;58m"; CARDSUB="${esc}[48;2;25;25;38m"; CARDBTN="${esc}[48;2;108;112;134m${esc}[1;38;2;30;30;46m"; MUTED=$(rgb "69;71;90")
+        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;41;42;58m"; CARDHOV="${esc}[48;2;40;41;58m"; CARDSUB="${esc}[48;2;25;25;38m"; CARDBTN="${esc}[48;2;108;112;134m${esc}[1;38;2;30;30;46m"; MUTED=$(rgb "69;71;90")
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "166;173;200")"; TITLESEL="${esc}[1m$(rgb "205;214;244")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "205;214;244")"; DESCSEL="${esc}[3m$(rgb "245;247;255")"     # the description italic in the full text colour
@@ -880,7 +880,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     elif [ "$th" = dracula ]; then                           # the Dracula palette, its roles as in Dracula's own terminal colours
         R=$(rgb "255;121;198"); NN=$(rgb "255;85;85"); S=$(rgb "139;233;253"); C=$(rgb "255;184;108"); PINK=$(rgb "255;146;223"); ORANGE=$(rgb "217;119;87")   # (magenta = pink, blue = purple; ORANGE: Claude's own)
         L="${esc}[1m$(rgb "248;248;242")"; D=$(rgb "98;114;164"); B=$D
-        Y=$(rgb "241;250;140"); GREEN=$(rgb "80;250;123"); BLUE=$(rgb "189;147;249"); SELBG="${esc}[48;2;68;71;90m"; CARDBG="${esc}[48;2;46;48;62m"; CARDSEL="${esc}[48;2;68;71;90m"; CARDHOV="${esc}[48;2;56;58;74m"; CARDSUB="${esc}[48;2;33;34;44m"; CARDBTN="${esc}[48;2;98;114;164m${esc}[1;38;2;40;42;54m"; MUTED=$(rgb "68;71;90")
+        Y=$(rgb "241;250;140"); GREEN=$(rgb "80;250;123"); BLUE=$(rgb "189;147;249"); SELBG="${esc}[48;2;68;71;90m"; CARDBG="${esc}[48;2;46;48;62m"; CARDSEL="${esc}[48;2;56;58;75m"; CARDHOV="${esc}[48;2;56;58;74m"; CARDSUB="${esc}[48;2;33;34;44m"; CARDBTN="${esc}[48;2;98;114;164m${esc}[1;38;2;40;42;54m"; MUTED=$(rgb "68;71;90")
         LSEL="${esc}[1m$(rgb "255;255;255")"; DSEL=$(rgb "189;195;223")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "214;216;228")"; TITLESEL="${esc}[1m$(rgb "248;248;242")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "248;248;242")"; DESCSEL="${esc}[3m$(rgb "255;255;255")"     # the description italic in the full text colour
@@ -890,7 +890,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         PINK="${esc}[95m"; ORANGE="${esc}[38;5;173m"; Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
-        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;46;46;60m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits)
+        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;36;36;48m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits)
         CARDBTN="${esc}[48;5;244m${esc}[1;38;5;232m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
         TITLE="${esc}[1;37m"; TITLESEL="${esc}[1;97m"                            # a topic: the title bold in the softer colour,
         DESC="${esc}[3;39m"; DESCSEL="${esc}[3;97m"                              # the description italic in the full text colour
@@ -1807,10 +1807,15 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac
     fi
     [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
-    [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && [ "$1" != 1 ] && { tc=$D; gc=$MUTED; mc=$MUTED; }   # (an idle agent: all text dimmed, it is not what matters now)
+    [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && [ "$1" != 1 ] && { tc=$D; mc=$D; }   # (an idle agent: its text in the dim grey, it is not what matters now; not the darkest one)
     bl="${bar}▌${X}${bg} "
+    local BSC=() BSW=() BN=0 bi=0 ex=0 seg_w=0 tl td tt tsn           # the bars of tests and of a deployment: small, on the right of the rows under the status
+    if [ -n "${TI_PROG:-}" ]; then ti_bar_seg "${TI_PROG% *}" "${TI_PROG#* }" "" "$gc" "$bg"; fi
+    if [ -n "${TI_TBARS:-}" ]; then
+        while IFS= read -r tl; do td=${tl%% *}; tt=${tl#* }; tt=${tt%% *}; tsn=${tl#* }; tsn=${tsn#* }; ti_bar_seg "$td" "$tt" "$tsn" "$gc" "$bg"; done <<< "$TI_TBARS"
+    fi
     if [ -n "${TI_AGN:-}" ]; then
-        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol; [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && [ "$1" != 1 ] && mcol=$MUTED
+        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol; [ "${TI_AGM:-$HOST}" != "$HOST" ] && mcol=$BLUE      # (the agents of this machine in herdr's machine colour, those of another machine in blue)
         clip_set am "${TI_AGM:-}" 12; dw_set amw "$am"; lead=2; [ -n "$am" ] && lead=$(( 2 + amw + 3 ))
         [ -n "$tm" ] && { rtp=$tm; rtc="$gc$tm"; }                  # the age on the left, the state on the right of it, and a space behind it
         [ -n "$st" ] && { rtp="$rtp${rtp:+ · }$st"; rtc="$rtc${rtc:+$gc · }$mc$st"; }
@@ -1825,16 +1830,19 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         [ -n "$am" ] && amc="$mcol$BOLD$am$X$bg$gc · "
         icon=${TI_AGIC:-${gc}○}
         printf '%s%s%s%s%s%s %s%s%s%s%*s%s%s\n' "${TI_SPIN:+$'\034'$(ti_spk "$bg")$'\034'}" "$rm" "$mk" "$bg" "$bl" "$icon" "$amc" "$BOLD$tc" "$an" "$X$bg" $(( cw - lead - anw - rw )) "" "$rtc" "$X"
-        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
-        [ -n "$t" ] && printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
+        ex=0; [ "$bi" -lt "$BN" ] && ex=$(( BSW[bi] + 1 ))
+        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 - ex )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
+        if [ -n "$t" ]; then printf '%s%s%s%s∟ %s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw - (ex > 0 ? ex - 1 : 0) )) "" "${BSC[bi]:-}" "$X"; [ "$ex" -gt 0 ] && bi=$(( bi + 1 )); fi
         if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
-            clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"
-            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
+            ex=0; [ "$bi" -lt "$BN" ] && ex=$(( BSW[bi] + 1 ))
+            clip_set t "$TI_NOW" $(( w - 5 - ex )); dw_set tw "$t"
+            printf '%s%s%s  %s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw - (ex > 0 ? ex - 1 : 0) )) "" "${BSC[bi]:-}" "$X"; [ "$ex" -gt 0 ] && bi=$(( bi + 1 ))
         fi
         local brp=""; [ -n "${10:-}" ] && brp="⎇ ${10}"; [ -n "$who" ] && brp="$brp${brp:+ · }$who"   # (who: where it hands over to, or the deployment's project)
         if [ -n "$brp" ]; then
-            local bw; clip_set brp "$brp" $(( w - 4 )); dw_set bw "$brp"
-            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$brp" "$X$bg" $(( w - 4 - bw )) "" "$X"
+            local bw; ex=0; [ "$bi" -lt "$BN" ] && ex=$(( BSW[bi] + 1 ))
+            clip_set brp "$brp" $(( w - 4 - ex )); dw_set bw "$brp"
+            printf '%s%s%s  %s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" "$gc" "$brp" "$X$bg" $(( w - 4 - bw - (ex > 0 ? ex - 1 : 0) )) "" "${BSC[bi]:-}" "$X"; [ "$ex" -gt 0 ] && bi=$(( bi + 1 ))
         fi
         if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 4 )); dw_set dw2 "$d"; printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 4 - dw2 )) "" "$X"; fi
     else
@@ -1862,28 +1870,18 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         fi
         if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 3 )); dw_set dw2 "$d"; printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"; fi
     fi
-    if [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
-        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 10 )) pf pi bf="" be=""
-        [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
-            pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
-            for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s  %s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
-        }
-    fi
-    if [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
-        local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
-        while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
-        [ "$tw" -gt 13 ] && tw=13
-        pw=$(( w - 10 - tw - 1 ))
-        while IFS= read -r tl; do
-            td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
-            [ "$tt" -gt 0 ] && [ "$pw" -gt 3 ] || continue
-            clip_set tn "$tsn" "$tw"; printf -v tn '%-*s' "$tw" "$tn"
-            pf=$(( (td * pw + tt / 2) / tt )); [ "$pf" -gt "$pw" ] && pf=$pw
-            bf=""; be=""; for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s  %s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
-        done <<< "$TI_TBARS"
-    fi
+    while [ "$bi" -lt "$BN" ]; do                              # bars that found no row beside a text row: a row of their own, on the right
+        printf '%s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" $(( w - 2 - BSW[bi] - 1 )) "" "${BSC[bi]}" "$X"; bi=$(( bi + 1 ))
+    done
+}
+ti_bar_seg() {  # ti_bar_seg <done> <total> <name|""> <text colour> <ground>: appends a small bar to BSC/BSW: "name ■■■□□ 19%" and a space (like the status above it), at most two
+    local d=$1 t=$2 nm=$3 pf pi bf="" be="" seg txt
+    [ "$BN" -lt 2 ] && [ "$t" -gt 0 ] 2>/dev/null || return 0
+    pf=$(( (d * 5 + t / 2) / t )); [ "$pf" -gt 5 ] && pf=5
+    for (( pi = 0; pi < 5; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
+    txt="$bf$be $(( d * 100 / t ))% "; seg="$ORANGE$bf$MUTED$be$X$5 $4$(( d * 100 / t ))%$X$5 "
+    if [ -n "$nm" ]; then clip_set nm "$nm" 8; seg="$4$nm $seg"; txt="$nm $txt"; fi
+    dw_set seg_w "$txt"; BSC[$BN]=$seg; BSW[$BN]=$seg_w; BN=$(( BN + 1 ))
 }
 ti_spk() {  # ti_spk <card background>: the ground under a dancing star (n normal, s selected, h hovered), printed
     case "$1" in "$CARDSEL"|"$SELBG") printf s ;; "$CARDHOV") printf h ;; *) printf n ;; esac
@@ -2038,7 +2036,7 @@ cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topic
 }
 idle_card() {  # idle_card <agent index>: the card of an agent without a card of its own: two rows (the agent, its last task); idle (also herdr's done) dimmed, one that works or needs
     # you in its colour; a click shows the agent (ref agent:<machine>/<pane>). An agent is always there.
-    local m id st name task TI_REF TI_BAR act=0 sc=$D ic="${MUTED}○" state=idle dim=1
+    local m id st name task TI_REF TI_BAR act=0 sc=$D ic="${D}○" state=idle dim=1
     IFS=$US read -r m id st name task <<< "${AG_LINES[$1]}"
     case "$task" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) task="" ;; esac   # (not a task: the idle card says no more than idle)
     case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
@@ -2077,7 +2075,7 @@ idle_cards() {  # the agents that are idle and have no card (nothing in review, 
         case "$task" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) task="" ;; esac   # (not a task: the idle card says no more than idle)
         case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
         if [ "$first" = 1 ]; then printf '\n  %sIDLE%s\n' "$D" "$X"; first=0; else printf '\n'; fi
-        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${D}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
         local act=0; [ "$id" = "${ACT_P:-}" ] && [ "$m" = "$HOST" ] && act=1       # (the agent herdr shows: not dimmed, the highlighted ground)
     TI_DIM=1; ti_card "$act" "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
     done

@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Changed
+- Test and deployment bars are small now: five boxes and the percentage (`client ■■■□□ 19%`, the suite's name in front, cut to eight characters), on the right of the second and third row of the card (beside the task, the live text or the branch), under the status. A card no longer needs a row of its own for them (only a card without an agent still has one).
+- The ground of the active card is darker (a little lighter than the panel, no longer a light grey). The agents of another machine have their machine name in blue (this machine's in herdr's machine colour, pink), also on idle cards. Idle cards are less muted: the text in the dim grey, not the darkest one.
 - Claude Code mod: the band above the prompt no longer shows the status of the agent's topic. It shows a **friendly reminder** instead: now and then, at random (at the earliest every ten minutes, for 45 seconds), in orange with a dog, a topic that waits, is next or is parked, with its description under it. New setting `FRIENDLY_REMINDER` (settings › *Show Friendly Reminder*, on); new command `bhote reminder`. The pane and `/topic` stay. After `bhote mod install` Claude Code needs `/reload-plugins`.
 
 ### Fixed
