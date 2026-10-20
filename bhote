@@ -6010,7 +6010,8 @@ bhote_main() {
             if [ -e "$SHARED_DIR/focus.pane" ]; then _fp=""; _ft=""; { read -r _fp _ft < "$SHARED_DIR/focus.pane"; } 2>/dev/null; [ "$_fp" = "$HERDR_PANE_ID" ] && _pf=true || _pf=false   # (the collector wrote it)
                 [ -n "$_ft" ] && [ -n "${HERDR_TAB_ID:-}" ] && [ "$_ft" != "$HERDR_TAB_ID" ] && _vis=0      # (another tab shows: nobody sees this panel, it does not dance)
             else _pf=$(pane_focused); fi
-            [ "$_vis" = "${TAB_VISIBLE:-1}" ] || { TAB_VISIBLE=$_vis; if [ "$_vis" = 1 ]; then redraw=1; DIRTY=0; else rmf "$RUN_DIR/anim.want"; fi; }
+            # (back in view: SEL_ID is cleared, the active card is the one of the agent of this tab again, not the one chosen before)
+        [ "$_vis" = "${TAB_VISIBLE:-1}" ] || { TAB_VISIBLE=$_vis; if [ "$_vis" = 1 ]; then redraw=1; DIRTY=0; SEL_ID=""; else rmf "$RUN_DIR/anim.want"; fi; }
             if [ "$_pf" != "${PANE_FOCUS:-}" ]; then PANE_FOCUS=$_pf; [ "$view" = main ] && redraw=1; fi
         fi
         if [ "${SETUP_PENDING:-}" = 1 ]; then

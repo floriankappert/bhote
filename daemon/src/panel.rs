@@ -412,7 +412,7 @@ impl Panel {
                 if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
                     let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
                     let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
-                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); } }
+                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); self.sel_id.clear(); } }   // (back in view: the active card is the one of the agent of this tab again, not the one chosen before)
                     if pf != self.pane_focus { self.pane_focus = pf; self.redraw = true; }
                 }
             }

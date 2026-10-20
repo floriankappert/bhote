@@ -20,7 +20,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - `BHOTED_PANEL=on`: the panel runs in the Rust daemon binary (`bhoted panel`): keys, mouse and the main view without bash. The topic's menu, settings, the wizard and the choosers still run as the script's views on the same terminal; the welcome screen with the dog is not in it yet. Off by default.
 
 ### Changed
-- The active card (the highlighted one when you have not chosen another) is the card of the agent in the panel's own tab, the one you are working with, not the first card of the list.
+- The active card (the highlighted one when you have not chosen another) is the card of the agent in the panel's own tab, the one you are working with, not the first card of the list; when the tab comes back into view, a card chosen before is forgotten, so the highlight is the active agent's again (it stayed on the card of another agent you had clicked).
 - No hover on the cards and lines any more: the mouse reporting no longer asks for motion without a button (it flooded the panel and, on a fast scroll, lost the mouse-off, so a card stayed lit); clicks, the wheel and drags work as before.
 - With more than one machine the cards of the other machines stand above those of this machine (ungrouped).
 - A new group of cards, **IDLE**, between RECENTLY FINISHED and the Next lines: every idle agent that has no card of its own (nothing in review, now, testing, deploying or recently finished), two rows each (the agent, its last task); a click shows the agent in herdr. The list of agents at the bottom keeps only the others (working, needs you, offline); an idle agent is no longer counted there as inactive.
