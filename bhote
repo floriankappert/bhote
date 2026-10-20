@@ -1506,6 +1506,11 @@ agent_dedup() {  # one agent, one card on now/testing: an agent that has several
         done
         [ "$dup" = 1 ] && { topic_set "${T_FILE[$i]}" status later; topic_set "${T_FILE[$i]}" dismissed 1; }
     done
+    # "Waiting for New Work" is no work: an agent that says so is idle (it has its card in the group IDLE), whatever status it put the topic in
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in now|testing|finished|review) ;; *) continue ;; esac
+        case "${T_TITLE[$i]}" in "Waiting for New Work"|"Waiting for new work"|"waiting for new work"|"Waiting For New Work") topic_set "${T_FILE[$i]}" status later; topic_set "${T_FILE[$i]}" dismissed 1 ;; esac
+    done
     return 0
 }
 tests_progress_write() {  # tests_progress_write <machine> <pane> <1|0>: the card of a testing topic shows one bar per running suite (two at most);

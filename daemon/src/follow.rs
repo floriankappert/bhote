@@ -105,6 +105,12 @@ pub fn agent_dedup(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
             _ => false });
         if dup { s.set(&t.file, "status", "later"); s.set(&t.file, "dismissed", "1"); }
     }
+    // "Waiting for New Work" is no work: an agent that says so is idle (it has its card in the group IDLE), whatever status it put the topic in
+    for t in ts {
+        if matches!(t.status.as_str(), "now" | "testing" | "finished" | "review") && matches!(t.title.trim(), "Waiting for New Work" | "Waiting for new work" | "waiting for new work" | "Waiting For New Work") {
+            s.set(&t.file, "status", "later"); s.set(&t.file, "dismissed", "1");
+        }
+    }
 }
 
 pub fn agent_cards(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
