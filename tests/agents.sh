@@ -489,6 +489,13 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   export HERDR_TAB_ID=t3; [ "$(marks)" = "Omarchy · Gamma " ] || exit 3                                                        # tab t3 shows the idle agent Gamma: its idle card is the highlighted one
   export HERDR_TAB_ID=t1; printf 'w1:p1 t1\n' > "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Alpha " ] || exit 4         # the focus moves back
   exit 0 ) && ok "the highlighted card is the active agent's (herdr's tab, its focused agent), also an idle one" || bad "active highlight: step $?"
+# a card that says finished always says when (also a now card whose agent has stopped, also when it is the chosen one), and never "x = done"
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Stopped one" "" ""; sf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$sf" agent S1; topic_set "$sf" agent_machine Omarchy; topic_set "$sf" agent_pane w1:p1; topic_set "$sf" status now
+  AG_LINES=("Omarchy${US}w1:p1${US}idle${US}S1${US}t"); AG_N=1; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); topics_load
+  for sel in "" "$(topic_id "$sf")"; do SEL_ID=$sel; out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+      printf '%s\n' "$out" | grep -q "just now · finished\|[0-9]m ago · finished" || exit 1; printf '%s\n' "$out" | grep -q "x = done" && exit 2; done
+  exit 0 ) && ok "finished always with its age, never x = done" || bad "finished age: step $?"
 # one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
 ( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
   mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }

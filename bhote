@@ -1912,7 +1912,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
              elif [ -n "${T_AG[$i]}" ]; then    # given to an agent: say what that agent is doing now
                  who=${T_AG[$i]}; tm=""; agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
                  case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
-                     idle|done) state=finished; sc=$GREEN ;; off-*) state="offline (${T_AM[$i]} reconnecting)"; sc=$D ;; *) state=gone; sc=$D ;; esac
+                     idle|done) state=finished; sc=$GREEN; ago_set tm "${T_UPD[$i]:-$NOW}" ;; off-*) state="offline (${T_AM[$i]} reconnecting)"; sc=$D ;; *) state=gone; sc=$D ;; esac
              fi ;;
         finished) who=${T_AG[$i]}; state=finished; sc=$GREEN; ago_set tm "${T_UPD[$i]:-$NOW}" ;;      # its agent stopped without a question: nothing to check, the card goes by itself
         testing) who=${T_AG[$i]}; state="tests running"; sc=$C; ago_set tm "${T_UPD[$i]:-$NOW}" ;;   # the agent stopped, a test suite runs (also in the background)
@@ -1985,7 +1985,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
         topic_meta "$i"; [ "$gk" = deploying ] && deploy_card_set "$i"
         who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
-            now) [ "$state" = finished ] && [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;;
+            now) ;;
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
         sl=0; TI_REF=${T_ID[$i]}
@@ -2006,7 +2006,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
                 case "$gk:$state" in deploying:*|*:"handing over") ;; *) who="" ;; esac   # (the agent's name is in the first row; who stays for where it hands over to, and the deployment's project)
             fi ;;
         esac
-        [ "$st" = now ] && case "$state" in finished|"finished · x = done") TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
+        [ "$st" = now ] && case "$state" in finished) TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
         ti_card "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
     done
     [ "$mode" = lists ] || [ "$grp" != status ] || idle_cards       # (grouped: the group IDLE at the end; ungrouped: they are in the sequence)

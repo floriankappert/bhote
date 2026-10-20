@@ -177,7 +177,7 @@ impl<'a> Cards<'a> {
                         "working" => { state = "working".into(); sc = self.g("ORANGE").into(); }
                         "testing" => { state = "running tests".into(); sc = self.g("ORANGE").into(); }
                         "blocked" => { state = "needs you".into(); sc = self.g("NN").into(); }
-                        "idle" | "done" => { state = "finished".into(); sc = self.g("GREEN").into(); }
+                        "idle" | "done" => { state = "finished".into(); sc = self.g("GREEN").into(); tm = ago(self.c.now, &upd); }
                         s if s.starts_with("off-") => { state = format!("offline ({} reconnecting)", t.am); sc = self.g("D").into(); }
                         _ => { state = "gone".into(); sc = self.g("D").into(); }
                     }
@@ -522,7 +522,6 @@ impl<'a> Cards<'a> {
             }
             let lc = match gk { "deploying" => g("Y"), "finished" => g("GREEN"), "now" => g("ORANGE"), "testing" => g("C"), "review" => g("BLUE"), _ => g("D") };
             let _ = &mut tm;
-            if st == "now" && state == "finished" && i as i64 == sel_idx { state = "finished · x = done".into(); }
             let sl = match &active { Some(ap) => t.ap == *ap && (t.am.is_empty() || t.am == self.host), None => i as i64 == sel_idx };   // the active agent's cards have the highlighted ground (one to one with herdr)
             let bar = if st == "now" && state.starts_with("finished") { g("GREEN") } else { lc.clone() };   // (its agent has stopped: the bar is green like the text, not orange like a working one)
             let mut o = Item { id: t.id.clone(), bar, prog, ..Default::default() };

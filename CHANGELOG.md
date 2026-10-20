@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Fixed
+- A card that says `finished` says when, always: a now card whose agent has stopped had no age (`finished` alone, and `finished · x = done` on the chosen one). The age is there now (`just now · finished`), and `x = done` is gone.
 - The highlighted card is the active agent's, one to one with herdr: the agent that herdr shows in the main area of the panel's tab (the focused pane when it is an agent of the tab, else the tab's first agent) has the highlighted ground on all its cards, an idle agent too (its idle card, not dimmed then); when you pick another agent in herdr the highlight moves with it (within a second or two). Before, the highlight was a card you had chosen, and could be another agent's.
 - A topic titled `Waiting for New Work` (what an agent writes when it has nothing to do) is never a card, whatever status it was given (review, finished, now): it is put away and the agent shows as idle, in the group IDLE. The same words as the *task* of an agent (herdr's task) are no task either: the card of a topic shows the topic's title then, and an idle card has no task row.
 - A recently finished card that repeats a card of the same agent (same title: at work, in review, waiting, or a newer finished one) is put away at once: the same work no longer shows twice (the remains of the card flood showed as a second `IMS (main)` card).
