@@ -21,6 +21,7 @@ chmod +x "$T/bin/herdr"; export PATH="$T/bin:$PATH"
 # shellcheck disable=SC1091
 . ./bhote
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
+cfg_set CARD_GROUPING status   # (the tests of the lists and headings run grouped; the ungrouped test says so itself)
 cfg_set TESTS_BUSY off
 out=$(collect_one Mac)
 echo "$out" | grep -q "^Mac${US}w1:p1${US}idle" && ok "setting off: a running test does not change the state" || bad "default must ignore tests: $out"
@@ -496,6 +497,15 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   for sel in "" "$(topic_id "$sf")"; do SEL_ID=$sel; out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
       printf '%s\n' "$out" | grep -q "just now · finished\|[0-9]m ago · finished" || exit 1; printf '%s\n' "$out" | grep -q "x = done" && exit 2; done
   exit 0 ) && ok "finished always with its age, never x = done" || bad "finished age: step $?"
+# every agent is always on a card: ungrouped, one without a topic (idle, done, working, needs you) has a card of its own; the list at the bottom keeps none of them
+( cfg_set CARD_GROUPING ungrouped; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  AG_LINES=("Omarchy${US}w1:p1${US}idle${US}A1${US}t" "Omarchy${US}w2:p1${US}done${US}A2${US}t" "Omarchy${US}w3:p1${US}working${US}A3${US}t" "Omarchy${US}w4:p1${US}blocked${US}A4${US}t" "Omarchy${US}w5:p1${US}gone${US}A5${US}t"); AG_N=5; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"
+  COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); topics_load
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  for a in A1 A2 A3 A4; do printf '%s\n' "$out" | grep -q "Omarchy · $a" || exit 1; done; printf '%s\n' "$out" | grep -q "A5" && exit 2     # (a gone agent has no card)
+  printf '%s\n' "$out" | grep -q "Omarchy · A4 *needs you" && printf '%s\n' "$out" | grep -q "Omarchy · A3 *working" || exit 3
+  ag=$(agents_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); for a in A1 A2 A3 A4; do printf '%s\n' "$ag" | grep -q "$a" && exit 4; done   # (not twice)
+  exit 0 ) && ok "every agent is on a card (idle, done, working, needs you), and not in the list at the bottom" || bad "every agent a card: step $?"
 # one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
 ( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
   mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }
@@ -735,7 +745,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
 ( rm -f "$TOPIC_DIR"/*.topic; RUN_DIR=$T/run2; mkdir -p "$RUN_DIR"; COLS=50; ROWS=40; TOO_SMALL=0; view=main
   printf '%s\n' "Omarchy${US}w1:p1${US}working${US}a${US}x" "Omarchy${US}w2:p1${US}testing${US}b${US}x" "Omarchy${US}w3:p1${US}idle${US}c${US}x" "Omarchy${US}w4:p1${US}done${US}d${US}x" "Omarchy${US}w5:p1${US}blocked${US}e${US}x" > "$AGENT_LOCAL"
   cfg_set AGENTS_COMPACT on; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
-  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 1 inactive" || exit 1            # working + testing, blocked, done (an idle agent is on a card)
+  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you" || exit 1; printf '%s\n' "$out" | grep -q "inactive" && exit 13   # working + testing, blocked; idle and done agents are on cards, not counted
   printf '%s\n' "$out" | grep -q "↕" || exit 2                                                                                                  # the button on the divider
   cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button

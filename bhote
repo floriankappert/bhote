@@ -2030,21 +2030,26 @@ cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topic
             [ -n "${T_CARD[$i]:-}" ] && [ "${T_AP[$i]}" = "$id" ] && [ "${T_AM[$i]:-$HOST}" = "$m" ] || continue
             seq[${#seq[@]}]=$i; used="$used$i"$'\n'; any=1
         done
-        [ "$any" = 0 ] && [ "${st:-idle}" = idle ] && seq[${#seq[@]}]="a$k"
+        [ "$any" = 0 ] && case "${st:-idle}" in idle|done|working|testing|blocked) seq[${#seq[@]}]="a$k" ;; esac   # (every agent is on a card: its own, else one that says what it does)
     done; done
     for (( i = 0; i < T_N; i++ )); do [ -n "${T_CARD[$i]:-}" ] && case "$used" in *$'\n'"$i"$'\n'*) ;; *) seq[${#seq[@]}]=$i ;; esac; done   # (no agent in the list)
     [ "$mode" = cards ] && return 0
     for (( i = 0; i < T_N; i++ )); do [ -z "${T_CARD[$i]:-}" ] && seq[${#seq[@]}]=$i; done
 }
-idle_card() {  # idle_card <agent index>: the card of an idle agent without a card (see idle_cards): two rows, a click shows the agent (ref agent:<machine>/<pane>)
-    local m id st name task TI_REF TI_BAR
+idle_card() {  # idle_card <agent index>: the card of an agent without a card of its own: two rows (the agent, its last task); idle (also herdr's done) dimmed, one that works or needs
+    # you in its colour; a click shows the agent (ref agent:<machine>/<pane>). An agent is always there.
+    local m id st name task TI_REF TI_BAR act=0 sc=$D ic="${MUTED}○" state=idle dim=1
     IFS=$US read -r m id st name task <<< "${AG_LINES[$1]}"
     case "$task" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) task="" ;; esac   # (not a task: the idle card says no more than idle)
     case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
+    case "${st:-idle}" in
+        working|testing) sc=$ORANGE; ic="${ORANGE}${SPIN_CH:-✶}"; state=working; dim=0 ;;
+        blocked) sc=$NN; ic="${NN}◉"; state="needs you"; dim=0 ;;
+    esac
+    [ "$id" = "${ACT_P:-}" ] && [ "$m" = "$HOST" ] && act=1       # (the agent herdr shows: not dimmed, the highlighted ground)
     printf '\n'
-    TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
-    local act=0; [ "$id" = "${ACT_P:-}" ] && [ "$m" = "$HOST" ] && act=1       # (the agent herdr shows: not dimmed, the highlighted ground)
-    TI_DIM=1; ti_card "$act" "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
+    TI_REF="agent:$m/$id"; TI_BAR=$sc; TI_AGN=$name; TI_AGM=$m; TI_AGIC=$ic; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+    [ "$dim" = 1 ] && TI_DIM=1; ti_card "$act" "$sc" "" "$TITLE" "" "" "" "$state" 0 ""; TI_DIM=""
 }
 ci_bars_set() {  # ci_bars_set <branch> <project id>: TI_TBARS gets a line "done total name" for each CI test job that runs for that branch (at most two bars on a card)
     [ -s "$SHARED_DIR/tests.list" ] || return 0
@@ -2067,7 +2072,7 @@ idle_cards() {  # the agents that are idle and have no card (nothing in review, 
     done
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        [ "${st:-idle}" = idle ] || continue
+        case "${st:-idle}" in idle|done) ;; *) continue ;; esac
         case "$used" in *$'\n'"$m$US$id"$'\n'*) continue ;; esac
         case "$task" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) task="" ;; esac   # (not a task: the idle card says no more than idle)
         case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
@@ -2189,7 +2194,7 @@ agents_counts() {  # agents_counts: this and the other machines' agents as numbe
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st _ <<< "${AG_LINES[$i]}"
-        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; idle|"") ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac   # (an idle agent is on a card: its own, or in the group IDLE)
+        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; idle|done|"") ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac   # (an idle agent is on a card: its own, or in the group IDLE)
     done
 }
 agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), two columns;
@@ -2214,11 +2219,12 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
     fi
     # each agent's project (from the collected tokens), the machines, the projects in their order
+    local cg; cfg_var cg CARD_GROUPING ungrouped
     local apj=() aidle=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
     local metas; metas_read metas
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        aidle[$i]=""; [ "${st:-idle}" = idle ] && aidle[$i]=1       # (an idle agent is on a card: its own, or in the group IDLE; here only the others)
+        aidle[$i]=""; case "${st:-idle}" in idle|done) aidle[$i]=1 ;; working|testing|blocked) [ "$cg" != status ] && aidle[$i]=1 ;; esac   # (an agent is on a card: its own, or one of its own when ungrouped (the others in the group IDLE); here only the rest)
         apj[$i]=""; case "$metas" in *$'\n'"$m$US$id$US"*) local rest=${metas#*$'\n'"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
         for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done; [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
         [ "$m" = "$HOST" ] && hosted=1

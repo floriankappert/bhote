@@ -577,19 +577,25 @@ impl<'a> Cards<'a> {
                 let t = &self.ts[i];
                 if card(t) && t.ap == r.id && (if t.am.is_empty() { &self.host } else { &t.am }) == &r.m { seq.push(Seq::Topic(i)); used[i] = true; any = true; }
             }
-            if !any && (r.st.is_empty() || r.st == "idle") { seq.push(Seq::Idle(k)); }
+            if !any && matches!(r.st.as_str(), "" | "idle" | "done" | "working" | "testing" | "blocked") { seq.push(Seq::Idle(k)); }   // (every agent is on a card: its own, else one that says what it does)
         }
         for i in 0..n { if card(&self.ts[i]) && !used[i] { seq.push(Seq::Topic(i)); } }
         if mode != "cards" { for i in 0..n { if !card(&self.ts[i]) { seq.push(Seq::Topic(i)); } } }
         seq
     }
 
-    /// idle_card: the card of an idle agent without a card, two rows; a click shows the agent (ref agent:<machine>/<pane>)
+    /// idle_card: the card of an agent without a card of its own, two rows (the agent, its last task): idle (also herdr's done) dimmed, one that works or needs you in its colour;
+    /// a click shows the agent (ref agent:<machine>/<pane>). An agent is always there.
     fn idle_card(&self, r: &Row, active: Option<&str>) -> String {
         let g = |k: &str| self.g(k).to_string();
-        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: no_idle_task(&r.task), dim: true, ..Default::default() };
+        let (sc, ic, state, dim) = match r.st.as_str() {
+            "working" | "testing" => (g("ORANGE"), format!("{}{}", g("ORANGE"), self.v.spin_ch), "working", false),
+            "blocked" => (g("NN"), format!("{}◉", g("NN")), "needs you", false),
+            _ => (g("D"), format!("{}○", g("MUTED")), "idle", true),
+        };
+        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: sc.clone(), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: ic, agtask: no_idle_task(&r.task), dim, ..Default::default() };
         let act = active == Some(r.id.as_str()) && r.m == self.host;   // (the agent herdr shows: not dimmed, the highlighted ground)
-        format!("\n{}", self.card(act, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o))
+        format!("\n{}", self.card(act, &sc, "", &g("TITLE"), "", "", "", state, "", &o))
     }
 
     /// idle_cards: the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
@@ -603,7 +609,7 @@ impl<'a> Cards<'a> {
         }
         let mut out = String::new(); let mut first = true;
         for r in &self.ag {
-            if !(r.st.is_empty() || r.st == "idle") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
+            if !matches!(r.st.as_str(), "" | "idle" | "done") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
             if first { out.push_str(&format!("\n  {}IDLE{}\n", g("D"), x)); first = false; } else { out.push('\n'); }
             let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: no_idle_task(&r.task), dim: true, ..Default::default() };
             let act = self.active_agent().as_deref() == Some(r.id.as_str()) && r.m == self.host;
