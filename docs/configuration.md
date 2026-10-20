@@ -48,7 +48,8 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `DEPLOY_PROJECTS_OFF` | | Projects off (deployments) | Comma-separated project names switched off in the Deployments block: the switches in the settings (Connections) write it. |
 | `TEST_PROJECTS_OFF` | | Projects off (tests) | The same for the Tests block; the local runs of a project's worktrees (`IMS-wt1` is IMS) go with it. |
 | `KHARKA_WATCH_STALE` | `90` | Restart after (s) | `bhote kharka watch` restarts `herdr-kharka` when its entry in kharka (`herdr/<node>`) is older than this. |
-| `CLAUDE_MOD` | `on` | Claude Code mod (band, pane) | Whether the [Claude Code mod](claude-mod.md) shows the topic of the agent: the band above the prompt and the pane (`/topic pane`). Off: the mod stays installed but draws nothing and asks bhote for nothing (it asks as `bhote current --json --mod` and gets `{"disabled":true}`). |
+| `CLAUDE_MOD` | `on` | Claude Code mod (pane) | Whether the [Claude Code mod](claude-mod.md) shows the topic of the agent: the pane (`/topic pane`). Off: the mod stays installed but draws nothing and asks bhote for nothing (it asks as `bhote current --json --mod` and gets `{"disabled":true}`). |
+| `FRIENDLY_REMINDER` | `on` | Show Friendly Reminder | The Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description, above the prompt: a reminder at random, not a status. Needs the mod (`bhote mod install`). |
 | `MONITOR_ROWS` | `4` | Entries shown | Entries each monitor shows. |
 | `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |

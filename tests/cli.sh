@@ -302,4 +302,13 @@ printf '%s %s\n' 56 1 > "$T/shared/panel.width"; : > "$WLOG"
 PATH="$T/wbin:$PATH" FOCUS1=true HERDR_PANE_ID=w2:p2 B __act clamp adopt >/dev/null 2>&1
 grep -q "pane resize --pane w2:p2 --direction left --amount 0.0407" "$WLOG" && ! grep -q "resize --pane w1:p2" "$WLOG" && ok "widths: adopt: the panel takes the known width (56), the others stay" || bad "width adopt: $(grep resize "$WLOG")"
 
+# the friendly reminder: a random topic that waits, is next or is parked; not a deployment wait, not a dismissed one, not "Waiting for New Work" (a store of its own)
+RB() { BHOTE_DATA=$T/remdata bash ./bhote "$@"; }
+rid=$(RB reminder); [ "$rid" = "{}" ] && ok "reminder: nothing eligible gives {}" || bad "reminder empty: $rid"
+RB add --status next "Reminder candidate" -d "Do this soon" >/dev/null; RB add --status now "Working one" >/dev/null; RB add "Waiting for New Work" --status next >/dev/null
+seen=""; for x in 1 2 3 4 5 6; do seen="$seen$(RB reminder | jq -r .title)|"; done
+case "$seen" in *"Working one"*|*"Waiting for New Work"*) bad "reminder picked something else: $seen" ;; "Reminder candidate|Reminder candidate|Reminder candidate|Reminder candidate|Reminder candidate|Reminder candidate|") ok "reminder: only waiting, next and parked topics, not a topic that runs, not Waiting for New Work" ;; *) bad "reminder: $seen" ;; esac
+RB reminder | jq -e '.description == "Do this soon" and .status == "next"' >/dev/null && ok "reminder: with the description and the status" || bad "reminder description: $(RB reminder)"
+B config set FRIENDLY_REMINDER off >/dev/null; [ "$(RB reminder)" = '{"disabled":true}' ] && ok "reminder: switched off in the settings (Show Friendly Reminder)" || bad "reminder off: $(RB reminder)"
+B config set FRIENDLY_REMINDER on >/dev/null
 rm -rf "$T"; exit $fail

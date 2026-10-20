@@ -5,6 +5,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Changed
+- Claude Code mod: the band above the prompt no longer shows the status of the agent's topic. It shows a **friendly reminder** instead: now and then, at random (at the earliest every ten minutes, for 45 seconds), in orange with a dog, a topic that waits, is next or is parked, with its description under it. New setting `FRIENDLY_REMINDER` (settings › *Show Friendly Reminder*, on); new command `bhote reminder`. The pane and `/topic` stay. After `bhote mod install` Claude Code needs `/reload-plugins`.
+
 ### Fixed
 - A card that says `finished` says when, always: a now card whose agent has stopped had no age (`finished` alone, and `finished · x = done` on the chosen one). The age is there now (`just now · finished`), and `x = done` is gone.
 - The highlighted card is the active agent's, one to one with herdr: the agent that herdr shows in the main area of the panel's tab (the focused pane when it is an agent of the tab, else the tab's first agent) has the highlighted ground on all its cards, an idle agent too (its idle card, not dimmed then); when you pick another agent in herdr the highlight moves with it (within a second or two). Before, the highlight was a card you had chosen, and could be another agent's.

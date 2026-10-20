@@ -126,6 +126,7 @@ DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monit
 TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor: their entries and the local runs of their worktrees are not shown
 KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
 CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of the agent: the band above the prompt and the pane (/topic pane). Off: it draws nothing and asks bhote for nothing
+FRIENDLY_REMINDER|on|bool|Show Friendly Reminder: the Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description (a reminder, not a status)
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -2881,7 +2882,8 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="bool|UPDATE_CHECK|Check for updates"
-    SET_ROWS[${#SET_ROWS[@]}]="bool|CLAUDE_MOD|Claude Code mod (band, pane)"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|CLAUDE_MOD|Claude Code mod (pane)"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|FRIENDLY_REMINDER|Show Friendly Reminder"
     [ "$(cfg_get REMOTE_AGENTS off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|HERDR_KEYS_MACHINE|Keyboard of herdr on"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
@@ -6515,6 +6517,24 @@ current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "si
     [ -n "$lists" ] || lists="{}"
     printf '{"pr":%s,"siblings":%s,"lists":%s}' "$pr" "$sib" "$lists"
 }
+cli_reminder() {  # bhote reminder [--json]: a random topic that waits, is next or is parked (not a deployment wait, not an automatic card, not dismissed), for the
+    # Claude Code mod's friendly reminder; {"disabled":true} with FRIENDLY_REMINDER off, {} when there is none
+    local i n=0 pick cand=() st t d w
+    if [ "$(cfg_get FRIENDLY_REMINDER on)" = off ]; then printf '{"disabled":true}\n'; return 0; fi
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in waiting|next|later) ;; *) continue ;; esac
+        [ "${T_DEP[$i]:-}" = 1 ] && continue; [ "${T_AN[$i]:-}" = 1 ] && continue
+        [ "${T_STATUS[$i]}" = later ] && [ "$(topic_get "${T_FILE[$i]}" dismissed)" = 1 ] && continue
+        case "${T_TITLE[$i]}" in "Waiting for New Work"|"Waiting for new work"|"waiting for new work") continue ;; esac
+        cand[$n]=$i; n=$(( n + 1 ))
+    done
+    if [ "$n" -eq 0 ]; then printf '{}\n'; return 0; fi
+    pick=${cand[$(( (RANDOM * 32768 + RANDOM) % n ))]}
+    st=${T_STATUS[$pick]}; w=""; [ "$st" = waiting ] && w=${T_WFOR[$pick]}
+    jq -cn --arg id "${T_ID[$pick]}" --arg title "${T_TITLE[$pick]}" --arg d "${T_DESC[$pick]:-}" --arg st "$st" --arg w "$w" \
+        '{id: $id, title: ($title | gsub("[\u0000-\u001f]"; " ")), description: (if $d == "" then null else ($d | gsub("[\u0000-\u001f]"; " ")) end), status: $st, waiting_for: (if $w == "" then null else $w end)}'
+}
 cli_current() {  # bhote current [--json [--full] [--mod]]: --mod is the Claude Code mod asking: with CLAUDE_MOD off it gets {"disabled":true} and draws nothing
     local i f hit="" full="" mod=""; for i in "$@"; do case "$i" in --full) full=1 ;; --mod) mod=1 ;; esac; done
     if [ -n "$mod" ] && [ "$(cfg_get CLAUDE_MOD on)" = off ]; then printf '{"disabled":true}\n'; return 0; fi
@@ -6972,6 +6992,7 @@ bhote — topics and agents next to herdr.
   bhote sync                         merge with the data location now
   bhote config [list|get|set|unset]  read and change the settings (bhote config list shows them all)
   bhote current                      the topic of the agent that asks (for a Claude Code SessionStart hook)
+  bhote reminder                     a random topic that waits, is next or is parked, as JSON (the Claude Code mod's friendly reminder)
   bhote agents                       the agents of herdr (numbered: refs for transfer)
   bhote transfer <from> <to> [-t <topic>]   Steal & Transfer: <from> commits and hands its work over to <to>
   bhote deploys | bhote tests        the deployment / test monitor (newest first)
@@ -7015,6 +7036,7 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
+        reminder) bhote_info; cli_reminder "$@" ;;
         __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
