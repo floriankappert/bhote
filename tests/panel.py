@@ -47,7 +47,11 @@ class Panel:
         self.now = int(time.time())
         for t in (topics or DEFAULT):
             self.topic(**t)
-        env = dict(os.environ, BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
+        os.makedirs(f"{T}/bin", exist_ok=True)   # a herdr that notes when an agent is shown (and hands everything else to the real one)
+        real = shutil.which("herdr") or "/bin/false"
+        open(f"{T}/bin/herdr", "w").write(f'#!/bin/sh\ncase "$1 $2" in "agent focus") echo "$(date +%s%N) $3" >> "{T}/focus.log"; exit 0 ;; *) exec "{real}" "$@" ;; esac\n')
+        os.chmod(f"{T}/bin/herdr", 0o755)
+        env = dict(os.environ, PATH=f"{T}/bin:" + os.environ.get("PATH", ""), BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
         for k in ("NO_COLOR", "HERDR_PANE_ID", "HERDR_TAB_ID", "CLAUDECODE"): env.pop(k, None)
         self.pid, self.fd = pty.fork()
         if self.pid: LIVE.append(self.pid)
@@ -202,6 +206,23 @@ os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode()); time.sleep(0.25); os
 menu = p.expect("ACTIONS", 10)
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("double click on a review card: its page") if (menu and back) else bad(f"review double click (menu={menu}, back={back})")
+
+# 7c) a click on a card shows its agent at once: herdr is asked within a fraction of a second (no script is started for it, no delay for a double click)
+p.close()
+p = Panel(topics=[dict(id="3000-1", title="Has an agent", status="now", agent="Agent", agent_pane="w9:p9")])
+y = p.fresh_row("Has an agent")
+t0 = time.time(); os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode())
+log = os.path.join(p.T, "focus.log"); seen = None
+while time.time() - t0 < 2 and seen is None:
+    time.sleep(0.01)
+    if os.path.exists(log):
+        try: seen = int(open(log).read().split()[0]) / 1e9
+        except (ValueError, IndexError): seen = None
+if seen is None: bad("a click on a card did not ask herdr to show the agent")
+elif seen - t0 > 0.25: bad("a click on a card showed the agent after %.0f ms" % ((seen - t0) * 1000))
+else: ok("a click on a card shows its agent at once (herdr asked after %.0f ms)" % max(0, (seen - t0) * 1000))
+p.close()
+p = Panel()
 
 # 8) settings (the script's view) and back
 p.out = b""; os.write(p.fd, b","); sets = p.expect("ettings", 8) or p.expect("SETTINGS", 1)

@@ -33,7 +33,7 @@ pub struct Panel {
     sel_id: String, hover_id: String, hover_btn: bool, expanded: String,
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
-    click_last: Option<(String, Instant)>, last_fp: String, jump_at: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
+    last_fp: String, focus_m: Option<std::time::SystemTime>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
@@ -48,7 +48,7 @@ impl Panel {
             has_machines: envs("BHOTE_HAS_MACHINES") == "1", pane_id: envs("HERDR_PANE_ID"), tab_id: envs("HERDR_TAB_ID"),
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
-            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, last_fp: String::new(), jump_at: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
+            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, last_fp: String::new(), focus_m: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
             pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
@@ -227,9 +227,17 @@ impl Panel {
             self.redraw = true;
         }
     }
+    /// The agent that was just shown is the focused pane: written to focus.pane at once (pane and tab), so that every panel moves its highlight now and not with the
+    /// next round of the collector (which writes the truth again)
+    fn note_focus(&self, pane: &str) {
+        let meta = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
+        let Some(tab) = meta.lines().find_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 2 && f[1] == pane { Some(f[2].to_string()) } else { None } }) else { return };
+        let (f, tmp) = (self.shared.join("focus.pane"), self.shared.join(format!("focus.pane.tmp.{}", std::process::id())));
+        if fs::write(&tmp, format!("{} {}\n", pane, tab)).is_ok() { let _ = fs::rename(&tmp, &f); }
+    }
     fn agent_jump(&mut self, m: &str, p: &str) {
         if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
-        if m == self.host { let mut c = Command::new("herdr"); c.args(["agent", "focus", p]); crate::proc::detached(c); }
+        if m == self.host { let mut c = Command::new("herdr"); c.args(["agent", "focus", p]); crate::proc::detached(c); self.note_focus(p); }
         else { self.act(&["flash", m, p], "flash", true); }
     }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {
@@ -322,14 +330,13 @@ impl Panel {
                 }
                 let twice = self.click_twice(&id);
                 if twice { // a double click: the topic's page
-                    self.jump_at = None;   // (the click before it has not shown the agent yet: it would have taken the focus away from this panel)
                     if !(id.starts_with("cap:")) { self.sel_id = id.clone(); }
                     if !(id.starts_with("more:") || id.starts_with("cap:")) { self.open_menu(term); }
                     self.redraw = true; return;
                 }
                 if let Some(k) = id.strip_prefix("cap:") { let k = k.to_string(); self.section_toggle(&k); }
                 else if let Some(s) = id.strip_prefix("more:") { self.sel_id = id.clone(); let s = s.to_string(); self.toggle_expand(&s); }
-                else { self.sel_id = id.clone(); if self.is_card(&id) { self.jump_at = Some((id.clone(), Instant::now() + Duration::from_millis(500))); } }   // (the agent is shown when no second click follows: a double click must reach this panel)
+                else { self.sel_id = id.clone(); if self.jump_card(&id) { return; } }   // (a card: the agent is shown at once, no repaint of the panel for it)
                 self.redraw = true; return;
             }
         }
@@ -337,10 +344,29 @@ impl Panel {
             let on = self.c("AGENTS_COMPACT", "off") == "on"; self.cfg_set("AGENTS_COMPACT", if on { "off" } else { "on" }); self.redraw = true;
         }
     }
+    /// A double click: the same entry twice within half a second. The first click may have shown an agent in another tab, so the second one reaches the panel
+    /// of that tab: the last click is kept in the shared folder, where every panel of this machine sees it.
     fn click_twice(&mut self, id: &str) -> bool {
-        let now = Instant::now();
-        if let Some((last, at)) = &self.click_last { if last == id && now.duration_since(*at) <= Duration::from_millis(500) { self.click_last = None; return true; } }
-        self.click_last = Some((id.to_string(), now)); false
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+        let f = self.shared.join("click.last");
+        if let Ok(t) = crate::proc::read_cap(&f) {
+            let mut it = t.trim().splitn(2, ' ');
+            if let (Some(ms), Some(last)) = (it.next().and_then(|v| v.parse::<u64>().ok()), it.next()) {
+                if last == id && now.saturating_sub(ms) <= 500 { let _ = fs::remove_file(&f); return true; }
+            }
+        }
+        let _ = fs::write(&f, format!("{} {}", now, id)); false
+    }
+    /// A click on a card shows its agent at once: an agent of this machine through herdr itself (no script started), another one through the script (kharka or herdr's
+    /// other machines). false: it is no card.
+    fn jump_card(&mut self, id: &str) -> bool {
+        let target = self.with_cards(|c| c.ts().iter().find(|t| t.id == id).and_then(|t| {
+            let card = matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
+            if card { Some((t.am.clone(), t.ap.clone())) } else { None }
+        }));
+        let Some((m, ap)) = target else { return false };
+        if !ap.is_empty() && (m.is_empty() || m == self.host) { let host = self.host.clone(); self.agent_jump(&host, &ap); } else { self.act(&["topic_jump", id], "jump", false); }
+        true
     }
     fn is_card(&self, id: &str) -> bool { self.with_cards(|c| c.ts().iter().find(|t| t.id == id).map_or(false, |t| matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1"))) }
     fn section_toggle(&mut self, kind: &str) { let k = format!("{}_COMPACT", kind.to_uppercase()); let on = self.c(&k, "off") == "on"; self.cfg_set(&k, if on { "off" } else { "on" }); }
@@ -400,23 +426,32 @@ impl Panel {
         if fs::read_to_string(&f).map_or(true, |t| t != me) { let _ = fs::write(&f, me); }
     }
     fn unregister(&self) { if !self.pane_id.is_empty() { let _ = fs::remove_file(self.shared.join("panels").join(&self.pane_id)); } }
+    /// focus.pane (the focused pane and its tab, written by the collector and by a click on a card here): what makes this panel visible or not, focused or not, and
+    /// which agent is shown (the highlight). Read again at once when the file changes (checked every tick: a stat), else once a second.
+    fn check_focus(&mut self) {
+        if !self.pane_id.is_empty() {
+            if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
+                let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
+                let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
+                if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); self.sel_id.clear(); } }   // (back in view: the active card is the one of the agent of this tab again, not the one chosen before)
+                if pf != self.pane_focus { self.pane_focus = pf; self.redraw = true; }
+                if fp != self.last_fp { self.last_fp = fp.to_string(); self.redraw = true; }   // (another agent is shown: the highlight moves)
+            }
+        }
+    }
+    fn focus_file_changed(&mut self) -> bool {
+        let m = fs::metadata(self.shared.join("focus.pane")).and_then(|m| m.modified()).ok();
+        if m != self.focus_m { self.focus_m = m; true } else { false }
+    }
     fn tick(&mut self) {
         self.keep_collector();
+        if self.focus_file_changed() { self.check_focus(); }
         let sec = store::now();
-        if let Some((id, t)) = self.jump_at.clone() { if Instant::now() >= t { self.jump_at = None; self.act(&["topic_jump", &id], "jump", false); } }
         if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { if self.clamp_adopt { self.act(&["clamp", "adopt"], "clamp", false); } else { self.act(&["clamp"], "clamp", false); } } self.clamp_adopt = false; } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
             self.register();
-            if !self.pane_id.is_empty() {
-                if let Ok(t) = crate::proc::read_cap(self.shared.join("focus.pane")) {
-                    let mut p = t.split_whitespace(); let (fp, ft) = (p.next().unwrap_or(""), p.next().unwrap_or(""));
-                    let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
-                    if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); self.sel_id.clear(); } }   // (back in view: the active card is the one of the agent of this tab again, not the one chosen before)
-                    if pf != self.pane_focus { self.pane_focus = pf; self.redraw = true; }
-                    if fp != self.last_fp { self.last_fp = fp.to_string(); self.redraw = true; }   // (another agent is shown: the highlight moves)
-                }
-            }
+            self.check_focus();
             if let Some((_, u)) = &self.flash { if Instant::now() >= *u { self.flash = None; self.redraw = true; } }
             if sec >= self.last_chk + 2 { self.last_chk = sec; let s = self.sig(); if s != self.files_sig { self.files_sig = s; if self.tab_visible { self.redraw = true; self.reload_cfg(); } else { self.dirty = true; } } }
             // bhote find / a jump chose a topic: select it here
@@ -448,8 +483,8 @@ pub fn run() -> i32 {
         }
         else if p.redraw && !p.tab_visible { p.redraw = false; p.dirty = true; }
         let mut timeout: i32 = if !p.pending.is_empty() { 150 } else if p.spin_any && p.tab_visible { 300 } else { 1000 };
-        if let Some((_, t)) = &p.jump_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }
         if let Some(t) = p.clamp_at { timeout = timeout.min(t.saturating_duration_since(Instant::now()).as_millis() as i32 + 1); }   // (the width check is due: do not sleep past it)
+        timeout = timeout.min(150);   // (a stat of focus.pane each time: another agent shown, this tab in view: the highlight follows at once)
         let ev = term.next(timeout);
         let go = crate::proc::guarded("event", &shared, || handle(&mut p, &mut term, ev)).unwrap_or_else(|| { p.redraw = true; true });
         if !go { break; }
