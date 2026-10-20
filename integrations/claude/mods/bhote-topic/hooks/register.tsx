@@ -147,7 +147,7 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'topic',
-      description: 'Your bhote topic: /topic [pane|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]',
+      description: 'Your bhote topic: /topic [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]',
     })
     lastReminder = (await $.clock.now()) - REMINDER_GAP + 2 * 60 * 1000 // the first one is possible after about two minutes
     await refresh($)
@@ -193,6 +193,12 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'topic' }, async ($, e) => {
     const [sub = 'status', ...rest] = e.args.trim().split(/\s+/)
     const current = await read($, topic)
+    if (sub === 'remind') { // the friendly reminder on demand (otherwise it comes up by itself, at random)
+      await update($, isHidden, () => false)
+      await remind($)
+      const shown = await read($, reminder)
+      return { text: shown === null ? 'No reminder: nothing waits, is next or is parked, or Show Friendly Reminder is off in the bhote settings.' : 'Friendly reminder shown.' }
+    }
     if (isOff) return { text: 'The topic display is switched off in bhote (setting CLAUDE_MOD).' }
 
     if (sub === 'pane') {
@@ -227,7 +233,7 @@ export const register: Register = (on, options) => {
     } else if (sub === 'wait' && rest.length > 0) {
       argv = ['bhote', 'wait', current.id, rest.join(' ')]
     } else {
-      return { text: 'Usage: /topic [pane|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]' }
+      return { text: 'Usage: /topic [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]' }
     }
 
     const ran = await $.process.run(argv, { timeoutMs: 10000 })
