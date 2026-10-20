@@ -41,6 +41,8 @@ fn rows(p: &std::path::Path) -> Vec<Row> {
 fn sp(n: i64) -> String { " ".repeat(n.unsigned_abs() as usize) }
 fn pre(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 fn clean(s: &str) -> String { s.chars().filter(|c| !c.is_control()).collect() }
+/// "Waiting for New Work" is not a task: the agent is idle (the card shows the topic's title, an idle card says no more than idle)
+fn no_idle_task(t: &str) -> String { if t.trim().to_lowercase().starts_with("waiting for new work") { String::new() } else { t.to_string() } }
 fn digits(s: &str) -> bool { !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) }
 
 /// age_set + ago_set: "just now", "5m ago", "3h ago", "2d ago" (relative to now)
@@ -93,20 +95,28 @@ impl<'a> Cards<'a> {
     pub fn sel_index(&self) -> i64 {
         if self.v.sel_id.starts_with("more:") { return -1; }
         for (i, t) in self.ts.iter().enumerate() { if t.id == self.v.sel_id { return i as i64; } }
-        // nothing chosen: the active card, the first one of an agent of this machine that sits in this panel's tab (the agent you are working with)
-        let tab = std::env::var("HERDR_TAB_ID").unwrap_or_default();
-        if !tab.is_empty() {
-            let meta = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
-            let panes: Vec<&str> = meta.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 2 && f[2] == tab { Some(f[1]) } else { None } }).collect();
-            if !panes.is_empty() {
-                for (i, t) in self.ts.iter().enumerate() {
-                    let card = matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
-                    if card && !t.ap.is_empty() && (t.am.is_empty() || t.am == self.host) && self.in_scope(i) && panes.contains(&t.ap.as_str()) { return i as i64; }
-                }
+        // nothing chosen: the active card, the first one of the active agent (the one herdr shows in this panel's tab)
+        if let Some(ap) = self.active_agent() {
+            for (i, t) in self.ts.iter().enumerate() {
+                let card = matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
+                if card && t.ap == ap && (t.am.is_empty() || t.am == self.host) && self.in_scope(i) { return i as i64; }
             }
         }
         for (i, t) in self.ts.iter().enumerate() { if Self::shows(&t.status) && self.in_scope(i) { return i as i64; } }
         0
+    }
+    /// active_agent: the agent that herdr shows in the main area of this panel's tab: the focused pane when it is an agent of the tab, else the first agent of the tab
+    /// (None outside herdr, or in a tab without an agent of this machine)
+    pub fn active_agent(&self) -> Option<String> {
+        let tab = std::env::var("HERDR_TAB_ID").unwrap_or_default(); if tab.is_empty() { return None; }
+        let fp = crate::proc::read_cap(self.shared.join("focus.pane")).unwrap_or_default().split_whitespace().next().unwrap_or("").to_string();
+        let meta = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
+        let mut first: Option<String> = None;
+        for l in meta.lines() {
+            let f: Vec<&str> = l.split(US).collect();
+            if f.len() > 2 && f[2] == tab { if f[1] == fp { return Some(fp); } if first.is_none() { first = Some(f[1].to_string()); } }
+        }
+        first
     }
     pub fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }
     pub fn expanded(&self, st: &str) -> bool { self.v.expanded.contains(&format!(" {} ", st)) }
@@ -141,7 +151,7 @@ impl<'a> Cards<'a> {
     }
 
     fn agent_state(&self, m: &str, id: &str) -> String { for r in &self.ag { if r.m == m && r.id == id { return if r.st.is_empty() { "idle".into() } else { r.st.clone() }; } } "gone".into() }
-    fn agent_task(&self, m: &str, id: &str) -> String { for r in &self.ag { if r.m == m && r.id == id { return r.task.clone(); } } String::new() }
+    fn agent_task(&self, m: &str, id: &str) -> String { for r in &self.ag { if r.m == m && r.id == id { return no_idle_task(&r.task); } } String::new() }
     fn agent_now(&self, m: &str, id: &str) -> String {
         let mut n = String::new();
         for r in &self.now_l { if r.m == m && r.id == id { n = r.st.clone(); break; } }
@@ -219,7 +229,7 @@ impl<'a> Cards<'a> {
             bg = g("CARDSEL");
         }
         if hov { bar = "\u{1b}[38;2;255;111;97m".into(); }
-        let dim = o.dim && !hov;   // (an idle agent: all text dimmed, it is not what matters now)
+        let dim = o.dim && !hov && !sel;   // (an idle agent: all text dimmed, it is not what matters now)
         if dim { tc = d_.clone(); gc = g("MUTED"); mc = g("MUTED"); }
         let bl = format!("{}▌{}{} ", bar, x, bg);
         let xb = format!("{}{}", x, bg);
@@ -474,8 +484,9 @@ impl<'a> Cards<'a> {
         if open == 0 && mode != "lists" { out.push_str(&self.bored()); }
         let mut prev = String::new();
         let grouped = self.c.cfg("CARD_GROUPING", "ungrouped") == "status";
+        let active = self.active_agent();
         for ent in self.cards_sequence(mode, grouped) {
-            let i = match ent { Seq::Idle(k) => { out.push_str(&self.idle_card(&self.ag[k])); continue; } Seq::Topic(i) => i };
+            let i = match ent { Seq::Idle(k) => { out.push_str(&self.idle_card(&self.ag[k], active.as_deref())); continue; } Seq::Topic(i) => i };
             let t = &self.ts[i]; let st = t.status.as_str();
             let gk = if st == "waiting" && t.dep == "1" { "deploying" } else { st };
             if st == "done" { continue; }
@@ -512,7 +523,7 @@ impl<'a> Cards<'a> {
             let lc = match gk { "deploying" => g("Y"), "finished" => g("GREEN"), "now" => g("ORANGE"), "testing" => g("C"), "review" => g("BLUE"), _ => g("D") };
             let _ = &mut tm;
             if st == "now" && state == "finished" && i as i64 == sel_idx { state = "finished · x = done".into(); }
-            let sl = i as i64 == sel_idx;
+            let sl = match &active { Some(ap) => t.ap == *ap && (t.am.is_empty() || t.am == self.host), None => i as i64 == sel_idx };   // the active agent's cards have the highlighted ground (one to one with herdr)
             let bar = if st == "now" && state.starts_with("finished") { g("GREEN") } else { lc.clone() };   // (its agent has stopped: the bar is green like the text, not orange like a working one)
             let mut o = Item { id: t.id.clone(), bar, prog, ..Default::default() };
             if st == "testing" && !t.ap.is_empty() {
@@ -575,10 +586,11 @@ impl<'a> Cards<'a> {
     }
 
     /// idle_card: the card of an idle agent without a card, two rows; a click shows the agent (ref agent:<machine>/<pane>)
-    fn idle_card(&self, r: &Row) -> String {
+    fn idle_card(&self, r: &Row, active: Option<&str>) -> String {
         let g = |k: &str| self.g(k).to_string();
-        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: r.task.clone(), dim: true, ..Default::default() };
-        format!("\n{}", self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o))
+        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: no_idle_task(&r.task), dim: true, ..Default::default() };
+        let act = active == Some(r.id.as_str()) && r.m == self.host;   // (the agent herdr shows: not dimmed, the highlighted ground)
+        format!("\n{}", self.card(act, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o))
     }
 
     /// idle_cards: the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
@@ -594,8 +606,9 @@ impl<'a> Cards<'a> {
         for r in &self.ag {
             if !(r.st.is_empty() || r.st == "idle") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
             if first { out.push_str(&format!("\n  {}IDLE{}\n", g("D"), x)); first = false; } else { out.push('\n'); }
-            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: r.task.clone(), dim: true, ..Default::default() };
-            out.push_str(&self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
+            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: no_idle_task(&r.task), dim: true, ..Default::default() };
+            let act = self.active_agent().as_deref() == Some(r.id.as_str()) && r.m == self.host;
+            out.push_str(&self.card(act, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
         }
         out
     }

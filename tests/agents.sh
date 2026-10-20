@@ -2,7 +2,7 @@
 # Tests of the agent lists: a running test makes an agent busy, escape codes are stripped, and exactly one panel collects.
 # A fake herdr answers; nothing touches the real one. Usage: bash tests/agents.sh
 cd "$(dirname "$0")/.." || exit 1
-unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
+unset HERDR_TAB_ID HERDR_PANE_ID CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data BHOTE_SHARED=$T/shared
 mkdir -p "$T/bin"
 cat > "$T/bin/herdr" <<'SH'
@@ -469,6 +469,26 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$other_f" status)" = finished ] && [ "$(topic_get "$now_f" status)" = now ] || exit 2   # (another title stays, the card at work stays)
   w_f=$(mk "Waiting for New Work" review); topics_load; agent_dedup; [ "$(topic_get "$w_f" status)" = later ] && [ "$(topic_get "$w_f" dismissed)" = 1 ] || exit 3   # (an agent that waits for new work is idle: no review card)
   exit 0 ) && ok "a finished card that repeats a card of its agent is put away; \"Waiting for New Work\" is never a card" || bad "finished duplicate: step $?"
+# "Waiting for New Work" as the task of an agent (herdr's task token) is no task: the card of its topic shows the topic's title, an idle card has no task row
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Real topic title" "" ""; rf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$rf" agent W2; topic_set "$rf" agent_machine Omarchy; topic_set "$rf" agent_pane w5:p1; topic_set "$rf" status review
+  AG_LINES=("Omarchy${US}w5:p1${US}idle${US}W2${US}Waiting for New Work" "Omarchy${US}w6:p1${US}idle${US}W3${US}Waiting for New Work"); AG_N=2; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"
+  COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  printf '%s\n' "$out" | grep -q "∟ Real topic title" || exit 1; printf '%s\n' "$out" | grep -q "Waiting for New Work" && exit 2
+  exit 0 ) && ok "the task \"Waiting for New Work\" is shown nowhere: the card has its topic's title, an idle card only idle" || bad "waiting for new work task: step $?"
+# the highlighted ground is the active agent's, one to one with what herdr shows in the tab of the panel (also an idle agent); the focus moves it
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Card of Alpha" "" ""; ta="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$ta" agent Alpha; topic_set "$ta" agent_machine Omarchy; topic_set "$ta" agent_pane w1:p1; topic_set "$ta" status now
+  topic_new "Card of Beta" "" ""; tb="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tb" agent Beta; topic_set "$tb" agent_machine Omarchy; topic_set "$tb" agent_pane w2:p1; topic_set "$tb" status review
+  AG_LINES=("Omarchy${US}w1:p1${US}working${US}Alpha${US}x" "Omarchy${US}w2:p1${US}idle${US}Beta${US}y" "Omarchy${US}w3:p1${US}idle${US}Gamma${US}z"); AG_N=3; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"
+  printf 'Omarchy%sw1:p1%st1%sx\nOmarchy%sw2:p1%st1%sx\nOmarchy%sw3:p1%st3%sx\n' "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
+  COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); topics_load
+  marks() { topics_block cards | grep -a $'\001' | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -ao 'Omarchy · [A-Za-z]*' | tr '\n' ' '; }
+  export HERDR_TAB_ID=t1; rm -f "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Alpha " ] || exit 1                       # tab t1, nothing focused: its first agent
+  printf 'w2:p1 t1\n' > "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Beta " ] || exit 2                          # the focus is on Beta (same tab): Beta's card only
+  export HERDR_TAB_ID=t3; [ "$(marks)" = "Omarchy · Gamma " ] || exit 3                                                        # tab t3 shows the idle agent Gamma: its idle card is the highlighted one
+  export HERDR_TAB_ID=t1; printf 'w1:p1 t1\n' > "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Alpha " ] || exit 4         # the focus moves back
+  exit 0 ) && ok "the highlighted card is the active agent's (herdr's tab, its focused agent), also an idle one" || bad "active highlight: step $?"
 # one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
 ( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
   mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }

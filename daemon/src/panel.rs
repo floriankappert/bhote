@@ -33,7 +33,7 @@ pub struct Panel {
     sel_id: String, hover_id: String, hover_btn: bool, expanded: String,
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
-    click_last: Option<(String, Instant)>, jump_at: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
+    click_last: Option<(String, Instant)>, last_fp: String, jump_at: Option<(String, Instant)>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
@@ -48,7 +48,7 @@ impl Panel {
             has_machines: envs("BHOTE_HAS_MACHINES") == "1", pane_id: envs("HERDR_PANE_ID"), tab_id: envs("HERDR_TAB_ID"),
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
-            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, jump_at: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
+            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, click_last: None, last_fp: String::new(), jump_at: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
             pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
@@ -414,6 +414,7 @@ impl Panel {
                     let pf = Some(fp == self.pane_id); let vis = !(ft.len() > 0 && !self.tab_id.is_empty() && ft != self.tab_id);
                     if vis != self.tab_visible { self.tab_visible = vis; if vis { self.redraw = true; self.dirty = false; self.shown_at = Some(Instant::now()); self.sel_id.clear(); } }   // (back in view: the active card is the one of the agent of this tab again, not the one chosen before)
                     if pf != self.pane_focus { self.pane_focus = pf; self.redraw = true; }
+                    if fp != self.last_fp { self.last_fp = fp.to_string(); self.redraw = true; }   // (another agent is shown: the highlight moves)
                 }
             }
             if let Some((_, u)) = &self.flash { if Instant::now() >= *u { self.flash = None; self.redraw = true; } }
