@@ -5,6 +5,11 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Fixed
+- A recently finished card that repeats a card of the same agent (same title: at work, in review, waiting, or a newer finished one) is put away at once: the same work no longer shows twice (the remains of the card flood showed as a second `IMS (main)` card).
+- The deployment monitor shows every deployment of a CircleCI pipeline, not only the ones whose job is in the stored names: IMS showed Backend only, because the detection had stored workflow entries (`release-and-deploy-frontend`, a name from the `workflows:` section, not a job of the runs) and a run was skipped when none of the names was one of its jobs. Now a workflow whose jobs match none of the names falls back to its first job with "deploy" in the name (`deploy-frontend` is Frontend). The detection no longer stores names for CircleCI (`bhote monitor detect` writes the new, empty names; the old ones are harmless now). A workflow that fails before its deploy job (the deploy job did not run) is a `failed` row, not nothing, and a failed or waiting workflow without any deploy job, in a pipeline that has no deploy row, shows once with the workflow's name (the setup workflow does not).
+- When the tab of a panel comes back into view, a card chosen before is forgotten, so the highlight is the active agent's again (it stayed on the card of another agent you had clicked).
+
 ## [0.9.2] - 2026-10-19
 
 ### Added
@@ -22,7 +27,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - `BHOTED_PANEL=on`: the panel runs in the Rust daemon binary (`bhoted panel`): keys, mouse and the main view without bash. The topic's menu, settings, the wizard and the choosers still run as the script's views on the same terminal; the welcome screen with the dog is not in it yet. Off by default.
 
 ### Changed
-- The active card (the highlighted one when you have not chosen another) is the card of the agent in the panel's own tab, the one you are working with, not the first card of the list; when the tab comes back into view, a card chosen before is forgotten, so the highlight is the active agent's again (it stayed on the card of another agent you had clicked).
+- The active card (the highlighted one when you have not chosen another) is the card of the agent in the panel's own tab, the one you are working with, not the first card of the list.
 - No hover on the cards and lines any more: the mouse reporting no longer asks for motion without a button (it flooded the panel and, on a fast scroll, lost the mouse-off, so a card stayed lit); clicks, the wheel and drags work as before.
 - With more than one machine the cards of the other machines stand above those of this machine (ungrouped).
 - A new group of cards, **IDLE**, between RECENTLY FINISHED and the Next lines: every idle agent that has no card of its own (nothing in review, now, testing, deploying or recently finished), two rows each (the agent, its last task); a click shows the agent in herdr. The list of agents at the bottom keeps only the others (working, needs you, offline); an idle agent is no longer counted there as inactive.
@@ -39,8 +44,6 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The drag handle on the divider above the agents is gone; the ↕ button (counts only) stays. `AGENT_ROWS` still sets the area's height, in the settings file.
 
 ### Fixed
-- A recently finished card that repeats a card of the same agent (same title: at work, in review, waiting, or a newer finished one) is put away at once: the same work no longer shows twice (the remains of the card flood showed as a second `IMS (main)` card).
-- The deployment monitor shows every deployment of a CircleCI pipeline, not only the ones whose job is in the stored names: IMS showed Backend only, because the detection had stored workflow entries (`release-and-deploy-frontend`, a name from the `workflows:` section, not a job of the runs) and a run was skipped when none of the names was one of its jobs. Now a workflow whose jobs match none of the names falls back to its first job with "deploy" in the name (`deploy-frontend` is Frontend). The detection no longer stores names for CircleCI (`bhote monitor detect` writes the new, empty names; the old ones are harmless now). A workflow that fails before its deploy job (the deploy job did not run) is a `failed` row, not nothing, and a failed or waiting workflow without any deploy job, in a pipeline that has no deploy row, shows once with the workflow's name (the setup workflow does not).
 - A flood of cards under DEPLOYING (one card per old topic of the agent, and a new topic every few seconds while it deployed) is gone: a deployment is bound to one topic per agent (its newest), and an agent whose topic waits for a deployment gets no second automatic card (that card was bound again, and so on).
 - A double click on a card (review too) opens its page: the click before it no longer shows the agent at once (that took the focus away from the panel, and the second click went to another pane); the agent is shown half a second later, unless a second click follows. (The Rust panel; the shell panel still shows the agent at once.)
 - A topic of an agent that has finished is bound to a deployment of its branch only when it finished no more than ten minutes before that deployment began: an old topic of the agent (here a Commerzbank topic, reopened days ago) is not what is deployed.
