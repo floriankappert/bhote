@@ -4200,17 +4200,6 @@ mon_deploy_branches() {  # stdin: a CircleCI config.yml -> branch=Label,… of i
         }
         END { print out }'
 }
-mon_deploy_jobs() {  # stdin: a CircleCI config.yml (and its continuation) -> job=Label,… of the jobs with "deploy" in their name that a workflow runs
-    # (deploy-ecs-backend=Backend, release-and-deploy-frontend=Frontend: the label is the last word of the name; a plain "deploy" is Deploy)
-    awk '
-        /^ *#/ { next }
-        /^workflows:/ { wf = 1; next }
-        wf && /^[^ #]/ { wf = 0 }
-        !wf { next }
-        /^ *- *[A-Za-z0-9_-]+:? *$/ { s = $0; sub(/^ *- */, "", s); gsub(/[ :]/, "", s)
-            if (tolower(s) ~ /deploy/ && !(s in seen)) { seen[s] = 1; l = s; sub(/.*-/, "", l); l = toupper(substr(l, 1, 1)) substr(l, 2); out = out (out ? "," : "") s "=" l } }
-        END { print out }'
-}
 monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAMES, MD_TESTS from its GitHub repository; 1 when there is none
     local pf=$1 repos k slug y def
     MD_CI=""; MD_BRANCHES=""; MD_NAMES=""; MD_TESTS=""; MD_WHY=""
@@ -4228,8 +4217,8 @@ monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAME
             [ -n "$y2" ] && y="$y"$'\n'"$y2"
         fi
         MD_BRANCHES=$(printf '%s\n' "$y" | mon_deploy_branches)
-        MD_NAMES=$(printf '%s\n' "$y" | mon_deploy_jobs)
-        return 0
+        MD_NAMES=""                                             # (no names: the monitor takes the jobs with "deploy" in their name that the runs really have, and labels them by the
+        return 0                                                # last word of the job: a workflow entry such as release-and-deploy-frontend is no job, and its name never matched)
     fi
     local wfs; wfs=$(gh_t workflow list -R "$slug" --json name --jq '.[].name' 2>/dev/null)
     [ -n "$wfs" ] || { MD_WHY="no CI found (no .circleci/config.yml, no GitHub workflows)"; return 1; }
@@ -4288,13 +4277,13 @@ deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>: 
 circleci_state() {  # a workflow's status -> ours (empty: leave it out)
     case "$1" in success) echo ok ;; failed|error|unauthorized) echo failed ;; failing|running) echo running ;; on_hold) echo approval ;; canceled) echo canceled ;; *) ;; esac
 }
-circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline each workflow (the newest of a name): wid US status US created US number US subject US branch US jobs JSON
+circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline each workflow (the newest of a name): wid US status US created US number US subject US branch US workflow name
     local q="project/$1/pipeline" pid num subj br wj
     [ -n "$2" ] && q="$q?branch=$2"
     while IFS=$US read -r pid num subj br; do
         [ -n "$pid" ] || continue
         wj=$(circleci_get "pipeline/$pid/workflow") || continue
-        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '(.items // []) | group_by(.name) | map(max_by(.created_at)) | .[] | [.id, .status, .created_at, $n, $s, $b] | join("\u001f")'
+        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '(.items // []) | group_by(.name) | map(max_by(.created_at)) | .[] | [.id, .status, .created_at, $n, $s, $b, .name] | join("\u001f")'
     done < <(circleci_get "$q" | jq -r --argjson k "$3" '.items[:$k][] | [.id, (.number | tostring), ((.vcs.commit.subject // "") | gsub("[\u0000-\u001f]"; " ")), (.vcs.branch // "")] | join("\u001f")' 2>/dev/null)
 }
 circleci_jobs() {  # circleci_jobs <workflow id> <workflow status>: the jobs JSON of a workflow; a finished workflow never changes: kept in $SHARED_DIR/ccjobs
@@ -4317,27 +4306,43 @@ deploys_circleci() {  # deploys_circleci <project> <slug> <branch=Label,…> <jo
     # A deployment is a workflow run that contains a deploy job (a workflow of a branch the deploy job is filtered off has none). Its label is the
     # job's (the names map, else the branch's own label, else the last word of the job name: deploy-ecs-backend is Backend), its progress the jobs
     # that are over of the jobs it has (a notify-* job and one that did not run are no part of it), a hold for approval is `approval`.
-    local e b lab wid st cr num subj br s jobs d tot dj djst l names=${4:-} map=${3:-} x
+    local e b lab wid st cr num subj br wname s jobs d tot dj djst l names=${4:-} map=${3:-} x rows=" " cands=""
     [ -n "$map" ] || map="="                                   # no branches given: every branch, labelled by its job
     while IFS= read -r e; do
         b=${e%%=*}; lab=${e#*=}; [ -n "$e" ] || continue
         [ "$lab" = "$b" ] && lab=""                            # (a branch that says nothing)
-        while IFS=$US read -r wid st cr num subj br; do
+        rows=" "; cands=""
+        while IFS=$US read -r wid st cr num subj br wname; do
             s=$(circleci_state "$st"); [ -n "$s" ] || continue
             jobs=$(circleci_jobs "$wid" "$st") || continue
+            # the deploy job of the workflow: one of the names map that the workflow really has, else (a name that is no job, e.g. the name of a workflow group) the first job with
+            # "deploy" in its name, else a hold for approval
             x=$(printf '%s' "$jobs" | jq -r --arg m "$names" '(.items // []) as $i | ($i | map(.name)) as $all
-                | (if $m == "" then ([$all[] | select(test("deploy"; "i"))][0] // [$all[] | select(test("approv"; "i"))][0])
-                   else ($m | split(",") | map(split("=")[0]) | map(select(. as $k | $all | index($k)))[0]) end) as $j
+                | (([$all[] | select(test("deploy"; "i"))][0]) // ([$all[] | select(test("approv"; "i"))][0])) as $auto
+                | (if $m == "" then $auto else ((($m | split(",") | map(split("=")[0]) | map(select(. as $k | $all | index($k)))[0])) // $auto) end) as $j
                 | select($j != null) | [$j, ([$i[] | select(.name == $j)][0].status // "")] | join("\u001f")' 2>/dev/null) || continue
-            [ -n "$x" ] || continue
+            if [ -z "$x" ]; then                               # no deploy job in this workflow: kept as a candidate (a row only when something needs a look, see below)
+                case "$s" in failed|canceled|approval) case "$wname" in setup*|path-filter*) ;; *) cands="$cands$wid$US$st$US$cr$US$num$US$subj$US$br$US$wname"$'\n' ;; esac ;; esac
+                continue
+            fi
             IFS=$US read -r dj djst <<< "$x"
-            [ "$djst" = not_run ] && continue                  # the workflow ran, but this deploy was never part of it
+            [ "$djst" = not_run ] && [ "$s" = ok ] && continue # the workflow went through, but this deploy was never part of it (a failed workflow shows: its deploy did not run because of that)
             l=$(mon_job_label "$dj" "$names"); [ -n "$l" ] || l=$lab            # the names map, else the branch's own label,
             [ -n "$l" ] || l=$(mon_job_word "$dj"); [ -n "$l" ] || l=$br        # else the last word of the job name, else the branch
             read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select((.name | test("^notify"; "i") | not) and .status != "not_run")] as $j
                 | "\([$j[] | select(.status | test("^(success|failed|canceled|infrastructure_fail|timedout)$"))] | length) \($j | length)"')
             mon_line "$(mon_iso "$cr")" "$1" "$l" "$s" "$d" "$tot" "$(mon_shipped "$subj" | cut -c1-70)" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+            rows="$rows$num "
         done < <(circleci_workflows "$2" "$b" 4)
+        while IFS=$US read -r wid st cr num subj br wname; do   # a pipeline on a deploy branch whose workflow failed (or waits) and has no deploy job: one row with the workflow's name
+            [ -n "$wid" ] || continue
+            case "$rows" in *" $num "*) continue ;; esac
+            rows="$rows$num "; s=$(circleci_state "$st")
+            jobs=$(circleci_jobs "$wid" "$st") || continue
+            read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select((.name | test("^notify"; "i") | not) and .status != "not_run")] as $j
+                | "\([$j[] | select(.status | test("^(success|failed|canceled|infrastructure_fail|timedout)$"))] | length) \($j | length)"')
+            mon_line "$(mon_iso "$cr")" "$1" "$wname" "$s" "$d" "$tot" "$(mon_shipped "$subj" | cut -c1-70)" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+        done <<< "$cands"
     done <<< "$(printf '%s' "$map" | tr ',' '\n')"
 }
 mon_job_label() {  # mon_job_label <job> <map job=Label,…>: its entry in the map (nothing when it has none)
@@ -4366,8 +4371,8 @@ tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jo
     find "$SHARED_DIR/ghjobs" -type f -mmin +1440 -delete 2>/dev/null
 }
 tests_circleci() {  # tests_circleci <project> <slug> <job names>: the test jobs of the last pipelines (any branch)
-    local wid st cr num subj br jobs j s d tot nm
-    while IFS=$US read -r wid st cr num subj br; do
+    local wid st cr num subj br wname jobs j s d tot nm
+    while IFS=$US read -r wid st cr num subj br wname; do
         jobs=$(circleci_get "workflow/$wid/job") || continue
         j=$(printf '%s' "$jobs" | jq -r --arg m "${3:-}" 'def term: IN("success","failed","canceled","not_run","infrastructure_fail","timedout","unauthorized","terminated-unknown","retried"); [.items[] | select(if $m == "" then (.name | test("test|build"; "i")) else (.name as $n | $m | split(",") | index($n)) end)]
             | select(length > 0) | [ (if any(.status | term | not) then "running" elif any(.status == "failed" or .status == "infrastructure_fail" or .status == "timedout") then "failed"

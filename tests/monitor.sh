@@ -43,6 +43,9 @@ case "$url" in
     *"/workflow/iw1/job") cat "$FAKE_DIR/jobs-iw1.json" ;;
     *"/workflow/iw2/job") cat "$FAKE_DIR/jobs-iw2.json" ;;
     *"/workflow/iw3/job") cat "$FAKE_DIR/jobs-iw3.json" ;;
+    *"/pipeline/i2/workflow") cat "$FAKE_DIR/wf-i2.json" ;;
+    *"/pipeline/i3/workflow") cat "$FAKE_DIR/wf-i3.json" ;;
+    *"/workflow/jw"[1-9]"/job") cat "$FAKE_DIR/jobs-$(printf '%s' "$url" | sed 's#.*/workflow/\(jw[0-9]\)/job.*#\1#').json" ;;
     *"/pipeline/p1/workflow") echo '{"items":[{"id":"w1","status":"success","created_at":"2026-10-08T09:00:00.120Z"}]}' ;;
     *"/pipeline/p2/workflow") echo '{"items":[{"id":"w2","status":"on_hold","created_at":"2026-10-08T10:00:00.000Z"}]}' ;;
     *"/workflow/w1/job") echo '{"items":[{"name":"build","status":"success"},{"name":"deploy-staging","status":"success"}]}' ;;
@@ -180,7 +183,7 @@ Y
 B project add IMS >/dev/null; topic_set "$TOPIC_DIR/proj-ims.topic" repos github.com/acme/ims
 out=$(B monitor detect IMS 2>&1)
 [ "$(topic_get "$TOPIC_DIR/proj-ims.topic" ci)" = circleci:gh/acme/IMS ] && [ "$(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_branches)" = "main=main" ] \
-  && [ "$(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_names)" = "deploy-ecs-backend=Backend,release-and-deploy-frontend=Frontend" ] \
+  && [ -z "$(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_names)" ] \
   && ok "detect: a dynamic CircleCI config is read through its continuation (deploy jobs, labels, main only), the slug as GitHub spells it" || bad "detect ims: $out · $(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_branches) · $(topic_get "$TOPIC_DIR/proj-ims.topic" deploy_names)"
 echo '{"items":[{"id":"i1","number":77,"vcs":{"branch":"main","commit":{"subject":"Add credits (#123)"}}}]}' > "$FAKE_DIR/pl-ims.json"
 echo '{"items":[{"id":"iw1","name":"ims-backend-workflow","status":"running","created_at":"2026-10-16T09:00:00.000Z"},{"id":"iw2","name":"ims-frontend-workflow","status":"success","created_at":"2026-10-16T09:00:00.000Z"},{"id":"iw3","name":"path-filter","status":"success","created_at":"2026-10-16T09:00:00.000Z"}]}' > "$FAKE_DIR/wf-i1.json"
@@ -193,6 +196,27 @@ echo "$d" | grep -q "IMS${US}Backend${US}running${US}1${US}3${US}Add credits (#1
   && ok "circleci: one deployment per workflow with a deploy job (labelled by it), no notify job in the progress, the setup workflow is none" || bad "circleci ims: $d"
 d=$(deploys_circleci IMS gh/acme/ims "main=main" "")
 echo "$d" | grep -q "IMS${US}Backend${US}running" && echo "$d" | grep -q "IMS${US}Frontend${US}ok" && ok "circleci: without a names map the label is the last word of the deploy job" || bad "circleci ims labels: $d"
+# the real IMS: the names the detection used to store (workflow entries such as release-and-deploy-frontend) are no jobs of the runs; the jobs of the runs are found by "deploy" in their name
+echo '{"items":[{"id":"i2","number":78,"vcs":{"branch":"main","commit":{"subject":"Merge pull request #1561 from bilendo/feat/paper-style"}}}]}' > "$FAKE_DIR/pl-ims.json"
+echo '{"items":[{"id":"jw1","name":"ims-backend-workflow","status":"success","created_at":"2026-10-20T09:00:00.000Z"},{"id":"jw2","name":"ims-frontend-workflow","status":"success","created_at":"2026-10-20T09:00:00.000Z"}]}' > "$FAKE_DIR/wf-i2.json"
+echo '{"items":[{"name":"build-backend","status":"success"},{"name":"deploy-ecs-backend","status":"success"}]}' > "$FAKE_DIR/jobs-jw1.json"
+echo '{"items":[{"name":"serial-start-2","status":"success"},{"name":"test-frontend","status":"success"},{"name":"release-frontend","status":"success"},{"name":"deploy-frontend","status":"success"},{"name":"serial-end-2","status":"success"}]}' > "$FAKE_DIR/jobs-jw2.json"
+d=$(deploys_circleci IMS gh/acme/ims "main=main" "deploy-ecs-backend=Backend,release-and-deploy-frontend=Frontend")
+echo "$d" | grep -q "IMS${US}Backend${US}ok${US}2${US}2${US}feat/paper-style (#1561)" && echo "$d" | grep -q "IMS${US}Frontend${US}ok${US}5${US}5${US}feat/paper-style (#1561)" && [ "$(printf '%s\n' "$d" | awk 'END { print NR }')" = 2 ] \
+  && ok "circleci: a stored name that is no job of the runs (a workflow entry) does not hide the workflow: backend and frontend are two rows" || bad "circleci frontend rows: $d"
+# a frontend workflow that fails before its deploy job: a row, failed (its deploy job did not run because of that)
+echo '{"items":[{"name":"serial-start-2","status":"success"},{"name":"test-frontend","status":"failed"},{"name":"release-frontend","status":"not_run"},{"name":"deploy-frontend","status":"not_run"},{"name":"serial-end-2","status":"not_run"}]}' > "$FAKE_DIR/jobs-jw2.json"
+echo '{"items":[{"id":"jw1","name":"ims-backend-workflow","status":"success","created_at":"2026-10-20T09:00:00.000Z"},{"id":"jw2","name":"ims-frontend-workflow","status":"failed","created_at":"2026-10-20T09:00:00.000Z"}]}' > "$FAKE_DIR/wf-i2.json"
+rm -f "$SHARED_DIR/ccjobs/jw2"
+d=$(deploys_circleci IMS gh/acme/ims "main=main" "")
+echo "$d" | grep -q "IMS${US}Frontend${US}failed${US}" && ok "circleci: a frontend workflow that fails before its deploy job is a failed row" || bad "circleci failed frontend: $d"
+# a workflow that fails and has no deploy job at all, in a pipeline without a deploy row: one row with the workflow's name (nothing is lost silently)
+echo '{"items":[{"id":"i3","number":79,"vcs":{"branch":"main","commit":{"subject":"Fix lint"}}}]}' > "$FAKE_DIR/pl-ims.json"
+echo '{"items":[{"id":"jw3","name":"lint-workflow","status":"failed","created_at":"2026-10-20T10:00:00.000Z"},{"id":"jw4","name":"path-filter","status":"failed","created_at":"2026-10-20T10:00:00.000Z"}]}' > "$FAKE_DIR/wf-i3.json"
+echo '{"items":[{"name":"lint","status":"failed"}]}' > "$FAKE_DIR/jobs-jw3.json"; echo '{"items":[{"name":"path-filtering/filter","status":"failed"}]}' > "$FAKE_DIR/jobs-jw4.json"
+d=$(deploys_circleci IMS gh/acme/ims "main=main" "")
+echo "$d" | grep -q "IMS${US}lint-workflow${US}failed${US}" && ! echo "$d" | grep -q "path-filter" && [ "$(printf '%s\n' "$d" | awk 'END { print NR }')" = 1 ] \
+  && ok "circleci: a failed workflow without a deploy job shows with the workflow's name (the setup workflow does not)" || bad "circleci fallback row: $d"
 ls "$SHARED_DIR/ccjobs/iw2" >/dev/null 2>&1 && [ ! -e "$SHARED_DIR/ccjobs/iw1" ] && ok "circleci: the jobs of a finished workflow are kept, a running one is read again" || bad "circleci job cache: $(ls "$SHARED_DIR/ccjobs" 2>&1)"
 
 # an agent's deployment: main is deployed, its commit title ends with the pull request ("(#123)"): the topic of the agent whose branch has that merged PR waits for it
