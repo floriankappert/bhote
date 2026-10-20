@@ -96,6 +96,15 @@ pub fn agent_dedup(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
         }
         if !keep { s.set(&t.file, "status", "finished"); s.set(&t.file, "auto_back", ""); }
     }
+    // a recently finished card that says the same as a card of the same agent (same title, at work, in review, waiting, or a newer finished one) is the same work twice: put away
+    for (i, t) in ts.iter().enumerate() {
+        if t.status != "finished" || t.ap.is_empty() || t.an == "1" { continue; }
+        let dup = ts.iter().enumerate().any(|(j, u)| j != i && u.ap == t.ap && am(u) == am(t) && u.title == t.title && match u.status.as_str() {
+            "now" | "testing" | "review" | "waiting" => true,
+            "finished" => u.upd > t.upd || (u.upd == t.upd && j < i),
+            _ => false });
+        if dup { s.set(&t.file, "status", "later"); s.set(&t.file, "dismissed", "1"); }
+    }
 }
 
 pub fn agent_cards(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
