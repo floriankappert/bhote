@@ -379,8 +379,8 @@ cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
   lab() ( BHOTE_SOURCE_ONLY=1; . "$vd/bhote"; version_label_set; printf '%s' "$VERSION_LABEL" )
   [ "$(lab)" = "$VERSION" ] || exit 1
   echo '# a local change' >> bhote; git -c user.name=t -c user.email=t@t commit -qam two
-  [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = "0.9.2 Preview" ] || exit 2
-  exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.2 Preview)" || bad "version label: step $?"
+  [ "$(lab)" = "$LOCAL_BUILD" ] && [ "$LOCAL_BUILD" = "0.9.3 Preview" ] || exit 2
+  exit 0 ) && ok "version: the release tag shows the version, a checkout past it its local build (0.9.3 Preview)" || bad "version label: step $?"
 # the monitor bar is built from whole cells, also where the shell counts bytes (bash 3.2 / macOS without a UTF-8 locale cut ■ in half: ��)
 ( export LC_ALL=C; mon_bar_set b 7 10 5; [ "$MB_ON" = "■■■■" ] && [ "$MB_OFF" = "■" ] && [ "$b" = "■■■■■" ] ) \
     && ok "monitor bar: filled and empty cells are whole characters (also in the C locale)" || bad "monitor bar cells: on=$MB_ON off=$MB_OFF"
