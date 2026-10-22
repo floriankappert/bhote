@@ -24,7 +24,7 @@ fi
 SPLASH_W=${BHOTE_WIDTH:-42}       # the start screen's least width; it grows with the pane (see splash_geometry)
 WIDTH=$SPLASH_W
 VERSION=${BHOTE_VERSION:-0.9.2}
-LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.3 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.3.1 for the next build
+LOCAL_BUILD=${BHOTE_LOCAL_BUILD:-0.9.2.1 Preview}      # what a checkout past the release tag calls itself (local work): counted on at the end, 0.9.2.2 for the next build
 # FEATURE_LEVEL: count it up whenever new options come to the settings (and put their wizard step in step_level). A machine whose
 # wizard ran at a lower level (WIZARD_LEVEL, 1 when never set) shows "New Features Available" in the head, and `w` runs only the new steps.
 FEATURE_LEVEL=4
@@ -126,6 +126,7 @@ DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monit
 TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor: their entries and the local runs of their worktrees are not shown
 KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
 CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of the agent: the band above the prompt and the pane (/topic pane). Off: it draws nothing and asks bhote for nothing
+FRIENDLY_REMINDER|on|bool|Show Friendly Reminder: the Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description (a reminder, not a status)
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
@@ -567,10 +568,18 @@ sel_index() {  # the index of the selected topic in the arrays (SEL_ID, else the
     sel_active_idx && return                                   # nothing chosen: the active card, the one of the agent in this panel's tab
     for (( i = 0; i < T_N; i++ )); do panel_shows "${T_STATUS[$i]}" && in_scope "$i" && { SEL_IDX=$i; return; }; done
 }
-sel_active_idx() {  # sel_active_idx: SEL_IDX = the first card of an agent of this machine that sits in this panel's tab (the agent you are working with); 1: none
-    local tab=${HERDR_TAB_ID:-} panes=" " m p t rest i; [ -n "$tab" ] && [ -r "$AGENT_META_L" ] || return 1
-    while IFS=$US read -r m p t rest; do [ "$t" = "$tab" ] && panes="$panes$p "; done < "$AGENT_META_L"
-    [ "$panes" != " " ] || return 1
+active_agent_set() {  # active_agent_set: ACT_P = the agent that herdr shows in the main area of this panel's tab: the focused pane when it is an agent of the tab, else the first
+    # agent of the tab (the panel sits in a tab; "" outside herdr or in a tab without an agent of this machine); 1 when there is none
+    ACT_P=""; local tab=${HERDR_TAB_ID:-} fp="" ft m p t rest first=""; [ -n "$tab" ] && [ -r "$AGENT_META_L" ] || return 1
+    { read -r fp ft < "$SHARED_DIR/focus.pane"; } 2>/dev/null
+    while IFS=$US read -r m p t rest; do
+        [ "$t" = "$tab" ] || continue; [ -n "$first" ] || first=$p
+        [ "$p" = "$fp" ] && { ACT_P=$p; return 0; }
+    done < "$AGENT_META_L"
+    ACT_P=$first; [ -n "$ACT_P" ]
+}
+sel_active_idx() {  # sel_active_idx: SEL_IDX = the first card of the active agent (active_agent_set: the one herdr shows in this panel's tab); 1: none
+    local panes=" " i; active_agent_set || return 1; panes=" $ACT_P "
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in review|now|testing|finished) ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] || continue ;; *) continue ;; esac
         [ -n "${T_AP[$i]}" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ] && in_scope "$i" || continue
@@ -863,7 +872,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     if [ "$th" = catppuccin ]; then
         R=$(rgb "203;166;247"); NN=$(rgb "243;139;168"); S=$(rgb "148;226;213"); C=$(rgb "250;179;135"); PINK=$(rgb "245;194;231"); ORANGE=$(rgb "217;119;87")   # (ORANGE: Claude's own, not Catppuccin's peach)
         L="${esc}[1m$(rgb "205;214;244")"; D=$(rgb "108;112;134"); B=$D
-        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;49;50;68m"; CARDHOV="${esc}[48;2;40;41;58m"; CARDSUB="${esc}[48;2;25;25;38m"; CARDBTN="${esc}[48;2;108;112;134m${esc}[1;38;2;30;30;46m"; MUTED=$(rgb "69;71;90")
+        Y=$(rgb "249;226;175"); GREEN=$(rgb "166;227;161"); BLUE=$(rgb "137;180;250"); SELBG="${esc}[48;2;49;50;68m"; CARDBG="${esc}[48;2;33;34;50m"; CARDSEL="${esc}[48;2;41;42;58m"; CARDHOV="${esc}[48;2;40;41;58m"; CARDSUB="${esc}[48;2;25;25;38m"; CARDBTN="${esc}[48;2;108;112;134m${esc}[1;38;2;30;30;46m"; MUTED=$(rgb "69;71;90")
         LSEL="${esc}[1m$(rgb "245;247;255")"; DSEL=$(rgb "186;194;222")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "166;173;200")"; TITLESEL="${esc}[1m$(rgb "205;214;244")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "205;214;244")"; DESCSEL="${esc}[3m$(rgb "245;247;255")"     # the description italic in the full text colour
@@ -871,7 +880,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
     elif [ "$th" = dracula ]; then                           # the Dracula palette, its roles as in Dracula's own terminal colours
         R=$(rgb "255;121;198"); NN=$(rgb "255;85;85"); S=$(rgb "139;233;253"); C=$(rgb "255;184;108"); PINK=$(rgb "255;146;223"); ORANGE=$(rgb "217;119;87")   # (magenta = pink, blue = purple; ORANGE: Claude's own)
         L="${esc}[1m$(rgb "248;248;242")"; D=$(rgb "98;114;164"); B=$D
-        Y=$(rgb "241;250;140"); GREEN=$(rgb "80;250;123"); BLUE=$(rgb "189;147;249"); SELBG="${esc}[48;2;68;71;90m"; CARDBG="${esc}[48;2;46;48;62m"; CARDSEL="${esc}[48;2;68;71;90m"; CARDHOV="${esc}[48;2;56;58;74m"; CARDSUB="${esc}[48;2;33;34;44m"; CARDBTN="${esc}[48;2;98;114;164m${esc}[1;38;2;40;42;54m"; MUTED=$(rgb "68;71;90")
+        Y=$(rgb "241;250;140"); GREEN=$(rgb "80;250;123"); BLUE=$(rgb "189;147;249"); SELBG="${esc}[48;2;68;71;90m"; CARDBG="${esc}[48;2;46;48;62m"; CARDSEL="${esc}[48;2;56;58;75m"; CARDHOV="${esc}[48;2;56;58;74m"; CARDSUB="${esc}[48;2;33;34;44m"; CARDBTN="${esc}[48;2;98;114;164m${esc}[1;38;2;40;42;54m"; MUTED=$(rgb "68;71;90")
         LSEL="${esc}[1m$(rgb "255;255;255")"; DSEL=$(rgb "189;195;223")         # on the selection: brighter than the plain text
         TITLE="${esc}[1m$(rgb "214;216;228")"; TITLESEL="${esc}[1m$(rgb "248;248;242")"   # a topic: the title bold in the softer colour,
         DESC="${esc}[3m$(rgb "248;248;242")"; DESCSEL="${esc}[3m$(rgb "255;255;255")"     # the description italic in the full text colour
@@ -881,7 +890,7 @@ theme_apply() {  # sets every colour variable from THEME and the COLOR_* overrid
         PINK="${esc}[95m"; ORANGE="${esc}[38;5;173m"; Y="${esc}[93m"; GREEN="${esc}[32m"; BLUE="${esc}[34m"; GRAD_ANSI="36 34 35 95 33"; MUTED="${esc}[2;90m"
         # the selected row: a dark grey from the 256 colours. "Bright black" (100) is the colour of dim text itself, which then
         # disappears on it; 236 keeps text and dim text readable on dark themes (COLOR_SELECTION overrides it).
-        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;46;46;60m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits)
+        SELBG="${esc}[48;5;236m"; CARDBG="${esc}[48;5;234m"; CARDSEL="${esc}[48;2;36;36;48m"; CARDHOV="${esc}[48;2;36;36;46m"; CARDSUB="${esc}[48;2;22;22;30m"   # (between the panel and the card: no step of the 256 colours fits)
         CARDBTN="${esc}[48;5;244m${esc}[1;38;5;232m"; LSEL="${esc}[1;97m"; DSEL="${esc}[38;5;251m"   # on the selection: white and a light grey
         TITLE="${esc}[1;37m"; TITLESEL="${esc}[1;97m"                            # a topic: the title bold in the softer colour,
         DESC="${esc}[3;39m"; DESCSEL="${esc}[3;97m"                              # the description italic in the full text colour
@@ -1124,7 +1133,7 @@ bhote_info() {  # what never changes while bhote runs: asked once (its own guard
 # the sync state, both agent files and the topics. The screen functions then only print. (Every awk/cat/wc/cut that the
 # drawing used to start cost 5 to 15 ms; a key press took 300 ms.)
 # What the panel calls its version: from a git checkout that is past the tag of its VERSION (local work, a branch, a merge of
-# several) it is LOCAL_BUILD ("0.9.1.3 Preview", the fourth number counts the builds); an install from a release (brew, pacman, a checkout on the tag) says VERSION.
+# several) it is LOCAL_BUILD ("0.9.2.1 Preview", the fourth number counts the builds); an install from a release (brew, pacman, a checkout on the tag) says VERSION.
 version_label_set() {
     VERSION_LABEL=$VERSION; [ -n "${BHOTE_NO_PREVIEW:-}" ] && return 0     # (the smoke tests: their pictures must not depend on the checkout)
     local p=${BASH_SOURCE[0]:-$0} l d maj min rest
@@ -1494,6 +1503,28 @@ agent_dedup() {  # one agent, one card on now/testing: an agent that has several
         done
         [ "$keep" = 1 ] || { topic_set "${T_FILE[$i]}" status finished; topic_set "${T_FILE[$i]}" auto_back ""; }
     done
+    # a recently finished or review card that says the same as a card of the same agent (same title: at work, a newer one, a finished one's review or wait) is the same work twice: put away
+    local ui uj dup
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in finished|review) ;; *) continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ "${T_AN[$i]}" != 1 ] || continue
+        dup=0; ui=$(num_or "${T_UPD[$i]}" 0)
+        for (( j = 0; j < T_N; j++ )); do
+            [ "$j" != "$i" ] && [ "${T_AP[$j]}" = "${T_AP[$i]}" ] && [ "${T_AM[$j]:-$HOST}" = "${T_AM[$i]:-$HOST}" ] && [ "${T_TITLE[$j]}" = "${T_TITLE[$i]}" ] || continue
+            case "${T_STATUS[$j]}" in
+                now|testing) dup=1; break ;;                                                   # (the agent works on it again: the card of an earlier turn is superseded)
+                review|waiting) [ "${T_STATUS[$i]}" = finished ] && { dup=1; break; } ;;
+            esac
+            case "${T_STATUS[$j]}" in
+                finished|review) uj=$(num_or "${T_UPD[$j]}" 0); { [ "$uj" -gt "$ui" ] || { [ "$uj" = "$ui" ] && [ "$j" -lt "$i" ]; }; } && { dup=1; break; } ;; esac
+        done
+        [ "$dup" = 1 ] && { topic_set "${T_FILE[$i]}" status later; topic_set "${T_FILE[$i]}" dismissed 1; }
+    done
+    # "Waiting for New Work" is no work: an agent that says so is idle (it has its card in the group IDLE), whatever status it put the topic in
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in now|testing|finished|review) ;; *) continue ;; esac
+        case "${T_TITLE[$i]}" in "Waiting for New Work"|"Waiting for new work"|"waiting for new work"|"Waiting For New Work") topic_set "${T_FILE[$i]}" status later; topic_set "${T_FILE[$i]}" dismissed 1 ;; esac
+    done
     return 0
 }
 tests_progress_write() {  # tests_progress_write <machine> <pane> <1|0>: the card of a testing topic shows one bar per running suite (two at most);
@@ -1781,10 +1812,15 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         case "$tc" in "$TITLE"|"$L") tc=$TITLESEL ;; *) tc="$BOLD$DSEL" ;; esac
     fi
     [ "$hov" = 1 ] && bar=$'\033[38;2;255;111;97m'            # under the pointer: the bar is coral red, so that you see which card you are on
-    [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && { tc=$D; gc=$MUTED; mc=$MUTED; }   # (an idle agent: all text dimmed, it is not what matters now)
+    [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && [ "$1" != 1 ] && { tc=$D; mc=$D; }   # (an idle agent: its text in the dim grey, it is not what matters now; not the darkest one)
     bl="${bar}▌${X}${bg} "
+    local BSC=() BSW=() BN=0 bi=0 ex=0 seg_w=0 tl td tt tsn           # the bars of tests and of a deployment: small, on the right of the rows under the status
+    if [ -n "${TI_PROG:-}" ]; then ti_bar_seg "${TI_PROG% *}" "${TI_PROG#* }" "" "$gc" "$bg"; fi
+    if [ -n "${TI_TBARS:-}" ]; then
+        while IFS= read -r tl; do td=${tl%% *}; tt=${tl#* }; tt=${tt%% *}; tsn=${tl#* }; tsn=${tsn#* }; ti_bar_seg "$td" "$tt" "$tsn" "$gc" "$bg"; done <<< "$TI_TBARS"
+    fi
     if [ -n "${TI_AGN:-}" ]; then
-        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol; [ "${TI_DIM:-}" = 1 ] && [ "$hov" != 1 ] && mcol=$MUTED
+        local am an amw anw lead rtp="" rtc="" rw=0 navail icon amc="" mcol; machine_fg_set mcol; [ "${TI_AGM:-$HOST}" != "$HOST" ] && mcol=$BLUE      # (the agents of this machine in herdr's machine colour, those of another machine in blue)
         clip_set am "${TI_AGM:-}" 12; dw_set amw "$am"; lead=2; [ -n "$am" ] && lead=$(( 2 + amw + 3 ))
         [ -n "$tm" ] && { rtp=$tm; rtc="$gc$tm"; }                  # the age on the left, the state on the right of it, and a space behind it
         [ -n "$st" ] && { rtp="$rtp${rtp:+ · }$st"; rtc="$rtc${rtc:+$gc · }$mc$st"; }
@@ -1799,16 +1835,19 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         [ -n "$am" ] && amc="$mcol$BOLD$am$X$bg$gc · "
         icon=${TI_AGIC:-${gc}○}
         printf '%s%s%s%s%s%s %s%s%s%s%*s%s%s\n' "${TI_SPIN:+$'\034'$(ti_spk "$bg")$'\034'}" "$rm" "$mk" "$bg" "$bl" "$icon" "$amc" "$BOLD$tc" "$an" "$X$bg" $(( cw - lead - anw - rw )) "" "$rtc" "$X"
-        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
-        [ -n "$t" ] && printf '%s%s%s%s∟ %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
+        ex=0; [ "$bi" -lt "$BN" ] && ex=$(( BSW[bi] + 1 ))
+        clip_set t "${TI_AGTASK:-$5}" $(( w - 5 - ex )); dw_set tw "$t"          # (what herdr shows under the agent: its task; the topic's title only when it has none)
+        if [ -n "$t" ]; then printf '%s%s%s%s∟ %s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" "$gc" "$tc" "$t" "$X$bg" $(( w - 4 - tw - (ex > 0 ? ex - 1 : 0) )) "" "${BSC[bi]:-}" "$X"; [ "$ex" -gt 0 ] && bi=$(( bi + 1 )); fi
         if [ -n "${TI_NOW:-}" ]; then                                      # what it does right now: herdr's third line, orange (no star: the one in the first row dances)
-            clip_set t "$TI_NOW" $(( w - 5 )); dw_set tw "$t"
-            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw )) "" "$X"
+            ex=0; [ "$bi" -lt "$BN" ] && ex=$(( BSW[bi] + 1 ))
+            clip_set t "$TI_NOW" $(( w - 5 - ex )); dw_set tw "$t"
+            printf '%s%s%s  %s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" "$ORANGE" "$t" "$X$bg" $(( w - 4 - tw - (ex > 0 ? ex - 1 : 0) )) "" "${BSC[bi]:-}" "$X"; [ "$ex" -gt 0 ] && bi=$(( bi + 1 ))
         fi
         local brp=""; [ -n "${10:-}" ] && brp="⎇ ${10}"; [ -n "$who" ] && brp="$brp${brp:+ · }$who"   # (who: where it hands over to, or the deployment's project)
         if [ -n "$brp" ]; then
-            local bw; clip_set brp "$brp" $(( w - 4 )); dw_set bw "$brp"
-            printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$gc" "$brp" "$X$bg" $(( w - 4 - bw )) "" "$X"
+            local bw; ex=0; [ "$bi" -lt "$BN" ] && ex=$(( BSW[bi] + 1 ))
+            clip_set brp "$brp" $(( w - 4 - ex )); dw_set bw "$brp"
+            printf '%s%s%s  %s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" "$gc" "$brp" "$X$bg" $(( w - 4 - bw - (ex > 0 ? ex - 1 : 0) )) "" "${BSC[bi]:-}" "$X"; [ "$ex" -gt 0 ] && bi=$(( bi + 1 ))
         fi
         if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 4 )); dw_set dw2 "$d"; printf '%s%s%s  %s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 4 - dw2 )) "" "$X"; fi
     else
@@ -1836,28 +1875,18 @@ ti_card() {  # ti_card <selected 0|1> <state colour> <time> <title colour> <titl
         fi
         if [ "$1" = 1 ] && [ -n "$6" ]; then clip_set d "$6" $(( w - 3 )); dw_set dw2 "$d"; printf '%s%s%s%s%s%s%*s%s\n' "$rm" "$bg" "$bl" "$dc" "$d" "$X$bg" $(( w - 2 - dw2 )) "" "$X"; fi
     fi
-    if [ -n "${TI_PROG:-}" ]; then            # a deployment under way: its progress, the bar full width
-        local pd=${TI_PROG% *} pt=${TI_PROG#* } pw=$(( w - 10 )) pf pi bf="" be=""
-        [ "$pt" -gt 0 ] && [ "$pw" -gt 3 ] && {
-            pf=$(( (pd * pw + pt / 2) / pt )); [ "$pf" -gt "$pw" ] && pf=$pw
-            for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s  %s%s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$ORANGE" "$bf" "$MUTED" "$be" "$X$bg" "$gc" $(( pd * 100 / pt )) "$X$bg" "$X"
-        }
-    fi
-    if [ -n "${TI_TBARS:-}" ]; then           # tests running: one bar per suite (two at most), like the deployment's, the suite's name in front
-        local tl tn td tt tw=0 tsn tb pw=0 pf pi bf="" be="" tr
-        while IFS= read -r tl; do tn=${tl#* }; tn=${tn#* }; [ "${#tn}" -gt "$tw" ] && tw=${#tn}; done <<< "$TI_TBARS"
-        [ "$tw" -gt 13 ] && tw=13
-        pw=$(( w - 10 - tw - 1 ))
-        while IFS= read -r tl; do
-            td=${tl%% *}; tr=${tl#* }; tt=${tr%% *}; tsn=${tr#* }
-            [ "$tt" -gt 0 ] && [ "$pw" -gt 3 ] || continue
-            clip_set tn "$tsn" "$tw"; printf -v tn '%-*s' "$tw" "$tn"
-            pf=$(( (td * pw + tt / 2) / tt )); [ "$pf" -gt "$pw" ] && pf=$pw
-            bf=""; be=""; for (( pi = 0; pi < pw; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
-            printf '%s%s%s  %s%s %s%s%s%s %s%3d%%%s %s\n' "$rm" "$bg" "$bl" "$gc" "$tn" "$ORANGE" "$bf" "$MUTED" "$be" "$gc" $(( td * 100 / tt )) "$X$bg" "$X"
-        done <<< "$TI_TBARS"
-    fi
+    while [ "$bi" -lt "$BN" ]; do                              # bars that found no row beside a text row: a row of their own, on the right
+        printf '%s%s%s%*s%s%s\n' "$rm" "$bg" "$bl" $(( w - 2 - BSW[bi] - 1 )) "" "${BSC[bi]}" "$X"; bi=$(( bi + 1 ))
+    done
+}
+ti_bar_seg() {  # ti_bar_seg <done> <total> <name|""> <text colour> <ground>: appends a small bar to BSC/BSW: "name ■■■□□ 19%" and a space (like the status above it), at most two
+    local d=$1 t=$2 nm=$3 pf pi bf="" be="" seg txt
+    [ "$BN" -lt 2 ] && [ "$t" -gt 0 ] 2>/dev/null || return 0
+    pf=$(( (d * 5 + t / 2) / t )); [ "$pf" -gt 5 ] && pf=5
+    for (( pi = 0; pi < 5; pi++ )); do if [ "$pi" -lt "$pf" ]; then bf="${bf}■"; else be="${be}■"; fi; done
+    txt="$bf$be $(( d * 100 / t ))% "; seg="$ORANGE$bf$MUTED$be$X$5 $4$(( d * 100 / t ))%$X$5 "
+    if [ -n "$nm" ]; then clip_set nm "$nm" 8; seg="$4$nm $seg"; txt="$nm $txt"; fi
+    dw_set seg_w "$txt"; BSC[$BN]=$seg; BSW[$BN]=$seg_w; BN=$(( BN + 1 ))
 }
 ti_spk() {  # ti_spk <card background>: the ground under a dancing star (n normal, s selected, h hovered), printed
     case "$1" in "$CARDSEL"|"$SELBG") printf s ;; "$CARDHOV") printf h ;; *) printf n ;; esac
@@ -1868,6 +1897,7 @@ agent_task_set() {  # agent_task_set <var> <machine> <pane>: what the agent work
         IFS=$US read -r _m _id _st _nm _tk <<< "${AG_LINES[$_i]}"
         [ "$_m" = "$2" ] && [ "$_id" = "$3" ] && break; _tk=""
     done
+    case "$_tk" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) _tk="" ;; esac   # (not a task: the agent is idle; the card shows the topic's title)
     printf -v "$1" '%s' "$_tk"
 }
 agent_state_set() {  # agent_state_set <var> <machine> <pane>: working | idle | blocked | done | gone, from the last agent lists
@@ -1886,7 +1916,7 @@ topic_meta() {  # topic_meta <topic index>: TM_WHO, TM_ST, TM_SC (the state's co
              elif [ -n "${T_AG[$i]}" ]; then    # given to an agent: say what that agent is doing now
                  who=${T_AG[$i]}; tm=""; agent_state_set ast "${T_AM[$i]}" "${T_AP[$i]}"
                  case "$ast" in working) state=working; sc=$ORANGE ;; testing) state="running tests"; sc=$ORANGE ;; blocked) state="needs you"; sc=$NN ;;
-                     idle|done) state=finished; sc=$GREEN ;; off-*) state="offline (${T_AM[$i]} reconnecting)"; sc=$D ;; *) state=gone; sc=$D ;; esac
+                     idle|done) state=finished; sc=$GREEN; ago_set tm "${T_UPD[$i]:-$NOW}" ;; off-*) state="offline (${T_AM[$i]} reconnecting)"; sc=$D ;; *) state=gone; sc=$D ;; esac
              fi ;;
         finished) who=${T_AG[$i]}; state=finished; sc=$GREEN; ago_set tm "${T_UPD[$i]:-$NOW}" ;;      # its agent stopped without a question: nothing to check, the card goes by itself
         testing) who=${T_AG[$i]}; state="tests running"; sc=$C; ago_set tm "${T_UPD[$i]:-$NOW}" ;;   # the agent stopped, a test suite runs (also in the background)
@@ -1931,7 +1961,8 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
         printf '\n  %s%s%s %s· its topics%s\n' "$L" "$(project_name "$CUR_PROJ")" "$X" "$D" "$X"
     fi
     [ "$open" -gt 0 ] || [ "$mode" = lists ] || bored_agents                           # nothing in review, now, next or waiting: on top, a checked one below
-    local grp seq=() it; cfg_var grp CARD_GROUPING ungrouped; cards_sequence "$mode" "$grp"
+    local grp seq=() it ACT_P=""; cfg_var grp CARD_GROUPING ungrouped; cards_sequence "$mode" "$grp"
+    active_agent_set                                            # (the cards of the agent that herdr shows in this tab have the highlighted ground: one to one with herdr)
     for it in ${seq[@]+"${seq[@]}"}; do
         case "$it" in a*) idle_card "${it#a}"; continue ;; esac   # (an idle agent without a card, in the order of the agents)
         i=$it
@@ -1958,10 +1989,12 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
         topic_meta "$i"; [ "$gk" = deploying ] && deploy_card_set "$i"
         who=$TM_WHO; state=$TM_ST; sc=$TM_SC; tm=$TM_TM
         case "$st" in
-            now) [ "$state" = finished ] && [ "$i" = "$SEL_IDX" ] && state="finished · x = done" ;;
+            now) ;;
             done) tc="$BOLD$D"; desc=""; cp=1 ;;   # muted but bold like every title, one line, no gap
         esac
-        sl=0; [ "$i" = "$SEL_IDX" ] && sl=1; TI_REF=${T_ID[$i]}
+        sl=0; TI_REF=${T_ID[$i]}
+        if [ -n "$ACT_P" ]; then [ "${T_AP[$i]}" = "$ACT_P" ] && [ "${T_AM[$i]:-$HOST}" = "$HOST" ] && sl=1       # the active agent's cards
+        else [ "$i" = "$SEL_IDX" ] && sl=1; fi                                                                   # (no active agent known: the chosen card)
         TI_BAR=$lc                                 # (the bar on the card has the colour of its group: review blue, now orange, next teal, waiting yellow)
         TI_AGN=""; TI_AGM=""; TI_AGIC=""; TI_AGTASK=""; TI_NOW=""; TI_SPIN=""
         if [ "$st" = testing ] && [ -n "${T_AP[$i]}" ]; then     # the bars of the suites that run (tests_sync writes them, one line each: done total suite)
@@ -1977,7 +2010,7 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
                 case "$gk:$state" in deploying:*|*:"handing over") ;; *) who="" ;; esac   # (the agent's name is in the first row; who stays for where it hands over to, and the deployment's project)
             fi ;;
         esac
-        [ "$st" = now ] && case "$state" in finished|"finished · x = done") TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
+        [ "$st" = now ] && case "$state" in finished) TI_BAR=$GREEN ;; esac   # (its agent has stopped: the bar says so too, not orange like a working one)
         ti_card "$sl" "$sc" "$tm" "$tc" "${T_TITLE[$i]:-(untitled)}" "$desc" "$who" "$state" "$cp" "$TM_BR"
     done
     [ "$mode" = lists ] || [ "$grp" != status ] || idle_cards       # (grouped: the group IDLE at the end; ungrouped: they are in the sequence)
@@ -2000,19 +2033,26 @@ cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topic
             [ -n "${T_CARD[$i]:-}" ] && [ "${T_AP[$i]}" = "$id" ] && [ "${T_AM[$i]:-$HOST}" = "$m" ] || continue
             seq[${#seq[@]}]=$i; used="$used$i"$'\n'; any=1
         done
-        [ "$any" = 0 ] && [ "${st:-idle}" = idle ] && seq[${#seq[@]}]="a$k"
+        [ "$any" = 0 ] && case "${st:-idle}" in idle|done|working|testing|blocked) seq[${#seq[@]}]="a$k" ;; esac   # (every agent is on a card: its own, else one that says what it does)
     done; done
     for (( i = 0; i < T_N; i++ )); do [ -n "${T_CARD[$i]:-}" ] && case "$used" in *$'\n'"$i"$'\n'*) ;; *) seq[${#seq[@]}]=$i ;; esac; done   # (no agent in the list)
     [ "$mode" = cards ] && return 0
     for (( i = 0; i < T_N; i++ )); do [ -z "${T_CARD[$i]:-}" ] && seq[${#seq[@]}]=$i; done
 }
-idle_card() {  # idle_card <agent index>: the card of an idle agent without a card (see idle_cards): two rows, a click shows the agent (ref agent:<machine>/<pane>)
-    local m id st name task TI_REF TI_BAR
+idle_card() {  # idle_card <agent index>: the card of an agent without a card of its own: two rows (the agent, its last task); idle (also herdr's done) dimmed, one that works or needs
+    # you in its colour; a click shows the agent (ref agent:<machine>/<pane>). An agent is always there.
+    local m id st name task TI_REF TI_BAR act=0 sc=$D ic="${D}○" state=idle dim=1
     IFS=$US read -r m id st name task <<< "${AG_LINES[$1]}"
+    case "$task" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) task="" ;; esac   # (not a task: the idle card says no more than idle)
     case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
+    case "${st:-idle}" in
+        working|testing) sc=$ORANGE; ic="${ORANGE}${SPIN_CH:-✶}"; state=working; dim=0 ;;
+        blocked) sc=$NN; ic="${NN}◉"; state="needs you"; dim=0 ;;
+    esac
+    [ "$id" = "${ACT_P:-}" ] && [ "$m" = "$HOST" ] && act=1       # (the agent herdr shows: not dimmed, the highlighted ground)
     printf '\n'
-    TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
-    TI_DIM=1; ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
+    TI_REF="agent:$m/$id"; TI_BAR=$sc; TI_AGN=$name; TI_AGM=$m; TI_AGIC=$ic; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+    [ "$dim" = 1 ] && TI_DIM=1; ti_card "$act" "$sc" "" "$TITLE" "" "" "" "$state" 0 ""; TI_DIM=""
 }
 ci_bars_set() {  # ci_bars_set <branch> <project id>: TI_TBARS gets a line "done total name" for each CI test job that runs for that branch (at most two bars on a card)
     [ -s "$SHARED_DIR/tests.list" ] || return 0
@@ -2035,12 +2075,14 @@ idle_cards() {  # the agents that are idle and have no card (nothing in review, 
     done
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        [ "${st:-idle}" = idle ] || continue
+        case "${st:-idle}" in idle|done) ;; *) continue ;; esac
         case "$used" in *$'\n'"$m$US$id"$'\n'*) continue ;; esac
+        case "$task" in [Ww]aiting\ [Ff]or\ [Nn]ew\ [Ww]ork*) task="" ;; esac   # (not a task: the idle card says no more than idle)
         case "$name" in "$m / "*) name=${name#"$m / "} ;; esac       # (Mac / root on the machine Mac says it twice)
         if [ "$first" = 1 ]; then printf '\n  %sIDLE%s\n' "$D" "$X"; first=0; else printf '\n'; fi
-        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${MUTED}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
-        TI_DIM=1; ti_card 0 "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
+        TI_REF="agent:$m/$id"; TI_BAR=$D; TI_AGN=$name; TI_AGM=$m; TI_AGIC="${D}○"; TI_AGTASK=$task; TI_NOW=""; TI_SPIN=""; TI_PROG=""; TI_TBARS=""
+        local act=0; [ "$id" = "${ACT_P:-}" ] && [ "$m" = "$HOST" ] && act=1       # (the agent herdr shows: not dimmed, the highlighted ground)
+    TI_DIM=1; ti_card "$act" "$D" "" "$TITLE" "" "" "" idle 0 ""; TI_DIM=""
     done
 }
 done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine
@@ -2155,7 +2197,7 @@ agents_counts() {  # agents_counts: this and the other machines' agents as numbe
     local i m id st; AC_ACTIVE=0; AC_NEEDS=0; AC_INACTIVE=0
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st _ <<< "${AG_LINES[$i]}"
-        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; idle|"") ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac   # (an idle agent is on a card: its own, or in the group IDLE)
+        case "${st#off-}" in working|testing) AC_ACTIVE=$(( AC_ACTIVE + 1 )) ;; blocked) AC_NEEDS=$(( AC_NEEDS + 1 )) ;; idle|done|"") ;; *) AC_INACTIVE=$(( AC_INACTIVE + 1 )) ;; esac   # (an idle agent is on a card: its own, or in the group IDLE)
     done
 }
 agents_block() {  # the agents by project (a caption each; the panel's own project first, those without one last), two columns;
@@ -2169,7 +2211,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     local compact; cfg_var compact AGENTS_COMPACT off
     if [ "$compact" = on ] && [ "$AG_N" -gt 0 ]; then              # counts only: no rows to click, no star to dance
         agents_counts
-        local ac=$ORANGE ab="$BOLD$ORANGE"; [ "$AC_ACTIVE" -gt 0 ] || { ac=$D; ab=$D; }       # (none active: no colour)
+        local ac=$GREEN ab="$BOLD$GREEN"; [ "$AC_ACTIVE" -gt 0 ] || { ac=$D; ab=$D; }       # (the active ones green; none active: no colour)
         printf '  %s✶%s %s%d active%s' "$ac" "$X" "$ab" "$AC_ACTIVE" "$X"
         [ "$AC_NEEDS" -gt 0 ] && printf ' %s·%s %s◉ %d need you%s' "$D" "$X" "$NN" "$AC_NEEDS" "$X"
         [ "$AC_INACTIVE" -gt 0 ] && printf ' %s·%s %s○ %d inactive%s' "$D" "$X" "$D" "$AC_INACTIVE" "$X"
@@ -2180,11 +2222,12 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
         echo 1 2>/dev/null > "$RUN_DIR/agrows"; echo 0 2>/dev/null > "$RUN_DIR/agmap"; agent_footer; return
     fi
     # each agent's project (from the collected tokens), the machines, the projects in their order
+    local cg; cfg_var cg CARD_GROUPING ungrouped
     local apj=() aidle=() machines=("$HOST") nm=1 hosted="" pm mm t a rr jj cc
     local metas; metas_read metas
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        aidle[$i]=""; [ "${st:-idle}" = idle ] && aidle[$i]=1       # (an idle agent is on a card: its own, or in the group IDLE; here only the others)
+        aidle[$i]=""; case "${st:-idle}" in idle|done) aidle[$i]=1 ;; working|testing|blocked) [ "$cg" != status ] && aidle[$i]=1 ;; esac   # (an agent is on a card: its own, or one of its own when ungrouped (the others in the group IDLE); here only the rest)
         apj[$i]=""; case "$metas" in *$'\n'"$m$US$id$US"*) local rest=${metas#*$'\n'"$m$US$id$US"}; rest=${rest%%$'\n'*}; IFS=$US read -r t a rr jj cc <<< "$rest"; apj[$i]=$jj ;; esac
         for (( k = 0; k < nm; k++ )); do [ "${machines[$k]}" = "$m" ] && break; done; [ "$k" = "$nm" ] && { machines[$nm]=$m; nm=$(( nm + 1 )); }
         [ "$m" = "$HOST" ] && hosted=1
@@ -2848,7 +2891,8 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="bool|SPLASH_AUTOCLOSE|Close welcome screen after 15 s"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTOSTART|Auto-start with herdr"
     SET_ROWS[${#SET_ROWS[@]}]="bool|UPDATE_CHECK|Check for updates"
-    SET_ROWS[${#SET_ROWS[@]}]="bool|CLAUDE_MOD|Claude Code mod (band, pane)"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|CLAUDE_MOD|Claude Code mod (pane)"
+    SET_ROWS[${#SET_ROWS[@]}]="bool|FRIENDLY_REMINDER|Show Friendly Reminder"
     [ "$(cfg_get REMOTE_AGENTS off)" = on ] && SET_ROWS[${#SET_ROWS[@]}]="prefer|HERDR_KEYS_MACHINE|Keyboard of herdr on"
     SET_ROWS[${#SET_ROWS[@]}]="key|JUMP_KEY|Jump key (herdr)"
     SET_ROWS[${#SET_ROWS[@]}]="key|FIND_KEY|Find key (herdr)"
@@ -4200,17 +4244,6 @@ mon_deploy_branches() {  # stdin: a CircleCI config.yml -> branch=Label,… of i
         }
         END { print out }'
 }
-mon_deploy_jobs() {  # stdin: a CircleCI config.yml (and its continuation) -> job=Label,… of the jobs with "deploy" in their name that a workflow runs
-    # (deploy-ecs-backend=Backend, release-and-deploy-frontend=Frontend: the label is the last word of the name; a plain "deploy" is Deploy)
-    awk '
-        /^ *#/ { next }
-        /^workflows:/ { wf = 1; next }
-        wf && /^[^ #]/ { wf = 0 }
-        !wf { next }
-        /^ *- *[A-Za-z0-9_-]+:? *$/ { s = $0; sub(/^ *- */, "", s); gsub(/[ :]/, "", s)
-            if (tolower(s) ~ /deploy/ && !(s in seen)) { seen[s] = 1; l = s; sub(/.*-/, "", l); l = toupper(substr(l, 1, 1)) substr(l, 2); out = out (out ? "," : "") s "=" l } }
-        END { print out }'
-}
 monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAMES, MD_TESTS from its GitHub repository; 1 when there is none
     local pf=$1 repos k slug y def
     MD_CI=""; MD_BRANCHES=""; MD_NAMES=""; MD_TESTS=""; MD_WHY=""
@@ -4228,8 +4261,8 @@ monitor_detect() {  # monitor_detect <project file>: MD_CI, MD_BRANCHES, MD_NAME
             [ -n "$y2" ] && y="$y"$'\n'"$y2"
         fi
         MD_BRANCHES=$(printf '%s\n' "$y" | mon_deploy_branches)
-        MD_NAMES=$(printf '%s\n' "$y" | mon_deploy_jobs)
-        return 0
+        MD_NAMES=""                                             # (no names: the monitor takes the jobs with "deploy" in their name that the runs really have, and labels them by the
+        return 0                                                # last word of the job: a workflow entry such as release-and-deploy-frontend is no job, and its name never matched)
     fi
     local wfs; wfs=$(gh_t workflow list -R "$slug" --json name --jq '.[].name' 2>/dev/null)
     [ -n "$wfs" ] || { MD_WHY="no CI found (no .circleci/config.yml, no GitHub workflows)"; return 1; }
@@ -4288,13 +4321,13 @@ deploys_github() {  # deploys_github <project> <owner/repo> <branches> <names>: 
 circleci_state() {  # a workflow's status -> ours (empty: leave it out)
     case "$1" in success) echo ok ;; failed|error|unauthorized) echo failed ;; failing|running) echo running ;; on_hold) echo approval ;; canceled) echo canceled ;; *) ;; esac
 }
-circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline each workflow (the newest of a name): wid US status US created US number US subject US branch US jobs JSON
+circleci_workflows() {  # circleci_workflows <slug> [branch] <pipelines>: per pipeline each workflow (the newest of a name): wid US status US created US number US subject US branch US workflow name
     local q="project/$1/pipeline" pid num subj br wj
     [ -n "$2" ] && q="$q?branch=$2"
     while IFS=$US read -r pid num subj br; do
         [ -n "$pid" ] || continue
         wj=$(circleci_get "pipeline/$pid/workflow") || continue
-        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '(.items // []) | group_by(.name) | map(max_by(.created_at)) | .[] | [.id, .status, .created_at, $n, $s, $b] | join("\u001f")'
+        printf '%s' "$wj" | jq -r --arg n "$num" --arg s "$subj" --arg b "$br" '(.items // []) | group_by(.name) | map(max_by(.created_at)) | .[] | [.id, .status, .created_at, $n, $s, $b, .name] | join("\u001f")'
     done < <(circleci_get "$q" | jq -r --argjson k "$3" '.items[:$k][] | [.id, (.number | tostring), ((.vcs.commit.subject // "") | gsub("[\u0000-\u001f]"; " ")), (.vcs.branch // "")] | join("\u001f")' 2>/dev/null)
 }
 circleci_jobs() {  # circleci_jobs <workflow id> <workflow status>: the jobs JSON of a workflow; a finished workflow never changes: kept in $SHARED_DIR/ccjobs
@@ -4317,28 +4350,50 @@ deploys_circleci() {  # deploys_circleci <project> <slug> <branch=Label,…> <jo
     # A deployment is a workflow run that contains a deploy job (a workflow of a branch the deploy job is filtered off has none). Its label is the
     # job's (the names map, else the branch's own label, else the last word of the job name: deploy-ecs-backend is Backend), its progress the jobs
     # that are over of the jobs it has (a notify-* job and one that did not run are no part of it), a hold for approval is `approval`.
-    local e b lab wid st cr num subj br s jobs d tot dj djst l names=${4:-} map=${3:-} x
+    local e b lab wid st cr num subj br wname s jobs d tot dj djst l names=${4:-} map=${3:-} x rows=" " cands=""
     [ -n "$map" ] || map="="                                   # no branches given: every branch, labelled by its job
     while IFS= read -r e; do
         b=${e%%=*}; lab=${e#*=}; [ -n "$e" ] || continue
         [ "$lab" = "$b" ] && lab=""                            # (a branch that says nothing)
-        while IFS=$US read -r wid st cr num subj br; do
+        rows=" "; cands=""
+        while IFS=$US read -r wid st cr num subj br wname; do
             s=$(circleci_state "$st"); [ -n "$s" ] || continue
             jobs=$(circleci_jobs "$wid" "$st") || continue
+            # the deploy job of the workflow: one of the names map that the workflow really has, else (a name that is no job, e.g. the name of a workflow group) the first job with
+            # "deploy" in its name, else a hold for approval
             x=$(printf '%s' "$jobs" | jq -r --arg m "$names" '(.items // []) as $i | ($i | map(.name)) as $all
-                | (if $m == "" then ([$all[] | select(test("deploy"; "i"))][0] // [$all[] | select(test("approv"; "i"))][0])
-                   else ($m | split(",") | map(split("=")[0]) | map(select(. as $k | $all | index($k)))[0]) end) as $j
+                | (([$all[] | select(test("deploy"; "i"))][0]) // ([$all[] | select(test("approv"; "i"))][0])) as $auto
+                | (if $m == "" then $auto else ((($m | split(",") | map(split("=")[0]) | map(select(. as $k | $all | index($k)))[0])) // $auto) end) as $j
                 | select($j != null) | [$j, ([$i[] | select(.name == $j)][0].status // "")] | join("\u001f")' 2>/dev/null) || continue
-            [ -n "$x" ] || continue
+            if [ -z "$x" ]; then                               # no deploy job in this workflow: kept as a candidate (a row only when something needs a look, see below)
+                case "$s" in failed|canceled|approval) case "$wname" in setup*|path-filter*) ;; *) cands="$cands$wid$US$st$US$cr$US$num$US$subj$US$br$US$wname"$'\n' ;; esac ;; esac
+                continue
+            fi
             IFS=$US read -r dj djst <<< "$x"
-            [ "$djst" = not_run ] && continue                  # the workflow ran, but this deploy was never part of it
+            [ "$djst" = not_run ] && [ "$s" = ok ] && continue # the workflow went through, but this deploy was never part of it (a failed workflow shows: its deploy did not run because of that)
             l=$(mon_job_label "$dj" "$names"); [ -n "$l" ] || l=$lab            # the names map, else the branch's own label,
             [ -n "$l" ] || l=$(mon_job_word "$dj"); [ -n "$l" ] || l=$br        # else the last word of the job name, else the branch
             read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select((.name | test("^notify"; "i") | not) and .status != "not_run")] as $j
                 | "\([$j[] | select(.status | test("^(success|failed|canceled|infrastructure_fail|timedout)$"))] | length) \($j | length)"')
             mon_line "$(mon_iso "$cr")" "$1" "$l" "$s" "$d" "$tot" "$(mon_shipped "$subj" | cut -c1-70)" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+            rows="$rows$num "
         done < <(circleci_workflows "$2" "$b" 4)
+        while IFS=$US read -r wid st cr num subj br wname; do   # a pipeline on a deploy branch whose workflow failed (or waits) and has no deploy job: one row with the workflow's name
+            [ -n "$wid" ] || continue
+            case "$rows" in *" $num "*) continue ;; esac
+            rows="$rows$num "; s=$(circleci_state "$st")
+            jobs=$(circleci_jobs "$wid" "$st") || continue
+            read -r d tot < <(printf '%s' "$jobs" | jq -r '[.items[] | select((.name | test("^notify"; "i") | not) and .status != "not_run")] as $j
+                | "\([$j[] | select(.status | test("^(success|failed|canceled|infrastructure_fail|timedout)$"))] | length) \($j | length)"')
+            mon_line "$(mon_iso "$cr")" "$1" "$wname" "$s" "$d" "$tot" "$(mon_shipped "$subj" | cut -c1-70)" "https://app.circleci.com/pipelines/${2}/${num}/workflows/$wid"
+        done <<< "$cands"
     done <<< "$(printf '%s' "$map" | tr ',' '\n')"
+}
+mon_when_set() {  # mon_when_set <var> <unix time>: when, short: 14:32 on today's date, 21.10. 14:32 on another day
+    local _t=$2 _w _td; _w=$(date -d "@$_t" '+%d.%m. %H:%M|%j%Y' 2>/dev/null || date -r "$_t" '+%d.%m. %H:%M|%j%Y' 2>/dev/null) || return 0
+    _td=$(date -d "@${NOW:-$(date +%s)}" '+%j%Y' 2>/dev/null || date -r "${NOW:-$(date +%s)}" '+%j%Y' 2>/dev/null)
+    if [ "${_w#*|}" = "$_td" ]; then _w=${_w:7:5}; else _w=${_w%|*}; fi
+    printf -v "$1" '%s' "$_w"
 }
 mon_job_label() {  # mon_job_label <job> <map job=Label,…>: its entry in the map (nothing when it has none)
     local n=$1 e IFS=,
@@ -4366,8 +4421,8 @@ tests_github() {  # tests_github <project> <owner/repo> <job names>: the test jo
     find "$SHARED_DIR/ghjobs" -type f -mmin +1440 -delete 2>/dev/null
 }
 tests_circleci() {  # tests_circleci <project> <slug> <job names>: the test jobs of the last pipelines (any branch)
-    local wid st cr num subj br jobs j s d tot nm
-    while IFS=$US read -r wid st cr num subj br; do
+    local wid st cr num subj br wname jobs j s d tot nm
+    while IFS=$US read -r wid st cr num subj br wname; do
         jobs=$(circleci_get "workflow/$wid/job") || continue
         j=$(printf '%s' "$jobs" | jq -r --arg m "${3:-}" 'def term: IN("success","failed","canceled","not_run","infrastructure_fail","timedout","unauthorized","terminated-unknown","retried"); [.items[] | select(if $m == "" then (.name | test("test|build"; "i")) else (.name as $n | $m | split(",") | index($n)) end)]
             | select(length > 0) | [ (if any(.status | term | not) then "running" elif any(.status == "failed" or .status == "infrastructure_fail" or .status == "timedout") then "failed"
@@ -4927,15 +4982,18 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
     dash_caption "$cap" "$kind"
     [ -s "$lst" ] || return 0                                  # (every project of it is switched off in the settings: only the caption)
     if section_compact "$kind"; then                            # counts only: what runs now, and how many of the last 10 failed
-        local run=0 bad=0 fixed=0 seen=0 okk=$'\n'
+        local run=0 bad=0 fixed=0 seen=0 okk=$'\n' badt=""
         while IFS=$US read -r t pj lb st _; do               # (newest first: a failure is resolved when a newer run of the same project and name went through)
             seen=$(( seen + 1 )); [ "$st" = running ] && run=$(( run + 1 ))
             [ "$st" = ok ] && okk="$okk$pj|$lb"$'\n'
-            if [ "$st" = failed ] && [ "$seen" -le 10 ]; then case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fixed=$(( fixed + 1 )) ;; *) bad=$(( bad + 1 )) ;; esac; fi
+            if [ "$st" = failed ] && [ "$seen" -le 10 ]; then case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fixed=$(( fixed + 1 )) ;; *) [ "$bad" = 0 ] && badt=$t; bad=$(( bad + 1 )) ;; esac; fi
         done < "$lst"
         local rc=$ORANGE rb="$BOLD$ORANGE"; [ "$run" -gt 0 ] || { rc=$D; rb=$D; }            # (nothing runs: no colour)
-        printf '  %s✶%s %s%d running%s %s·%s ' "$rc" "$X" "$rb" "$run" "$X" "$D" "$X"
-        if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s' "$D" "$X"; fi
+        [ "$run" -gt 0 ] && printf '\034x\034'                    # (something runs: the star dances, like a working agent's; the ground x is none)
+        printf '  %s%s%s %s%d running%s %s·%s ' "$rc" "${SPIN_CH:-✶}" "$X" "$rb" "$run" "$X" "$D" "$X"
+        if [ "$bad" -gt 0 ]; then local when=""; [ -n "$badt" ] && mon_when_set when "$badt"
+            printf '\033[48;2;168;22;46m\033[1m\033[38;2;250;250;250m ✗ %d failed%s %s' "$bad" "${when:+ · $when}" "$X"       # failed: a dark strawberry red ground, light letters, a space on both sides
+        else printf '%s✗ 0 failed%s' "$D" "$X"; fi
         [ "$fixed" -gt 0 ] && printf ' %s·%s %s✓ %d resolved%s' "$D" "$X" "$GREEN" "$fixed" "$X"
         printf '\n'
         return 0
@@ -5993,8 +6051,10 @@ bhote_main() {
             if [ -e "$SHARED_DIR/focus.pane" ]; then _fp=""; _ft=""; { read -r _fp _ft < "$SHARED_DIR/focus.pane"; } 2>/dev/null; [ "$_fp" = "$HERDR_PANE_ID" ] && _pf=true || _pf=false   # (the collector wrote it)
                 [ -n "$_ft" ] && [ -n "${HERDR_TAB_ID:-}" ] && [ "$_ft" != "$HERDR_TAB_ID" ] && _vis=0      # (another tab shows: nobody sees this panel, it does not dance)
             else _pf=$(pane_focused); fi
-            [ "$_vis" = "${TAB_VISIBLE:-1}" ] || { TAB_VISIBLE=$_vis; if [ "$_vis" = 1 ]; then redraw=1; DIRTY=0; else rmf "$RUN_DIR/anim.want"; fi; }
+            # (back in view: SEL_ID is cleared, the active card is the one of the agent of this tab again, not the one chosen before)
+        [ "$_vis" = "${TAB_VISIBLE:-1}" ] || { TAB_VISIBLE=$_vis; if [ "$_vis" = 1 ]; then redraw=1; DIRTY=0; SEL_ID=""; else rmf "$RUN_DIR/anim.want"; fi; }
             if [ "$_pf" != "${PANE_FOCUS:-}" ]; then PANE_FOCUS=$_pf; [ "$view" = main ] && redraw=1; fi
+            if [ "${_fp:-}" != "${LAST_FP:-}" ]; then LAST_FP=${_fp:-}; [ "$view" = main ] && redraw=1; fi    # (another agent is shown: the highlight moves)
         fi
         if [ "${SETUP_PENDING:-}" = 1 ]; then
             if [ "$view" != splash ]; then                     # the pane got too small for the welcome screen: next start
@@ -6475,6 +6535,24 @@ current_context() {  # current_context <topic file>: JSON {"pr": {...}|null, "si
     [ -n "$lists" ] || lists="{}"
     printf '{"pr":%s,"siblings":%s,"lists":%s}' "$pr" "$sib" "$lists"
 }
+cli_reminder() {  # bhote reminder [--json]: a random topic that waits, is next or is parked (not a deployment wait, not an automatic card, not dismissed), for the
+    # Claude Code mod's friendly reminder; {"disabled":true} with FRIENDLY_REMINDER off, {} when there is none
+    local i n=0 pick cand=() st t d w
+    if [ "$(cfg_get FRIENDLY_REMINDER on)" = off ]; then printf '{"disabled":true}\n'; return 0; fi
+    topics_load
+    for (( i = 0; i < T_N; i++ )); do
+        case "${T_STATUS[$i]}" in waiting|next|later) ;; *) continue ;; esac
+        [ "${T_DEP[$i]:-}" = 1 ] && continue; [ "${T_AN[$i]:-}" = 1 ] && continue
+        [ "${T_STATUS[$i]}" = later ] && [ "$(topic_get "${T_FILE[$i]}" dismissed)" = 1 ] && continue
+        case "${T_TITLE[$i]}" in "Waiting for New Work"|"Waiting for new work"|"waiting for new work") continue ;; esac
+        cand[$n]=$i; n=$(( n + 1 ))
+    done
+    if [ "$n" -eq 0 ]; then printf '{}\n'; return 0; fi
+    pick=${cand[$(( (RANDOM * 32768 + RANDOM) % n ))]}
+    st=${T_STATUS[$pick]}; w=""; [ "$st" = waiting ] && w=${T_WFOR[$pick]}
+    jq -cn --arg id "${T_ID[$pick]}" --arg title "${T_TITLE[$pick]}" --arg d "${T_DESC[$pick]:-}" --arg st "$st" --arg w "$w" \
+        '{id: $id, title: ($title | gsub("[\u0000-\u001f]"; " ")), description: (if $d == "" then null else ($d | gsub("[\u0000-\u001f]"; " ")) end), status: $st, waiting_for: (if $w == "" then null else $w end)}'
+}
 cli_current() {  # bhote current [--json [--full] [--mod]]: --mod is the Claude Code mod asking: with CLAUDE_MOD off it gets {"disabled":true} and draws nothing
     local i f hit="" full="" mod=""; for i in "$@"; do case "$i" in --full) full=1 ;; --mod) mod=1 ;; esac; done
     if [ -n "$mod" ] && [ "$(cfg_get CLAUDE_MOD on)" = off ]; then printf '{"disabled":true}\n'; return 0; fi
@@ -6932,6 +7010,7 @@ bhote — topics and agents next to herdr.
   bhote sync                         merge with the data location now
   bhote config [list|get|set|unset]  read and change the settings (bhote config list shows them all)
   bhote current                      the topic of the agent that asks (for a Claude Code SessionStart hook)
+  bhote reminder                     a random topic that waits, is next or is parked, as JSON (the Claude Code mod's friendly reminder)
   bhote agents                       the agents of herdr (numbered: refs for transfer)
   bhote transfer <from> <to> [-t <topic>]   Steal & Transfer: <from> commits and hands its work over to <to>
   bhote deploys | bhote tests        the deployment / test monitor (newest first)
@@ -6975,6 +7054,7 @@ bhote_cli() {
         remote-changed) : > "$SHARED_DIR/remote.due"; poke ;;            # (the plugin action "changed": another machine's agents moved)
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
+        reminder) bhote_info; cli_reminder "$@" ;;
         __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;

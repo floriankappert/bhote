@@ -98,7 +98,7 @@ front of it: `w3:a1|Shop (main)`, `MAC/w3:a1|root` (a session in the home folder
 hand (empty: made from the name again). A code set by hand is a record in the topic store, so every machine shows the same.
 A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. The ↕ at the end of the rule above the agents
 switches the agent overview to counts only (there is no drag handle; `AGENT_ROWS` sets the area's height). A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
-`finished · x = done`, `gone`).
+`finished`, `gone`).
 
 ## Handing a topic to an agent
 

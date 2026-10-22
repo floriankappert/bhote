@@ -3,10 +3,11 @@
 A [Claude Code mod](https://code.claude.com/docs/en/plugins/mods/overview) that puts the topic of the agent into the Claude Code
 session itself, so you see it without looking at the panel. It needs Claude Code 2.1.287 or newer (terminal and desktop app).
 
-- **A band above the prompt:** a rounded box in the colour of the status, `🐕 title` and the description on the left, the status
-  as a badge on the right (`NOW`, `TESTING`, `NEXT`, `REVIEW`, `LATER`, `DONE`, or `WAITING FOR <name>`) with its age (`3min ago`)
-  under it. The age moves on by itself every minute. The colours are theme colours: now orange, testing purple, next blue,
-  review red, waiting yellow, later grey, done green. `[-]` (or `ctrl+x ctrl+a`) collapses the band, as it does for any band.
+- **A friendly reminder above the prompt:** now and then, at random and not often (about every ten minutes at the earliest, after a turn
+  or between turns, for 45 seconds), a rounded orange box with `🐶` and the title of a topic that waits, is next or is parked, and its
+  description under it. It is a reminder ("did you still have this on your screen?"), not a status: the band that showed the status of the agent
+  is gone. Which topic is chosen at random (`bhote reminder`): waiting, next or parked ones, not a wait for a deployment, not an automatic card,
+  not a dismissed one. Settings › *Show Friendly Reminder* (`FRIENDLY_REMINDER`, on) switches it off. `[-]` (or `ctrl+x ctrl+a`) collapses it.
 - **Progress bars** under the title: a bar for each test suite that runs in the agent's worktree (`Server ■■■□□ 50% (5/10)`, from the live
   status files, see [monitors](monitors.md)), and one for the deployment its topic waits for (`IMS · Backend ■■■□□ 60% (3/5)`; `queued`,
   `needs approval` and `failed` as words). A deployment the agent starts by pushing its branch is bound to the topic by bhote, so it shows up
@@ -16,18 +17,17 @@ session itself, so you see it without looking at the panel. It needs Claude Code
   and age, the description (Markdown), project, agent, machine and branch, who it waits for and since when, the Slack pin, the pull request of the
   branch (`#26 open ✓3 ✗0 ◌0`, a link) and its checks, the test and deployment bars (the deployment with a link), the review summary with the
   review card's buttons (a button answers the agent and puts the topic back on now), the other topics that are on the cards of the panel (of every machine kharka reaches, each with the agent's code `MAC4`/`OMR3`: in review, now, testing, deploying, recently finished, each with its count and `+n more`; every item has two lines (the title; under it `∟`, the agent's address and when) and a press on either line shows the agent in herdr (`bhote jump`); next,
-  waiting, later, done and archived ones are not shown), and buttons for Review, Done, Next and Later. It is read every 10 s while it is open (`bhote current --json --full`). The band above the prompt stays, as the small
-  version for a narrow terminal.
+  waiting, later, done and archived ones are not shown), and buttons for Review, Done, Next and Later. It is read every 10 s while it is open (`bhote current --json --full`). 
 - **`/topic`** changes the topic of the agent without a Claude turn (also while Claude works, no tokens):
   `/topic` shows it, `/topic review|done|now|next|later|testing|dismiss` sets the status, `/topic wait <Name>` waits for a name,
-  `/topic hide` and `/topic show` hide and show the band.
+  `/topic hide` and `/topic show` hide and show the reminder.
 
 The mod only calls the CLI (`bhote current --json`, `bhote <status> <id>`), so it finds the topic the way `bhote current` does
-(Claude session, else herdr pane). An agent without a topic, or one whose topic is done, shows no band.
+(Claude session, else herdr pane). The reminder does not depend on the agent: it comes from any topic of your list.
 
 ## Switching it off
 
-`bhote config set CLAUDE_MOD off` (or settings › *Claude Code mod*) switches the display off on this machine: the band and the pane are empty, `/topic` says so,
+`bhote config set CLAUDE_MOD off` (or settings › *Claude Code mod*) switches the display off on this machine: the pane is empty, `/topic` says so (the reminder has its own switch, `FRIENDLY_REMINDER`),
 and the mod asks bhote for nothing but once a minute whether it may draw again. It needs no `/reload-plugins`. The other machines have a setting of their own.
 
 ## Install

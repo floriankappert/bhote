@@ -41,7 +41,7 @@ the wizard, or ⏎ on *CI* in the project's settings):
 |---|---|---|
 | `ci` | `github:<owner/repo>` | `circleci:gh/<owner/repo>` (when the repository has `.circleci/config.yml`) |
 | `deploy_branches` | the default branch (`main`) | `branch=Label` from the deploy jobs' branch filters: `develop=Staging,main=Production` |
-| `deploy_names` | the workflows with "deploy" in their name, `Workflow=Label` (`Backend Deployment=Backend`) | deploy jobs, `job=Label` (`deploy-ecs-backend=Backend`); empty: every job with "deploy" in it (else "approv"), labelled by the last word of its name |
+| `deploy_names` | the workflows with "deploy" in their name, `Workflow=Label` (`Backend Deployment=Backend`) | deploy jobs, `job=Label` (`deploy-ecs-backend=Backend`); empty (what the detection writes for CircleCI): every job with "deploy" in it (else "approv"), labelled by the last word of its name |
 | `test_names` | job names; empty: every job with "test" in it (matrix shards `Tests (1/4)` are one entry) | job names; empty: every job with "test" or "build" in it |
 
 **CircleCI deployments.** A deployment is a workflow run that contains a deploy job: one entry per workflow, labelled by that job
