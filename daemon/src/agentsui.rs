@@ -116,7 +116,7 @@ impl<'a> Cards<'a> {
         if compact && !ag.is_empty() {
             let (mut act, mut needs, mut inact) = (0, 0, 0);
             for r in ag { match r.st.trim_start_matches("off-") { "working" | "testing" => act += 1, "blocked" => needs += 1, "idle" | "done" | "" => {} _ => inact += 1 } }   // (an idle agent is on a card: its own, or in the group IDLE)
-            let (mut ac, mut ab) = (g("ORANGE"), format!("{}{}", g("BOLD"), g("ORANGE"))); if act == 0 { ac = g("D"); ab = g("D"); }
+            let (mut ac, mut ab) = (g("GREEN"), format!("{}{}", g("BOLD"), g("GREEN"))); if act == 0 { ac = g("D"); ab = g("D"); }
             out.push_str(&format!("  {}✶{} {}{} active{}", ac, x, ab, act, x));
             if needs > 0 { out.push_str(&format!(" {}·{} {}◉ {} need you{}", g("D"), x, g("NN"), needs, x)); }
             if inact > 0 { out.push_str(&format!(" {}·{} {}○ {} inactive{}", g("D"), x, g("D"), inact, x)); }

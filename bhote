@@ -2206,7 +2206,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
     local compact; cfg_var compact AGENTS_COMPACT off
     if [ "$compact" = on ] && [ "$AG_N" -gt 0 ]; then              # counts only: no rows to click, no star to dance
         agents_counts
-        local ac=$ORANGE ab="$BOLD$ORANGE"; [ "$AC_ACTIVE" -gt 0 ] || { ac=$D; ab=$D; }       # (none active: no colour)
+        local ac=$GREEN ab="$BOLD$GREEN"; [ "$AC_ACTIVE" -gt 0 ] || { ac=$D; ab=$D; }       # (the active ones green; none active: no colour)
         printf '  %s✶%s %s%d active%s' "$ac" "$X" "$ab" "$AC_ACTIVE" "$X"
         [ "$AC_NEEDS" -gt 0 ] && printf ' %s·%s %s◉ %d need you%s' "$D" "$X" "$NN" "$AC_NEEDS" "$X"
         [ "$AC_INACTIVE" -gt 0 ] && printf ' %s·%s %s○ %d inactive%s' "$D" "$X" "$D" "$AC_INACTIVE" "$X"
@@ -4980,8 +4980,7 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
         local rc=$ORANGE rb="$BOLD$ORANGE"; [ "$run" -gt 0 ] || { rc=$D; rb=$D; }            # (nothing runs: no colour)
         [ "$run" -gt 0 ] && printf '\034x\034'                    # (something runs: the star dances, like a working agent's; the ground x is none)
         printf '  %s%s%s %s%d running%s %s·%s ' "$rc" "${SPIN_CH:-✶}" "$X" "$rb" "$run" "$X" "$D" "$X"
-        if [ "$bad" -gt 0 ]; then local nbg=${NN//\[38;/[48;}; [ "$nbg" = "$NN" ] && nbg=$'\033[41m'
-            printf '%s\033[1m\033[38;2;250;250;250m ✗ %d failed %s' "$nbg" "$bad" "$X"       # failed: a red ground, light letters, a space on both sides
+        if [ "$bad" -gt 0 ]; then printf '\033[48;2;168;22;46m\033[1m\033[38;2;250;250;250m ✗ %d failed %s' "$bad" "$X"       # failed: a dark strawberry red ground, light letters, a space on both sides
         else printf '%s✗ 0 failed%s' "$D" "$X"; fi
         [ "$fixed" -gt 0 ] && printf ' %s·%s %s✓ %d resolved%s' "$D" "$X" "$GREEN" "$fixed" "$X"
         printf '\n'
