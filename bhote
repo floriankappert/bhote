@@ -1503,15 +1503,20 @@ agent_dedup() {  # one agent, one card on now/testing: an agent that has several
         done
         [ "$keep" = 1 ] || { topic_set "${T_FILE[$i]}" status finished; topic_set "${T_FILE[$i]}" auto_back ""; }
     done
-    # a recently finished card that says the same as a card of the same agent (same title, at work, in review, waiting, or a newer finished one) is the same work twice: put away
+    # a recently finished or review card that says the same as a card of the same agent (same title: at work, a newer one, a finished one's review or wait) is the same work twice: put away
     local ui uj dup
     for (( i = 0; i < T_N; i++ )); do
-        [ "${T_STATUS[$i]}" = finished ] && [ -n "${T_AP[$i]}" ] && [ "${T_AN[$i]}" != 1 ] || continue
+        case "${T_STATUS[$i]}" in finished|review) ;; *) continue ;; esac
+        [ -n "${T_AP[$i]}" ] && [ "${T_AN[$i]}" != 1 ] || continue
         dup=0; ui=$(num_or "${T_UPD[$i]}" 0)
         for (( j = 0; j < T_N; j++ )); do
             [ "$j" != "$i" ] && [ "${T_AP[$j]}" = "${T_AP[$i]}" ] && [ "${T_AM[$j]:-$HOST}" = "${T_AM[$i]:-$HOST}" ] && [ "${T_TITLE[$j]}" = "${T_TITLE[$i]}" ] || continue
-            case "${T_STATUS[$j]}" in now|testing|review|waiting) dup=1; break ;;
-                finished) uj=$(num_or "${T_UPD[$j]}" 0); { [ "$uj" -gt "$ui" ] || { [ "$uj" = "$ui" ] && [ "$j" -lt "$i" ]; }; } && { dup=1; break; } ;; esac
+            case "${T_STATUS[$j]}" in
+                now|testing) dup=1; break ;;                                                   # (the agent works on it again: the card of an earlier turn is superseded)
+                review|waiting) [ "${T_STATUS[$i]}" = finished ] && { dup=1; break; } ;;
+            esac
+            case "${T_STATUS[$j]}" in
+                finished|review) uj=$(num_or "${T_UPD[$j]}" 0); { [ "$uj" -gt "$ui" ] || { [ "$uj" = "$ui" ] && [ "$j" -lt "$i" ]; }; } && { dup=1; break; } ;; esac
         done
         [ "$dup" = 1 ] && { topic_set "${T_FILE[$i]}" status later; topic_set "${T_FILE[$i]}" dismissed 1; }
     done

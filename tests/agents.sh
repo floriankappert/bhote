@@ -468,6 +468,9 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   now_f=$(mk "Same work" now); old_f=$(mk "Same work" finished); other_f=$(mk "Other work" finished); topics_load; agent_dedup
   [ "$(topic_get "$old_f" status)" = later ] && [ "$(topic_get "$old_f" dismissed)" = 1 ] || exit 1      # (the same work twice: put away)
   [ "$(topic_get "$other_f" status)" = finished ] && [ "$(topic_get "$now_f" status)" = now ] || exit 2   # (another title stays, the card at work stays)
+  rv_f=$(mk "Same work" review); topics_load; agent_dedup; [ "$(topic_get "$rv_f" status)" = later ] && [ "$(topic_get "$rv_f" dismissed)" = 1 ] || exit 4   # (a review of an earlier turn, the agent works on it again: superseded)
+  r2=$(mk "Review twice" review); sed -i.bak 's/^updated=.*/updated=1000/' "$r2"; rm -f "$r2.bak"; r3=$(mk "Review twice" review); topics_load; agent_dedup
+  [ "$(topic_get "$r2" status)" = later ] && [ "$(topic_get "$r3" status)" = review ] || exit 5                 # (two reviews of the same title: the older one goes)
   w_f=$(mk "Waiting for New Work" review); topics_load; agent_dedup; [ "$(topic_get "$w_f" status)" = later ] && [ "$(topic_get "$w_f" dismissed)" = 1 ] || exit 3   # (an agent that waits for new work is idle: no review card)
   exit 0 ) && ok "a finished card that repeats a card of its agent is put away; \"Waiting for New Work\" is never a card" || bad "finished duplicate: step $?"
 # "Waiting for New Work" as the task of an agent (herdr's task token) is no task: the card of its topic shows the topic's title, an idle card has no task row
