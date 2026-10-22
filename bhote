@@ -4978,8 +4978,11 @@ monitor_block() {  # monitor_block deploys|tests <rows>: a caption and the last 
             if [ "$st" = failed ] && [ "$seen" -le 10 ]; then case "$okk" in *$'\n'"$pj|$lb"$'\n'*) fixed=$(( fixed + 1 )) ;; *) bad=$(( bad + 1 )) ;; esac; fi
         done < "$lst"
         local rc=$ORANGE rb="$BOLD$ORANGE"; [ "$run" -gt 0 ] || { rc=$D; rb=$D; }            # (nothing runs: no colour)
-        printf '  %s✶%s %s%d running%s %s·%s ' "$rc" "$X" "$rb" "$run" "$X" "$D" "$X"
-        if [ "$bad" -gt 0 ]; then printf '%s✗ %d failed%s' "$NN" "$bad" "$X"; else printf '%s✗ 0 failed%s' "$D" "$X"; fi
+        [ "$run" -gt 0 ] && printf '\034x\034'                    # (something runs: the star dances, like a working agent's; the ground x is none)
+        printf '  %s%s%s %s%d running%s %s·%s ' "$rc" "${SPIN_CH:-✶}" "$X" "$rb" "$run" "$X" "$D" "$X"
+        if [ "$bad" -gt 0 ]; then local nbg=${NN//\[38;/[48;}; [ "$nbg" = "$NN" ] && nbg=$'\033[41m'
+            printf '%s\033[1m\033[38;2;250;250;250m ✗ %d failed %s' "$nbg" "$bad" "$X"       # failed: a red ground, light letters, a space on both sides
+        else printf '%s✗ 0 failed%s' "$D" "$X"; fi
         [ "$fixed" -gt 0 ] && printf ' %s·%s %s✓ %d resolved%s' "$D" "$X" "$GREEN" "$fixed" "$X"
         printf '\n'
         return 0

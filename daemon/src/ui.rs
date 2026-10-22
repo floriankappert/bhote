@@ -148,8 +148,12 @@ fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
         }
         let (mut rc, mut rb) = (g("ORANGE"), format!("{}{}", g("BOLD"), g("ORANGE")));
         if run == 0 { rc = g("D"); rb = g("D"); }
+        if run > 0 { out.push_str("\u{1c}x\u{1c}"); }   // (something runs: the star dances, like a working agent's; the ground x is none)
         out.push_str(&format!("  {}✶{} {}{} running{} {}·{} ", rc, g("X"), rb, run, g("X"), g("D"), g("X")));
-        if bad > 0 { out.push_str(&format!("{}✗ {} failed{}", g("NN"), bad, g("X"))); } else { out.push_str(&format!("{}✗ 0 failed{}", g("D"), g("X"))); }
+        if bad > 0 {
+            let nn = g("NN"); let nbg = if nn.contains("[38;") { nn.replace("[38;", "[48;") } else { "\u{1b}[41m".to_string() };
+            out.push_str(&format!("{}\u{1b}[1m\u{1b}[38;2;250;250;250m ✗ {} failed {}", nbg, bad, g("X")));   // failed: a red ground, light letters, a space on both sides
+        } else { out.push_str(&format!("{}✗ 0 failed{}", g("D"), g("X"))); }
         if fixed > 0 { out.push_str(&format!(" {}·{} {}✓ {} resolved{}", g("D"), g("X"), g("GREEN"), fixed, g("X"))); }
         out.push('\n');
         return out;

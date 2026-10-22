@@ -699,7 +699,7 @@ impl<'a> Layout<'a> {
         let mut dn = c.v.done_max; if c.expanded("done") { dn = c.done_total(); }
         let mut dblk = trim(c.done_block(dn)); let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
         while dh > 0 && dn > 0 && rows - hh - bh - dh < th.min(6) { dn -= 1; dblk = trim(c.done_block(dn)); dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) }; }
-        let mut mblk = trim(crate::ui::monitors(c.c)); let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
+        let mut mblk = trim(crate::ui::monitors(c.c)); { /* the star of a running monitor dances with the others */ let sp = c.v.spin_ch.clone(); mblk = mblk.split('\n').map(|l| if l.starts_with("\u{1c}x\u{1c}") { l.replacen('✶', &sp, 1) } else { l.to_string() }).collect::<Vec<_>>().join("\n"); } let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
         if mh > 0 && rows - hh - bh - dh - mh < th.min(6) { mblk.clear(); mh = 0; }
         let lh = if lists.is_empty() { 0 } else { count_lines(&lists) };
         let mut lcut = lh; let need = th.min(6);

@@ -341,7 +341,10 @@ mon_proj_toggle deploys IMS; mon_proj_toggle deploys Rails; mon_proj_toggle depl
     "$(( t0 - 3 ))${US}Web${US}Frontend${US}failed${US}${US}${US}fix/n3${US}u3" "$(( t0 - 4 ))${US}Web${US}Backend${US}running${US}1${US}4${US}fix/n4${US}u4"; } > "$SHARED_DIR/deploys.list"
 section_toggle deploys
 blk=$( COLS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); monitor_block deploys 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' )
-case "$blk" in *"1 running · ✗ 1 failed · ✓ 1 resolved"*) ok "deployments, small: open failures and resolved ones are told apart" ;; *) bad "resolved (small): $blk" ;; esac
+case "$blk" in *"1 running ·  ✗ 1 failed  · ✓ 1 resolved"*) ok "deployments, small: open failures and resolved ones are told apart" ;; *) bad "resolved (small): $blk" ;; esac
+raw=$( NN=$'\033[38;2;243;139;168m'; ORANGE=O; BOLD=B; X=Z; D=D; GREEN=G; COLS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); monitor_block deploys 4 )
+case "$raw" in *$'\034x\034'*) ok "deployments, small: something runs: the star dances (the marker of the dancing star in front of the row)" ;; *) bad "running marker: $(printf '%s' "$raw" | command cat -v | head -3)" ;; esac
+case "$raw" in *$'\033[48;2;243;139;168m'*$'\033[38;2;250;250;250m ✗ 1 failed '*) ok "deployments, small: failed has a red ground and light letters, a space on both sides" ;; *) bad "failed ground: $(printf '%s' "$raw" | command cat -v | head -3)" ;; esac
 section_toggle deploys
 blk=$( COLS=60; RULE_LINE=$(hline 55); DASH_LINE=$(dline 55); monitor_block deploys 4 | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' )
 [ "$(printf '%s\n' "$blk" | grep -c "failed · resolved")" = 1 ] && [ "$(printf '%s\n' "$blk" | grep "Frontend" | grep -c resolved)" = 0 ] && ok "deployments: a failure with a newer success says resolved, an open one does not" || bad "resolved (list): $blk"
