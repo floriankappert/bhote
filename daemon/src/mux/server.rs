@@ -18,6 +18,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vt100::Color;
 
+/// The short host name (before the first dot).
+fn host_name() -> String {
+    let mut b = [0u8; 256];
+    let ok = unsafe { libc::gethostname(b.as_mut_ptr() as *mut libc::c_char, b.len()) } == 0;
+    let n = b.iter().position(|&x| x == 0).unwrap_or(0);
+    let full = if ok { String::from_utf8_lossy(&b[..n]).into_owned() } else { String::new() };
+    full.split('.').next().unwrap_or("").to_string()
+}
+
 fn bar_mode_load() -> String {
     let v = crate::config_read(&super::panels::config_path()).get("MUX_BAR").cloned().unwrap_or_default();
     match v.as_str() { "on" | "full" | "off" => v, _ => "auto".into() }
@@ -62,6 +71,7 @@ impl Modes {
 }
 
 pub struct Client {
+    pub title: String,
     pub id: u32, pub stream: UnixStream, pub cols: u16, pub rows: u16,
     /// a viewer of one pane (`bhote view`): shows that pane only, sends every key to it, and does not change any pane's size
     pub view: Option<String>,
@@ -302,7 +312,7 @@ impl Server {
             Ev::PaneOut(id, b) => if let Some(p) = self.panes.get_mut(&id) { p.output(&b); self.dirty = true; },
             Ev::PaneExit(id) => if self.panes.contains_key(&id) { self.close_pane(id); },
             Ev::NewClient { id, stream, cols, rows, view } => {
-                self.clients.push(Client { id, stream, cols, rows, view, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
+                self.clients.push(Client { title: String::new(), id, stream, cols, rows, view, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
                 self.after_change();
             }
             Ev::Frame(id, t, p) => match t {
@@ -489,6 +499,7 @@ impl Server {
         }
         let ended: Vec<u32> = self.clients.iter().filter(|c| c.view.as_ref().map_or(false, |n| self.pane_by_name(n).is_none())).map(|c| c.id).collect();
         for id in ended { self.detach_client(id, "pane closed"); }
+        let title: Option<String> = self.world.ws.get(self.world.active).map(|w| format!("{}: {}", host_name(), w.label.replace(|c: char| c.is_control(), " ")));
         let mut gone = Vec::new();
         for i in 0..self.clients.len() {
             let (g, modes) = self.compose(i);
@@ -496,6 +507,8 @@ impl Server {
             let same = c.prev.as_ref().map_or(false, |p| p.cells == g.cells && p.cursor == g.cursor) && c.modes == modes;
             if same && extra.is_empty() { continue; }
             let mut out = modes.diff(&c.modes);
+            // the title of the terminal window: "<host>: <workspace>" (herdr's window_title; bhote's jump between machines finds the window by it)
+            if c.view.is_none() { if let Some(t) = &title { if *t != c.title { out.push_str(&format!("\x1b]2;{t}\x07")); c.title = t.clone(); } } }
             if !same { out.push_str(&render::diff(c.prev.as_ref(), &g)); }
             out.push_str(&extra);
             c.modes = modes; c.prev = Some(g);

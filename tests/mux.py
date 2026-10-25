@@ -72,6 +72,10 @@ check(c.wait_for("hello_21"), "typed command runs", repr(c.out[-300:]))
 c.send("printf '\\033[?2004h'\r")
 check(c.wait_for("\x1b[?2004h"), "bracketed paste of the pane is switched on in the terminal")
 c.send("printf '\\033[?2004l'\r")
+check(c.wait_for("\x1b]2;"), "the window title is set (host: workspace)")
+import re as _re
+tm = _re.findall(rb"\x1b\]2;([^\x07]*)\x07", c.out)
+check(tm and b": " in tm[-1], "and it has the form <host>: <workspace>", tm[-1:] )
 # 3. detach
 c.send("\x02d")
 check(c.wait_exit() and c.status == 0, "ctrl+b d detaches (exit 0)", str(c.status))
