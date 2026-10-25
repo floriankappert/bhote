@@ -133,7 +133,7 @@ fn kharka_ls(bin: &str, prefix: &str) -> Option<Vec<Value>> {
     Some(String::from_utf8_lossy(&out).lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
 }
 
-pub struct Remote { pub nodes: String, pub offline: String, pub meta: String, pub now: String, pub agents: String }
+pub struct Remote { pub nodes: String, pub offline: String, pub meta: String, pub now: String, pub agents: String, pub workspaces: String }
 
 fn ctl_strip(s: &str) -> String { clean(s) }
 
@@ -142,7 +142,7 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
     let mut on = std::collections::HashMap::new();
     for e in n { if let Some(k) = e["key"].as_str() { on.insert(k.trim_start_matches("_nodes/").to_string(), !matches!(e.pointer("/value/online"), Some(Value::Bool(false)))); } }
     let off = format!(",{},", off_list);
-    let (mut nodes, mut offline, mut meta, mut now, mut agents) = (String::new(), String::new(), String::new(), String::new(), String::new());
+    let (mut nodes, mut offline, mut meta, mut now, mut agents, mut wsout) = (String::new(), String::new(), String::new(), String::new(), String::new(), String::new());
     let us = US.to_string();
     for e in h {
         let key = e["key"].as_str().unwrap_or("");
@@ -159,6 +159,19 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
         let cmds: Vec<String> = v.get("commands").and_then(|x| x.as_array()).into_iter().flatten().map(|c| tostr(c).chars().filter(|c| c.is_ascii_lowercase() || *c == '.' || *c == '_').collect()).collect();
         nodes.push_str(&[m.clone(), node.to_string(), (if down { "1" } else { "0" }).to_string(), cmds.join(",")].join(&us)); nodes.push('\n');
         if down { offline.push_str(&m); offline.push('\n'); }
+        // workspaces.remote: machine, id, label, number, state of its agents (working > blocked > done > idle)
+        let mut wst: std::collections::HashMap<String, u8> = std::collections::HashMap::new();
+        for a in v.get("agents").and_then(|x| x.as_array()).into_iter().flatten() {
+            let r = match tostr(&or_empty(a.get("status"))).as_str() { "working" => 4, "blocked" => 3, "done" => 2, _ => 1 };
+            let e = wst.entry(tostr(&or_empty(a.get("workspace")))).or_insert(0); if r > *e { *e = r; }
+        }
+        let mut wl: Vec<&Value> = v.get("workspaces").and_then(|x| x.as_array()).into_iter().flatten().filter(|w| w.is_object()).collect();
+        wl.sort_by_key(|w| w.get("number").and_then(|n| n.as_i64()).unwrap_or(1_000_000));
+        for w in wl {
+            let id = tostr(&or_empty(w.get("id")));
+            let st = if down { "off" } else { match wst.get(&id) { Some(4) => "working", Some(3) => "blocked", Some(2) => "done", _ => "idle" } };
+            wsout.push_str(&[m.clone(), id, clean(&tostr(&or_empty(w.get("label")))), tostr(&or_empty(w.get("number"))), st.to_string()].iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&us)); wsout.push('\n');
+        }
         for a in v.get("agents").and_then(|x| x.as_array()).into_iter().flatten() {
             if !a.is_object() { continue; }
             let pane = tostr(&or_empty(a.get("pane")));
@@ -178,7 +191,7 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
             if !tn.is_empty() { now.push_str(&[m.clone(), pane.clone(), ctl_strip(&tn)].join(&us)); now.push('\n'); }
         }
     }
-    Remote { nodes, offline, meta, now, agents }
+    Remote { nodes, offline, meta, now, agents, workspaces: wsout }
 }
 
 fn kharka_self(shared: &Path, bin: &str) -> String {
@@ -211,6 +224,7 @@ pub fn collect_remote_kharka(shared: &Path, host: &str, bin: &str, off_list: &st
     let _ = put_tmp(&shared.join("agents.nodes"), &r.nodes);
     let _ = put_tmp(&shared.join("machines.offline"), &r.offline);
     let _ = put_tmp(&shared.join("agents.meta.remote"), &r.meta);
+    let _ = put_tmp(&shared.join("workspaces.remote"), &r.workspaces);
     let a = put_list(&shared.join("agents.now.remote"), &r.now);
     let b = put_list(&remote, &r.agents);
     if a || b {

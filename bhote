@@ -91,6 +91,7 @@ MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
 PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 PANEL_LAYOUT|single|enum:single:split|One panel per tab (single), or two (split): the cards of the agents on the left, the topics, deployments and tests on the right (the Rust panel, BHOTED_PANEL=on)
+PANEL_LEFT_WIDTH|40|int:30:64|Width of the left panel in the split layout (columns); the herdr plugin makes it that wide, a dragged divider changes it for all tabs
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|on|bool|An agent whose workspace runs tests counts as busy (testing): it is not free, and its topic does not go to review until the tests are done
@@ -2486,63 +2487,66 @@ find_key_apply() { local _j; cfg_var _j JUMP_KEY off; herdr_keys_apply "$_j" "$1
 # The panel's pane in herdr stays between PANEL_MIN_WIDTH and PANEL_MAX_WIDTH: after a resize has settled (a dragged divider,
 # a smaller window) the split is moved back (pane.resize takes a share of the split). Only when the panel is the right part
 # of a split; the agent next to it keeps at least 40 columns.
-panel_geom() {  # panel_geom <pane>: PG_W PG_SW = the pane's width and the width of the split it is the right part of (0 0: not a right part)
-    local w sw; PG_W=0; PG_SW=0
-    read -r w sw <<< "$(herdr pane layout --pane "$1" 2>/dev/null | jq -r --arg p "$1" '
+panel_geom() {  # panel_geom <pane> [left]: PG_W PG_SW = the pane's width and the width of the split it is the right part of (left: the left part of); 0 0: it is not
+    local w sw lf=0; [ "${2:-}" = left ] && lf=1; PG_W=0; PG_SW=0
+    read -r w sw <<< "$(herdr pane layout --pane "$1" 2>/dev/null | jq -r --arg p "$1" --argjson lf "$lf" '
         ([.result.layout.panes[] | select(.pane_id == $p)][0].rect) as $r
-        | ([.result.layout.splits[] | select(.direction == "right" and (((.rect.x + .rect.width * .ratio) - $r.x) | fabs) <= 2
+        | ([.result.layout.splits[] | select(.direction == "right" and ((if $lf == 1 then ((.rect.x + .rect.width * .ratio) - ($r.x + $r.width)) else ((.rect.x + .rect.width * .ratio) - $r.x) end) | fabs) <= 2
               and .rect.y <= $r.y and (.rect.y + .rect.height) >= ($r.y + $r.height))][0].rect.width // 0) as $sw
         | "\($r.width // 0) \($sw)"' 2>/dev/null)"
     num_set w "$w" 0; num_set sw "$sw" 0; PG_W=$w; PG_SW=$sw
 }
-panel_set_width() {  # panel_set_width <pane> <want>: moves the split so the pane is <want> columns wide (the agent next to it keeps 40); 0: done or not possible
-    local p=$1 want=$2 amt dir
-    panel_geom "$p"; [ "$PG_W" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 1
+panel_set_width() {  # panel_set_width <pane> <want> [left]: moves the split so the pane is <want> columns wide (the agent next to it keeps 40); 0: done or not possible
+    local p=$1 want=$2 side=${3:-} amt dir shrink=right grow=left; [ "$side" = left ] && { shrink=left; grow=right; }   # (a left panel: its divider moves the other way)
+    panel_geom "$p" "$side"; [ "$PG_W" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 1
     [ "$PG_W" = "$want" ] && return 1
-    if [ "$PG_W" -gt "$want" ]; then dir=right; else dir=left; [ $(( PG_SW - want )) -ge 40 ] || return 1; fi
+    if [ "$PG_W" -gt "$want" ]; then dir=$shrink; else dir=$grow; [ $(( PG_SW - want )) -ge 40 ] || return 1; fi
     amt=$(LC_ALL=C awk -v a="$PG_W" -v b="$want" -v s="$PG_SW" 'BEGIN { d = a - b; if (d < 0) d = -d; printf "%.4f", d / s }')
     herdr pane resize --pane "$p" --direction "$dir" --amount "$amt" >/dev/null 2>&1
 }
-panel_width_clamp() {  # panel_width_clamp [adopt]: adopt = the size changed because the layout was worked out again (the workspace was shown, a sync moved the
+panel_width_clamp() {  # panel_width_clamp [single|left|right] [adopt]: the side of the panel (the left one has its own width, 30 to 64, and its own group), adopt = the size changed because the layout was worked out again (the workspace was shown, a sync moved the
     # split of a hidden one), not because you dragged: the panel takes the width the panels have (panel.width) instead of leading with its own
-    local p=${HERDR_PANE_ID:-} lo hi w want kw
+    local p=${HERDR_PANE_ID:-} lo hi w want kw side=single mode="" a wf=panel.width
+    for a in "$@"; do case "$a" in adopt) mode=adopt ;; left|right|single) side=$a ;; esac; done
     case "$p" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
     cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64; [ "$hi" -lt "$lo" ] && hi=$lo
-    if [ "${1:-}" = adopt ]; then
-        { read -r kw _ < "$SHARED_DIR/panel.width"; } 2>/dev/null; num_set kw "${kw:-}" 0
-        if [ "$kw" -gt 0 ]; then [ "$kw" -lt "$lo" ] && kw=$lo; [ "$kw" -gt "$hi" ] && kw=$hi; panel_set_width "$p" "$kw"; return 0; fi
+    [ "$side" = left ] && { lo=30; hi=64; wf=panel.width.left; }
+    if [ "$mode" = adopt ]; then
+        { read -r kw _ < "$SHARED_DIR/$wf"; } 2>/dev/null; num_set kw "${kw:-}" 0
+        if [ "$kw" -gt 0 ]; then [ "$kw" -lt "$lo" ] && kw=$lo; [ "$kw" -gt "$hi" ] && kw=$hi; panel_set_width "$p" "$kw" "$side"; return 0; fi
     fi
-    panel_geom "$p"; w=$PG_W; [ "$w" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 0
+    panel_geom "$p" "$side"; w=$PG_W; [ "$w" -gt 0 ] && [ "$PG_SW" -gt 0 ] || return 0
     if [ "$w" -gt "$hi" ]; then want=$hi; elif [ "$w" -lt "$lo" ]; then want=$lo; else want=""; fi
-    if [ -n "$want" ]; then panel_set_width "$p" "$want"; return 0; fi      # (the resize reaches this panel again: the others follow then)
-    panel_width_sync "$p" "$w"
+    if [ -n "$want" ]; then panel_set_width "$p" "$want" "$side"; return 0; fi      # (the resize reaches this panel again: the others follow then)
+    panel_width_sync "$p" "$w" "$side"
 }
 # All panels are as wide as the one you are working in (a panel made wider or narrower by hand): the panels of the other tabs and
 # workspaces follow. Only the panel of the tab you look at leads, so the panels never pull against each other.
-panel_width_sync() {  # panel_width_sync <this pane> <its width>
-    local p=$1 w=$2 lines tab q focused=0 lo hi want
+panel_width_sync() {  # panel_width_sync <this pane> <its width> [side]
+    local p=$1 w=$2 side=${3:-single} lines tab q focused=0 lo hi want
     lines=$(herdr pane list 2>/dev/null | jq -r '.result.panes[] | [.pane_id, .tab_id, (.label // ""), (.agent // ""), (.focused | tostring)] | map(gsub("[|\u0001-\u001f]"; "")) | join("|")' 2>/dev/null) || return 0
     tab=$(printf '%s\n' "$lines" | awk -F'|' -v p="$p" '$1 == p { print $2 }')
     [ -n "$tab" ] && [ -n "$(printf '%s\n' "$lines" | awk -F'|' -v t="$tab" '$2 == t && $5 == "true"')" ] || return 0   # (the tab is not the one in front: it follows)
     cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
     while read -r q; do
         [ "$q" != "$p" ] || continue
-        panel_set_width "$q" "$w"
-    done <<< "$(panel_pane_ids)"
-    panel_width_publish "$w"
+        panel_set_width "$q" "$w" "$side"
+    done <<< "$(panel_pane_ids "$side")"
+    if [ "$side" = left ]; then printf '%s %s\n' "$w" "$(date +%s)" > "$SHARED_DIR/panel.width.left"; else panel_width_publish "$w"; fi   # (the left panels are a group of their own, on this machine only)
 }
 # The panels of this machine: panes that carry the label bhote or the title Bhote and no agent (what the plugin makes), and every pane whose
 # panel is running here (it registers itself in $SHARED_DIR/panels/<pane>; a panel started by hand has neither label nor title).
-panel_pane_ids() {
-    { herdr pane list 2>/dev/null | jq -r '.result.panes[] | select(((.agent // "") == "") and ((.label // "") == "bhote" or (.terminal_title_stripped // "") == "Bhote")) | .pane_id' 2>/dev/null
-      local f pid; for f in "$SHARED_DIR"/panels/*; do
-          [ -f "$f" ] || continue; pid=""; { read -r pid < "$f"; } 2>/dev/null
-          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then basename "$f"; else rm -f "$f"; fi
+panel_pane_ids() {  # panel_pane_ids [single|left|right]: the panel panes of one side (the left ones; every other: the right and the single ones)
+    local want=${1:-single}; [ "$want" = right ] && want=single
+    { herdr pane list 2>/dev/null | jq -r --arg w "$want" '.result.panes[] | select((.agent // "") == "") | ((.label // "") as $l | select(if $w == "left" then $l == "bhote-left" else ($l == "bhote" or $l == "bhote-right" or ((.terminal_title_stripped // "") == "Bhote" and $l != "bhote-left")) end)) | .pane_id' 2>/dev/null
+      local f pid sd; for f in "$SHARED_DIR"/panels/*; do
+          [ -f "$f" ] || continue; pid=""; sd=""; { read -r pid sd < "$f"; } 2>/dev/null
+          if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then if [ "$want" = left ]; then [ "$sd" = left ] && basename "$f"; else [ "$sd" = left ] || basename "$f"; fi; else rm -f "$f"; fi
       done; } | LC_ALL=C sort -u | while read -r q; do case "$q" in ''|*[!A-Za-z0-9:_-]*) ;; *) printf '%s\n' "$q" ;; esac; done
 }
 panel_register() {  # panel_register: this panel's pane and process, for panel_pane_ids
     case "${HERDR_PANE_ID:-}" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
-    mkdir -p "$SHARED_DIR/panels" 2>/dev/null && printf '%s\n' "$$" > "$SHARED_DIR/panels/$HERDR_PANE_ID"
+    mkdir -p "$SHARED_DIR/panels" 2>/dev/null && printf '%s single\n' "$$" > "$SHARED_DIR/panels/$HERDR_PANE_ID"
 }
 # The width goes to the other machines through kharka (bhote.width/<this node>), when the collector follows kharka: a panel made wider on
 # Linux makes the panels on the Mac as wide, and back. PANEL_WIDTH_FILE holds "<width> <ms>" of the last width this machine knows (set
@@ -2567,7 +2571,7 @@ width_request() {  # width_request <watch line>: another machine's panels were m
     cfg_var lo PANEL_MIN_WIDTH 46; cfg_var hi PANEL_MAX_WIDTH 64; num_set lo "$lo" 46; num_set hi "$hi" 64
     [ "$w" -lt "$lo" ] && w=$lo; [ "$w" -gt "$hi" ] && w=$hi
     printf '%s %s\n' "$w" "$at" > "$SHARED_DIR/panel.width"
-    while read -r q; do panel_set_width "$q" "$w"; done <<< "$(panel_pane_ids)"
+    while read -r q; do panel_set_width "$q" "$w"; done <<< "$(panel_pane_ids right)"
 }
 # A click on an agent focuses it in herdr. On another machine herdr focuses it there, but only the herdr client can switch
 # machines (the API cannot). So on a Mac, with the agents from kharka, bhote types herdr's own key for that agent's row into the
@@ -2889,6 +2893,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
     SET_ROWS[${#SET_ROWS[@]}]="enum|PANEL_LAYOUT|Panel layout"
+    SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_LEFT_WIDTH|Panel left width"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTO_ASSIGN|Auto-assign now topics"

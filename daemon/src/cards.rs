@@ -128,19 +128,38 @@ impl<'a> Cards<'a> {
     /// The workspaces of this machine for the left panel (workspaces.local): a caption and a line each, "number  name  state"; the focused one on the highlighted ground; a click
     /// on a line shows that workspace (ref ws:<id>)
     pub fn workspaces_block(&self) -> String {
-        let t = crate::proc::read_cap(self.shared.join("workspaces.local")).unwrap_or_default();
-        if t.trim().is_empty() { return String::new(); }
+        let loc = crate::proc::read_cap(self.shared.join("workspaces.local")).unwrap_or_default();
+        let rem = crate::proc::read_cap(self.shared.join("workspaces.remote")).unwrap_or_default();
+        if loc.trim().is_empty() && rem.trim().is_empty() { return String::new(); }
         let g = |k: &str| self.g(k).to_string(); let x = g("X");
         let mut out = format!("\n{}", crate::ui::dash_caption_pub(self.c, "Workspaces"));
         let w = self.c.cols - 4;
-        for l in t.lines() {
+        // grouped by machine: this one first (rows of workspaces.local), then each other machine (workspaces.remote: machine, id, label, number, state)
+        let mut groups: Vec<(String, Vec<(String, String, String, bool, String, bool)>)> = Vec::new();
+        let mine: Vec<_> = loc.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { None } else { Some((f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3] == "1", f[4].to_string(), true)) } }).collect();
+        groups.push((self.host.clone(), mine));
+        for l in rem.lines() {
             let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { continue; }
-            let (num, id, label, focused, st) = (f[0], f[1], f[2], f[3] == "1", f[4]);
-            let ic = match st { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), _ => format!("{}○", g("D")) };
-            let name = clip(label, w - 7); let nw = dw(&name);
-            let (bg, tc) = if focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL"))) } else { (String::new(), g("L")) };
-            out.push_str(&format!("{}{}{}  {}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", REF, format!("ws:{}", id), REF, bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x));
+            let row = (f[3].to_string(), f[1].to_string(), f[2].to_string(), false, f[4].to_string(), false);
+            match groups.iter_mut().find(|g| g.0 == f[0]) { Some(gr) => gr.1.push(row), None => groups.push((f[0].to_string(), vec![row])) }
         }
+        let many = groups.iter().filter(|g| !g.1.is_empty()).count() > 1;
+        for (mach, rows) in &groups {
+            if rows.is_empty() && *mach != self.host { continue; }
+            if many {
+                let col = if *mach == self.host { g("D") } else { g("BLUE") };
+                out.push_str(&format!("{}{}{}{}\n", col, g("BOLD"), clip(mach, w + 2), x));
+            }
+            for (num, id, label, focused, st, local) in rows {
+                let ic = match st.as_str() { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), _ => format!("{}○", g("D")) };
+                let name = clip(label, w - 7); let nw = dw(&name);
+                let (bg, tc) = if *focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL"))) } else { (String::new(), g("L")) };
+                let line = format!("{}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x);
+                if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&line); }
+            }
+            if *mach == self.host { out.push_str(&format!("{}ws:+new{}   {}+ new{}\n", REF, REF, g("D"), x)); }   // (a click makes a workspace on this machine)
+        }
+        out.push_str(&format!("  {}{}{}\n", g("B"), "─".repeat((self.c.cols - 5).max(0) as usize), x));   // the divider under the workspaces
         out
     }
     pub fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }

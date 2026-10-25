@@ -311,4 +311,38 @@ case "$seen" in *"Working one"*|*"Waiting for New Work"*) bad "reminder picked s
 RB reminder | jq -e '.description == "Do this soon" and .status == "next"' >/dev/null && ok "reminder: with the description and the status" || bad "reminder description: $(RB reminder)"
 B config set FRIENDLY_REMINDER off >/dev/null; [ "$(RB reminder)" = '{"disabled":true}' ] && ok "reminder: switched off in the settings (Show Friendly Reminder)" || bad "reminder off: $(RB reminder)"
 B config set FRIENDLY_REMINDER on >/dev/null
+# the left panels are a group of their own: the left panel in front sets the width of the left panels of the other tabs, the right panels stay
+mkdir -p "$T/wbin2"; cat > "$T/wbin2/herdr" <<'SH'
+#!/bin/sh
+echo "$*" >> "$WLOG"
+case "$*" in
+ *"pane list"*) echo '{"result":{"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"claude","focused":true},{"pane_id":"w1:p3","tab_id":"w1:t1","label":"bhote-left"},{"pane_id":"w1:p2","tab_id":"w1:t1","label":"bhote-right"},{"pane_id":"w2:p1","tab_id":"w2:t1","agent":"claude","focused":false},{"pane_id":"w2:p3","tab_id":"w2:t1","label":"bhote-left"},{"pane_id":"w2:p2","tab_id":"w2:t1","label":"bhote-right"}]}}' ;;
+ *"pane layout --pane w1:p3"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w1:p3","rect":{"x":0,"y":0,"width":40,"height":40}}],"splits":[{"direction":"right","ratio":0.33058,"rect":{"x":0,"y":0,"width":121,"height":40}}]}}}' ;;
+ *"pane layout --pane w2:p3"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w2:p3","rect":{"x":0,"y":0,"width":34,"height":40}}],"splits":[{"direction":"right","ratio":0.28099,"rect":{"x":0,"y":0,"width":121,"height":40}}]}}}' ;;
+ *"pane layout --pane w1:p2"*) echo '{"result":{"layout":{"panes":[{"pane_id":"w1:p2","rect":{"x":200,"y":0,"width":56,"height":40}}],"splits":[{"direction":"right","ratio":0.78125,"rect":{"x":0,"y":0,"width":256,"height":40}}]}}}' ;;
+ *) exit 0 ;;
+esac
+SH
+chmod +x "$T/wbin2/herdr"; : > "$WLOG"; rm -f "$T/shared/panel.width" "$T/shared/panel.width.left"
+PATH="$T/wbin2:$PATH" HERDR_PANE_ID=w1:p3 B __act clamp left >/dev/null 2>&1
+grep -q "pane resize --pane w2:p3 --direction right --amount 0.0496" "$WLOG" && ! grep -q "resize --pane w1:p3\|resize --pane w[12]:p2" "$WLOG" && read -r lw _ < "$T/shared/panel.width.left" && [ "$lw" = 40 ] \
+    && ok "widths: the left panel in front sets the width of the left panels of the other tabs (not the right ones), a group of its own" || bad "left width sync: $(grep resize "$WLOG") [$(cat "$T/shared/panel.width.left" 2>&1)]"
+
+# the herdr plugin in split mode: right and left panel (dry run)
+pt=$(mktemp -d); mkdir "$pt/bin"
+cat > "$pt/bin/herdr" <<'EOF2'
+#!/bin/sh
+case "$1 $2" in
+"pane list") echo '{"result":{"panes":[{"tab_id":"t1","pane_id":"p1","agent":"claude","focused":true,"label":""}]}}';;
+"pane layout") echo '{"result":{"layout":{"panes":[{"pane_id":"p1","rect":{"width":200}}]}}}';;
+esac
+EOF2
+chmod +x "$pt/bin/herdr"; printf 'PANEL_LAYOUT=split\nBHOTED_PANEL=on\nPANEL_LEFT_WIDTH=42\n' > "$pt/cfg"
+out=$(BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
+echo "$out" | grep -q 'rename <new> bhote-right' && echo "$out" | grep -q 'rename <new> bhote-left' && echo "$out" | grep -q 'resize <new> to 42' && ok "plugin split: right and left panel, left 42 wide" || bad "plugin split: $out"
+printf 'PANEL_LAYOUT=single\n' > "$pt/cfg"
+out=$(BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
+echo "$out" | grep -q 'bhote-left' && bad "plugin single: no left panel expected: $out" || ok "plugin single: one panel, no left one"
+rm -rf "$pt"
+
 rm -rf "$T"; exit $fail

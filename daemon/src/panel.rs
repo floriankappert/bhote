@@ -229,10 +229,11 @@ impl Panel {
     }
     /// A click on a workspace shows it (herdr itself, no script); then focus.pane is written from herdr's own answer, so that the panels move their highlight at once
     fn focus_workspace(&mut self, id: &str) {
-        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || ":_-+".contains(c)) { return; }
         let (id, shared) = (id.to_string(), self.shared.clone());
         std::thread::spawn(move || {
-            let _ = crate::proc::run("herdr", &["workspace", "focus", &id], 5, None);
+            if id == "+new" { let _ = crate::proc::run("herdr", &["workspace", "create", "--focus"], 10, None); }   // (the "+ new" row: a new workspace, shown)
+            else { let _ = crate::proc::run("herdr", &["workspace", "focus", &id], 5, None); }
             if let Some(o) = crate::proc::run("herdr", &["pane", "list"], 5, None).filter(|o| o.0 == 0) {
                 let v: serde_json::Value = serde_json::from_slice(&o.1).unwrap_or(serde_json::Value::Null);
                 if let Some(p) = v["result"]["panes"].as_array().and_then(|a| a.iter().find(|p| p["focused"] == true)) {
@@ -441,7 +442,7 @@ impl Panel {
     fn register(&self) {
         if self.pane_id.is_empty() || !self.pane_id.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
         let dir = self.shared.join("panels"); let _ = fs::create_dir_all(&dir);
-        let f = dir.join(&self.pane_id); let me = format!("{}\n", std::process::id());
+        let f = dir.join(&self.pane_id); let me = format!("{} {}\n", std::process::id(), ["single", "left", "right"][self.side.min(2) as usize]);
         if fs::read_to_string(&f).map_or(true, |t| t != me) { let _ = fs::write(&f, me); }
     }
     fn unregister(&self) { if !self.pane_id.is_empty() { let _ = fs::remove_file(self.shared.join("panels").join(&self.pane_id)); } }
@@ -466,7 +467,7 @@ impl Panel {
         self.keep_collector();
         if self.focus_file_changed() { self.check_focus(); }
         let sec = store::now();
-        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { if self.clamp_adopt { self.act(&["clamp", "adopt"], "clamp", false); } else { self.act(&["clamp"], "clamp", false); } } self.clamp_adopt = false; } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
+        if let Some(t) = self.clamp_at { if Instant::now() >= t { self.clamp_at = None; if !self.pane_id.is_empty() { { let sd = ["single", "left", "right"][self.side.min(2) as usize]; if self.clamp_adopt { self.act(&["clamp", sd, "adopt"], "clamp", false); } else { self.act(&["clamp", sd], "clamp", false); } } } self.clamp_adopt = false; } }   // (outside herdr there is no pane to widen: no process; not once a second: a pane that is too narrow is widened at once)
         if sec != self.last_tick {
             self.last_tick = sec;
             self.register();
