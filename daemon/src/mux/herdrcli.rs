@@ -115,6 +115,7 @@ pub fn run(args: &[String]) -> i32 {
         ("agent", "send-keys") => { method = "pane.send_keys".into(); put("pane_id", json!(pane(true))); put("keys", json!(rest(3))); }
         _ => { eprintln!("herdr: the native mux has no `{noun} {verb}`"); return 2; }
     }
+    if !resume.is_empty() && matches!((noun, verb), ("tab", "create") | ("pane", "split") | ("workspace", "create")) { p.insert("command".into(), json!(resume)); }   // after `--`: what the new pane runs
     match call(&method, Value::Object(p)) {
         Ok(v) => {
             if let Some(e) = v.get("error") { eprintln!("{}", json!({"id": format!("cli:{noun}:{verb}"), "error": e})); return 1; }

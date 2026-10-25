@@ -55,6 +55,11 @@ ended with it; `KHARKA_SIDECAR=off` stops that, `KHARKA_LABEL` names the machine
 service on a machine that runs the native mux** (it points at herdr's socket and writes the same entry): Linux `systemctl --user disable --now herdr-kharka`,
 macOS `launchctl bootout gui/$(id -u)/dev.kharka.herdr`. `bhote doctor` says which one runs. `bhote mux stop|status|restart` controls the server.
 
+A click on an agent of another machine opens it in a tab of its own, named `<machine> <pane>`: the tab runs `ssh -t <node> …` with `bhote view <pane>`
+(the other machine runs the native mux; `bhote view` shows that one pane, every key goes to it, it does not resize it) or, when it runs herdr,
+`herdr agent attach <pane>`. The ssh destination is the kharka node name; `REMOTE_SSH` changes the command (`{node}`). A second click shows the same tab.
+Close the tab (`prefix k`) to leave. The other machine needs `bhote` (or herdr) in the PATH of a login shell, and ssh from here to there must work.
+
 ## Not done / not tested
 
 - macOS: the same code (`libc` constants, `ps` instead of `/proc`), but only built and tested on Linux so far.

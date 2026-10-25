@@ -53,13 +53,18 @@ impl Drop for Raw {
     }
 }
 
-pub fn attach() -> i32 {
+pub fn attach() -> i32 { attach_to(None) }
+
+/// `bhote view <pane>`: only that pane, without chrome; every key goes to it. For a pane of another machine (over ssh).
+pub fn view(pane: &str) -> i32 { attach_to(Some(pane)) }
+
+fn attach_to(view: Option<&str>) -> i32 {
     if unsafe { libc::isatty(0) } != 1 || unsafe { libc::isatty(1) } != 1 { eprintln!("bhote attach needs a terminal"); return 1; }
-    let stream = match connect_or_start() { Ok(s) => s, Err(e) => { eprintln!("bhote: no mux server: {e}"); return 1; } };
+    let stream = match if view.is_some() { UnixStream::connect(proto::sock_path()) } else { connect_or_start() } { Ok(s) => s, Err(e) => { eprintln!("bhote: no mux server: {e}"); return 1; } };
     let (cols, rows) = winsize();
     let mut r = BufReader::new(stream.try_clone().expect("clone"));
     let mut w = stream;
-    let _ = writeln!(w, "{}", json!({"id": "a", "method": "attach", "params": {"cols": cols, "rows": rows}}));
+    let _ = writeln!(w, "{}", json!({"id": "a", "method": "attach", "params": {"cols": cols, "rows": rows, "pane": view}}));
     let mut line = String::new();
     if r.read_line(&mut line).unwrap_or(0) == 0 || !line.contains("\"attached\":true") { eprintln!("bhote: attach failed: {}", line.trim()); return 1; }
     let raw = Raw::enter();

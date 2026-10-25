@@ -20,7 +20,7 @@ use vt100::Color;
 pub enum Ev {
     PaneOut(u32, Vec<u8>),
     PaneExit(u32),
-    NewClient { id: u32, stream: UnixStream, cols: u16, rows: u16 },
+    NewClient { id: u32, stream: UnixStream, cols: u16, rows: u16, view: Option<String> },
     Frame(u32, u8, Vec<u8>),
     ClientGone(u32),
     Control(Value, Sender<Value>),
@@ -57,6 +57,8 @@ impl Modes {
 
 pub struct Client {
     pub id: u32, pub stream: UnixStream, pub cols: u16, pub rows: u16,
+    /// a viewer of one pane (`bhote view`): shows that pane only, sends every key to it, and does not change any pane's size
+    pub view: Option<String>,
     pub(super) prev: Option<Grid>, pub(super) modes: Modes,
     pub parser: input::Parser, pub mode: super::actions::Mode, pub sel: Option<super::actions::Selection>, pub drag: Option<super::actions::Drag>,
     /// when a lone escape byte is the escape key (no more bytes came)
@@ -108,7 +110,7 @@ impl Server {
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
     pub fn area(&self) -> Rect {
-        let (c, r) = self.clients.iter().map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))).unwrap_or((80, 24));
+        let (c, r) = self.clients.iter().filter(|c| c.view.is_none()).map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))).unwrap_or((80, 24));
         Rect { x: 0, y: 0, w: c, h: r.saturating_sub(1).max(1) }
     }
 
@@ -218,8 +220,8 @@ impl Server {
         match ev {
             Ev::PaneOut(id, b) => if let Some(p) = self.panes.get_mut(&id) { p.output(&b); self.dirty = true; },
             Ev::PaneExit(id) => if self.panes.contains_key(&id) { self.close_pane(id); },
-            Ev::NewClient { id, stream, cols, rows } => {
-                self.clients.push(Client { id, stream, cols, rows, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
+            Ev::NewClient { id, stream, cols, rows, view } => {
+                self.clients.push(Client { id, stream, cols, rows, view, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
                 self.after_change();
             }
             Ev::Frame(id, t, p) => match t {
@@ -261,7 +263,29 @@ impl Server {
         self.after_change();
     }
 
-    fn client_input(&mut self, id: u32, bytes: &[u8]) { super::actions::on_input(self, id, bytes); }
+    fn client_input(&mut self, id: u32, bytes: &[u8]) {
+        // a viewer types into its pane, nothing else
+        if let Some(name) = self.clients.iter().find(|c| c.id == id).and_then(|c| c.view.clone()) {
+            if let Some(p) = self.pane_by_name(&name).and_then(|pid| self.panes.get_mut(&pid)) { p.parser.screen_mut().set_scrollback(0); p.input(bytes); }
+            return;
+        }
+        super::actions::on_input(self, id, bytes);
+    }
+
+    /// The picture for a viewer: the pane as it is (cut where the viewer is smaller), its cursor, its own modes (mouse only when it asked).
+    fn compose_view(&self, ci: usize) -> Option<(Grid, Modes)> {
+        let c = &self.clients[ci];
+        let p = self.pane_by_name(c.view.as_deref()?).and_then(|id| self.panes.get(&id))?;
+        let mut g = Grid::new(c.cols, c.rows);
+        let s = p.screen(); let (pr, pc) = s.size();
+        g.blit(s, 0, 0, pc.get().min(c.cols), pr.get().min(c.rows));
+        if !s.hide_cursor() { let (r, cc) = s.cursor_position(); if r < c.rows && cc < c.cols { g.cursor = Some((cc, r)); } }
+        let mut m = Modes::of(s);
+        use vt100::{MouseProtocolEncoding as E, MouseProtocolMode as M};
+        m.mouse = match s.mouse_protocol_mode() { M::None => 0, M::Press => 1, M::PressRelease => 2, M::ButtonMotion => 3, M::AnyMotion => 4 };
+        m.enc = match s.mouse_protocol_encoding() { E::Default => 0, E::Utf8 => 1, E::Sgr => 2 };
+        Some((g, m))
+    }
 
     /// The bar under the panes: workspaces, tabs, and on the right what the mode of the client is.
     fn bar(&self, g: &mut Grid, y: u16, c: &Client) {
@@ -303,6 +327,7 @@ impl Server {
 
     /// The picture for a client: the panes of the shown tab, the dividers, the bar.
     fn compose(&self, ci: usize) -> (Grid, Modes) {
+        if self.clients[ci].view.is_some() { if let Some(v) = self.compose_view(ci) { return v; } return (Grid::new(self.clients[ci].cols, self.clients[ci].rows), Modes::default()); }
         let (cols, rows) = (self.clients[ci].cols, self.clients[ci].rows);
         let mut g = Grid::new(cols, rows);
         let Some((_, tab)) = self.world.current() else { return (g, Modes { mouse: 3, enc: 2, ..Modes::default() }) };
@@ -354,6 +379,8 @@ impl Server {
             for c in self.clip.drain(..) { extra.push_str(&c); }
             if std::mem::take(&mut h.bell) { extra.push('\x07'); }
         }
+        let ended: Vec<u32> = self.clients.iter().filter(|c| c.view.as_ref().map_or(false, |n| self.pane_by_name(n).is_none())).map(|c| c.id).collect();
+        for id in ended { self.detach_client(id, "pane closed"); }
         let mut gone = Vec::new();
         for i in 0..self.clients.len() {
             let (g, modes) = self.compose(i);
@@ -386,7 +413,8 @@ fn serve_conn(stream: UnixStream, tx: Sender<Ev>, next_client: Arc<AtomicU32>) -
             let rows = p.get("rows").and_then(|v| v.as_u64()).unwrap_or(24).clamp(1, 1000) as u16;
             let id = next_client.fetch_add(1, Ordering::SeqCst);
             writeln!(w, "{}", json!({"id": req.get("id"), "result": {"attached": true, "client": id}}))?;
-            if tx.send(Ev::NewClient { id, stream: w.try_clone()?, cols, rows }).is_err() { return Ok(()); }
+            let view = p.get("pane").and_then(|v| v.as_str()).map(String::from);
+            if tx.send(Ev::NewClient { id, stream: w.try_clone()?, cols, rows, view }).is_err() { return Ok(()); }
             while let Ok((t, p)) = read_frame(&mut r) { if tx.send(Ev::Frame(id, t, p)).is_err() { return Ok(()); } }
             let _ = tx.send(Ev::ClientGone(id));
             return Ok(());
