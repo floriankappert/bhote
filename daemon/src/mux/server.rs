@@ -115,7 +115,7 @@ pub struct Server {
     pub sidebars: Vec<Sidebar>,
     pub sb_focus: Option<u32>,
     pub sb_hidden: bool,
-    pub sb_dismissed: Vec<Edge>,
+    pub sb_dismissed: Vec<String>,
     pub sb_sizes: std::collections::HashMap<String, u16>,
     sb_n: u32,
 }
@@ -143,14 +143,23 @@ impl Server {
         Rect { x: x0, y: 0, w: w.max(1), h: hm.max(1) }
     }
 
-    /// Where the side panels are (those that fit), with their edge; the dividers are the cells next to them.
+    /// Where the side panels are (those that fit), with their edge; the dividers are the cells next to them. The panels of your own are stacked under the bhote panel of a
+    /// column, as many as leave it 10 rows.
     pub fn sidebar_rects(&self) -> Vec<(u32, Rect, Edge)> {
         let (c, _) = self.screen_size(); let h = self.full_h();
         let (l, r, b) = self.sidebar_sizes(c, h);
         let a = self.area();
         let mut v = Vec::new();
-        if l > 0 { if let Some(s) = self.sidebar_at(Edge::Left) { v.push((s.pane, Rect { x: 0, y: 0, w: l, h }, Edge::Left)); } }
-        if r > 0 { if let Some(s) = self.sidebar_at(Edge::Right) { v.push((s.pane, Rect { x: a.x + a.w + 1, y: 0, w: r, h }, Edge::Right)); } }
+        for (edge, w, x) in [(Edge::Left, l, 0u16), (Edge::Right, r, a.x + a.w + 1)] {
+            if w == 0 { continue; }
+            let Some(prim) = self.sidebar_at(edge) else { continue };
+            let extras: Vec<&Sidebar> = self.sidebars.iter().filter(|s| s.edge == edge && s.extra).collect();
+            let mut used = 0u16; let mut take: Vec<&Sidebar> = Vec::new();
+            for e in extras { if h.saturating_sub(used + e.want + 1) >= 10 { used += e.want + 1; take.push(e); } }
+            v.push((prim.pane, Rect { x, y: 0, w, h: h - used }, edge));
+            let mut y = h - used + 1;
+            for e in take { v.push((e.pane, Rect { x, y, w, h: e.want }, edge)); y += e.want + 1; }
+        }
         if b > 0 { if let Some(s) = self.sidebar_at(Edge::Bottom) { v.push((s.pane, Rect { x: a.x, y: a.h + 1, w: a.w, h: b }, Edge::Bottom)); } }
         v
     }
@@ -441,6 +450,7 @@ impl Server {
                 Edge::Right => for y in r.y..r.y + r.h { g.put(r.x - 1, y, "│", &dim); },
                 Edge::Bottom => for x in r.x..r.x + r.w { g.put(x, r.y - 1, "─", &dim); },
             }
+            if self.is_extra(id) { for x in r.x..r.x + r.w { g.put(x, r.y - 1, "─", &dim); } }   // (a panel of your own: a line above it)
             let Some(p) = self.panes.get(&id) else { continue };
             let s = p.screen(); let (pr, pc) = s.size();
             g.blit(s, r.x, r.y, pc.get().min(r.w), pr.get().min(r.h));

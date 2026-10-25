@@ -7374,6 +7374,15 @@ cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of h
         elif printf '%s' "$hk" | grep -q -- '--herdr-socket'; then say ok "kharka: herdr-kharka runs against the mux socket"
         else say WARN "kharka: a herdr-kharka runs against herdr's socket (a service?): it writes this machine's entry too; stop it (Linux: systemctl --user stop herdr-kharka; macOS: launchctl bootout gui/$(id -u)/dev.kharka.herdr)"; fi
     fi
+    if [ -r "$AGENT_NODES" ]; then   # the other machines (kharka nodes): is the ssh connection there that a click on their workspaces and agents needs?
+        local l n d c
+        while IFS=$US read -r l n d c; do
+            [ -n "$n" ] && [ "$l" != "$HOST" ] || continue
+            # shellcheck disable=SC2086
+            if ssh $REMOTE_SSH_OPTS -o BatchMode=yes -o ConnectTimeout=4 "$n" true >/dev/null 2>&1; then say ok "machine $l ($n): ssh works"
+            else say WARN "machine $l ($n): ssh does not work from here without a password: a click on its workspaces and agents cannot open them (ssh $n true)"; fi
+        done < "$AGENT_NODES"
+    fi
     [ -n "${HERDR_PANE_ID:-}" ] && [ "${BHOTE_MUX:-}" = native ] && say ok "this pane is a native pane ($HERDR_PANE_ID)"
     return $ok
 }

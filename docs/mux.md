@@ -48,6 +48,9 @@ window gives the room to the main area), you can drag a divider. In a narrow win
 area keeps at least 30 columns; a panel that does not fit is not drawn, but keeps running. `prefix b` hides and shows the panels, `prefix t` goes into a panel and back,
 `prefix B` makes a panel that ended again.
 
+**Your own panels:** `PANEL_<NAME>_CMD=<program>` hangs any program under the bhote panel of a column (`PANEL_<NAME>=left|right`, default right; `PANEL_<NAME>_HEIGHT` rows, default 12), e.g.
+`PANEL_GIT_CMD=lazygit` and `PANEL_GIT_HEIGHT=16`: it is a real terminal (keys, mouse), the same for every workspace; in a low window the last ones go first.
+
 `CHAT_PANEL=on` (`CHAT_HEIGHT`) adds the chat strip (`bhote chat`): the history of an agent from its Claude Code transcript, an input field
 (`alt+enter` new line, `up` earlier messages), `@` picks the agent, `enter` sends it to the agent's prompt.
 

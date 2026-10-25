@@ -14,12 +14,17 @@ pub enum Edge { Left, Right, Bottom }
 
 /// A side panel: where it is, its program's pane, the size it wants (columns, rows for the bottom one).
 #[derive(Clone, Debug)]
-pub struct Sidebar { pub edge: Edge, pub pane: u32, pub want: u16 }
+pub struct Sidebar { pub edge: Edge, pub pane: u32, pub want: u16, /// a panel of your own, stacked under the bhote panel of its column (want = its rows)
+    pub extra: bool, pub name: String }
+
+/// A panel of your own: `PANEL_<NAME>_CMD` is its program, `PANEL_<NAME>` its column (left, right; default right), `PANEL_<NAME>_HEIGHT` its rows.
+pub struct Extra { pub name: String, pub edge: Edge, pub cmd: String, pub rows: u16 }
 
 pub struct PanelCfg {
     pub enabled: bool, pub left: u16, pub right: u16, pub keep: u16, pub chat: bool, pub chat_h: u16,
     /// the sections of the panels (None: no such panel)
     pub left_sections: Option<String>, pub right_sections: Option<String>,
+    pub extras: Vec<Extra>,
 }
 
 fn num(cfg: &std::collections::HashMap<String, String>, k: &str, d: u16, lo: u16, hi: u16) -> u16 { cfg.get(k).and_then(|v| v.parse::<u16>().ok()).filter(|v| *v >= lo && *v <= hi).unwrap_or(d) }
@@ -63,6 +68,15 @@ impl PanelCfg {
             chat_h: num(&cfg, "CHAT_HEIGHT", 14, 6, 80),
             // PANEL_LAYOUT=single: one panel on the right with everything (as the panel was before there were two)
             left_sections: if single { None } else { list("PANEL_LEFT", "workspaces,agents,overview") },
+            extras: {
+                let mut v: Vec<Extra> = cfg.iter().filter_map(|(k, cmd)| {
+                    let name = k.strip_prefix("PANEL_")?.strip_suffix("_CMD")?; if name.is_empty() || cmd.trim().is_empty() { return None; }
+                    let edge = if cfg.get(&format!("PANEL_{name}")).map_or(false, |e| e == "left") { Edge::Left } else { Edge::Right };
+                    if cfg.get(&format!("PANEL_{name}")).map_or(false, |e| e == "off") { return None; }
+                    Some(Extra { name: name.to_ascii_lowercase(), edge, cmd: cmd.clone(), rows: num(&cfg, &format!("PANEL_{name}_HEIGHT"), 12, 4, 80) })
+                }).collect();
+                v.sort_by(|a, b| a.name.cmp(&b.name)); v
+            },
             right_sections: if single { Some("head,agents,overview,topics,done,deployments,tests".into()) } else { list("PANEL_RIGHT", "topics,done,deployments,tests") },
         }
     }
@@ -82,7 +96,9 @@ pub fn bhote_bin() -> Option<PathBuf> {
 
 impl Server {
     pub fn is_panel(&self, pane: u32) -> bool { self.sidebars.iter().any(|s| s.pane == pane) }
-    pub fn sidebar_at(&self, edge: Edge) -> Option<&Sidebar> { self.sidebars.iter().find(|s| s.edge == edge) }
+    /// The bhote panel of an edge (not the panels of your own under it).
+    pub fn sidebar_at(&self, edge: Edge) -> Option<&Sidebar> { self.sidebars.iter().find(|s| s.edge == edge && !s.extra) }
+    pub fn is_extra(&self, pane: u32) -> bool { self.sidebars.iter().any(|s| s.pane == pane && s.extra) }
 
     /// The pane that gets the keys: the focused side panel, else the focused pane of the shown tab.
     pub fn input_pane(&self) -> Option<u32> { self.sb_focus.filter(|p| self.panes.contains_key(p)).or_else(|| self.world.focused_pane()) }
@@ -117,14 +133,18 @@ impl Server {
         let cfg = PanelCfg::load();
         if !cfg.enabled { return; }
         self.ensuring = true;
-        let mut todo: Vec<(Edge, Spawn, u16, &str)> = Vec::new();
+        let mut todo: Vec<(Edge, Spawn, u16, String, bool)> = Vec::new();
         let sz = |e: &str, d: u16| self.sb_sizes.get(e).copied().unwrap_or(d);
-        if let Some(s) = &cfg.left_sections { if let Some(sp) = self.panel_spawn(s, LEFT) { todo.push((Edge::Left, sp, sz("left", cfg.left), LEFT)); } }
-        if let Some(s) = &cfg.right_sections { if let Some(sp) = self.panel_spawn(s, RIGHT) { todo.push((Edge::Right, sp, sz("right", cfg.right), RIGHT)); } }
-        if cfg.chat { if let Some(sp) = self.chat_spawn() { todo.push((Edge::Bottom, sp, sz("bottom", cfg.chat_h), CHAT)); } }
-        for (edge, sp, want, label) in todo {
-            if self.sidebar_at(edge).is_some() || self.sb_dismissed.contains(&edge) { continue; }
-            if let Ok(pane) = self.make_global_pane(&sp, label) { self.sidebars.push(Sidebar { edge, pane, want }); }
+        if let Some(s) = &cfg.left_sections { if let Some(sp) = self.panel_spawn(s, LEFT) { todo.push((Edge::Left, sp, sz("left", cfg.left), LEFT.into(), false)); } }
+        if let Some(s) = &cfg.right_sections { if let Some(sp) = self.panel_spawn(s, RIGHT) { todo.push((Edge::Right, sp, sz("right", cfg.right), RIGHT.into(), false)); } }
+        if cfg.chat { if let Some(sp) = self.chat_spawn() { todo.push((Edge::Bottom, sp, sz("bottom", cfg.chat_h), CHAT.into(), false)); } }
+        for x in &cfg.extras {
+            let sp = Spawn { cmd: vec!["sh".into(), "-c".into(), x.cmd.clone()], cwd: None, env: vec![("BHOTE_GLOBAL".into(), "1".into()), ("BHOTE_PANEL".into(), "1".into())] };
+            todo.push((x.edge, sp, x.rows, format!("bhote-x-{}", x.name), true));
+        }
+        for (edge, sp, want, label, extra) in todo {
+            if self.sidebars.iter().any(|s| s.name == label) || self.sb_dismissed.contains(&label) { continue; }
+            if let Ok(pane) = self.make_global_pane(&sp, &label) { self.sidebars.push(Sidebar { edge, pane, want, extra, name: label }); }
         }
         self.ensuring = false;
     }
@@ -133,7 +153,7 @@ impl Server {
     pub fn sidebar_closed(&mut self, pane: u32) {
         if let Some(i) = self.sidebars.iter().position(|s| s.pane == pane) {
             let s = self.sidebars.remove(i);
-            self.sb_dismissed.push(s.edge);
+            self.sb_dismissed.push(s.name);
             if self.sb_focus == Some(pane) { self.sb_focus = None; }
         }
     }
