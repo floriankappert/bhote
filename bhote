@@ -4547,7 +4547,8 @@ kw_age_set() {  # kw_age_set <var> <key>: seconds since that entry was written (
     _ms=$(printf '%s' "$_e" | jq -r '(.hlc // "") | split("-")[0]' 2>/dev/null); case "$_ms" in ''|*[!0-9]*) printf -v "$1" '%s' -1 ;; *) printf -v "$1" '%s' $(( $(date +%s) - _ms / 1000 )) ;; esac
 }
 kw_restart() {  # kw_restart <herdr-kharka|daemon>: through launchd (macOS) or systemd (Linux user units); 1 when this machine has no such service
-    local what=$1 label unit
+    local what=$1 label unit bd
+    if [ "$what" = herdr-kharka ]; then bhoted_bin_set bd; [ -n "$bd" ] && "$bd" mux-call server.restart_sidecar 2>/dev/null | grep -q '"restarted":true' && return 0; fi   # (the native mux runs it itself: it starts the sidecar again)
     case "$(uname -s)" in
         Darwin) case "$what" in daemon) label=dev.kharka.daemon ;; *) label=dev.kharka.herdr ;; esac
             launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1 || return 1; launchctl kickstart -k "gui/$(id -u)/$label" >/dev/null 2>&1 ;;
