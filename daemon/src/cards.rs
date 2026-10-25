@@ -155,7 +155,7 @@ impl<'a> Cards<'a> {
                 let name = clip(label, w - 7); let nw = dw(&name);
                 let (bg, tc) = if *focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL"))) } else { (String::new(), g("L")) };
                 let line = format!("{}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x);
-                if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&line); }
+                if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&format!("{}rws:{}:{}{}{}", REF, mach, id, REF, line)); }   // (another machine's workspace: a click shows it here)
             }
             if *mach == self.host { out.push_str(&format!("{}ws:+new{}   {}+ new{}\n", REF, REF, g("D"), x)); }   // (a click makes a workspace on this machine)
         }

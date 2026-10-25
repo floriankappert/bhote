@@ -5,6 +5,11 @@ use super::server::{Server, Spawn};
 use super::world::{self, World};
 use serde_json::{json, Value};
 
+pub fn bar_mode_load_pub() -> String {
+    let v = crate::config_read(&super::panels::config_path()).get("MUX_BAR").cloned().unwrap_or_default();
+    match v.as_str() { "on" | "full" | "off" => v, _ => "auto".into() }
+}
+
 type Res = Result<Value, (&'static str, String)>;
 fn nf(what: &str) -> (&'static str, String) { ("not_found", format!("no such {what}")) }
 fn bad(m: impl Into<String>) -> (&'static str, String) { ("invalid_params", m.into()) }
@@ -96,7 +101,8 @@ impl Server {
         let (rects, divs) = World::rects(t, area);
         let rj = |r: &Rect| json!({"x": r.x, "y": r.y, "width": r.w, "height": r.h});
         let splits: Vec<Value> = divs.iter().map(|d| {
-            let ratio = { let mut n = &t.root; for &sec in &d.path { if let layout::Node::Split { a, b, .. } = n { n = if sec { b } else { a }; } } if let layout::Node::Split { ratio, .. } = n { *ratio } else { 0.5 } };
+            // the share the first child really has (what a fixed size comes to, too): the divider is at rect.x + rect.width * ratio
+            let ratio = d.first as f32 / (match d.dir { Dir::Right => d.rect.w, Dir::Down => d.rect.h }.max(1) as f32);
             json!({"id": format!("split_{}", d.path.iter().map(|b| if *b { '1' } else { '0' }).collect::<String>() + if d.path.is_empty() { "root" } else { "" }), "direction": if d.dir == Dir::Right { "right" } else { "down" }, "ratio": ratio, "rect": rj(&d.rect)})
         }).collect();
         let name = |id: &u32| self.panes.get(id).map(|p| p.name()).unwrap_or_default();
@@ -152,7 +158,7 @@ impl Server {
             "ping" => Ok(json!({"pong": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id()})),
             "server.stop" => { self.end_clients("stopped"); self.quit = true; Ok(json!({"stopped": true})) }
             "server.restart_sidecar" => { let was = self.sidecar.is_some(); self.sidecar_stop(); self.sidecar_at = None; Ok(json!({"restarted": was})) }
-            "server.reload_config" => Ok(json!({"status": "applied", "diagnostics": []})),
+            "server.reload_config" => { self.bar_mode = bar_mode_load_pub(); self.km = super::keymap::Keymap::load(&super::actions::keys_path()); self.after_change(); Ok(json!({"status": "applied", "diagnostics": []})) }
             "notification.show" => {
                 // a desktop notification through the terminal (OSC 777), a bell for the sound, and a line on the bar
                 let title = s(p, "title").or_else(|| p.get("text").and_then(|t| t.as_str())).unwrap_or("").replace(|c: char| c.is_control() || c == ';', " ");
@@ -165,7 +171,7 @@ impl Server {
             "api.snapshot" => {
                 let panes: Vec<Value> = self.panes.values().map(|q| self.pane_json(q)).collect();
                 let agents: Vec<Value> = panes.iter().filter(|q| q.get("agent").is_some()).cloned().collect();
-                let ws: Vec<Value> = (0..self.world.ws.len()).map(|i| self.ws_json(i)).collect();
+                let ws: Vec<Value> = (0..self.world.ws.len()).filter(|i| !self.world.ws[*i].hidden).map(|i| self.ws_json(i)).collect();
                 let mut tabs = Vec::new(); for (wi, w) in self.world.ws.iter().enumerate() { for ti in 0..w.tabs.len() { tabs.push(self.tab_json(wi, ti)); } }
                 Ok(json!({"snapshot": {"panes": panes, "agents": agents, "workspaces": ws, "tabs": tabs}, "type": "api_snapshot"}))
             }
@@ -219,7 +225,8 @@ impl Server {
                 let side = s(p, "direction").and_then(Side::parse).ok_or_else(|| bad("direction"))?;
                 let amount = p.get("amount").and_then(|x| x.as_f64()).unwrap_or(0.05) as f32;
                 let (wi, ti) = self.world.tab_of_pane(a).ok_or_else(|| nf("tab"))?;
-                if !self.world.ws[wi].tabs[ti].root.resize(a, side, amount) { return Err(("no_split", "nothing to resize that way".into())); }
+                let area = self.area();
+                if !self.world.ws[wi].tabs[ti].root.resize(a, side, amount, area) { return Err(("no_split", "nothing to resize that way".into())); }
                 self.after_change();
                 Ok(json!({}))
             }
@@ -273,10 +280,11 @@ impl Server {
                 Ok(json!({}))
             }
             // ── workspaces
-            "workspace.list" => Ok(json!({"workspaces": (0..self.world.ws.len()).map(|i| self.ws_json(i)).collect::<Vec<_>>(), "type": "workspace_list"})),
+            "workspace.list" => { let all = flag(p, "all").unwrap_or(false); Ok(json!({"workspaces": (0..self.world.ws.len()).filter(|i| all || !self.world.ws[*i].hidden).map(|i| self.ws_json(i)).collect::<Vec<_>>(), "type": "workspace_list"})) }
             "workspace.get" => { let wi = self.ws_of(p)?; Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
             "workspace.create" => {
                 let (wi, pid) = self.create_workspace(s(p, "label").unwrap_or(""), &spawn_of(p), flag(p, "focus").unwrap_or(false)).map_err(|e| ("create_failed", e.to_string()))?;
+                if flag(p, "hidden").unwrap_or(false) { self.world.ws[wi].hidden = true; self.after_change(); }
                 Ok(json!({"workspace": self.ws_json(wi), "tab": self.tab_json(wi, 0), "pane": self.pane_json(&self.panes[&pid]), "type": "workspace_info"}))
             }
             "workspace.focus" => { let wi = self.ws_of(p)?; self.world.active = wi; self.dirty = true; { let w = world::ws_name(self.world.ws[wi].id); self.emit("workspace.focused", None, json!({"workspace_id": w})); } Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }

@@ -101,10 +101,10 @@ pub fn run(args: &[String]) -> i32 {
             if !resume.is_empty() { put("resume", json!(resume)); }
         }
         ("pane", "release-agent") => { method = "pane.release_agent".into(); put("pane_id", json!(pane(true))); if let Some(v) = a.get("source") { put("source", json!(v)); } }
-        ("workspace", "list") => method = "workspace.list".into(),
+        ("workspace", "list") => { method = "workspace.list".into(); if a.flag("all") { put("all", json!(true)); } }
         ("workspace", "get") | ("workspace", "focus") | ("workspace", "close") => { method = format!("workspace.{verb}"); if let Some(w) = a.pos.get(2) { put("workspace_id", json!(w)); } }
         ("workspace", "rename") => { method = "workspace.rename".into(); put("workspace_id", json!(a.pos.get(2))); put("label", json!(rest(3).join(" "))); }
-        ("workspace", "create") => { method = "workspace.create".into(); if let Some(c) = a.get("cwd") { put("cwd", json!(c)); } if let Some(l) = a.get("label") { put("label", json!(l)); } put("env", env_map(&a)); put("focus", json!(a.flag("focus"))); }
+        ("workspace", "create") => { method = "workspace.create".into(); if let Some(c) = a.get("cwd") { put("cwd", json!(c)); } if let Some(l) = a.get("label") { put("label", json!(l)); } put("env", env_map(&a)); put("focus", json!(a.flag("focus"))); if a.flag("hidden") { put("hidden", json!(true)); } }
         ("tab", "list") => { method = "tab.list".into(); if let Some(w) = a.get("workspace") { put("workspace_id", json!(w)); } }
         ("tab", "get") | ("tab", "focus") | ("tab", "close") => { method = format!("tab.{verb}"); if let Some(t) = a.pos.get(2) { put("tab_id", json!(t)); } }
         ("tab", "rename") => { method = "tab.rename".into(); put("tab_id", json!(a.pos.get(2))); put("label", json!(rest(3).join(" "))); }

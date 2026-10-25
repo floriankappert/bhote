@@ -106,7 +106,10 @@ impl Server {
             if want_r > 0 && t >= want_r + cfg.keep {
                 if let Some(sp) = self.panel_spawn(RIGHT) {
                     let ratio = (t as f32 - 1.0 - want_r as f32) / (t as f32 - 1.0);
-                    if let Ok(new) = self.split_pane(main, Dir::Right, ratio, &sp, false) { self.panes.get_mut(&new).unwrap().label = RIGHT.into(); }
+                    if let Ok(new) = self.split_pane(main, Dir::Right, ratio, &sp, false) {
+                        self.panes.get_mut(&new).unwrap().label = RIGHT.into();
+                        if let Some((wi, ti)) = self.world.find_tab(wid, tid) { self.world.ws[wi].tabs[ti].root.fix_size_of(new, want_r); }
+                    }
                 }
             }
         }
@@ -119,7 +122,7 @@ impl Server {
                     let ratio = want_l as f32 / (t as f32 - 1.0);
                     if let Ok(new) = self.split_pane(main, Dir::Right, ratio, &sp, false) {
                         self.panes.get_mut(&new).unwrap().label = LEFT.into();
-                        if let Some((wi, ti)) = self.world.find_tab(wid, tid) { self.world.ws[wi].tabs[ti].root.swap(main, new); }
+                        if let Some((wi, ti)) = self.world.find_tab(wid, tid) { self.world.ws[wi].tabs[ti].root.swap(main, new); self.world.ws[wi].tabs[ti].root.fix_size_of(new, want_l); }
                     }
                 }
             }

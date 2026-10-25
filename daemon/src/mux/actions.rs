@@ -142,7 +142,8 @@ fn forward(s: &mut Server, raw: &[u8]) {
 fn resize_focused(s: &mut Server, side: Side, amount: f32) {
     let Some(f) = s.world.focused_pane() else { return };
     let Some((wi, ti)) = s.world.tab_of_pane(f) else { return };
-    if s.world.ws[wi].tabs[ti].root.resize(f, side, amount) { s.after_change(); }
+    let area = s.area();
+    if s.world.ws[wi].tabs[ti].root.resize(f, side, amount, area) { s.after_change(); }
 }
 
 fn apply_rename(s: &mut Server, p: &Prompt) {
@@ -221,7 +222,7 @@ pub fn run(s: &mut Server, id: u32, action: &str, arg: Option<&str>) {
         "new_workspace" => { let sp = s.follow_cwd(); let _ = s.create_workspace("", &sp, true); }
         "close_workspace" => if let Some((wi, _)) = cur { let mut l = Vec::new(); for t in &s.world.ws[wi].tabs { t.root.leaves(&mut l); } for p in l { s.close_pane(p); } },
         "previous_workspace" | "next_workspace" => { let n = s.world.ws.len(); if n > 0 { s.world.active = if action == "next_workspace" { (s.world.active + 1) % n } else { (s.world.active + n - 1) % n }; } }
-        "reload_config" => s.km = Keymap::load(&keys_path()),
+        "reload_config" => { s.km = Keymap::load(&keys_path()); s.bar_mode = super::api::bar_mode_load_pub(); }
         "focus_panel" => s.focus_panel(),
         "open_panel" => if let Some((wi, ti)) = cur { let (wid, tid) = (s.world.ws[wi].id, s.world.ws[wi].tabs[ti].id); let cfg = super::panels::PanelCfg::load(); s.make_panels(wid, tid, &cfg, true); },
         "popup" => if let Some(cmd) = arg { s.open_popup(vec!["sh".into(), "-c".into(), cmd.to_string()]); },

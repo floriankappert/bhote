@@ -35,9 +35,11 @@ c.send(P + P); E.settle()
 c.send("\r"); c.wait_for("^B")
 check(b"^B" in c.out, "prefix twice sends the key itself")
 c.send("\x03")
-# tabs
+# tabs (the bar appears with the second tab)
+h0 = E.layout()["area"]["height"]
 c.send(P + "c"); E.settle()
 check(len(E.tabs()) == 2 and E.tabs()[1]["focused"], "prefix+c: a new tab, shown")
+check(E.layout()["area"]["height"] == h0 - 1, "the bar of the tabs appears with the second tab (one row)")
 c.send(P + "1"); E.settle()
 check(E.tabs()[0]["focused"], "prefix+1 shows the first tab")
 c.send(P + "n"); E.settle()

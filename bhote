@@ -85,12 +85,13 @@ BHOTED|auto|enum:auto:off|The Rust daemon bhoted keeps the topic index current f
 KHARKA||text|The kharka binary for STORE=kharka and AGENTS_VIA=kharka (empty: kharka on the PATH; the environment variable KHARKA comes first)
 SYNC_VIA|herdr|enum:herdr:ssh|How topics travel: herdr (its saved machine; each side pulls from the other) or plain ssh
 PUSH_STATES|on|bool|When an agent here changes its state, tell the other machines at once (through herdr), so that their panels show it within a second (only with REMOTE_AGENTS on and AGENTS_VIA=herdr)
-REMOTE_SSH|ssh -t {node}|text|How the native mux reaches an agent of another machine (a click on its card opens it in a tab): the ssh command, {node} is the kharka node name of that machine
+REMOTE_SSH|ssh -t -o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m {node}|text|How the native mux reaches an agent of another machine (a click on its card opens it in a tab): the ssh command, {node} is the kharka node name of that machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
 KHARKA_SIDECAR|auto|enum:auto:off|The native mux runs herdr-kharka against its own socket (auto: with STORE=kharka or AGENTS_VIA=kharka), so that the other machines see the workspaces and agents of this machine and can focus and prompt them. Stop the old herdr-kharka service (it points at herdr) when you switch
 KHARKA_LABEL||text|The name of this machine in kharka for the sidecar (empty: the kharka node name)
+MUX_BAR|auto|enum:auto:on:full:off|The bar under the panes of the native mux: auto = only when a workspace has more than one tab (the tabs), on = always the tabs, full = the workspaces too, off = never (the mode and notices then show on the last row)
 MUX|native|enum:native:herdr|What `bhote` starts from a plain terminal: the native mux (the pane server of bhote, bhote attach) or herdr (kept for one release; the environment variable BHOTE_MUX=herdr says the same)
 CHAT_PANEL|off|enum:off:bottom:right|The chat pane of the native mux (an input field and the history of an agent; bhote chat): under the main pane (bottom) or under the right panel (right)
 CHAT_HEIGHT|14|int:6:80|Rows of the chat pane
@@ -2679,20 +2680,42 @@ agent_row_type() {  # agent_row_type <row 1-9>: types herdr's key for that row i
 }
 # In the native mux an agent of another machine is "mounted" by a tab of its own that shows that agent's pane over ssh: bhote view there (the other
 # machine runs the native mux), else herdr agent attach (it runs herdr). The ssh destination is the kharka node name (REMOTE_SSH: another command, {node}).
-remote_view() {  # remote_view <machine> <pane>: 0 when the tab is there (made or shown)
+REMOTE_SSH_OPTS='-o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m -o ConnectTimeout=8'   # one connection per machine, kept for a quarter of an hour: the next tab is there at once
+remote_cmd() {  # remote_cmd <pane>: what runs over there, without a login shell: the daemon next to bhote (the native mux), else herdr
+    local p=$1
+    printf '%s' "sh -c 'for d in \"\$HOME/.local/bin\" \"\$HOME/.cargo/bin\" /opt/homebrew/bin /usr/local/bin /usr/bin; do if [ -x \"\$d/bhote\" ]; then b=\$(readlink -f \"\$d/bhote\" 2>/dev/null || echo \"\$d/bhote\"); x=\$(dirname \"\$b\")/daemon/target/release/bhoted; [ -x \"\$x\" ] && exec \"\$x\" view $p; fi; done; PATH=\"\$HOME/.local/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec herdr agent attach $p'"
+}
+remote_warm() {  # remote_warm: the shared ssh connection to every machine kharka knows is made now (bhote remote-warm; the mux does it at its start and every ten minutes)
+    [ -r "$AGENT_NODES" ] || return 0
+    mkdir -p ~/.ssh 2>/dev/null; chmod 700 ~/.ssh 2>/dev/null
+    local l n d c
+    while IFS=$US read -r l n d c; do
+        [ -n "$n" ] && [ "$l" != "$HOST" ] && [ "$d" != 1 ] || continue
+        # shellcheck disable=SC2086
+        ssh $REMOTE_SSH_OPTS -o BatchMode=yes "$n" -O check >/dev/null 2>&1 || ssh $REMOTE_SSH_OPTS -o BatchMode=yes -N -f "$n" >/dev/null 2>&1 &
+    done < "$AGENT_NODES"
+    wait
+}
+remote_workspace() {  # remote_workspace <machine> <workspace id> [pane]: the workspace of another machine as a workspace of its own here (hidden from the list: the panel lists it under its machine)
     [ "${BHOTE_MUX:-}" = native ] && [ -n "${HERDR_PANE_ID:-}" ] || return 1
-    local node ssh_cmd label="$1 $2" tab
-    kharka_node_of "$1" && node=$KN_NODE || return 1
+    local m=$1 w=$2 pane=${3:-} node ssh_cmd label name id l1 l2 l3 l4 l5
+    kharka_node_of "$m" && node=$KN_NODE || return 1
     [ -n "$node" ] || return 1
-    cfg_var ssh_cmd REMOTE_SSH "ssh -t {node}"; ssh_cmd=${ssh_cmd//\{node\}/$node}
-    tab=$(herdr tab list 2>/dev/null | jq -r --arg l "$label" '[.result.tabs[] | select(.label == $l)][0].tab_id // empty' 2>/dev/null)
-    if [ -n "$tab" ]; then herdr tab focus "$tab" >/dev/null 2>&1; return 0; fi
-    # (`$SHELL -lc` over there: a login shell has the PATH of the user's profile)
-    herdr tab create --label "$label" -- $ssh_cmd "\"\$SHELL\" -lc 'bhote view $2 || herdr agent attach $2'" >/dev/null 2>&1
+    # its name, and the pane that shows it: the agent of that workspace (else its first pane)
+    label=$w
+    if [ -r "$SHARED_DIR/workspaces.remote" ]; then while IFS=$US read -r l1 l2 l3 l4 l5; do [ "$l1" = "$m" ] && [ "$l2" = "$w" ] && { label=$l3; break; }; done < "$SHARED_DIR/workspaces.remote"; fi
+    if [ -z "$pane" ] && [ -r "$AGENT_META_R" ]; then while IFS=$US read -r l1 l2 l3 l4 l5; do [ "$l1" = "$m" ] && [ "${l2%%:*}" = "$w" ] && [ "$l4" = a ] && { pane=$l2; break; }; done < "$AGENT_META_R"; fi
+    [ -n "$pane" ] || pane="$w:p1"
+    name="$m · ${label//[[:cntrl:]]/}"
+    id=$(herdr workspace list --all 2>/dev/null | jq -r --arg n "$name" '[.result.workspaces[] | select(.label == $n)][0].workspace_id // empty' 2>/dev/null)
+    if [ -n "$id" ]; then herdr workspace focus "$id" >/dev/null 2>&1; return 0; fi
+    cfg_var ssh_cmd REMOTE_SSH "ssh -t $REMOTE_SSH_OPTS {node}"; ssh_cmd=${ssh_cmd//\{node\}/$node}
+    # shellcheck disable=SC2086
+    herdr workspace create --label "$name" --hidden --focus -- $ssh_cmd "$(remote_cmd "$pane")" >/dev/null 2>&1
 }
 agent_jump() {  # agent_jump <machine> <pane>
     case "$2" in ''|*[!A-Za-z0-9:_-]*) return 1 ;; esac
-    if [ "$1" != "$HOST" ] && remote_view "$1" "$2"; then return 0; fi
+    if [ "$1" != "$HOST" ] && remote_workspace "$1" "${2%%:*}" "$2"; then return 0; fi
     if [ "$1" = "$HOST" ]; then ( herdr agent focus "$2" >/dev/null 2>&1 & )
     else
         machine_known "$1" || return 1
@@ -6331,6 +6354,7 @@ act_slack() {                                                                   
     printf '%s' "$FLASH_MSG"
 }
 act_clamp() { panel_width_clamp "$@"; }                                                         # (the width of the panel pane is kept between the two settings)
+act_mountws() { ui_load; remote_workspace "$1" "$2" >/dev/null 2>&1; }   # <machine> <workspace id>: a click on a workspace of another machine (the left panel)
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
     [ -n "${CLAUDECODE:-}" ] && return 0
@@ -7100,7 +7124,7 @@ bhote_cli() {
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
         reminder) bhote_info; cli_reminder "$@" ;;
-        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
+        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|mountws|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;
@@ -7114,6 +7138,7 @@ bhote_cli() {
         monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
         doctor) cli_doctor ;;
+        remote-warm) bhote_info; remote_warm ;;
         chat|attach|mux|view) local _bd; bhoted_bin_set _bd; [ -n "$_bd" ] || { echo "bhote: $cmd needs the Rust daemon (bhoted not found)" >&2; return 1; }; exec "$_bd" "$cmd" "$@" ;;   # (the chat panel, the native mux: a terminal on the pane server, the server itself)
         version|--version|-V) version_label_set; if [ -n "$json" ]; then printf '{"version":%s,"build":%s}\n' "$(json_str "$VERSION")" "$(json_str "$VERSION_LABEL")"; else echo "bhote $VERSION_LABEL"; fi ;;
         add)  local title="" who="" st="" desc="" arg pin="" proj="" dep="" depl=""

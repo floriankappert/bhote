@@ -31,7 +31,7 @@ fn node_json(s: &Server, n: &Node) -> Option<Value> {
             let resume = q.agent.as_deref().map(|a| resume_of(a, sess, &q.resume)).unwrap_or_default();
             Some(json!({"leaf": {"n": q.n, "label": q.label, "cwd": q.foreground().1, "cmd": q.cmd, "agent": q.agent, "session": sess, "resume": resume}}))
         }
-        Node::Split { dir, ratio, a, b } => match (node_json(s, a), node_json(s, b)) {
+        Node::Split { dir, ratio, a, b, .. } => match (node_json(s, a), node_json(s, b)) {
             (Some(x), Some(y)) => Some(json!({"split": if *dir == Dir::Right { "right" } else { "down" }, "ratio": ratio, "a": x, "b": y})),
             (Some(x), None) | (None, Some(x)) => Some(x),
             (None, None) => None,
@@ -49,7 +49,7 @@ pub fn snapshot(s: &Server) -> Value {
             tabs.push(json!({"id": t.id, "label": t.label, "no_panels": t.no_panels, "focus": n_of(t.focus), "zoomed": t.zoomed.and_then(n_of), "root": root}));
         }
         if tabs.is_empty() { continue; }
-        wss.push(json!({"id": w.id, "label": w.label, "cwd": w.cwd, "next_tab": w.next_tab, "next_pane": w.next_pane, "active_tab": w.tabs.get(w.active).map(|t| t.id), "tabs": tabs}));
+        wss.push(json!({"id": w.id, "label": w.label, "cwd": w.cwd, "next_tab": w.next_tab, "next_pane": w.next_pane, "hidden": w.hidden, "active_tab": w.tabs.get(w.active).map(|t| t.id), "tabs": tabs}));
     }
     json!({"version": 1, "active_workspace": s.world.ws.get(s.world.active).map(|w| w.id), "workspaces": wss})
 }
@@ -91,7 +91,7 @@ impl Server {
         let ratio = v.get("ratio").and_then(|r| r.as_f64()).unwrap_or(0.5) as f32;
         let a = self.build(wi, tab, v.get("a")?, made);
         let b = self.build(wi, tab, v.get("b")?, made);
-        match (a, b) { (Some(a), Some(b)) => Some(Node::Split { dir, ratio, a: Box::new(a), b: Box::new(b) }), (Some(x), None) | (None, Some(x)) => Some(x), _ => None }
+        match (a, b) { (Some(a), Some(b)) => Some(Node::Split { dir, ratio, fixed: super::layout::Fixed::None, a: Box::new(a), b: Box::new(b) }), (Some(x), None) | (None, Some(x)) => Some(x), _ => None }
     }
 }
 
@@ -105,6 +105,7 @@ pub fn load(s: &mut Server) -> bool {
         let u = |k: &str, d: u64| w.get(k).and_then(|x| x.as_u64()).unwrap_or(d) as u32;
         let id = u("id", 0); if id == 0 { continue; }
         let wi = s.world.restore_workspace(id, w.get("label").and_then(|x| x.as_str()).unwrap_or(""), w.get("cwd").and_then(|x| x.as_str()).unwrap_or(""), u("next_tab", 2), u("next_pane", 1));
+        s.world.ws[wi].hidden = w.get("hidden").and_then(|x| x.as_bool()).unwrap_or(false);
         for t in w.get("tabs").and_then(|t| t.as_array()).cloned().unwrap_or_default() {
             let tid = t.get("id").and_then(|x| x.as_u64()).unwrap_or(1) as u32;
             let mut made = Vec::new();

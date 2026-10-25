@@ -3,6 +3,10 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Dir { Right, Down }
 
+/// How a split is cut: by its ratio, or the first / second child has a fixed size in cells (the panels: a bigger window gives the room to the other side).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Fixed { None, First(u16), Second(u16) }
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Side { Left, Right, Up, Down }
 
@@ -20,17 +24,20 @@ pub struct Rect { pub x: u16, pub y: u16, pub w: u16, pub h: u16 }
 pub enum Node {
     Leaf(u32),
     /// `ratio`: the share of the first child (of the space without the divider)
-    Split { dir: Dir, ratio: f32, a: Box<Node>, b: Box<Node> },
+    Split { dir: Dir, ratio: f32, fixed: Fixed, a: Box<Node>, b: Box<Node> },
 }
 
 /// A divider: where it is, along which axis it runs and the path of its split in the tree (false = first child).
 #[derive(Clone, Debug, PartialEq)]
-pub struct Divider { pub dir: Dir, pub x: u16, pub y: u16, pub len: u16, pub path: Vec<bool>, pub rect: Rect }
+pub struct Divider { pub dir: Dir, pub x: u16, pub y: u16, pub len: u16, pub path: Vec<bool>, pub rect: Rect, /// the size of the first child
+    pub first: u16 }
 
-fn cut(total: u16, ratio: f32) -> u16 {
+/// The size of the first child of a split over `total` cells (the divider takes one).
+fn cut(total: u16, ratio: f32, fixed: Fixed) -> u16 {
     let avail = total.saturating_sub(1);
     if avail < 2 { return avail; }
-    ((avail as f32 * ratio).round() as u16).clamp(1, avail - 1)
+    let first = match fixed { Fixed::None => (avail as f32 * ratio).round() as u16, Fixed::First(n) => n, Fixed::Second(n) => avail.saturating_sub(n) };
+    first.clamp(1, avail - 1)
 }
 
 impl Node {
@@ -41,12 +48,12 @@ impl Node {
     fn walk(&self, r: Rect, out: &mut Vec<(u32, Rect)>, divs: &mut Vec<Divider>, path: &mut Vec<bool>) {
         match self {
             Node::Leaf(p) => out.push((*p, r)),
-            Node::Split { dir, ratio, a, b } => {
+            Node::Split { dir, ratio, fixed, a, b } => {
                 let (ra, rb, div) = match dir {
-                    Dir::Right => { let wa = cut(r.w, *ratio); (Rect { w: wa, ..r }, Rect { x: r.x + wa + 1, w: r.w.saturating_sub(wa + 1), ..r }, (r.x + wa, r.y, r.h)) }
-                    Dir::Down => { let ha = cut(r.h, *ratio); (Rect { h: ha, ..r }, Rect { y: r.y + ha + 1, h: r.h.saturating_sub(ha + 1), ..r }, (r.x, r.y + ha, r.w)) }
+                    Dir::Right => { let wa = cut(r.w, *ratio, *fixed); (Rect { w: wa, ..r }, Rect { x: r.x + wa + 1, w: r.w.saturating_sub(wa + 1), ..r }, (r.x + wa, r.y, r.h)) }
+                    Dir::Down => { let ha = cut(r.h, *ratio, *fixed); (Rect { h: ha, ..r }, Rect { y: r.y + ha + 1, h: r.h.saturating_sub(ha + 1), ..r }, (r.x, r.y + ha, r.w)) }
                 };
-                divs.push(Divider { dir: *dir, x: div.0, y: div.1, len: div.2, path: path.clone(), rect: r });
+                divs.push(Divider { dir: *dir, x: div.0, y: div.1, len: div.2, path: path.clone(), rect: r, first: match dir { Dir::Right => ra.w, Dir::Down => ra.h } });
                 path.push(false); a.walk(ra, out, divs, path); path.pop();
                 path.push(true); b.walk(rb, out, divs, path); path.pop();
             }
@@ -56,7 +63,7 @@ impl Node {
     /// `target` becomes a split of itself (first child) and `new` (second child); `ratio` is what the old pane keeps.
     pub fn split(&mut self, target: u32, new: u32, dir: Dir, ratio: f32) -> bool {
         match self {
-            Node::Leaf(p) if *p == target => { *self = Node::Split { dir, ratio: ratio.clamp(0.05, 0.95), a: Box::new(Node::Leaf(target)), b: Box::new(Node::Leaf(new)) }; true }
+            Node::Leaf(p) if *p == target => { *self = Node::Split { dir, ratio: ratio.clamp(0.05, 0.95), fixed: Fixed::None, a: Box::new(Node::Leaf(target)), b: Box::new(Node::Leaf(new)) }; true }
             Node::Leaf(_) => false,
             Node::Split { a, b, .. } => a.split(target, new, dir, ratio) || b.split(target, new, dir, ratio),
         }
@@ -108,22 +115,39 @@ impl Node {
 
     /// Moves a divider of the pane by `amount` (a share of that split) toward `side`. The divider on that side of the pane
     /// is taken; a pane at the edge moves its inner divider that way (the nearest split along the axis).
-    pub fn resize(&mut self, target: u32, side: Side, amount: f32) -> bool {
+    pub fn resize(&mut self, target: u32, side: Side, amount: f32, area: Rect) -> bool {
         let anc = self.ancestors(target);
         let pick = anc.iter().rev().find(|(_, d, in_a)| *d == side.axis() && *in_a == side.forward()).or_else(|| anc.iter().rev().find(|(_, d, _)| *d == side.axis())).cloned();
         let Some((path, _, _)) = pick else { return false };
-        if let Some(Node::Split { ratio, .. }) = self.at_mut(&path) {
-            *ratio = (*ratio + if side.forward() { amount } else { -amount }).clamp(0.05, 0.95);
-            return true;
-        }
-        false
+        let (mut out, mut divs) = (Vec::new(), Vec::new());
+        self.rects(area, &mut out, &mut divs);
+        let Some(d) = divs.iter().find(|d| d.path == path) else { return false };
+        let total = match d.dir { Dir::Right => d.rect.w, Dir::Down => d.rect.h }.saturating_sub(1).max(1);
+        let delta = ((amount * total as f32).round() as i32).max(1);
+        let pos = d.first as i32 + if side.forward() { delta } else { -delta };
+        self.set_divider(&path, d.rect, pos.clamp(1, total as i32 - 1) as u16);
+        true
     }
 
-    /// The ratio of the divider at `path` is set so that its position is `pos` cells from the start of `rect`.
+    /// The divider at `path` is put `pos` cells from the start of `rect` (a split with a fixed size keeps that size).
     pub fn set_divider(&mut self, path: &[bool], rect: Rect, pos: u16) {
-        if let Some(Node::Split { dir, ratio, .. }) = self.at_mut(path) {
+        if let Some(Node::Split { dir, ratio, fixed, .. }) = self.at_mut(path) {
             let total = match dir { Dir::Right => rect.w, Dir::Down => rect.h }.saturating_sub(1).max(1);
+            let pos = pos.clamp(1, total.saturating_sub(1).max(1));
+            *fixed = match *fixed { Fixed::None => Fixed::None, Fixed::First(_) => Fixed::First(pos), Fixed::Second(_) => Fixed::Second(total - pos) };
             *ratio = (pos as f32 / total as f32).clamp(0.05, 0.95);
+        }
+    }
+
+    /// The split that holds this pane gets a fixed size for it (cells): its side keeps that size when the window changes.
+    pub fn fix_size_of(&mut self, pane: u32, size: u16) -> bool {
+        match self {
+            Node::Leaf(_) => false,
+            Node::Split { fixed, a, b, .. } => {
+                if matches!(**a, Node::Leaf(p) if p == pane) { *fixed = Fixed::First(size); return true; }
+                if matches!(**b, Node::Leaf(p) if p == pane) { *fixed = Fixed::Second(size); return true; }
+                a.fix_size_of(pane, size) || b.fix_size_of(pane, size)
+            }
         }
     }
 }
@@ -189,13 +213,29 @@ mod tests {
     }
 
     #[test]
+    fn a_fixed_size_stays_when_the_window_grows() {
+        let mut n = Node::Leaf(1);
+        n.split(1, 2, Dir::Right, 0.5);
+        n.fix_size_of(2, 30);   // pane 2 (second child) is 30 cells
+        assert_eq!(rects(&n, 101, 10)[1].1.w, 30);
+        assert_eq!(rects(&n, 201, 10)[1].1.w, 30);
+        assert_eq!(rects(&n, 201, 10)[0].1.w, 170);
+        let area = Rect { x: 0, y: 0, w: 201, h: 10 };
+        assert!(n.resize(2, Side::Left, 0.05, area)); // grows by about 10 cells
+        assert!(rects(&n, 201, 10)[1].1.w >= 38);
+        let w = rects(&n, 201, 10)[1].1.w;
+        assert_eq!(rects(&n, 301, 10)[1].1.w, w, "the new size is kept, too");
+    }
+
+    #[test]
     fn resize_moves_the_divider() {
         let mut n = Node::Leaf(1);
         n.split(1, 2, Dir::Right, 0.5);
-        assert!(n.resize(2, Side::Left, 0.25)); // pane 2 grows to the left
-        match &n { Node::Split { ratio, .. } => assert!((ratio - 0.25).abs() < 1e-6), _ => panic!() }
-        assert!(n.resize(1, Side::Left, 0.05)); // pane 1 sits at the edge: its inner divider still moves left
-        match &n { Node::Split { ratio, .. } => assert!((ratio - 0.20).abs() < 1e-6), _ => panic!() }
-        assert!(!n.resize(1, Side::Up, 0.1));
+        let area = Rect { x: 0, y: 0, w: 81, h: 24 };
+        assert!(n.resize(2, Side::Left, 0.25, area)); // pane 2 grows to the left
+        match &n { Node::Split { ratio, .. } => assert!((ratio - 0.25).abs() < 0.02, "{ratio}"), _ => panic!() }
+        assert!(n.resize(1, Side::Left, 0.05, area)); // pane 1 sits at the edge: its inner divider still moves left
+        match &n { Node::Split { ratio, .. } => assert!((ratio - 0.20).abs() < 0.03, "{ratio}"), _ => panic!() }
+        assert!(!n.resize(1, Side::Up, 0.1, area));
     }
 }

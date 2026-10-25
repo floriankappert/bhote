@@ -13,7 +13,11 @@ impl Tab {
     pub fn new(id: u32, label: String, pane: u32) -> Tab { Tab { id, label, root: Node::Leaf(pane), focus: pane, zoomed: None, popup: None, popup_prev: pane, no_panels: false } }
 }
 
-pub struct Workspace { pub id: u32, pub label: String, pub cwd: String, pub tabs: Vec<Tab>, pub active: usize, pub next_tab: u32, pub next_pane: u32 }
+pub struct Workspace {
+    pub id: u32, pub label: String, pub cwd: String, pub tabs: Vec<Tab>, pub active: usize, pub next_tab: u32, pub next_pane: u32,
+    /// the view of a workspace of another machine (the left panel lists those by machine itself): not in `workspace list`, closed when nobody looks for a while
+    pub hidden: bool,
+}
 
 #[derive(Default)]
 pub struct World { pub ws: Vec<Workspace>, pub active: usize, pub next_ws: u32 }
@@ -37,13 +41,13 @@ pub fn parse_name(s: &str, kind: char) -> Option<(u32, u32)> {
 impl World {
     pub fn new_workspace(&mut self, label: &str, cwd: &str) -> usize {
         self.next_ws += 1;
-        self.ws.push(Workspace { id: self.next_ws, label: label.to_string(), cwd: cwd.to_string(), tabs: Vec::new(), active: 0, next_tab: 1, next_pane: 1 });
+        self.ws.push(Workspace { id: self.next_ws, label: label.to_string(), cwd: cwd.to_string(), tabs: Vec::new(), active: 0, next_tab: 1, next_pane: 1, hidden: false });
         self.ws.len() - 1
     }
     /// A workspace with the id and counters it had (after a restart: the names of its panes stay the same).
     pub fn restore_workspace(&mut self, id: u32, label: &str, cwd: &str, next_tab: u32, next_pane: u32) -> usize {
         self.next_ws = self.next_ws.max(id);
-        self.ws.push(Workspace { id, label: label.to_string(), cwd: cwd.to_string(), tabs: Vec::new(), active: 0, next_tab, next_pane });
+        self.ws.push(Workspace { id, label: label.to_string(), cwd: cwd.to_string(), tabs: Vec::new(), active: 0, next_tab, next_pane, hidden: false });
         self.ws.len() - 1
     }
     pub fn ws_index(&self, id: u32) -> Option<usize> { self.ws.iter().position(|w| w.id == id) }

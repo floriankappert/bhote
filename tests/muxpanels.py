@@ -22,6 +22,16 @@ check(lay[by["bhote-right"]]["width"] == 56, "the right panel is 56 columns", la
 check(lay[by["bhote-left"]]["x"] == 0 and lay[by[""]]["x"] > 0 and lay[by["bhote-right"]]["x"] > lay[by[""]]["x"], "left, main, right in this order")
 check(E.focused() == by[""], "the focus stays on the main pane")
 check(os.path.exists(f"{E.T}/side.left") and os.path.exists(f"{E.T}/side.right"), "the panels know their side (BHOTE_SIDE)")
+# the panels keep their width when the window grows (the room goes to the main pane), and one panel does not move the other
+c.resize(230, 50); E.settle(0.8)
+lay2 = {p["pane_id"]: p["rect"] for p in E.layout()["panes"]}
+check(lay2[by["bhote-left"]]["width"] == 40 and lay2[by["bhote-right"]]["width"] == 56 and lay2[by[""]]["width"] > lay[by[""]]["width"], "a bigger window: the panels stay as wide as they were", lay2)
+E.call("pane.resize", {"pane_id": by["bhote-right"], "direction": "left", "amount": 0.1}); E.settle(0.5)
+lay3 = {p["pane_id"]: p["rect"] for p in E.layout()["panes"]}
+check(lay3[by["bhote-right"]]["width"] > 56 and lay3[by["bhote-left"]]["width"] == 40, "a wider right panel leaves the left one alone", lay3)
+c.resize(200, 50); E.settle(0.8)
+check(E.rect(by["bhote-right"])["width"] == lay3[by["bhote-right"]]["width"], "and its new width is kept")
+E.call("pane.resize", {"pane_id": by["bhote-right"], "direction": "right", "amount": 0.1}); E.settle(0.5)
 # a new tab and a new workspace get panels too
 c.send("\x02c"); E.settle(0.6)
 tab2 = [p for p in E.panes() if p["tab_id"] == "w1:t2"]

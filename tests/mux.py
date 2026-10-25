@@ -86,13 +86,13 @@ check(c2.wait_for("hello_21"), "attach again shows the same screen", repr(c2.out
 def size():
     r = call("pane.layout")["result"]["layout"]["panes"][0]["rect"]   # (the bar takes the last row)
     return (r["width"], r["height"])
-check(size() == (100, 29), "the pane has the size of the client (less the bar)", str(size()))
+check(size() == (100, 30), "the pane has the size of the client (no bar with one tab)", str(size()))
 # 6. resize
 c2.resize(90, 28)
 time.sleep(0.5)
-check(size() == (90, 27), "resize reaches the pane", str(size()))
+check(size() == (90, 28), "resize reaches the pane", str(size()))
 c2.send("stty size\r")
-check(c2.wait_for("27 90"), "the program in the pane sees the new size", repr(c2.out[-200:]))
+check(c2.wait_for("28 90"), "the program in the pane sees the new size", repr(c2.out[-200:]))
 # 7. literal prefix key and the control socket
 r = call("pane.send_text", {"text": "echo via_socket\r"})
 check(c2.wait_for("via_socket"), "pane.send_text types into the pane", str(r))

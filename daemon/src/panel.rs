@@ -344,6 +344,10 @@ impl Panel {
             if let Some(t) = self.ref_at(y).cloned() {
                 let id = t.clone();
                 if let Some(wid) = id.strip_prefix("ws:") { self.focus_workspace(wid); return; }   // (a workspace of the left panel: show it)
+                if let Some(rest) = id.strip_prefix("rws:") {   // a workspace of another machine: shown here as a workspace of its own (over ssh)
+                    if let Some((m, w)) = rest.rsplit_once(':') { let (m, w) = (m.to_string(), w.to_string()); self.act(&["mountws", &m, &w], "flash", false); }
+                    self.redraw = true; return;
+                }
                 if let Some(rest) = id.strip_prefix("agent:") {   // an idle agent's card: show the agent
                     if let Some((m, pane)) = rest.rsplit_once('/') { let (m, pane) = (m.to_string(), pane.to_string()); self.agent_jump(&m, &pane); }
                     self.redraw = true; return;

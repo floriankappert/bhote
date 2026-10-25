@@ -17,6 +17,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vt100::Color;
 
+fn bar_mode_load() -> String {
+    let v = crate::config_read(&super::panels::config_path()).get("MUX_BAR").cloned().unwrap_or_default();
+    match v.as_str() { "on" | "full" | "off" => v, _ => "auto".into() }
+}
+
 pub enum Ev {
     PaneOut(u32, Vec<u8>),
     PaneExit(u32),
@@ -101,17 +106,25 @@ pub struct Server {
     pub sidecar: Option<std::process::Child>,
     pub sidecar_at: Option<Instant>,
     pub sidecar_first: bool,
+    /// MUX_BAR: auto (the bar of the tabs only when a workspace has more than one tab), on (always), full (also the workspaces), off
+    pub bar_mode: String,
+    pub no_client_at: Option<Instant>,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
     pub fn area(&self) -> Rect {
         let (c, r) = self.clients.iter().filter(|c| c.view.is_none()).map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))).unwrap_or((80, 24));
-        Rect { x: 0, y: 0, w: c, h: r.saturating_sub(1).max(1) }
+        Rect { x: 0, y: 0, w: c, h: r.saturating_sub(self.bar_rows()).max(1) }
+    }
+
+    /// 1 when the bar is there: always with `on` and `full`, with `auto` when some workspace has more than one tab.
+    pub fn bar_rows(&self) -> u16 {
+        match self.bar_mode.as_str() { "off" => 0, "on" | "full" => 1, _ => self.world.ws.iter().any(|w| w.tabs.len() > 1) as u16 }
     }
 
     /// A pane process in the workspace `ws` for tab `tab` (not yet in the tree).
@@ -214,6 +227,12 @@ impl Server {
         if self.toast.as_ref().map_or(false, |(_, t)| *t <= now) { self.toast = None; self.dirty = true; }
         self.save_state(false);
         self.sidecar_tick();
+        // views of workspaces of other machines hold an ssh connection (and a size over there): they end when nobody has looked for a while
+        if self.clients.iter().all(|c| c.view.is_some()) { if self.no_client_at.is_none() { self.no_client_at = Some(now); } } else { self.no_client_at = None; }
+        if self.no_client_at.map_or(false, |t| now.duration_since(t) > Duration::from_secs(std::env::var("BHOTE_VIEW_GRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(30))) {
+            let hidden: Vec<u32> = self.world.ws.iter().filter(|w| w.hidden).flat_map(|w| { let mut l = Vec::new(); for t in &w.tabs { t.root.leaves(&mut l); } l }).collect();
+            for p in hidden { self.close_pane(p); }
+        }
     }
 
     pub fn handle(&mut self, ev: Ev) {
@@ -304,23 +323,34 @@ impl Server {
         if !tag.is_empty() { let w = tag.chars().count() as u16 + 2; g.put(cols.saturating_sub(w), y, &format!(" {tag} "), &warn); }
     }
 
+    /// Without a bar the mode, a prompt or a notification is shown on the last row, over the pane, as long as there is something to say.
+    fn status_overlay(&self, g: &mut Grid, y: u16, c: &Client) {
+        let warn = Cell { fg: Color::Rgb(20, 22, 34), bg: Color::Rgb(250, 179, 135), bold: true, ..Cell::default() };
+        let cols = g.cols;
+        if let super::actions::Mode::Prompt(p) = &c.mode { g.fill(0, y, cols, 1, &warn); g.put(1, y, &format!("{}: {}", p.label(), p.text), &warn); return; }
+        let text = if let Some((t, _)) = &self.toast { t.clone() } else { c.mode.tag(&self.km) };
+        if text.is_empty() { return; }
+        let w = text.chars().count() as u16 + 2;
+        g.put(cols.saturating_sub(w), y, &format!(" {text} "), &warn);
+    }
+
     /// What is on the bar: x, text, what a click does, whether it is the shown one.
     pub fn bar_items(&self) -> Vec<(u16, String, super::actions::Click, bool)> {
         let mut v = Vec::new();
         let mut x = 1u16;
         let width = |t: &str| t.chars().map(|c| if render::wide(c) { 2 } else { 1 }).sum::<u16>();
-        for (i, w) in self.world.ws.iter().enumerate() {
+        if self.bar_mode == "full" { for (i, w) in self.world.ws.iter().enumerate().filter(|(_, w)| !w.hidden) {
             let t = format!(" {} {} ", i + 1, w.label);
             let n = width(&t); v.push((x, t, super::actions::Click::Workspace(i), i == self.world.active)); x += n;
-        }
+        } }
         if let Some(w) = self.world.ws.get(self.world.active) {
-            x += 3;
+            if self.bar_mode == "full" { x += 3; }
             for (i, t) in w.tabs.iter().enumerate() {
                 let tx = format!(" {} ", t.label);
                 let n = width(&tx); v.push((x, tx, super::actions::Click::Tab(i), i == w.active)); x += n;
             }
             // the separator between workspaces and tabs
-            v.push((v.iter().filter(|i| matches!(i.2, super::actions::Click::Workspace(_))).map(|i| i.0 + width(&i.1)).max().unwrap_or(1), " │ ".into(), super::actions::Click::None, false));
+            if self.bar_mode == "full" { v.push((v.iter().filter(|i| matches!(i.2, super::actions::Click::Workspace(_))).map(|i| i.0 + width(&i.1)).max().unwrap_or(1), " │ ".into(), super::actions::Click::None, false)); }
         }
         v
     }
@@ -366,7 +396,7 @@ impl Server {
             }
         }
         super::actions::overlay(self, ci, &rects, &mut g);
-        if area.h < rows { self.bar(&mut g, area.h, &self.clients[ci]); }
+        if area.h < rows { self.bar(&mut g, area.h, &self.clients[ci]); } else if rows > 0 { self.status_overlay(&mut g, rows - 1, &self.clients[ci]); }
         (g, modes)
     }
 
