@@ -17,8 +17,8 @@ impl Pty {
     /// `argv` empty: the user's shell (login shell of $SHELL, else /bin/sh).
     pub fn spawn(argv: &[String], cwd: Option<&Path>, cols: u16, rows: u16, env: &[(String, String)]) -> io::Result<Pty> {
         let (mut m, mut s) = (-1i32, -1i32);
-        let ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
-        if unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null(), &ws) } != 0 { return Err(io::Error::last_os_error()); }
+        let mut ws = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: 0, ws_ypixel: 0 };
+        if unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null_mut(), &mut ws as *mut _ as _) } != 0 { return Err(io::Error::last_os_error()); }
         let (master, slave) = unsafe { (OwnedFd::from_raw_fd(m), OwnedFd::from_raw_fd(s)) };
         unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC); libc::fcntl(slave.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC); }
         let mut cmd = if argv.is_empty() {
