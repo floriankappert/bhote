@@ -152,7 +152,15 @@ impl Server {
             "ping" => Ok(json!({"pong": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id()})),
             "server.stop" => { self.end_clients("stopped"); self.quit = true; Ok(json!({"stopped": true})) }
             "server.reload_config" => Ok(json!({"status": "applied", "diagnostics": []})),
-            "notification.show" => Ok(json!({})),
+            "notification.show" => {
+                // a desktop notification through the terminal (OSC 777), a bell for the sound, and a line on the bar
+                let title = s(p, "title").or_else(|| p.get("text").and_then(|t| t.as_str())).unwrap_or("").replace(|c: char| c.is_control() || c == ';', " ");
+                let body = s(p, "body").unwrap_or("").replace(|c: char| c.is_control() || c == ';', " ");
+                self.clip.push(format!("\x1b]777;notify;{title};{body}\x07{}", if s(p, "sound").map_or(true, |x| x != "none") { "\x07" } else { "" }));
+                self.toast = Some((if body.is_empty() { title } else { format!("{title}: {body}") }, std::time::Instant::now() + std::time::Duration::from_secs(8)));
+                self.dirty = true;
+                Ok(json!({}))
+            }
             "api.snapshot" => {
                 let panes: Vec<Value> = self.panes.values().map(|q| self.pane_json(q)).collect();
                 let agents: Vec<Value> = panes.iter().filter(|q| q.get("agent").is_some()).cloned().collect();
@@ -300,6 +308,25 @@ impl Server {
                 Ok(json!({}))
             }
             // ── agents (the state comes from the hooks, see agent.rs)
+            "pane.report_agent" | "pane.report_agent_session" => { let id = self.pane_of(p)?; self.report_agent(id, p); Ok(json!({})) }
+            "pane.release_agent" => { let id = self.pane_of(p)?; let q = self.panes.get_mut(&id).unwrap(); q.reported = None; q.chk = None; Ok(json!({})) }
+            "agent.list" => Ok(json!({"agents": self.panes.values().filter(|q| q.agent.is_some()).map(|q| self.pane_json(q)).collect::<Vec<_>>(), "type": "agent_list"})),
+            "agent.get" => { let id = self.pane_of(p)?; if self.panes[&id].agent.is_none() { return Err(nf("agent")); } Ok(json!({"agent": self.pane_json(&self.panes[&id]), "type": "agent_info"})) }
+            "agent.read" => {
+                let id = self.pane_of(p)?;
+                let src = s(p, "source").unwrap_or("recent-unwrapped").to_string();
+                let lines = p.get("lines").and_then(|l| l.as_u64()).unwrap_or(200) as usize;
+                Ok(json!({"text": self.read_text(id, &src, lines, src == "recent-unwrapped"), "type": "agent_read"}))
+            }
+            "agent.prompt" => {
+                // the text as a paste (bracketed when the agent asked for that), then Enter a moment later: the agent takes it as typed and sent
+                let id = self.pane_of(p)?;
+                let text = s(p, "text").unwrap_or("").to_string();
+                let q = self.panes.get_mut(&id).unwrap();
+                if q.screen().bracketed_paste() { q.input(format!("\x1b[200~{text}\x1b[201~").as_bytes()); } else { q.input(text.as_bytes()); }
+                self.later.push((std::time::Instant::now() + std::time::Duration::from_millis(250), id, b"\r".to_vec()));
+                Ok(json!({}))
+            }
             "agent.focus" => { let id = self.pane_of(p)?; self.set_focus(id); Ok(json!({"pane": self.pane_json(&self.panes[&id]), "type": "pane_info"})) }
             m => Err(("unknown_method", format!("no method {m}"))),
         }

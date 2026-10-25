@@ -83,11 +83,16 @@ pub struct Server {
     pub clip: Vec<String>,
     /// panels are being made (their splits must not start that again)
     pub ensuring: bool,
+    /// bytes for a pane later (the Enter after a prompt): when, pane, bytes
+    pub later: Vec<(Instant, u32, Vec<u8>)>,
+    /// a notification line on the bar and until when
+    pub toast: Option<(String, Instant)>,
+    pub last_detect: Option<Instant>,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -104,7 +109,7 @@ impl Server {
         let cwd = sp.cwd.clone().unwrap_or_else(|| if w.cwd.is_empty() { self.cwd.clone() } else { w.cwd.clone() });
         let name = world::pane_name(w.id, n);
         let mut env = self.env.clone();
-        env.extend([("HERDR_PANE_ID".to_string(), name), ("HERDR_TAB_ID".to_string(), world::tab_name(w.id, tab)), ("HERDR_WORKSPACE_ID".to_string(), world::ws_name(w.id)), ("BHOTE_MUX".to_string(), "native".to_string())]);
+        env.extend([("HERDR_PANE_ID".to_string(), name), ("HERDR_TAB_ID".to_string(), world::tab_name(w.id, tab)), ("HERDR_WORKSPACE_ID".to_string(), world::ws_name(w.id)), ("BHOTE_MUX".to_string(), "native".to_string()), ("HERDR_ENV".to_string(), "1".to_string())]);
         env.extend(sp.env.iter().cloned());
         let a = self.area();
         let pty = Pty::spawn(&sp.cmd, Some(std::path::Path::new(&cwd)), a.w, a.h, &env)?;
@@ -178,6 +183,15 @@ impl Server {
         self.dirty = true;
     }
 
+    /// What happens without an event: delayed keys, the agents, the toast.
+    fn tick(&mut self) {
+        let now = Instant::now();
+        let due: Vec<(Instant, u32, Vec<u8>)> = { let (d, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.later).into_iter().partition(|(t, _, _)| *t <= now); self.later = rest; d };
+        for (_, id, b) in due { if let Some(p) = self.panes.get_mut(&id) { p.input(&b); } }
+        if self.last_detect.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(400)) { self.last_detect = Some(now); self.detect_agents(); }
+        if self.toast.as_ref().map_or(false, |(_, t)| *t <= now) { self.toast = None; self.dirty = true; }
+    }
+
     pub fn handle(&mut self, ev: Ev) {
         match ev {
             Ev::PaneOut(id, b) => if let Some(p) = self.panes.get_mut(&id) { p.output(&b); self.dirty = true; },
@@ -228,6 +242,7 @@ impl Server {
             return;
         }
         for (x, text, _, active) in self.bar_items() { g.put(x, y, &text, if active { &hi } else { &base }); }
+        if let Some((t, _)) = &self.toast { let w = t.chars().count() as u16 + 2; g.put(cols.saturating_sub(w + 1), y, &format!(" {t} "), &warn); return; }
         let tag = c.mode.tag(&self.km);
         if !tag.is_empty() { let w = tag.chars().count() as u16 + 2; g.put(cols.saturating_sub(w), y, &format!(" {tag} "), &warn); }
     }
@@ -387,7 +402,7 @@ pub fn run() -> i32 {
     let mut s = Server::new(tx, env);
     if let Err(e) = s.create_workspace("", &Spawn::default(), true) { eprintln!("bhoted mux: no pane: {e}"); let _ = std::fs::remove_file(&path); return 1; }
     while !s.quit {
-        let wait = if s.dirty { Duration::from_millis(4) } else if s.clients.iter().any(|c| c.esc_at.is_some()) { Duration::from_millis(10) } else { Duration::from_secs(3600) };
+        let wait = if s.dirty { Duration::from_millis(4) } else if s.clients.iter().any(|c| c.esc_at.is_some()) { Duration::from_millis(10) } else { Duration::from_millis(400) };
         match rx.recv_timeout(wait) {
             Ok(ev) => s.handle(ev),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -395,6 +410,7 @@ pub fn run() -> i32 {
         }
         for _ in 0..512 { match rx.try_recv() { Ok(ev) => s.handle(ev), Err(_) => break } }
         super::actions::flush_esc(&mut s);
+        s.tick();
         if s.dirty { s.render(); }
     }
     let _ = std::fs::remove_file(&path);

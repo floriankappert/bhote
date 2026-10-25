@@ -43,13 +43,25 @@ pub struct Pane {
     pub agent: Option<String>,
     pub status: String,
     pub session: Option<serde_json::Value>,
+    /// the state an agent reported itself (a hook): it counts until it is released, and instead of the screen
+    pub reported: Option<String>,
+    /// the working/idle/blocked state without the "done" flag, and a change that waits to settle
+    pub base: String,
+    pub pend: Option<(String, std::time::Instant)>,
+    /// when the process in front was looked at last, and the revision of the screen then
+    pub chk: Option<std::time::Instant>,
+    pub chk_rev: u64,
+    /// the command that starts the agent's session again (M7)
+    pub resume: Vec<String>,
+    /// the last status an event was sent for
+    pub evsent: String,
 }
 
 fn nz(n: u16) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(n.max(1)).unwrap() }
 
 impl Pane {
     pub fn new(id: u32, (ws, n, tab): (u32, u32, u32), pty: Pty, cols: u16, rows: u16, cmd: Vec<String>, cwd: String) -> Pane {
-        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None }
+        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new() }
     }
     pub fn agent_name(&self) -> Option<&str> { self.agent.as_deref() }
     pub fn agent_status(&self) -> &str { if self.status.is_empty() { "unknown" } else { &self.status } }

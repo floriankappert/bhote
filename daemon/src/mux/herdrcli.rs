@@ -3,7 +3,7 @@
 use super::client::call;
 use serde_json::{json, Map, Value};
 
-const VALUE_OPTS: &[&str] = &["pane", "direction", "ratio", "cwd", "env", "label", "source", "lines", "amount", "source-pane", "target-pane", "workspace", "tab", "token", "clear-token", "machine", "body", "sound", "plugin", "timeout", "state", "match", "title", "command"];
+const VALUE_OPTS: &[&str] = &["pane", "direction", "ratio", "cwd", "env", "label", "source", "lines", "amount", "source-pane", "target-pane", "workspace", "tab", "token", "clear-token", "machine", "body", "sound", "plugin", "timeout", "state", "match", "title", "command", "agent", "agent-session-id", "agent-session-path", "message", "seq", "session-start-source"];
 
 struct Args { pos: Vec<String>, opt: Vec<(String, String)>, flags: Vec<String> }
 
@@ -41,6 +41,8 @@ fn pane_param(a: &Args, positional: bool) -> Option<String> {
 
 pub fn run(args: &[String]) -> i32 {
     // `--machine X` reaches another machine through kharka (M8); here only this one
+    // after a lone `--` come the words that start the agent again (report-agent)
+    let (args, resume): (&[String], Vec<String>) = match args.iter().position(|x| x == "--") { Some(i) => (&args[..i], args[i + 1..].to_vec()), None => (args, Vec::new()) };
     let a = Args::parse(args);
     if a.get("machine").is_some() { eprintln!("herdr: --machine is not supported by the native mux"); return 1; }
     let noun = a.pos.first().map(|s| s.as_str()).unwrap_or("");
@@ -91,6 +93,14 @@ pub fn run(args: &[String]) -> i32 {
             for kv in a.all("token") { if let Some((k, v)) = kv.split_once('=') { t.insert(k.to_string(), json!(v)); } }
             put("tokens", Value::Object(t)); put("clear_tokens", json!(a.all("clear-token")));
         }
+        ("pane", "report-agent") | ("pane", "report-agent-session") => {
+            method = if verb == "report-agent" { "pane.report_agent".into() } else { "pane.report_agent_session".into() };
+            put("pane_id", json!(pane(true)));
+            for (k, key) in [("source", "source"), ("agent", "agent"), ("state", "state"), ("message", "message"), ("agent-session-id", "agent_session_id"), ("agent-session-path", "agent_session_path")] { if let Some(v) = a.get(k) { put(key, json!(v)); } }
+            if let Some(n) = a.get("seq").and_then(|n| n.parse::<u64>().ok()) { put("seq", json!(n)); }
+            if !resume.is_empty() { put("resume", json!(resume)); }
+        }
+        ("pane", "release-agent") => { method = "pane.release_agent".into(); put("pane_id", json!(pane(true))); if let Some(v) = a.get("source") { put("source", json!(v)); } }
         ("workspace", "list") => method = "workspace.list".into(),
         ("workspace", "get") | ("workspace", "focus") | ("workspace", "close") => { method = format!("workspace.{verb}"); if let Some(w) = a.pos.get(2) { put("workspace_id", json!(w)); } }
         ("workspace", "rename") => { method = "workspace.rename".into(); put("workspace_id", json!(a.pos.get(2))); put("label", json!(rest(3).join(" "))); }
