@@ -12,5 +12,6 @@ strip = true
 [dependencies]
 libc = "0.2.191"
 serde_json = { version = "1", features = ["preserve_order"] }
+unicode-width = "0.2.2"
 ureq = "2"
 vt100 = "0.18.1"

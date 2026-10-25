@@ -163,6 +163,9 @@ fn main() {
     ui::init_locale();
     let a: Vec<String> = std::env::args().collect();
     if a.len() >= 2 && a[1] == "panel" { std::process::exit(panel::run()); }
+    if a.len() >= 2 && a[1] == "mux" { std::process::exit(mux::server::run()); }                     // the pane server (docs/mux-protocol.md)
+    if a.len() >= 2 && a[1] == "attach" { std::process::exit(mux::client::attach()); }               // a terminal on the pane server (starts it when none runs)
+    if a.len() >= 3 && a[1] == "mux-call" { std::process::exit(mux::client::call_main(&a[2..])); }  // bhoted mux-call <method> [params json]
     if a.len() < 4 { eprintln!("usage: bhoted index|run <topic dir> <out> [--parent <pid>] [--pid-file <file>]"); std::process::exit(2); }
     let opt = |name: &str| a.iter().position(|x| x == name).and_then(|i| a.get(i + 1)).cloned();
     let parent: Option<i32> = opt("--parent").and_then(|v| v.parse().ok());

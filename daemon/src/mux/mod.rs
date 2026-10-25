@@ -6,3 +6,10 @@ use std::num::NonZeroU16;
 pub fn parser(rows: u16, cols: u16, scrollback: usize) -> vt100::Parser {
     vt100::Parser::new(NonZeroU16::new(rows.max(1)).unwrap(), NonZeroU16::new(cols.max(1)).unwrap(), scrollback)
 }
+
+pub mod proto;
+pub mod pty;
+pub mod render;
+pub mod pane;
+pub mod server;
+pub mod client;
