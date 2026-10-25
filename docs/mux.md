@@ -7,7 +7,7 @@
 - `ctrl+b d` — detach; `bhote` again shows the same screen. After a restart of the machine or a killed server, the session is back
   (layout, names such as `w1:p2`, labels, folders; agents with a session are started again with their resume command, `claude --resume <id>`).
   The session is `~/.local/state/bhote/mux-session.json` (`BHOTE_MUX_STATE`).
-- `bhote doctor` — what the mux needs, and what is left of herdr.
+- A panel pane is marked with `BHOTE_PANEL=1` (the mux and the herdr plugin set it); a plain `bhote` in a terminal always starts the mux, even when the terminal inherited `HERDR_*` variables. `bhote doctor` — what the mux needs, and what is left of herdr.
 
 Inside a pane, `herdr ...` is a link to the mux with herdr's words and JSON (`herdr pane list`, `pane split`, `agent prompt`, `workspace create`, …),
 so the scripts of bhote, the Claude Code hooks of herdr's integration (`pane.report_agent_session`) and `herdr-kharka` work unchanged.

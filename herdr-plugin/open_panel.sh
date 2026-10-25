@@ -48,7 +48,7 @@ tabs=$(printf '%s' "$panes" | jq -r '
 
 # the command typed into a NEW (or our own, labelled) pane: the full path, single-quoted
 case "$bhote" in *"'"*) exit 0 ;; esac
-run="'$bhote'"
+run="BHOTE_PANEL=1 '$bhote'"   # (BHOTE_PANEL=1: this is the panel; a plain `bhote` in a terminal starts the mux)
 # the right panel (or the single one) of a tab, made next to its agent pane: label $2
 make_right() {  # make_right <agent pane> <label>
     total=$("$herdr" pane layout --pane "$1" 2>/dev/null | jq -r --arg p "$1" '[.result.layout.panes[] | select(.pane_id == $p)][0].rect.width // empty')

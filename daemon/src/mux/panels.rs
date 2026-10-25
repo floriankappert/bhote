@@ -54,7 +54,7 @@ impl Server {
 
     fn panel_spawn(&self, side: &str) -> Option<Spawn> {
         let bin = bhote_bin()?;
-        Some(Spawn { cmd: vec![bin.to_string_lossy().into_owned()], cwd: None, env: vec![("BHOTE_SIDE".into(), if side == LEFT { "left".into() } else { "right".into() })] })
+        Some(Spawn { cmd: vec![bin.to_string_lossy().into_owned()], cwd: None, env: vec![("BHOTE_PANEL".into(), "1".into()), ("BHOTE_SIDE".into(), if side == LEFT { "left".into() } else { "right".into() })] })
     }
 
     fn chat_spawn(&self) -> Option<Spawn> {
