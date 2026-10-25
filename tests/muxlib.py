@@ -6,11 +6,14 @@ if not os.path.exists(BIN):
     print("skipped: no bhoted binary"); sys.exit(0)
 
 class Env:
-    def __init__(self, keys=None, limit=120):
+    def __init__(self, keys=None, limit=120, config="AUTOSTART=off\n", panel_bin=None):
         self.T = tempfile.mkdtemp()
         self.sock = f"{self.T}/mux.sock"
         if keys is not None: open(f"{self.T}/keys", "w").write(keys)
-        self.env = dict(os.environ, BHOTE_MUX_SOCK=self.sock, SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=self.T, ENV="", BHOTE_KEYS=f"{self.T}/keys")
+        open(f"{self.T}/config", "w").write(config)
+        if panel_bin is not None:
+            open(f"{self.T}/panel", "w").write(panel_bin); os.chmod(f"{self.T}/panel", 0o755)
+        self.env = dict(os.environ, BHOTE_CONFIG=f"{self.T}/config", BHOTE_BIN=f"{self.T}/panel" if panel_bin is not None else "/nonexistent", BHOTE_MUX_SOCK=self.sock, SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=self.T, ENV="", BHOTE_KEYS=f"{self.T}/keys")
         for k in ("HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "XDG_RUNTIME_DIR"): self.env.pop(k, None)
         self.fails = 0; self.clients = []
         signal.signal(signal.SIGALRM, lambda *_: (print("FAIL the test ran out of time", flush=True), self.cleanup(), os._exit(1))); signal.alarm(limit)
@@ -29,6 +32,12 @@ class Env:
         return next(p for p in self.layout(pane)['panes'] if p['pane_id'] == pane)['rect']
     def tabs(self): return self.result("tab.list").get("tabs", [])
     def workspaces(self): return self.result("workspace.list").get("workspaces", [])
+    def start(self):
+        """A server without a client (the first attach starts one by itself)."""
+        subprocess.Popen([BIN, "mux"], env=self.env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        for _ in range(60):
+            if self.call("ping").get("result"): return
+            time.sleep(0.1)
     def client(self, cols=100, rows=30):
         c = Client(self, cols, rows); self.clients.append(c); return c
     def settle(self, t=0.25): time.sleep(t)

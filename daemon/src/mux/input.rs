@@ -86,7 +86,9 @@ impl Parser {
                     let n = utf8_len(c);
                     if b.len() < 1 + n { return None; }
                     let inner = Self::plain(&b[1..1 + n]).unwrap_or_default();
-                    Some((1 + n, Some(key(format!("alt+{}", inner), &b[..1 + n]))))
+                    // modifiers in the order ctrl, alt, shift
+                    let name = match inner.strip_prefix("ctrl+") { Some(r) => format!("ctrl+alt+{r}"), None => format!("alt+{inner}") };
+                    Some((1 + n, Some(key(name, &b[..1 + n]))))
                 }
             };
         }
@@ -168,7 +170,7 @@ mod tests {
         assert_eq!(names(b"\x00\x02\x1c"), ["ctrl+space", "ctrl+b", "ctrl+\\"]);
         assert_eq!(names(b"O?%"), ["shift+o", "?", "%"]);
         assert_eq!(names(b"\x1b[A\x1b[1;5D\x1b[1;7C\x1b[1;8A\x1bOB"), ["up", "ctrl+left", "ctrl+alt+right", "ctrl+alt+shift+up", "down"]);
-        assert_eq!(names(b"\x1bx\x1b\r\x1b\x1b"), ["alt+x", "alt+enter", "alt+esc"]);
+        assert_eq!(names(b"\x1bx\x1b\r\x1b\x1b\x1b\x14"), ["alt+x", "alt+enter", "alt+esc", "ctrl+alt+t"]);
         assert_eq!(names(b"\x1b[3~\x1b[5~\x1b[1;3H\x1b[Z"), ["delete", "pageup", "alt+home", "shift+tab"]);
         assert_eq!(names("ä日".as_bytes()), ["ä", "日"]);
         assert_eq!(names(b"\x1b[13;2u"), ["shift+enter"]);

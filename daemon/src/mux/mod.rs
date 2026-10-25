@@ -20,3 +20,4 @@ pub mod herdrcli;
 pub mod input;
 pub mod keymap;
 pub mod actions;
+pub mod panels;

@@ -220,6 +220,9 @@ pub fn run(s: &mut Server, id: u32, action: &str, arg: Option<&str>) {
         "close_workspace" => if let Some((wi, _)) = cur { let mut l = Vec::new(); for t in &s.world.ws[wi].tabs { t.root.leaves(&mut l); } for p in l { s.close_pane(p); } },
         "previous_workspace" | "next_workspace" => { let n = s.world.ws.len(); if n > 0 { s.world.active = if action == "next_workspace" { (s.world.active + 1) % n } else { (s.world.active + n - 1) % n }; } }
         "reload_config" => s.km = Keymap::load(&keys_path()),
+        "focus_panel" => s.focus_panel(),
+        "open_panel" => if let Some((wi, ti)) = cur { let (wid, tid) = (s.world.ws[wi].id, s.world.ws[wi].tabs[ti].id); let cfg = super::panels::PanelCfg::load(); s.make_panels(wid, tid, &cfg, true); },
+        "popup" => if let Some(cmd) = arg { s.open_popup(vec!["sh".into(), "-c".into(), cmd.to_string()]); },
         "run" => if let Some(cmd) = arg {
             let mut c = std::process::Command::new("sh");
             c.args(["-c", cmd]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
@@ -387,7 +390,10 @@ fn mouse(s: &mut Server, id: u32, m: Mouse) {
         return;
     }
     let Some((_, tab)) = s.world.current() else { return };
-    let (rects, divs) = World::rects(tab, area);
+    let (rects, divs) = match tab.popup {
+        Some(pp) => { let q = World::popup_rect(area); (vec![(pp, Rect { x: q.x + 1, y: q.y + 1, w: q.w.saturating_sub(2), h: q.h.saturating_sub(2) })], Vec::new()) }
+        None => World::rects(tab, area),
+    };
     // a divider
     if m.press && button == 0 && !motion && !wheel {
         for d in &divs {

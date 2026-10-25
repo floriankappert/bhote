@@ -1,7 +1,17 @@
 //! Workspaces, tabs and their split trees. Panes are only ids here; the server owns them.
 use super::layout::{Divider, Node, Rect};
 
-pub struct Tab { pub id: u32, pub label: String, pub root: Node, pub focus: u32, pub zoomed: Option<u32> }
+pub struct Tab {
+    pub id: u32, pub label: String, pub root: Node, pub focus: u32, pub zoomed: Option<u32>,
+    /// a floating pane over the tab (not in the tree) and the pane that had the focus before it
+    pub popup: Option<u32>, pub popup_prev: u32,
+    /// the user closed the panels of this tab: they are not made again by themselves
+    pub no_panels: bool,
+}
+
+impl Tab {
+    pub fn new(id: u32, label: String, pane: u32) -> Tab { Tab { id, label, root: Node::Leaf(pane), focus: pane, zoomed: None, popup: None, popup_prev: pane, no_panels: false } }
+}
 
 pub struct Workspace { pub id: u32, pub label: String, pub cwd: String, pub tabs: Vec<Tab>, pub active: usize, pub next_tab: u32, pub next_pane: u32 }
 
@@ -42,7 +52,7 @@ impl World {
         Some((wi, ti))
     }
     pub fn tab_of_pane(&self, pane: u32) -> Option<(usize, usize)> {
-        for (wi, w) in self.ws.iter().enumerate() { for (ti, t) in w.tabs.iter().enumerate() { if t.root.contains(pane) { return Some((wi, ti)); } } }
+        for (wi, w) in self.ws.iter().enumerate() { for (ti, t) in w.tabs.iter().enumerate() { if t.root.contains(pane) || t.popup == Some(pane) { return Some((wi, ti)); } } }
         None
     }
 
@@ -63,10 +73,17 @@ impl World {
         (out, divs)
     }
 
+    /// Where a popup is: 70% of the area, in the middle (the pane inside has a border of one cell).
+    pub fn popup_rect(area: Rect) -> Rect {
+        let (w, h) = ((area.w as u32 * 7 / 10).max(10).min(area.w as u32) as u16, (area.h as u32 * 7 / 10).max(5).min(area.h as u32) as u16);
+        Rect { x: area.x + (area.w - w) / 2, y: area.y + (area.h - h) / 2, w, h }
+    }
+
     /// Drops a pane from its tab; an empty tab goes, and with it an empty workspace. Returns false when the pane was in no tab.
     pub fn remove_pane(&mut self, pane: u32) -> bool {
         let Some((wi, ti)) = self.tab_of_pane(pane) else { return false };
         let tab = &mut self.ws[wi].tabs[ti];
+        if tab.popup == Some(pane) { tab.popup = None; tab.focus = if tab.root.contains(tab.popup_prev) { tab.popup_prev } else { let mut l = Vec::new(); tab.root.leaves(&mut l); l[0] }; return true; }
         if tab.root.remove(pane) {
             if tab.zoomed == Some(pane) { tab.zoomed = None; }
             if tab.focus == pane { let mut l = Vec::new(); tab.root.leaves(&mut l); tab.focus = l[0]; }
@@ -98,9 +115,9 @@ mod tests {
     fn remove_pane_cascades() {
         let mut w = World::default();
         let a = w.new_workspace("a", "/");
-        w.ws[a].tabs.push(Tab { id: 1, label: "1".into(), root: Node::Leaf(10), focus: 10, zoomed: None });
+        w.ws[a].tabs.push(Tab::new(1, "1".into(), 10));
         let b = w.new_workspace("b", "/");
-        w.ws[b].tabs.push(Tab { id: 1, label: "1".into(), root: Node::Leaf(20), focus: 20, zoomed: None });
+        w.ws[b].tabs.push(Tab::new(1, "1".into(), 20));
         w.active = 1;
         assert!(w.remove_pane(20));
         assert_eq!((w.ws.len(), w.active), (1, 0));

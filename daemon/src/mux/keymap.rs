@@ -4,6 +4,7 @@
 //!     split_vertical = prefix+v alt+enter     # action = key key ...   (`prefix+` first: after the prefix key)
 //!     switch_tab = prefix+1..9 alt+1..9        # a digit range: the key's digit is the argument
 //!     run prefix+t notify-send hello           # run <key> <shell command>
+//!     popup ctrl+alt+t bhote find              # popup <key> <shell command>: a floating pane over the tab
 //!     close_pane = none                        # removes the keys of an action
 use std::collections::HashMap;
 
@@ -46,6 +47,8 @@ close_workspace = prefix+shift+k
 previous_workspace = prefix+shift+p alt+up
 next_workspace = prefix+shift+n alt+down
 reload_config = prefix+q
+focus_panel = prefix+t
+open_panel = prefix+b
 ";
 
 /// A key as written in a file, as the input parser names it: modifiers in the order ctrl, alt, shift; capitals are shift+letter.
@@ -94,10 +97,13 @@ impl Keymap {
         for line in text.lines() {
             let line = line.split(" #").next().unwrap_or("").trim();
             if line.is_empty() || line.starts_with('#') { continue; }
-            if let Some(rest) = line.strip_prefix("run ") {
-                if let Some((k, cmd)) = rest.trim().split_once(char::is_whitespace) { self.bind(k, Bind { action: "run".into(), arg: Some(cmd.trim().to_string()) }); }
-                continue;
+            for verb in ["run", "popup"] {
+                if let Some(rest) = line.strip_prefix(verb).and_then(|r| r.strip_prefix(' ')) {
+                    if let Some((k, cmd)) = rest.trim().split_once(char::is_whitespace) { self.bind(k, Bind { action: verb.into(), arg: Some(cmd.trim().to_string()) }); }
+                    continue;
+                }
             }
+            if line.starts_with("run ") || line.starts_with("popup ") { continue; }
             let Some((name, keys)) = line.split_once('=') else { continue };
             let (name, keys) = (name.trim(), keys.trim());
             if name == "prefix" { self.prefix = canon(keys); continue; }

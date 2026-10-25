@@ -8,7 +8,8 @@ if not os.path.exists(BIN):
     print("skipped: no bhoted binary"); sys.exit(0)
 T = tempfile.mkdtemp()
 SOCK = f"{T}/mux.sock"
-ENV = dict(os.environ, BHOTE_MUX_SOCK=SOCK, SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=T, ENV="")
+open(f"{T}/config", "w").write("AUTOSTART=off\n")
+ENV = dict(os.environ, BHOTE_CONFIG=f"{T}/config", BHOTE_MUX_SOCK=SOCK, SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=T, ENV="")
 fails = 0
 def ok(m): print("ok   " + m, flush=True)
 def bad(m, extra=""):

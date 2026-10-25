@@ -1,7 +1,7 @@
 //! `bhoted mux`: the pane server. One event loop owns all state; threads only read (ptys, sockets) and send events.
 use super::input;
 use super::keymap::Keymap;
-use super::layout::{Dir, Node, Rect};
+use super::layout::{Dir, Rect};
 use super::pane::Pane;
 use super::proto::{self, read_frame, write_frame};
 use super::pty::{self, Pty};
@@ -81,11 +81,13 @@ pub struct Server {
     pub last_focus: Option<u32>,
     /// OSC 52 sequences to hand to every terminal
     pub clip: Vec<String>,
+    /// panels are being made (their splits must not start that again)
+    pub ensuring: bool,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new() }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -95,7 +97,7 @@ impl Server {
     }
 
     /// A pane process in the workspace `ws` for tab `tab` (not yet in the tree).
-    fn make_pane(&mut self, wi: usize, tab: u32, sp: &Spawn) -> std::io::Result<u32> {
+    pub fn make_pane(&mut self, wi: usize, tab: u32, sp: &Spawn) -> std::io::Result<u32> {
         let id = self.next_pane; self.next_pane += 1;
         let w = &mut self.world.ws[wi];
         let n = w.next_pane; w.next_pane += 1;
@@ -122,7 +124,7 @@ impl Server {
         let pid = match self.make_pane(wi, 1, sp) { Ok(p) => p, Err(e) => { self.world.ws.remove(wi); self.world.next_ws -= 1; return Err(e); } };
         let w = &mut self.world.ws[wi];
         w.next_tab = 2;
-        w.tabs.push(Tab { id: 1, label: "1".into(), root: Node::Leaf(pid), focus: pid, zoomed: None });
+        w.tabs.push(Tab::new(1, "1".into(), pid));
         if focus || self.world.ws.len() == 1 { self.world.active = wi; }
         self.after_change();
         Ok((wi, pid))
@@ -134,7 +136,7 @@ impl Server {
         let w = &mut self.world.ws[wi];
         w.next_tab += 1;
         let label = if label.is_empty() { (w.tabs.len() + 1).to_string() } else { label.to_string() };
-        w.tabs.push(Tab { id: tid, label, root: Node::Leaf(pid), focus: pid, zoomed: None });
+        w.tabs.push(Tab::new(tid, label, pid));
         if focus { w.active = w.tabs.len() - 1; self.world.active = wi; }
         self.after_change();
         Ok((tid, pid))
@@ -156,6 +158,7 @@ impl Server {
     }
 
     pub fn close_pane(&mut self, id: u32) {
+        if self.is_panel(id) { if let Some((wi, ti)) = self.world.tab_of_pane(id) { self.world.ws[wi].tabs[ti].no_panels = true; } }
         self.panes.remove(&id);
         self.world.remove_pane(id);
         if self.world.ws.is_empty() { self.end_clients("exited"); self.quit = true; }
@@ -164,9 +167,13 @@ impl Server {
 
     /// The panes get the size their rectangle has now (also those of tabs that are not shown).
     pub fn after_change(&mut self) {
+        self.ensure_panels();
         let area = self.area();
         let mut sizes = Vec::new();
-        for w in &self.world.ws { for t in &w.tabs { let (r, _) = World::rects(t, area); sizes.extend(r); } }
+        for w in &self.world.ws { for t in &w.tabs {
+            let (r, _) = World::rects(t, area); sizes.extend(r);
+            if let Some(p) = t.popup { let q = World::popup_rect(area); sizes.push((p, Rect { x: q.x + 1, y: q.y + 1, w: q.w.saturating_sub(2).max(1), h: q.h.saturating_sub(2).max(1) })); }
+        } }
         for (id, r) in sizes { if let Some(p) = self.panes.get_mut(&id) { p.resize(r.w, r.h); } }
         self.dirty = true;
     }
@@ -269,6 +276,20 @@ impl Server {
             if *id == tab.focus {
                 modes = Modes::of(s);
                 if !s.hide_cursor() { let (cr, cc) = s.cursor_position(); if cr < r.h && cc < r.w { g.cursor = Some((r.x + cc, r.y + cr)); } }
+            }
+        }
+        if let Some(pid) = tab.popup {
+            if let Some(p) = self.panes.get(&pid) {
+                let q = World::popup_rect(area);
+                let edge = Cell { fg: Color::Rgb(137, 220, 235), ..Cell::default() };
+                g.fill(q.x, q.y, q.w, q.h, &Cell::default());
+                for x in q.x + 1..q.x + q.w.saturating_sub(1) { g.put(x, q.y, "─", &edge); g.put(x, q.y + q.h - 1, "─", &edge); }
+                for y in q.y + 1..q.y + q.h.saturating_sub(1) { g.put(q.x, y, "│", &edge); g.put(q.x + q.w - 1, y, "│", &edge); }
+                g.put(q.x, q.y, "╭", &edge); g.put(q.x + q.w - 1, q.y, "╮", &edge); g.put(q.x, q.y + q.h - 1, "╰", &edge); g.put(q.x + q.w - 1, q.y + q.h - 1, "╯", &edge);
+                let s = p.screen(); let (pr, pc) = s.size();
+                g.blit(s, q.x + 1, q.y + 1, pc.get().min(q.w.saturating_sub(2)), pr.get().min(q.h.saturating_sub(2)));
+                modes = Modes::of(s);
+                g.cursor = if s.hide_cursor() { None } else { let (cr, cc) = s.cursor_position(); Some((q.x + 1 + cc, q.y + 1 + cr)) };
             }
         }
         super::actions::overlay(self, ci, &rects, &mut g);
