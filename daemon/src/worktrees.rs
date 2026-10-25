@@ -38,6 +38,20 @@ pub fn of_repo(dir: &str) -> Vec<Wt> {
     out
 }
 
+/// The name of a workspace that starts in `dir`, as herdr named them: `repo (branch)` in the main checkout, `repo (wt1)` in a linked worktree `repo-wt1`;
+/// the folder's name outside a git repository.
+pub fn label_for(dir: &str) -> String {
+    let plain = || Path::new(dir).file_name().map(|n| n.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_else(|| "/".into());
+    let Some(top) = git(dir, &["rev-parse", "--show-toplevel"]).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) else { return plain() };
+    let list = of_repo(dir);
+    let Some(i) = list.iter().position(|w| w.path == top) else { return plain() };
+    let w = &list[i];
+    if i == 0 { return format!("{} ({})", w.repo, if w.branch.is_empty() { "main" } else { &w.branch }); }
+    let name = Path::new(&top).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let suffix = name.strip_prefix(&format!("{}-", w.repo)).unwrap_or(&name).to_string();
+    format!("{} ({})", w.repo, suffix)
+}
+
 fn render(v: &[Wt]) -> String { v.iter().map(|w| format!("{}{US}{}{US}{}{US}{}\n", w.repo, w.branch, w.path, w.dirty as u8)).collect() }
 fn parse(t: &str) -> Vec<Wt> {
     t.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() < 4 { None } else { Some(Wt { repo: f[0].into(), branch: f[1].into(), path: f[2].into(), dirty: f[3] == "1" }) } }).collect()
@@ -84,6 +98,9 @@ mod tests {
         assert_eq!((v[0].repo.as_str(), v[0].branch.as_str(), v[0].dirty), ("proj", "main", false));
         assert_eq!((v[1].branch.as_str(), v[1].dirty), ("feat", true));
         assert_eq!(parse(&render(&v)), v);
+        assert_eq!(label_for(main.to_str().unwrap()), "proj (main)");
+        assert_eq!(label_for(t.join("proj-wt1").to_str().unwrap()), "proj (wt1)");
+        assert_eq!(label_for(t.to_str().unwrap()), t.file_name().unwrap().to_string_lossy());
         let _ = fs::remove_dir_all(&t);
     }
 }

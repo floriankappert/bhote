@@ -231,7 +231,7 @@ impl Server {
 
     pub fn create_workspace(&mut self, label: &str, sp: &Spawn, focus: bool) -> std::io::Result<(usize, u32)> {
         let cwd = sp.cwd.clone().unwrap_or_else(|| self.cwd.clone());
-        let label = if label.is_empty() { std::path::Path::new(&cwd).file_name().map(|f| f.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_else(|| "/".into()) } else { label.to_string() };
+        let label = if label.is_empty() { crate::worktrees::label_for(&cwd) } else { label.to_string() };
         let wi = self.world.new_workspace(&label, &cwd);
         let pid = match self.make_pane(wi, 1, sp) { Ok(p) => p, Err(e) => { self.world.ws.remove(wi); self.world.next_ws -= 1; return Err(e); } };
         let w = &mut self.world.ws[wi];
