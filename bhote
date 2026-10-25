@@ -7280,7 +7280,7 @@ cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of h
     command -v herdr >/dev/null 2>&1 && say info "herdr is installed ($(herdr --version 2>/dev/null)): MUX=herdr still starts it; it goes after this release" || say ok "herdr is not needed"
     if command -v herdr >/dev/null 2>&1 && herdr plugin list 2>/dev/null | grep -q bhote.panel; then say info "the herdr plugin bhote.panel is linked: it only matters with MUX=herdr (the native mux makes the panels itself)"; fi
     if [ "$(cfg_get STORE local)" = kharka ] || [ "$(cfg_get AGENTS_VIA herdr)" = kharka ]; then
-        local hk; hk=$(pgrep -af herdr-kharka 2>/dev/null | grep -v pgrep)
+        local hk; hk=$(ps -A -o command= 2>/dev/null | grep '[h]erdr-kharka')
         if [ -z "$hk" ]; then say info "kharka: no herdr-kharka runs (the mux starts one with its server)"
         elif printf '%s' "$hk" | grep -q -- '--herdr-socket'; then say ok "kharka: herdr-kharka runs against the mux socket"
         else say WARN "kharka: a herdr-kharka runs against herdr's socket (a service?): it writes this machine's entry too; stop it (Linux: systemctl --user stop herdr-kharka; macOS: launchctl bootout gui/$(id -u)/dev.kharka.herdr)"; fi
