@@ -5124,6 +5124,42 @@ claude_profiles() {  # claude_profiles: sets CLAUDE_DIRS to every Claude Code pr
     done
     [ ${#CLAUDE_DIRS[@]} -gt 0 ] || { CLAUDE_DIRS[0]=${CLAUDE_CONFIG_DIR:-$HOME/.claude}; mkdir -p "${CLAUDE_DIRS[0]}"; }
 }
+# bhote integration install|uninstall|status claude: the hook that tells the multiplexer what a Claude Code session does (integrations/claude/hooks/agent-state.sh),
+# in every Claude profile's settings.json (SessionStart, UserPromptSubmit, PostToolUse, Notification, Stop, SessionEnd). Safe to repeat.
+HOOK_EVENTS="SessionStart UserPromptSubmit PostToolUse Notification Stop SessionEnd"
+cli_integration() {
+    local act=${1:-status} what=${2:-claude} hd dest prof f ev tmp n=0 src
+    [ "$what" = claude ] || { echo "bhote: integration claude (the only one so far)" >&2; return 2; }
+    command -v jq >/dev/null 2>&1 || { echo "bhote: jq is needed" >&2; return 1; }
+    dest="$HOME/.local/share/bhote/hooks/agent-state.sh"
+    if [ "$act" = install ]; then
+        hd=$(w_share integrations/claude/hooks) || { echo "bhote: the hook is not part of this installation" >&2; return 1; }
+        src=$hd/integrations/claude/hooks/agent-state.sh
+        mkdir -p "${dest%/*}" && cp "$src" "$dest" && chmod +x "$dest"
+    fi
+    claude_profiles
+    for prof in "${CLAUDE_DIRS[@]}"; do
+        f=$prof/settings.json
+        case "$act" in
+            install)
+                [ -f "$f" ] || printf '{}\n' > "$f"
+                tmp=$(mktemp "$prof/.settings.XXXXXX") || continue
+                if jq --arg cmd "sh $dest" --arg evs "$HOOK_EVENTS" '
+                    .hooks = (.hooks // {}) | reduce ($evs | split(" ")[]) as $e (.;
+                        if ([.hooks[$e][]?.hooks[]? | select(.command == $cmd)] | length) > 0 then .
+                        else .hooks[$e] = ((.hooks[$e] // []) + [{"hooks": [{"type": "command", "command": $cmd}]}]) end)' "$f" > "$tmp" 2>/dev/null
+                then mv "$tmp" "$f"; printf 'hook -> %s\n' "${f/#$HOME/~}"; n=$(( n + 1 )); else rm -f "$tmp"; echo "bhote: could not change ${f/#$HOME/~}" >&2; fi ;;
+            uninstall)
+                [ -f "$f" ] || continue
+                tmp=$(mktemp "$prof/.settings.XXXXXX") || continue
+                if jq --arg cmd "sh $dest" '.hooks |= (if . == null then null else with_entries(.value |= map(select((.hooks // []) | map(.command == $cmd) | any | not))) | with_entries(select(.value | length > 0)) end)' "$f" > "$tmp" 2>/dev/null
+                then mv "$tmp" "$f"; printf 'hook removed from %s\n' "${f/#$HOME/~}"; n=$(( n + 1 )); else rm -f "$tmp"; fi ;;
+            status) if [ -f "$f" ] && grep -q "agent-state.sh" "$f" 2>/dev/null; then printf 'ok    %s\n' "${f/#$HOME/~}"; else printf 'none  %s\n' "${f/#$HOME/~}"; fi ;;
+        esac
+    done
+    [ "$act" = install ] && [ "$n" -gt 0 ] && echo "Claude Code reads its settings when a session starts: new sessions report their state exactly."
+    return 0
+}
 cli_skills() {  # bhote skills [install]: the Claude Code skills bhote and bhote-install into every Claude profile (skill_put)
     local sd n done_n=0 prof
     sd=$(w_share integrations/claude/skills) || { echo "bhote: the skills are not part of this installation" >&2; return 1; }
@@ -7096,6 +7132,7 @@ bhote — topics and agents next to herdr.
   bhote bar                          one status bar line (Waybar-style JSON)
   bhote handover <topic> --to <m/p> --branch <b> --commit <c>   (the source agent reports; the command it gets says it)
   bhote setup [--json]               the setup wizard (--json: only what is in place)
+  bhote integration install|uninstall|status claude  the Claude Code hook that tells the mux what a session does (exact states)
   bhote skills [install]             put the Claude Code skills bhote and bhote-install into every Claude profile (then /bhote-install)
   bhote jump <machine> <pane> | <agent>  show that agent in herdr (another machine: focused there)
   bhote kharka watch [install|uninstall|status]  restart herdr-kharka when its entry stops being written (one look; install: a timer every minute)
@@ -7140,6 +7177,7 @@ bhote_cli() {
         update) cli_update ;;
         reload) cli_reload ;;
         skills) cli_skills "$@" ;;
+        integration) cli_integration "$@" ;;
         mod) cli_mod "$@" ;;
         jump) bhote_info; cli_jump "$@" ;;
         kharka) bhote_info; cli_kharka "$@" ;;
