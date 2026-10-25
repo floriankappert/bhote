@@ -40,6 +40,12 @@ impl World {
         self.ws.push(Workspace { id: self.next_ws, label: label.to_string(), cwd: cwd.to_string(), tabs: Vec::new(), active: 0, next_tab: 1, next_pane: 1 });
         self.ws.len() - 1
     }
+    /// A workspace with the id and counters it had (after a restart: the names of its panes stay the same).
+    pub fn restore_workspace(&mut self, id: u32, label: &str, cwd: &str, next_tab: u32, next_pane: u32) -> usize {
+        self.next_ws = self.next_ws.max(id);
+        self.ws.push(Workspace { id, label: label.to_string(), cwd: cwd.to_string(), tabs: Vec::new(), active: 0, next_tab, next_pane });
+        self.ws.len() - 1
+    }
     pub fn ws_index(&self, id: u32) -> Option<usize> { self.ws.iter().position(|w| w.id == id) }
     pub fn current(&self) -> Option<(&Workspace, &Tab)> { let w = self.ws.get(self.active)?; Some((w, w.tabs.get(w.active)?)) }
     pub fn current_mut(&mut self) -> Option<&mut Tab> { let w = self.ws.get_mut(self.active)?; w.tabs.get_mut(w.active) }

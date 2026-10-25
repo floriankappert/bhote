@@ -22,3 +22,4 @@ pub mod keymap;
 pub mod actions;
 pub mod panels;
 pub mod agent;
+pub mod session;

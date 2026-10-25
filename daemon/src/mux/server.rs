@@ -88,11 +88,15 @@ pub struct Server {
     /// a notification line on the bar and until when
     pub toast: Option<(String, Instant)>,
     pub last_detect: Option<Instant>,
+    /// the session file (session.rs) and what was written to it last
+    pub state_file: Option<std::path::PathBuf>,
+    pub state_saved: String,
+    pub state_at: Option<Instant>,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -102,10 +106,13 @@ impl Server {
     }
 
     /// A pane process in the workspace `ws` for tab `tab` (not yet in the tree).
-    pub fn make_pane(&mut self, wi: usize, tab: u32, sp: &Spawn) -> std::io::Result<u32> {
+    pub fn make_pane(&mut self, wi: usize, tab: u32, sp: &Spawn) -> std::io::Result<u32> { self.make_pane_n(wi, tab, None, sp) }
+
+    /// `n`: the number inside the workspace (a restored pane keeps its name), else the next free one.
+    pub fn make_pane_n(&mut self, wi: usize, tab: u32, n: Option<u32>, sp: &Spawn) -> std::io::Result<u32> {
         let id = self.next_pane; self.next_pane += 1;
         let w = &mut self.world.ws[wi];
-        let n = w.next_pane; w.next_pane += 1;
+        let n = match n { Some(n) => { w.next_pane = w.next_pane.max(n + 1); n } None => { let n = w.next_pane; w.next_pane += 1; n } };
         let cwd = sp.cwd.clone().unwrap_or_else(|| if w.cwd.is_empty() { self.cwd.clone() } else { w.cwd.clone() });
         let name = world::pane_name(w.id, n);
         let mut env = self.env.clone();
@@ -166,7 +173,7 @@ impl Server {
         if self.is_panel(id) { if let Some((wi, ti)) = self.world.tab_of_pane(id) { self.world.ws[wi].tabs[ti].no_panels = true; } }
         self.panes.remove(&id);
         self.world.remove_pane(id);
-        if self.world.ws.is_empty() { self.end_clients("exited"); self.quit = true; }
+        if self.world.ws.is_empty() { self.end_clients("exited"); self.quit = true; if let Some(f) = &self.state_file { let _ = std::fs::remove_file(f); } self.state_file = None; }
         self.after_change();
     }
 
@@ -190,6 +197,7 @@ impl Server {
         for (_, id, b) in due { if let Some(p) = self.panes.get_mut(&id) { p.input(&b); } }
         if self.last_detect.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(400)) { self.last_detect = Some(now); self.detect_agents(); }
         if self.toast.as_ref().map_or(false, |(_, t)| *t <= now) { self.toast = None; self.dirty = true; }
+        self.save_state(false);
     }
 
     pub fn handle(&mut self, ev: Ev) {
@@ -400,7 +408,9 @@ pub fn run() -> i32 {
         env.push(("PATH".into(), format!("{}:{}", d.display(), std::env::var("PATH").unwrap_or_default())));
     }
     let mut s = Server::new(tx, env);
-    if let Err(e) = s.create_workspace("", &Spawn::default(), true) { eprintln!("bhoted mux: no pane: {e}"); let _ = std::fs::remove_file(&path); return 1; }
+    s.state_file = Some(super::session::state_path());
+    let restored = super::session::load(&mut s);
+    if !restored { if let Err(e) = s.create_workspace("", &Spawn::default(), true) { eprintln!("bhoted mux: no pane: {e}"); let _ = std::fs::remove_file(&path); return 1; } }
     while !s.quit {
         let wait = if s.dirty { Duration::from_millis(4) } else if s.clients.iter().any(|c| c.esc_at.is_some()) { Duration::from_millis(10) } else { Duration::from_millis(400) };
         match rx.recv_timeout(wait) {
@@ -413,6 +423,7 @@ pub fn run() -> i32 {
         s.tick();
         if s.dirty { s.render(); }
     }
+    s.save_state(true);
     let _ = std::fs::remove_file(&path);
     0
 }

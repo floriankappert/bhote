@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.." || exit 1
 BIN=$PWD/daemon/target/release/bhoted
 [ -x "$BIN" ] && command -v jq >/dev/null 2>&1 || { echo skipped; exit 0; }
-T=$(mktemp -d); printf "AUTOSTART=off\n" > "$T/config"; export BHOTE_CONFIG=$T/config BHOTE_MUX_SOCK=$T/mux.sock SHELL=/bin/sh HOME=$T ENV=/dev/null
+T=$(mktemp -d); printf "AUTOSTART=off\n" > "$T/config"; export BHOTE_MUX_STATE=$T/state.json BHOTE_CONFIG=$T/config BHOTE_MUX_SOCK=$T/mux.sock SHELL=/bin/sh HOME=$T ENV=/dev/null
 unset HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID CLAUDECODE
 mkdir -p "$T/bin"; ln -s "$BIN" "$T/bin/herdr"; export PATH="$T/bin:$PATH"
 ( cd "$T" && exec setsid "$BIN" mux >/dev/null 2>&1 ) &

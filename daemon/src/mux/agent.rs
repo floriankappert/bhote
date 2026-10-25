@@ -51,7 +51,11 @@ impl Server {
                 let (g, _) = p.foreground();
                 let cmd = std::fs::read(format!("/proc/{g}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).ok()
                     .or_else(|| std::process::Command::new("ps").args(["-o", "command=", "-p", &g.to_string()]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or_default();
-                let name = agent_of_cmdline(&cmd).map(String::from);
+                let mut name = agent_of_cmdline(&cmd).map(String::from);
+                // an agent that reported itself stays while something other than a shell is in front (its own helper process, a wrapper)
+                let first = cmd.split_whitespace().next().unwrap_or("").rsplit('/').next().unwrap_or("").trim_start_matches('-');
+                let shell = matches!(first, "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "nu" | "") && agent_of_cmdline(&cmd).is_none();
+                if name.is_none() && p.reported.is_some() && !shell { name = p.agent.clone(); }
                 if name != p.agent {
                     p.agent = name;
                     if p.agent.is_none() { p.status.clear(); p.base.clear(); p.reported = None; p.pend = None; p.session = None; }

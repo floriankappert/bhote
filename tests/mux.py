@@ -9,7 +9,7 @@ if not os.path.exists(BIN):
 T = tempfile.mkdtemp()
 SOCK = f"{T}/mux.sock"
 open(f"{T}/config", "w").write("AUTOSTART=off\n")
-ENV = dict(os.environ, BHOTE_CONFIG=f"{T}/config", BHOTE_MUX_SOCK=SOCK, SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=T, ENV="")
+ENV = dict(os.environ, BHOTE_CONFIG=f"{T}/config", BHOTE_MUX_SOCK=SOCK, BHOTE_MUX_STATE=f"{T}/state.json", SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=T, ENV="")
 fails = 0
 def ok(m): print("ok   " + m, flush=True)
 def bad(m, extra=""):
