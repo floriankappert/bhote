@@ -1,69 +1,96 @@
 #!/usr/bin/env python3
-"""The panels built into the native mux: left and right panel per tab from the settings, widths, no re-creation after a close,
-the jump key, the popup. The panel is a fake program here (it says which side it is). Usage: python3 tests/muxpanels.py"""
+"""The side panels of the native mux: ONE left and ONE right panel for all workspaces and tabs (no new panel, no reload when you switch), fixed widths,
+the sections from the settings, the window that gets narrow or wide, the jump key, hide and show, the divider that can be dragged, the popup.
+The panel is a fake program here (it says which side and which sections). Usage: python3 tests/muxpanels.py"""
 import os, time
 from muxlib import *
-FAKE = '#!/bin/sh\necho "panel side=$BHOTE_SIDE" > "$(dirname "$0")/side.$BHOTE_SIDE"\nprintf "PANEL-%s\\n" "$BHOTE_SIDE"\nexec sleep 600\n'
-E = Env(config="PANEL_LAYOUT=split\nPANEL_LEFT_WIDTH=40\n", panel_bin=FAKE)
+FAKE = '#!/bin/sh\necho "panel side=$BHOTE_SIDE sections=$BHOTE_SECTIONS global=$BHOTE_GLOBAL" > "$(dirname "$0")/side.$BHOTE_SIDE"\nprintf "PANEL-%s %s\\n" "$BHOTE_SIDE" "$$"\nexec sleep 600\n'
+E = Env(config="PANEL_LEFT_WIDTH=40\n", panel_bin=FAKE)
 check = E.check
-labels = lambda: {p["pane_id"]: p.get("label", "") for p in E.panes()}
+sb = lambda: {s["label"]: s for s in E.layout().get("sidebars", [])}
 # nothing before a client shows a size
 E.start()
-check(len(E.panes()) == 1, "before a client attaches there are no panels")
+check(len(E.layout().get("sidebars", [])) == 0, "before a client attaches there are no panels")
 c = E.client(200, 50)
 check(c.wait_for("PANEL-right") and c.wait_for("PANEL-left"), "both panels draw")
 E.settle(0.3)
-pl = E.panes()
-check(len(pl) == 3, "one tab: main pane and two panels", pl)
-by = {p.get("label", ""): p["pane_id"] for p in pl}
-lay = {p["pane_id"]: p["rect"] for p in E.layout()["panes"]}
-check(lay[by["bhote-left"]]["width"] == 40, "the left panel is 40 columns (PANEL_LEFT_WIDTH)", lay)
-check(lay[by["bhote-right"]]["width"] == 56, "the right panel is 56 columns", lay)
-check(lay[by["bhote-left"]]["x"] == 0 and lay[by[""]]["x"] > 0 and lay[by["bhote-right"]]["x"] > lay[by[""]]["x"], "left, main, right in this order")
-check(E.focused() == by[""], "the focus stays on the main pane")
-check(os.path.exists(f"{E.T}/side.left") and os.path.exists(f"{E.T}/side.right"), "the panels know their side (BHOTE_SIDE)")
-# the panels keep their width when the window grows (the room goes to the main pane), and one panel does not move the other
-c.resize(230, 50); E.settle(0.8)
-lay2 = {p["pane_id"]: p["rect"] for p in E.layout()["panes"]}
-check(lay2[by["bhote-left"]]["width"] == 40 and lay2[by["bhote-right"]]["width"] == 56 and lay2[by[""]]["width"] > lay[by[""]]["width"], "a bigger window: the panels stay as wide as they were", lay2)
-E.call("pane.resize", {"pane_id": by["bhote-right"], "direction": "left", "amount": 0.1}); E.settle(0.5)
-lay3 = {p["pane_id"]: p["rect"] for p in E.layout()["panes"]}
-check(lay3[by["bhote-right"]]["width"] > 56 and lay3[by["bhote-left"]]["width"] == 40, "a wider right panel leaves the left one alone", lay3)
-c.resize(200, 50); E.settle(0.8)
-check(E.rect(by["bhote-right"])["width"] == lay3[by["bhote-right"]]["width"], "and its new width is kept")
-E.call("pane.resize", {"pane_id": by["bhote-right"], "direction": "right", "amount": 0.1}); E.settle(0.5)
-# a new tab and a new workspace get panels too
-c.send("\x02c"); E.settle(0.6)
-tab2 = [p for p in E.panes() if p["tab_id"] == "w1:t2"]
-check(len(tab2) == 3, "a new tab gets its panels", tab2)
+s = sb()
+check(set(s) == {"bhote-left", "bhote-right"}, "a left and a right panel", s)
+check(s["bhote-left"]["rect"]["width"] == 40 and s["bhote-right"]["rect"]["width"] == 56, "40 and 56 columns (PANEL_LEFT_WIDTH, the right one)", s)
+main = E.layout()["panes"][0]["rect"]
+check(s["bhote-left"]["rect"]["x"] == 0 and main["x"] == 41 and s["bhote-right"]["rect"]["x"] == main["x"] + main["width"] + 1, "left, main area, right (a cell between each)", (s, main))
+check(len(E.panes()) == 1 and E.focused() == "w1:p1", "the panels are no panes of the workspace; the focus is on the main pane")
+env = open(f"{E.T}/side.left").read()
+check("sections=workspaces,agents,overview" in env and "global=1" in env, "the left panel gets its sections and knows it is global", env)
+check("sections=topics,done,deployments,tests" in open(f"{E.T}/side.right").read(), "the right panel its sections")
+pids = {k: c.out.decode(errors="replace") for k in ()}
+def panel_pids(): return sorted(set(__import__("re").findall(rb"PANEL-(?:left|right) (\d+)", c.out)))
+before = panel_pids()
+# switching workspaces and tabs: the same panels (no new process, nothing made again)
+c.send("\x02c"); E.settle(0.5)
 c.send("\x02C"); E.settle(0.8)
-check(len([p for p in E.panes() if p["workspace_id"] == "w2"]) == 3, "a new workspace gets its panels")
-c.send("\x02P"); E.settle()
-# the jump key: main -> right panel -> back
-main = by[""]
-E.call("pane.focus", {"pane_id": main}); E.settle(0.2)
+c.send("\x02P"); E.settle(0.5)
+E.call("workspace.focus", {"workspace_id": "w1"}); E.settle(0.3)
+check(panel_pids() == before and len(E.layout().get("sidebars", [])) == 2, "new tabs and workspaces and switching between them: the same two panel processes", (before, panel_pids()))
+check(sb()["bhote-left"]["rect"]["width"] == 40 and sb()["bhote-right"]["rect"]["width"] == 56, "and the same widths")
+# a bigger and a smaller window
+c.resize(230, 50); E.settle(0.8)
+s2 = sb(); m2 = E.layout()["panes"][0]["rect"]
+check(s2["bhote-left"]["rect"]["width"] == 40 and s2["bhote-right"]["rect"]["width"] == 56 and m2["width"] > main["width"], "a bigger window: the panels stay as wide, the main area grows", (s2, m2))
+c.resize(100, 50); E.settle(0.8)
+check(set(sb()) == {"bhote-left"} and E.layout()["panes"][0]["rect"]["width"] >= 30, "a narrow window: the right panel goes (the left stays)", sb())
+c.resize(60, 50); E.settle(0.8)
+check(len(sb()) == 1 and sb()["bhote-left"]["rect"]["width"] < 40, "a narrower one: the left panel gets narrower, the main area keeps its room", sb())
+c.resize(50, 50); E.settle(0.8)
+check(len(sb()) == 0, "too narrow for any panel: the main area has it all")
+c.resize(200, 50); E.settle(0.8)
+check(set(sb()) == {"bhote-left", "bhote-right"} and panel_pids() == before, "wide again: both are back (the same processes)", (sb(), panel_pids(), before))
+# the jump key: into the right panel and back
+f0 = E.focused()
 c.send("\x02t"); E.settle(0.3)
-check(E.focused() == by["bhote-right"], "prefix+t jumps to the panel", E.focused())
+n = len(c.out); c.send("typed_into_panel"); E.settle(0.4)
+check(E.focused() == f0, "the panel has the keys, the tab keeps its focus")
 c.send("\x02t"); E.settle(0.3)
-check(E.focused() == main, "and back to the pane before", E.focused())
-# a closed panel stays closed; prefix+b brings it back
-E.call("pane.close", {"pane_id": by["bhote-left"]}); E.settle(0.5)
-t1 = lambda: {p["pane_id"]: p.get("label", "") for p in E.panes() if p["tab_id"] == "w1:t1"}
-check("bhote-left" not in t1().values(), "a closed panel is not made again by itself", t1())
-E.call("pane.focus", {"pane_id": main})
-c.send("\x02b"); E.settle(0.8)
-check("bhote-left" in t1().values(), "prefix+b makes the missing panel again", t1())
-# widths follow pane resize like the plugin's panel_set_width does (the panel is the right/left part of a split)
-newleft = next(k for k, v in t1().items() if v == "bhote-left")
-w0 = E.rect(newleft)["width"]
-E.call("pane.resize", {"pane_id": newleft, "direction": "right", "amount": 0.05}); E.settle(0.3)
-check(E.rect(newleft)["width"] > w0, "pane resize widens the left panel", (w0, E.rect(newleft)["width"]))
-# the popup
-c.kill()
+c.send("back_in_shell"); E.settle(0.4)
+check("back_in_shell" in E.result("pane.read", {"pane_id": f0, "source": "visible"})["text"] and "typed_into_panel" not in E.result("pane.read", {"pane_id": f0, "source": "visible"})["text"], "the jump key goes back: typing reaches the shell again")
+# prefix+b hides the panels and shows them again (their programs keep running)
+c.send("\x02b"); E.settle(0.5)
+check(len(sb()) == 0 and E.layout()["panes"][0]["rect"]["width"] == 200, "prefix+b hides the panels: the main area has all columns")
+c.send("\x02b"); E.settle(0.5)
+check(len(sb()) == 2 and panel_pids() == before, "and shows them again, the same processes")
+# the divider of a panel can be dragged
+r = sb()["bhote-left"]["rect"]
+c.mouse(0, r["x"] + r["width"] + 1, 5); c.mouse(32, r["x"] + r["width"] + 11, 5); c.mouse(0, r["x"] + r["width"] + 11, 5, press=False); E.settle(0.5)
+check(sb()["bhote-left"]["rect"]["width"] >= 49, "dragging the divider makes the left panel wider", sb()["bhote-left"]["rect"])
+# a closed panel stays closed until prefix+shift+b
+E.call("pane.close", {"pane_id": "w0:p1"}); E.settle(0.5)
+check(len(sb()) == 1, "a panel that ends is gone", sb())
+E.settle(1.0)
+check(len(sb()) == 1, "and not made again by itself")
+c.send("\x02B"); E.settle(1.0)
+check(len(sb()) == 2, "prefix+shift+b makes it again", sb())
+# PANEL_LAYOUT=single and the sections of the settings
 E.fresh()
-open(f"{E.T}/keys", "w").write("popup ctrl+alt+t echo popup_$((6*7)); read x; echo got_$x; sleep 1\n")
+open(f"{E.T}/config", "w").write("PANEL_LAYOUT=single\n")
+c.kill(); c = E.client(200, 50); c.wait_for("PANEL-")
+E.settle(0.5)
+check(list(sb()) == ["bhote-right"] and "sections=head,agents" in open(f"{E.T}/side.").read(), "PANEL_LAYOUT=single: one panel with everything", sb())
+E.fresh()
+open(f"{E.T}/config", "w").write("PANEL_LEFT=workspaces,worktrees\nPANEL_RIGHT=topics\nPANEL_LEFT_WIDTH=30\n")
+c.kill(); c = E.client(200, 50); c.wait_for("PANEL-")
+E.settle(0.5)
+check("sections=workspaces,worktrees" in open(f"{E.T}/side.left").read() and "sections=topics" in open(f"{E.T}/side.right").read(), "PANEL_LEFT and PANEL_RIGHT choose the sections")
+check(sb()["bhote-left"]["rect"]["width"] == 30, "PANEL_LEFT_WIDTH")
+E.fresh()
+open(f"{E.T}/config", "w").write("PANEL_RIGHT=off\n")
+c.kill(); c = E.client(200, 50); c.wait_for("PANEL-")
+E.settle(0.5)
+check(list(sb()) == ["bhote-left"], "PANEL_RIGHT=off: no right panel", sb())
+# the popup (a floating pane over the tab)
+E.fresh()
 open(f"{E.T}/config", "w").write("AUTOSTART=off\n")
-c = E.client(120, 40)
+open(f"{E.T}/keys", "w").write("popup ctrl+alt+t echo popup_$((6*7)); read x; echo got_$x; sleep 1\n")
+c.kill(); c = E.client(120, 40)
 assert c.wait_for("$ ")
 c.send("\x1b\x14", 0.6)   # ctrl+alt+t as terminals send it (ESC ctrl+t)
 check(c.wait_for("popup_42"), "the popup key opens a floating pane that runs its command", c.out[-200:])

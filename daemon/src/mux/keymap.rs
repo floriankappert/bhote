@@ -48,7 +48,8 @@ previous_workspace = prefix+shift+p alt+up
 next_workspace = prefix+shift+n alt+down
 reload_config = prefix+q
 focus_panel = prefix+t
-open_panel = prefix+b
+toggle_sidebar = prefix+b
+open_panel = prefix+shift+b
 ";
 
 /// A key as written in a file, as the input parser names it: modifiers in the order ctrl, alt, shift; capitals are shift+letter.

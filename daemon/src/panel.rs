@@ -95,10 +95,12 @@ impl Panel {
         if parse(&latest) > parse(&self.version) { format!("⬆ Update available v{} · , settings", latest) } else { String::new() }
     }
     fn current_project(&self) -> String {
-        if self.pane_id.is_empty() { return String::new(); }
+        // a global side panel (the native mux) belongs to no tab: the project is that of the pane that is shown
+        let me = if envs("BHOTE_GLOBAL").is_empty() { self.pane_id.clone() } else { self.last_fp.clone() };
+        if me.is_empty() { return String::new(); }
         let t = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
         let rows: Vec<Vec<&str>> = t.lines().map(|l| l.split(US).collect()).collect();
-        let tab = rows.iter().find(|r| r.get(1) == Some(&self.pane_id.as_str())).and_then(|r| r.get(2).copied()).unwrap_or("");
+        let tab = rows.iter().find(|r| r.get(1) == Some(&me.as_str())).and_then(|r| r.get(2).copied()).unwrap_or("");
         if tab.is_empty() { return String::new(); }
         for r in &rows { if r.get(2) == Some(&tab) && r.get(3) == Some(&"a") && r.get(5).map_or(false, |j| !j.is_empty()) { return r[5].to_string(); } }
         String::new()

@@ -51,7 +51,7 @@ pub fn snapshot(s: &Server) -> Value {
         if tabs.is_empty() { continue; }
         wss.push(json!({"id": w.id, "label": w.label, "cwd": w.cwd, "next_tab": w.next_tab, "next_pane": w.next_pane, "hidden": w.hidden, "active_tab": w.tabs.get(w.active).map(|t| t.id), "tabs": tabs}));
     }
-    json!({"version": 1, "active_workspace": s.world.ws.get(s.world.active).map(|w| w.id), "workspaces": wss})
+    json!({"version": 1, "sidebars": s.sb_sizes, "active_workspace": s.world.ws.get(s.world.active).map(|w| w.id), "workspaces": wss})
 }
 
 impl Server {
@@ -125,6 +125,7 @@ pub fn load(s: &mut Server) -> bool {
         s.world.ws[wi].active = at;
         if v.get("active_workspace").and_then(|x| x.as_u64()) == Some(id as u64) { active = Some(wi); }
     }
+    if let Some(o) = v.get("sidebars").and_then(|x| x.as_object()) { for (k, n) in o { if let Some(n) = n.as_u64() { s.sb_sizes.insert(k.clone(), n as u16); } } }
     if s.world.ws.is_empty() { return false; }
     s.world.active = active.unwrap_or(0);
     s.after_change();

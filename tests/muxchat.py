@@ -3,7 +3,7 @@
 @ picks another agent, and CHAT_PANEL=bottom makes the pane by itself. Usage: python3 tests/muxchat.py"""
 import os, json, time, subprocess
 from muxlib import *
-E = Env(config="CHAT_PANEL=bottom\nCHAT_HEIGHT=12\nAUTOSTART=on\n", panel_bin="#!/bin/sh\nexec sleep 600\n")
+E = Env(config="CHAT_PANEL=bottom\nCHAT_HEIGHT=12\nAUTOSTART=on\nPANEL_LEFT=off\nPANEL_RIGHT=off\n", panel_bin="#!/bin/sh\nexec sleep 600\n")
 check = E.check
 sess = "11111111-2222-3333-4444-555555555555"
 os.makedirs(f"{E.T}/.claude/projects/proj", exist_ok=True)
@@ -16,10 +16,10 @@ E.start()
 c = E.client(160, 50)
 assert c.wait_for("$ ")
 E.settle(1.0)
-panes = {p.get("label", ""): p["pane_id"] for p in E.panes()}
-check("bhote-chat" in panes, "CHAT_PANEL=bottom: the chat pane is made", panes)
-chat = panes["bhote-chat"]; main = panes[""]
-check(E.rect(chat)["height"] == 12 and E.rect(chat)["y"] > E.rect(main)["y"], "under the main pane, 12 rows high", (E.rect(chat), E.rect(main)))
+sbs = {s["label"]: s for s in E.layout().get("sidebars", [])}
+check("bhote-chat" in sbs, "CHAT_PANEL=bottom: the chat panel is made (for all workspaces)", sbs)
+chat = sbs["bhote-chat"]["pane_id"]; main = "w1:p1"
+check(sbs["bhote-chat"]["rect"]["height"] == 12 and sbs["bhote-chat"]["rect"]["y"] > E.rect(main)["y"], "under the main area, 12 rows high", (sbs, E.rect(main)))
 # the agent runs in the main pane; it reports its session
 E.call("pane.run", {"pane_id": main, "command": "claude"}); E.settle(0.8)
 env2 = dict(E.env); os.makedirs(f"{E.T}/lnk"); os.symlink(BIN, f"{E.T}/lnk/herdr"); env2["PATH"] = f"{E.T}/lnk:" + env2["PATH"]
@@ -31,7 +31,6 @@ t = chat_text()
 check("please fix the build" in t and "Looking at the failing test now." in t and "Bash cargo test" in t, "the history shows the transcript (you, the agent, a tool line)", t)
 check("claude" in t.split("\n")[0], "the header names the agent", t.split("\n")[0])
 # type into the chat and send
-E.call("pane.focus", {"pane_id": chat})
 for ch in "hello from chat": E.call("pane.send_text", {"pane_id": chat, "text": ch})
 E.settle(0.4)
 check("hello from chat" in chat_text(), "typed text shows in the input box")

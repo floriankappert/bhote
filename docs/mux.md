@@ -36,9 +36,19 @@ Copy mode (`prefix [`): `hjkl`, `w b 0 $ g G`, `ctrl+u/d/b/f`, `v` / `V` select,
 
 ## Panels and chat
 
-Every tab gets the panels of bhote as panes (what the herdr plugin did): the right one and, by default (`PANEL_LAYOUT=split`; `single` turns it off), the left one, both the Rust panel (the mux starts it with `BHOTE_RUST_PANEL=1`, no `BHOTED_PANEL` needed). The left panel needs room: the main pane keeps at least 64 columns, so about 160 columns in all
-(`PANEL_LEFT_WIDTH`, `PANEL_MIN_WIDTH`, `PANEL_MAX_WIDTH`), unless `AUTOSTART=off`. A panel you close stays closed in that tab until `prefix b`.
-`CHAT_PANEL=bottom|right` (`CHAT_HEIGHT`) adds the chat pane (`bhote chat`): the history of an agent from its Claude Code transcript, an input field
+The side panels are **global**: one left panel, one right panel and (with `CHAT_PANEL=on`) the chat strip at the bottom, the same for every workspace and tab. Switching
+a workspace changes what the main area shows and nothing in the panels (they keep running, their scroll and selection stay). They are not panes of a tab (`herdr pane list`
+does not list them; `pane list --all` does; `pane layout` has them under `sidebars`).
+
+What a panel shows is a list of **sections**: `workspaces` (of all machines, grouped by machine), `agents` (the cards), `overview` (the agents' summary and the keys at the bottom),
+`topics`, `done`, `deployments`, `tests`, `worktrees` (the git worktrees of the repositories the agents work in, with who works in each), `head`.
+`PANEL_LEFT` (default `workspaces,agents,overview`) and `PANEL_RIGHT` (default `topics,done,deployments,tests`) choose them, `off` takes a panel away,
+`PANEL_LAYOUT=single` makes one panel on the right with everything. Widths: `PANEL_LEFT_WIDTH` (40), the right one `PANEL_MIN_WIDTH`..`PANEL_MAX_WIDTH`; they are fixed (a bigger
+window gives the room to the main area), you can drag a divider. In a narrow window the right panel goes first, then the left one gets narrower, then it goes, too: the main
+area keeps at least 30 columns; a panel that does not fit is not drawn, but keeps running. `prefix b` hides and shows the panels, `prefix t` goes into a panel and back,
+`prefix B` makes a panel that ended again.
+
+`CHAT_PANEL=on` (`CHAT_HEIGHT`) adds the chat strip (`bhote chat`): the history of an agent from its Claude Code transcript, an input field
 (`alt+enter` new line, `up` earlier messages), `@` picks the agent, `enter` sends it to the agent's prompt.
 
 ## Agents

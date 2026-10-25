@@ -4,6 +4,7 @@ use super::keymap::Keymap;
 use super::layout::{Dir, Rect};
 use super::pane::Pane;
 use super::proto::{self, read_frame, write_frame};
+use super::panels::{Edge, Sidebar};
 use super::pty::{self, Pty};
 use super::render::{self, Cell, Grid};
 use super::world::{self, Tab, World};
@@ -134,18 +135,49 @@ pub struct Server {
     pub warm_at: Option<Instant>,
     /// asks the process thread about (pane, process group)
     pub proc_req: Sender<(u32, i32)>,
+    /// the side panels (panels.rs): one left, one right, one at the bottom, for all workspaces; the one that has the keys; hidden; the edges whose panel was closed; the sizes the user gave them
+    pub sidebars: Vec<Sidebar>,
+    pub sb_focus: Option<u32>,
+    pub sb_hidden: bool,
+    pub sb_dismissed: Vec<Edge>,
+    pub sb_sizes: std::collections::HashMap<String, u16>,
+    sb_n: u32,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
         let proc_req = proc_thread(tx.clone());
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None, warm_at: None, proc_req }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None, warm_at: None, proc_req, sidebars: Vec::new(), sb_focus: None, sb_hidden: false, sb_dismissed: Vec::new(), sb_sizes: Default::default(), sb_n: 0 }
     }
 
-    /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
+    /// The size of the window the panes are laid out for: what the smallest attached client shows (80x24 without a client).
+    pub fn screen_size(&self) -> (u16, u16) {
+        self.clients.iter().filter(|c| c.view.is_none()).map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))).unwrap_or((80, 24))
+    }
+
+    /// The height above the bar (the bar is the row below).
+    pub fn full_h(&self) -> u16 { self.screen_size().1.saturating_sub(self.bar_rows()).max(1) }
+
+    /// The main area: the window without the bar and without the side panels. The panes of the tabs are laid out in it.
     pub fn area(&self) -> Rect {
-        let (c, r) = self.clients.iter().filter(|c| c.view.is_none()).map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))).unwrap_or((80, 24));
-        Rect { x: 0, y: 0, w: c, h: r.saturating_sub(self.bar_rows()).max(1) }
+        let (c, _) = self.screen_size(); let h = self.full_h();
+        let (l, r, b) = self.sidebar_sizes(c, h);
+        let x0 = if l > 0 { l + 1 } else { 0 };
+        let w = c.saturating_sub(x0 + if r > 0 { r + 1 } else { 0 });
+        let hm = h.saturating_sub(if b > 0 { b + 1 } else { 0 });
+        Rect { x: x0, y: 0, w: w.max(1), h: hm.max(1) }
+    }
+
+    /// Where the side panels are (those that fit), with their edge; the dividers are the cells next to them.
+    pub fn sidebar_rects(&self) -> Vec<(u32, Rect, Edge)> {
+        let (c, _) = self.screen_size(); let h = self.full_h();
+        let (l, r, b) = self.sidebar_sizes(c, h);
+        let a = self.area();
+        let mut v = Vec::new();
+        if l > 0 { if let Some(s) = self.sidebar_at(Edge::Left) { v.push((s.pane, Rect { x: 0, y: 0, w: l, h }, Edge::Left)); } }
+        if r > 0 { if let Some(s) = self.sidebar_at(Edge::Right) { v.push((s.pane, Rect { x: a.x + a.w + 1, y: 0, w: r, h }, Edge::Right)); } }
+        if b > 0 { if let Some(s) = self.sidebar_at(Edge::Bottom) { v.push((s.pane, Rect { x: a.x, y: a.h + 1, w: a.w, h: b }, Edge::Bottom)); } }
+        v
     }
 
     /// 1 when the bar is there: always with `on` and `full`, with `auto` when some workspace has more than one tab.
@@ -174,6 +206,24 @@ impl Server {
         self.panes.insert(id, Pane::new(id, (self.world.ws[wi].id, n, tab), pty, a.w, a.h, sp.cmd.clone(), cwd));
         let (name, pj) = (self.panes[&id].name(), self.pane_json(&self.panes[&id]));
         self.emit("pane.created", None, json!({"pane": pj, "pane_id": name}));
+        Ok(id)
+    }
+
+    /// A pane that belongs to no workspace (a side panel): the name is w0:pN.
+    pub fn make_global_pane(&mut self, sp: &Spawn, label: &str) -> std::io::Result<u32> {
+        let id = self.next_pane; self.next_pane += 1; self.sb_n += 1;
+        let n = self.sb_n;
+        let cwd = sp.cwd.clone().unwrap_or_else(|| self.cwd.clone());
+        let mut env = self.env.clone();
+        env.extend([("HERDR_PANE_ID".to_string(), world::pane_name(0, n)), ("BHOTE_MUX".to_string(), "native".to_string()), ("HERDR_ENV".to_string(), "1".to_string())]);
+        env.extend(sp.env.iter().cloned());
+        let pty = Pty::spawn(&sp.cmd, Some(std::path::Path::new(&cwd)), 80, 24, &env)?;
+        let reader = pty.reader()?;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || { pty::read_loop(reader, |b| tx.send(Ev::PaneOut(id, b)).is_ok()); let _ = tx.send(Ev::PaneExit(id)); });
+        let mut p = Pane::new(id, (0, n, 0), pty, 80, 24, sp.cmd.clone(), cwd);
+        p.label = label.to_string();
+        self.panes.insert(id, p);
         Ok(id)
     }
 
@@ -222,7 +272,7 @@ impl Server {
     }
 
     pub fn close_pane(&mut self, id: u32) {
-        if self.is_panel(id) { if let Some((wi, ti)) = self.world.tab_of_pane(id) { self.world.ws[wi].tabs[ti].no_panels = true; } }
+        if self.is_panel(id) { self.panes.remove(&id); self.sidebar_closed(id); self.after_change(); return; }
         let closed = self.panes.get(&id).map(|p| (p.name(), world::ws_name(p.ws)));
         self.panes.remove(&id);
         self.world.remove_pane(id);
@@ -233,13 +283,14 @@ impl Server {
 
     /// The panes get the size their rectangle has now (also those of tabs that are not shown).
     pub fn after_change(&mut self) {
-        self.ensure_panels();
+        self.ensure_sidebars(false);
         let area = self.area();
         let mut sizes = Vec::new();
         for w in &self.world.ws { for t in &w.tabs {
             let (r, _) = World::rects(t, area); sizes.extend(r);
             if let Some(p) = t.popup { let q = World::popup_rect(area); sizes.push((p, Rect { x: q.x + 1, y: q.y + 1, w: q.w.saturating_sub(2).max(1), h: q.h.saturating_sub(2).max(1) })); }
         } }
+        for (id, r, _) in self.sidebar_rects() { sizes.push((id, r)); }
         for (id, r) in sizes { if let Some(p) = self.panes.get_mut(&id) { p.resize(r.w, r.h); } }
         self.dirty = true;
     }
@@ -404,9 +455,24 @@ impl Server {
             let s = p.screen();
             let (pr, pc) = s.size();
             g.blit(s, r.x, r.y, pc.get().min(r.w), pr.get().min(r.h));
-            if *id == tab.focus {
+            if Some(*id) == self.input_pane() {
                 modes = Modes::of(s);
                 if !s.hide_cursor() { let (cr, cc) = s.cursor_position(); if cr < r.h && cc < r.w { g.cursor = Some((r.x + cc, r.y + cr)); } }
+            }
+        }
+        // the side panels, and the cells between them and the main area
+        for (id, r, edge) in self.sidebar_rects() {
+            match edge {
+                Edge::Left => for y in r.y..r.y + r.h { g.put(r.x + r.w, y, "│", &dim); },
+                Edge::Right => for y in r.y..r.y + r.h { g.put(r.x - 1, y, "│", &dim); },
+                Edge::Bottom => for x in r.x..r.x + r.w { g.put(x, r.y - 1, "─", &dim); },
+            }
+            let Some(p) = self.panes.get(&id) else { continue };
+            let s = p.screen(); let (pr, pc) = s.size();
+            g.blit(s, r.x, r.y, pc.get().min(r.w), pr.get().min(r.h));
+            if Some(id) == self.input_pane() {
+                modes = Modes::of(s);
+                g.cursor = if s.hide_cursor() { None } else { let (cr, cc) = s.cursor_position(); if cr < r.h && cc < r.w { Some((r.x + cc, r.y + cr)) } else { None } };
             }
         }
         if let Some(pid) = tab.popup {
@@ -424,14 +490,14 @@ impl Server {
             }
         }
         super::actions::overlay(self, ci, &rects, &mut g);
-        if area.h < rows { self.bar(&mut g, area.h, &self.clients[ci]); } else if rows > 0 { self.status_overlay(&mut g, rows - 1, &self.clients[ci]); }
+        if self.bar_rows() > 0 && self.full_h() < rows { self.bar(&mut g, self.full_h(), &self.clients[ci]); } else if rows > 0 { self.status_overlay(&mut g, rows - 1, &self.clients[ci]); }
         (g, modes)
     }
 
     fn render(&mut self) {
         self.dirty = false;
         let mut extra = String::new();
-        if let Some(p) = self.world.focused_pane().and_then(|f| self.panes.get_mut(&f)) {
+        if let Some(p) = self.input_pane().and_then(|f| self.panes.get_mut(&f)) {
             let h = p.parser.callbacks_mut();
             for c in h.clipboard.drain(..) { extra.push_str(&c); }
             for c in self.clip.drain(..) { extra.push_str(&c); }

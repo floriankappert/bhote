@@ -2,6 +2,7 @@
 use super::input::{Input, Key, Mouse};
 use super::keymap::Keymap;
 use super::layout::{self, Dir, Rect, Side};
+use super::panels::Edge;
 use super::render::{Cell, Grid};
 use super::server::{Server, Spawn};
 use super::world::{self, World};
@@ -50,7 +51,7 @@ impl Mode {
 pub struct Selection { pub pane: u32, pub a: (usize, u16), pub b: (usize, u16), pub linewise: bool, pub active: bool }
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum Drag { Divider { path: Vec<bool>, rect: Rect, dir: Dir }, Select }
+pub enum Drag { Divider { path: Vec<bool>, rect: Rect, dir: Dir }, Select, Sidebar(Edge) }
 
 fn ci(s: &Server, id: u32) -> Option<usize> { s.clients.iter().position(|c| c.id == id) }
 
@@ -88,7 +89,7 @@ fn paste(s: &mut Server, id: u32, data: Vec<u8>) {
         Mode::Prompt(p) => { if p.fresh { p.text.clear(); p.fresh = false; } p.text.push_str(&String::from_utf8_lossy(&data).replace(['\n', '\r'], " ")); s.dirty = true; }
         Mode::Normal | Mode::Prefix => {
             s.clients[i].mode = Mode::Normal; s.clients[i].sel = None;
-            let Some(p) = s.world.focused_pane().and_then(|f| s.panes.get_mut(&f)) else { return };
+            let Some(p) = s.input_pane().and_then(|f| s.panes.get_mut(&f)) else { return };
             p.parser.screen_mut().set_scrollback(0);
             if p.screen().bracketed_paste() { let mut v = b"\x1b[200~".to_vec(); v.extend_from_slice(&data); v.extend_from_slice(b"\x1b[201~"); p.input(&v); } else { p.input(&data); }
         }
@@ -133,7 +134,7 @@ fn key(s: &mut Server, id: u32, k: Key) {
 
 /// Typed text goes to the focused pane; its scrollback view snaps back to the live screen.
 fn forward(s: &mut Server, raw: &[u8]) {
-    if let Some(p) = s.world.focused_pane().and_then(|f| s.panes.get_mut(&f)) {
+    if let Some(p) = s.input_pane().and_then(|f| s.panes.get_mut(&f)) {
         if p.screen().scrollback() > 0 { p.parser.screen_mut().set_scrollback(0); }
         p.input(raw);
     }
@@ -202,8 +203,20 @@ pub fn run(s: &mut Server, id: u32, action: &str, arg: Option<&str>) {
         "close_pane" => if let Some(f) = focused { s.close_pane(f); },
         "zoom" => if let Some(f) = focused { if let Some(t) = s.world.current_mut() { t.zoomed = if t.zoomed.is_some() { None } else { Some(f) }; } s.after_change(); },
         "last_pane" => if let Some(l) = s.last_focus.filter(|l| s.panes.contains_key(l)) { s.set_focus(l); },
-        "focus_pane_left" | "focus_pane_right" | "focus_pane_up" | "focus_pane_down" => if let (Some(f), Some(side)) = (focused, side_of(action)) {
-            if let Some(n) = layout::neighbor(&s.tab_rects(), f, side) { s.set_focus(n); }
+        "focus_pane_left" | "focus_pane_right" | "focus_pane_up" | "focus_pane_down" => if let Some(side) = side_of(action) {
+            let (cols, _) = s.screen_size(); let (l, r, b) = s.sidebar_sizes(cols, s.full_h());
+            if let Some(cur) = s.sb_focus {
+                // in a side panel: toward the main area leaves it
+                let edge = s.sidebars.iter().find(|x| x.pane == cur).map(|x| x.edge);
+                if matches!((edge, side), (Some(Edge::Left), Side::Right) | (Some(Edge::Right), Side::Left) | (Some(Edge::Bottom), Side::Up)) { s.sb_focus = None; }
+            } else if let Some(f) = focused {
+                if let Some(n) = layout::neighbor(&s.tab_rects(), f, side) { s.set_focus(n); }
+                else {
+                    // at the edge of the main area: into the side panel there
+                    let to = match side { Side::Left if l > 0 => Some(Edge::Left), Side::Right if r > 0 => Some(Edge::Right), Side::Down if b > 0 => Some(Edge::Bottom), _ => None };
+                    if let Some(sb) = to.and_then(|e| s.sidebar_at(e)) { s.sb_focus = Some(sb.pane); }
+                }
+            }
         },
         "resize_mode" => s.clients[i].mode = Mode::Resize,
         "resize_pane_left" | "resize_pane_right" | "resize_pane_up" | "resize_pane_down" => if let Some(side) = side_of(action) { resize_focused(s, side, 0.05); },
@@ -224,7 +237,8 @@ pub fn run(s: &mut Server, id: u32, action: &str, arg: Option<&str>) {
         "previous_workspace" | "next_workspace" => { let n = s.world.ws.len(); if n > 0 { s.world.active = if action == "next_workspace" { (s.world.active + 1) % n } else { (s.world.active + n - 1) % n }; } }
         "reload_config" => { s.km = Keymap::load(&keys_path()); s.bar_mode = super::api::bar_mode_load_pub(); }
         "focus_panel" => s.focus_panel(),
-        "open_panel" => if let Some((wi, ti)) = cur { let (wid, tid) = (s.world.ws[wi].id, s.world.ws[wi].tabs[ti].id); let cfg = super::panels::PanelCfg::load(); s.make_panels(wid, tid, &cfg, true); },
+        "open_panel" => { s.ensure_sidebars(true); s.after_change(); }
+        "toggle_sidebar" => s.toggle_sidebars(),
         "popup" => if let Some(cmd) = arg { s.open_popup(vec!["sh".into(), "-c".into(), cmd.to_string()]); },
         "run" => if let Some(cmd) = arg {
             let mut c = std::process::Command::new("sh");
@@ -379,10 +393,23 @@ fn mouse(s: &mut Server, id: u32, m: Mouse) {
             }
             return;
         }
+        Some(Drag::Sidebar(edge)) => {
+            if !m.press && !motion { s.clients[i].drag = None; return; }
+            let (cols, _) = s.screen_size(); let h = s.full_h();
+            let (want, name, lo, hi) = match edge {
+                Edge::Left => (m.x, "left", 24, cols.saturating_sub(40)),
+                Edge::Right => (cols.saturating_sub(m.x + 1), "right", 30, cols.saturating_sub(40)),
+                Edge::Bottom => (h.saturating_sub(m.y + 1), "bottom", 6, h.saturating_sub(12)),
+            };
+            let want = want.clamp(lo, hi.max(lo));
+            if let Some(sb) = s.sidebars.iter_mut().find(|x| x.edge == edge) { sb.want = want; }
+            s.sb_sizes.insert(name.into(), want);
+            s.after_change(); return;
+        }
         None => {}
     }
     // the bar
-    if m.y == area.h {
+    if s.bar_rows() > 0 && m.y == s.full_h() {
         if m.press && button == 0 && !motion && !wheel {
             for (x, text, click, _) in s.bar_items() {
                 let w = text.chars().count() as u16;
@@ -392,11 +419,23 @@ fn mouse(s: &mut Server, id: u32, m: Mouse) {
         }
         return;
     }
+    let sbr = s.sidebar_rects();
     let Some((_, tab)) = s.world.current() else { return };
-    let (rects, divs) = match tab.popup {
+    let (mut rects, divs) = match tab.popup {
         Some(pp) => { let q = World::popup_rect(area); (vec![(pp, Rect { x: q.x + 1, y: q.y + 1, w: q.w.saturating_sub(2), h: q.h.saturating_sub(2) })], Vec::new()) }
         None => World::rects(tab, area),
     };
+    let popup_open = tab.popup.is_some();
+    if !popup_open {
+        // the side panels: their divider can be dragged, and a click in one gives it the keys
+        if m.press && button == 0 && !motion && !wheel {
+            for (_, r, edge) in &sbr {
+                let hit = match edge { Edge::Left => m.x == r.x + r.w && m.y < r.y + r.h, Edge::Right => m.x + 1 == r.x && m.y < r.y + r.h, Edge::Bottom => m.y + 1 == r.y && m.x >= r.x && m.x < r.x + r.w };
+                if hit { s.clients[i].drag = Some(Drag::Sidebar(*edge)); return; }
+            }
+        }
+        for (p, r, _) in &sbr { rects.push((*p, *r)); }
+    }
     // a divider
     if m.press && button == 0 && !motion && !wheel {
         for d in &divs {
@@ -405,7 +444,10 @@ fn mouse(s: &mut Server, id: u32, m: Mouse) {
         }
     }
     let Some((pid, r)) = rects.iter().find(|(_, r)| m.x >= r.x && m.x < r.x + r.w && m.y >= r.y && m.y < r.y + r.h).cloned() else { return };
-    if m.press && !motion && !wheel && s.world.focused_pane() != Some(pid) { s.set_focus(pid); }
+    if m.press && !motion && !wheel {
+        if s.is_panel(pid) { if s.sb_focus != Some(pid) { s.sb_focus = Some(pid); } }
+        else { s.sb_focus = None; if s.world.focused_pane() != Some(pid) { s.set_focus(pid); } }
+    }
     let (px, py) = (m.x - r.x, m.y - r.y);
     let p = &s.panes[&pid];
     let (mode, enc) = (p.screen().mouse_protocol_mode(), p.screen().mouse_protocol_encoding());

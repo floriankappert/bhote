@@ -106,7 +106,8 @@ impl Server {
             json!({"id": format!("split_{}", d.path.iter().map(|b| if *b { '1' } else { '0' }).collect::<String>() + if d.path.is_empty() { "root" } else { "" }), "direction": if d.dir == Dir::Right { "right" } else { "down" }, "ratio": ratio, "rect": rj(&d.rect)})
         }).collect();
         let name = |id: &u32| self.panes.get(id).map(|p| p.name()).unwrap_or_default();
-        json!({"layout": {"area": rj(&area), "focused_pane_id": name(&t.focus), "panes": rects.iter().map(|(id, r)| json!({"pane_id": name(id), "focused": *id == t.focus, "rect": rj(r)})).collect::<Vec<_>>(), "splits": splits, "tab_id": world::tab_name(w.id, t.id), "workspace_id": world::ws_name(w.id), "zoomed": t.zoomed.is_some()}, "type": "pane_layout"})
+        json!({"layout": {"area": rj(&area), "focused_pane_id": name(&t.focus), "panes": rects.iter().map(|(id, r)| json!({"pane_id": name(id), "focused": *id == t.focus, "rect": rj(r)})).collect::<Vec<_>>(), "splits": splits, "tab_id": world::tab_name(w.id, t.id), "workspace_id": world::ws_name(w.id), "zoomed": t.zoomed.is_some(),
+            "sidebars": self.sidebar_rects().iter().map(|(id, r, e)| json!({"pane_id": name(id), "label": self.panes.get(id).map(|p| p.label.clone()).unwrap_or_default(), "edge": match e { super::panels::Edge::Left => "left", super::panels::Edge::Right => "right", super::panels::Edge::Bottom => "bottom" }, "rect": rj(r)})).collect::<Vec<_>>()}, "type": "pane_layout"})
     }
 
     /// The text of a pane: the last `lines` lines of scrollback plus screen (`unwrapped` joins the lines the terminal wrapped).
@@ -169,7 +170,7 @@ impl Server {
                 Ok(json!({}))
             }
             "api.snapshot" => {
-                let panes: Vec<Value> = self.panes.values().map(|q| self.pane_json(q)).collect();
+                let panes: Vec<Value> = self.panes.values().filter(|q| !self.is_panel(q.id)).map(|q| self.pane_json(q)).collect();
                 let agents: Vec<Value> = panes.iter().filter(|q| q.get("agent").is_some()).cloned().collect();
                 let ws: Vec<Value> = (0..self.world.ws.len()).filter(|i| !self.world.ws[*i].hidden).map(|i| self.ws_json(i)).collect();
                 let mut tabs = Vec::new(); for (wi, w) in self.world.ws.iter().enumerate() { for ti in 0..w.tabs.len() { tabs.push(self.tab_json(wi, ti)); } }
@@ -178,7 +179,8 @@ impl Server {
             // ── panes
             "pane.list" => {
                 let ws = s(p, "workspace_id"); let tab = s(p, "tab_id");
-                let mut list: Vec<&Pane> = self.panes.values().filter(|q| ws.map_or(true, |w| world::ws_name(q.ws) == w) && tab.map_or(true, |t| world::tab_name(q.ws, q.tab) == t)).collect();
+                let all = flag(p, "all").unwrap_or(false);
+                let mut list: Vec<&Pane> = self.panes.values().filter(|q| (all || !self.is_panel(q.id)) && ws.map_or(true, |w| world::ws_name(q.ws) == w) && tab.map_or(true, |t| world::tab_name(q.ws, q.tab) == t)).collect();
                 list.sort_by_key(|q| (self.world.ws_index(q.ws), q.tab, q.n));
                 Ok(json!({"panes": list.iter().map(|q| self.pane_json(q)).collect::<Vec<_>>(), "type": "pane_list"}))
             }
@@ -319,7 +321,7 @@ impl Server {
             // ── agents (the state comes from the hooks, see agent.rs)
             "pane.report_agent" | "pane.report_agent_session" => { let id = self.pane_of(p)?; self.report_agent(id, p); Ok(json!({})) }
             "pane.release_agent" => { let id = self.pane_of(p)?; let q = self.panes.get_mut(&id).unwrap(); q.reported = None; q.chk = None; Ok(json!({})) }
-            "agent.list" => Ok(json!({"agents": self.panes.values().filter(|q| q.agent.is_some()).map(|q| self.pane_json(q)).collect::<Vec<_>>(), "type": "agent_list"})),
+            "agent.list" => Ok(json!({"agents": self.panes.values().filter(|q| q.agent.is_some() && !self.is_panel(q.id)).map(|q| self.pane_json(q)).collect::<Vec<_>>(), "type": "agent_list"})),
             "agent.get" => { let id = self.pane_of(p)?; if self.panes[&id].agent.is_none() { return Err(nf("agent")); } Ok(json!({"agent": self.pane_json(&self.panes[&id]), "type": "agent_info"})) }
             "agent.read" => {
                 let id = self.pane_of(p)?;
