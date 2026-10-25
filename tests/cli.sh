@@ -101,7 +101,7 @@ B config set AGENT_CAN_CLOSE maybe >/dev/null 2>&1; [ $? = 1 ] && ok "config: bo
 B config unset DONE_MAX >/dev/null; [ "$(B config get DONE_MAX)" = 4 ] && ok "config: unset goes back to the default" || bad "unset"
 B config set THEME dracula >/dev/null && [ "$(B config get THEME)" = dracula ] && ok "config: THEME takes dracula" || bad "THEME dracula refused"
 th=$(BHOTE_SOURCE_ONLY=1 BHOTE_FORCE_COLOR=1 bash -c '. ./bhote; theme_apply; printf "%s|%s|%s|%s" "$S" "$BLUE" "$L" "$CARDSEL"')
-case "$th" in *"139;233;253"*"|"*"189;147;249"*"|"*"248;248;242"*"|"*"48;2;68;71;90"*) ok "THEME=dracula: the Dracula colours (accent cyan, review purple, text, selection)" ;; *) bad "dracula colours: $(printf '%q' "$th")" ;; esac
+case "$th" in *"139;233;253"*"|"*"189;147;249"*"|"*"248;248;242"*"|"*"48;2;56;58;75"*) ok "THEME=dracula: the Dracula colours (accent cyan, review purple, text, the active card)" ;; *) bad "dracula colours: $(printf '%q' "$th")" ;; esac
 B config unset THEME >/dev/null
 for t in terminal catppuccin dracula; do                     # every theme: the summary's own ground and the brighter text on the selection
     B config set THEME "$t" >/dev/null

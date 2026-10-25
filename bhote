@@ -90,6 +90,7 @@ AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come f
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
 PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
+PANEL_LAYOUT|single|enum:single:split|One panel per tab (single), or two (split): the cards of the agents on the left, the topics, deployments and tests on the right (the Rust panel, BHOTED_PANEL=on)
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
 TESTS_BUSY|on|bool|An agent whose workspace runs tests counts as busy (testing): it is not free, and its topic does not go to review until the tests are done
@@ -2873,6 +2874,7 @@ settings_rows() {   # fills SET_ROWS with "kind|key|label": the main page, or th
     SET_ROWS=("link|CONNECTIONS|Connections" "link|PROJECTS|Projects" "enum|TOPICS_SCOPE|Topics shown" "enum|CARD_GROUPING|Agent cards: grouping/sorting" "link|SETUP|Setup wizard")
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MIN_WIDTH|Panel width min"
     SET_ROWS[${#SET_ROWS[@]}]="num|PANEL_MAX_WIDTH|Panel width max"
+    SET_ROWS[${#SET_ROWS[@]}]="enum|PANEL_LAYOUT|Panel layout"
     SET_ROWS[${#SET_ROWS[@]}]="num|LOCAL_EVERY|Local interval (s)"
     SET_ROWS[${#SET_ROWS[@]}]="bool|TESTS_BUSY|Running tests = agent busy"
     SET_ROWS[${#SET_ROWS[@]}]="bool|AUTO_ASSIGN|Auto-assign now topics"

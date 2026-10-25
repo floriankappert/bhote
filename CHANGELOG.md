@@ -5,6 +5,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+### Added
+- Panel sides (step 1 of two panels per tab): the Rust panel can be the **left** panel (the agents' cards and the agent overview) or the **right** one (the lines of the topics, done, deployments, tests), by the pane label `bhote-left` / `bhote-right` or `BHOTE_SIDE`; new setting `PANEL_LAYOUT` (`single` is the panel as before, `split` for two). The herdr plugin that makes the two panes and the workspace list for the left panel follow.
+
 ### Changed
 - The small views of Deployments and Tests (counts only): `failed` has a dark strawberry red ground (`168;22;46`) and light letters, a space on both sides (` ✗ 2 failed `), and when something runs the `✶` dances like a working agent's. In the small view of the agents the active ones are green (were orange). `failed` also says when the newest open failure was: the time for today (` ✗ 1 failed · 14:32 `), date and time for another day (`21.10. 14:32`).
 - Test and deployment bars are small now: five boxes and the percentage (`client ■■■□□ 19%`, the suite's name in front, cut to eight characters), on the right of the second and third row of the card (beside the task, the live text or the branch), under the status. A card no longer needs a row of its own for them (only a card without an agent still has one).

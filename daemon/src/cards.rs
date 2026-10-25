@@ -675,7 +675,8 @@ fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
 
 struct Vp { row: i64, map: String, spin: String }
 pub struct Out { pub frame: String, pub tmap: String, pub spin: String, pub divrow: i64, pub toff: Option<i64> }
-pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64> }
+/// side: 0 one panel with everything, 1 the left panel (the agents' cards and the agent overview), 2 the right one (the lines of the topics, done, deployments and tests)
+pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64>, pub side: u8 }
 impl<'a> Layout<'a> {
     /// bhote_view: head on top, the topics below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
     /// the run folder (tmap, spinrows, divrow, toff), as the script writes them.
@@ -694,12 +695,13 @@ impl<'a> Layout<'a> {
         let rows = self.rows;
         let trim = |s: String| s.trim_end_matches('\n').to_string();
         let head = trim(self.head.clone()); let bottom = trim(self.bottom.clone());
-        let mut topics = trim(c.block("cards")); let lists = trim(c.block("lists"));
+        let mut topics = if self.side == 2 { String::new() } else { trim(c.block("cards")) };
+        let lists = if self.side == 1 { String::new() } else { trim(c.block("lists")) };
         let (hh, mut th, bh) = (count_lines(&head), count_lines(&topics), count_lines(&bottom));
-        let mut dn = c.v.done_max; if c.expanded("done") { dn = c.done_total(); }
-        let mut dblk = trim(c.done_block(dn)); let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
+        let mut dn = if self.side == 1 { 0 } else { c.v.done_max }; if self.side != 1 && c.expanded("done") { dn = c.done_total(); }
+        let mut dblk = if self.side == 1 { String::new() } else { trim(c.done_block(dn)) }; let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
         while dh > 0 && dn > 0 && rows - hh - bh - dh < th.min(6) { dn -= 1; dblk = trim(c.done_block(dn)); dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) }; }
-        let mut mblk = trim(crate::ui::monitors(c.c)); { /* the star of a running monitor dances with the others */ let sp = c.v.spin_ch.clone(); mblk = mblk.split('\n').map(|l| if l.starts_with("\u{1c}x\u{1c}") { l.replacen('✶', &sp, 1) } else { l.to_string() }).collect::<Vec<_>>().join("\n"); } let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
+        let mut mblk = if self.side == 1 { String::new() } else { trim(crate::ui::monitors(c.c)) }; { /* the star of a running monitor dances with the others */ let sp = c.v.spin_ch.clone(); mblk = mblk.split('\n').map(|l| if l.starts_with("\u{1c}x\u{1c}") { l.replacen('✶', &sp, 1) } else { l.to_string() }).collect::<Vec<_>>().join("\n"); } let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
         if mh > 0 && rows - hh - bh - dh - mh < th.min(6) { mblk.clear(); mh = 0; }
         let lh = if lists.is_empty() { 0 } else { count_lines(&lists) };
         let mut lcut = lh; let need = th.min(6);
@@ -736,10 +738,11 @@ impl<'a> Layout<'a> {
             put(&mut vp, &tl, off, off + content, &mut out);
             out.push_str(&format!(" {}↑↓ {} more lines{}\n", g("D"), th - content, g("X"))); vp.row += 1;
         } else { put(&mut vp, &tl, 0, n.min(avail), &mut out); }
-        for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0);
+        if self.side != 2 { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }
         if lcut > 0 { let (p, _) = parse_lines(&lists); put(&mut vp, &p, 0, lcut, &mut out); }
         if dh > 0 { let (p, _) = parse_lines(&dblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
         if mh > 0 { let (p, _) = parse_lines(&mblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
+        if self.side == 2 { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }   // (the right panel is filled from the top, the keys at the bottom)
         out.push_str(&bottom);
         Out { frame: out, tmap: vp.map, spin: vp.spin, divrow: rows - bh + 1, toff: toff_out }
     }

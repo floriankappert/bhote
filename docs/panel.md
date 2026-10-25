@@ -37,6 +37,13 @@ project and deployment (`IMS · Backend`) behind the branch, its state (deployin
 taken from the deployment monitor. When the deployment is over the topic goes to review. A topic that says it waits for a deployment while none runs
 for it is a line in the normal Waiting list.
 
+## Two panels per tab (split)
+
+`PANEL_LAYOUT=split` (settings › *Panel layout*) is for the Rust panel (`BHOTED_PANEL=on`): not one panel with everything, but two. The **left** one shows
+the agents' cards (also the idle ones) and the agent overview, the **right** one the lines of the topics (next, waiting, parked), done, deployments and tests.
+A panel knows its side from the label of its herdr pane (`bhote-left`, `bhote-right`) or from `BHOTE_SIDE=left|right`; without either it is the one panel
+with everything, as before. (Panes for the two sides are made by the herdr plugin; the workspaces join the left panel next.)
+
 ## Keys
 
 The list is for the mouse: **click a card** to show its agent in herdr (on another machine: selected there; in another tab the focus goes to the bhote panel there), **double-click it** to open its page, **click a line** (next, waiting, later, done) to open its page. There are no arrow keys or `⏎` on the list, and no context menu (the page has the actions).

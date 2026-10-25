@@ -40,7 +40,7 @@ def bad(m):
         print("  last output (%d bytes, alive=%s): %s" % (len(p.out), p.alive, tail), flush=True)
 
 class Panel:
-    def __init__(self, cols=70, rows=40, cfg="", topics=None):
+    def __init__(self, cols=70, rows=40, cfg="", topics=None, side=None):
         self.T = tempfile.mkdtemp(); T = self.T
         for d in ("data/topics", "shared", "home"): os.makedirs(f"{T}/{d}")
         open(f"{T}/config", "w").write("BHOTED_PANEL=on\nCARD_GROUPING=status\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
@@ -51,7 +51,7 @@ class Panel:
         real = shutil.which("herdr") or "/bin/false"
         open(f"{T}/bin/herdr", "w").write(f'#!/bin/sh\ncase "$1 $2" in "agent focus") echo "$(date +%s%N) $3" >> "{T}/focus.log"; exit 0 ;; *) exec "{real}" "$@" ;; esac\n')
         os.chmod(f"{T}/bin/herdr", 0o755)
-        env = dict(os.environ, PATH=f"{T}/bin:" + os.environ.get("PATH", ""), BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
+        env = dict(os.environ, **({"BHOTE_SIDE": side} if side else {}), PATH=f"{T}/bin:" + os.environ.get("PATH", ""), BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
         for k in ("NO_COLOR", "HERDR_PANE_ID", "HERDR_TAB_ID", "CLAUDECODE"): env.pop(k, None)
         self.pid, self.fd = pty.fork()
         if self.pid: LIVE.append(self.pid)
@@ -221,6 +221,18 @@ while time.time() - t0 < 2 and seen is None:
 if seen is None: bad("a click on a card did not ask herdr to show the agent")
 elif seen - t0 > 0.25: bad("a click on a card showed the agent after %.0f ms" % ((seen - t0) * 1000))
 else: ok("a click on a card shows its agent at once (herdr asked after %.0f ms)" % max(0, (seen - t0) * 1000))
+p.close()
+p = Panel()
+
+# 7d) two panels per tab: the left one has the agents' cards and the agent overview, the right one the lines of the topics, done and the monitors
+p.close()
+p = Panel(side="left"); p.expect("First review", 6); sc = "\n".join(p.screen())
+if "First review" in sc and "Working topic" in sc and "A next topic" not in sc and "Done thing" not in sc and "Waiting for Anna" not in sc: ok("the left panel: the cards, not the lines of next, waiting and done")
+else: bad("left panel: " + sc.replace("\n", " | ")[:300])
+p.close()
+p = Panel(side="right"); p.expect("A next topic", 6); sc = "\n".join(p.screen())
+if "A next topic" in sc and "Waiting for Anna" in sc and "Done thing" in sc and "First review" not in sc and "Agents" not in sc: ok("the right panel: next, waiting and done, no cards and no agent overview")
+else: bad("right panel: " + sc.replace("\n", " | ")[:300])
 p.close()
 p = Panel()
 

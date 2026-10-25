@@ -218,9 +218,11 @@ impl<'a> Cards<'a> {
 }
 
 /// view_bottom: the agents, a dash line and the keys (or a short note instead)
-pub fn bottom(cards: &Cards, av: &AgentView, mcodes: &[(String, String)]) -> Bottom {
+pub fn bottom(cards: &Cards, av: &AgentView, mcodes: &[(String, String)]) -> Bottom { bottom_side(cards, av, mcodes, true) }
+/// the bottom of the frame: the agent overview, a rule and the keys; with_agents false (the right panel): the rule and the keys only
+pub fn bottom_side(cards: &Cards, av: &AgentView, mcodes: &[(String, String)], with_agents: bool) -> Bottom {
     let g = |k: &str| cards.c.c.g(k).to_string(); let x = g("X");
-    let (mut text, agrows, agmap) = cards.agents_block(av, mcodes);
+    let (mut text, agrows, agmap) = if with_agents { cards.agents_block(av, mcodes) } else { (String::new(), "1\n".to_string(), "0\n".to_string()) };
     text.push_str(&format!("  {}{}{}\n", g("MUTED"), "┈".repeat((cards.c.cols - 5).max(0) as usize), x));
     let room = cards.c.cols - 4;
     if !av.flash.is_empty() { text.push_str(&format!("  {}{}{}", g("S"), clip(&av.flash, room), x)); }

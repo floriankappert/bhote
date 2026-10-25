@@ -33,7 +33,7 @@ pub struct Panel {
     sel_id: String, hover_id: String, hover_btn: bool, expanded: String,
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
-    last_fp: String, focus_m: Option<std::time::SystemTime>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
+    side: u8, last_fp: String, focus_m: Option<std::time::SystemTime>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
@@ -48,7 +48,7 @@ impl Panel {
             has_machines: envs("BHOTE_HAS_MACHINES") == "1", pane_id: envs("HERDR_PANE_ID"), tab_id: envs("HERDR_TAB_ID"),
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
             cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
-            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, last_fp: String::new(), focus_m: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
+            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, side: match envs("BHOTE_SIDE").as_str() { "left" => 1, "right" => 2, _ => 0 }, last_fp: String::new(), focus_m: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
             pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
@@ -124,9 +124,9 @@ impl Panel {
         let view = self.view(mc.clone());
         let mut cards = Cards::new(&ctx, &view); cards.rows_total = self.rows as i64;
         let av = agentsui::agent_view(&view, &ctx.cfg, &ctx.shared);
-        let b = agentsui::bottom(&cards, &av, &mc);
+        let b = agentsui::bottom_side(&cards, &av, &mc, self.side != 2);   // (the right panel has no agent overview: that is the left one's)
         let head = agentsui::head(&ctx, &view.head_view());
-        let lay = Layout { cards: &cards, rows: self.rows as i64, head, bottom: b.text, run_dir: PathBuf::new(), prev_toff: self.prev_toff };
+        let lay = Layout { cards: &cards, rows: self.rows as i64, head, bottom: b.text, run_dir: PathBuf::new(), prev_toff: self.prev_toff, side: self.side };
         let o = lay.view_out();
         self.prev_toff = o.toff;
         self.tmap = o.tmap.lines().filter_map(|l| { let mut p = l.splitn(2, '\u{1e}'); Some((p.next()?.parse().ok()?, p.next()?.to_string())) }).collect();
@@ -466,9 +466,17 @@ impl Panel {
     }
 }
 
+/// 1 for a pane labelled bhote-left, 2 for bhote-right, else 0 (one panel with everything)
+fn side_from_label(pane: &str) -> u8 {
+    let Some(o) = crate::proc::run("herdr", &["pane", "get", pane], 5, None).filter(|o| o.0 == 0) else { return 0 };
+    let v: serde_json::Value = serde_json::from_slice(&o.1).unwrap_or(serde_json::Value::Null);
+    match v["result"]["pane"]["label"].as_str().unwrap_or("") { "bhote-left" => 1, "bhote-right" => 2, _ => 0 }
+}
+
 pub fn run() -> i32 {
     if !Term::is_tty() { eprintln!("bhoted panel: needs a terminal"); return 1; }
     let mut p = Panel::new();
+    if p.side == 0 && !p.pane_id.is_empty() { p.side = side_from_label(&p.pane_id); }   // (the plugin labels the two panes of a tab bhote-left and bhote-right)
     p.reload_cfg();
     p.start_collector();
     let mut term = Term::enter(true);
