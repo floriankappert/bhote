@@ -14,6 +14,7 @@ mod agentsui;
 mod theme;
 mod cards;
 mod follow;
+mod mux;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;

@@ -10,5 +10,7 @@ lto = true
 strip = true
 
 [dependencies]
+libc = "0.2.191"
 serde_json = { version = "1", features = ["preserve_order"] }
 ureq = "2"
+vt100 = "0.18.1"
