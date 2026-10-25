@@ -1,0 +1,201 @@
+//! The split tree of a tab: panes are leaves, a split cuts its rectangle in two with a one-cell divider between.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Dir { Right, Down }
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Side { Left, Right, Up, Down }
+
+impl Side {
+    pub fn parse(s: &str) -> Option<Side> { match s { "left" => Some(Side::Left), "right" => Some(Side::Right), "up" => Some(Side::Up), "down" => Some(Side::Down), _ => None } }
+    fn axis(self) -> Dir { match self { Side::Left | Side::Right => Dir::Right, _ => Dir::Down } }
+    /// the divider lies behind the pane (right/down of it) when the pane is the first child
+    fn forward(self) -> bool { matches!(self, Side::Right | Side::Down) }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct Rect { pub x: u16, pub y: u16, pub w: u16, pub h: u16 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Node {
+    Leaf(u32),
+    /// `ratio`: the share of the first child (of the space without the divider)
+    Split { dir: Dir, ratio: f32, a: Box<Node>, b: Box<Node> },
+}
+
+/// A divider: where it is, along which axis it runs and the path of its split in the tree (false = first child).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Divider { pub dir: Dir, pub x: u16, pub y: u16, pub len: u16, pub path: Vec<bool>, pub rect: Rect }
+
+fn cut(total: u16, ratio: f32) -> u16 {
+    let avail = total.saturating_sub(1);
+    if avail < 2 { return avail; }
+    ((avail as f32 * ratio).round() as u16).clamp(1, avail - 1)
+}
+
+impl Node {
+    pub fn leaves(&self, out: &mut Vec<u32>) { match self { Node::Leaf(p) => out.push(*p), Node::Split { a, b, .. } => { a.leaves(out); b.leaves(out); } } }
+    pub fn contains(&self, id: u32) -> bool { match self { Node::Leaf(p) => *p == id, Node::Split { a, b, .. } => a.contains(id) || b.contains(id) } }
+
+    pub fn rects(&self, r: Rect, out: &mut Vec<(u32, Rect)>, divs: &mut Vec<Divider>) { self.walk(r, out, divs, &mut Vec::new()) }
+    fn walk(&self, r: Rect, out: &mut Vec<(u32, Rect)>, divs: &mut Vec<Divider>, path: &mut Vec<bool>) {
+        match self {
+            Node::Leaf(p) => out.push((*p, r)),
+            Node::Split { dir, ratio, a, b } => {
+                let (ra, rb, div) = match dir {
+                    Dir::Right => { let wa = cut(r.w, *ratio); (Rect { w: wa, ..r }, Rect { x: r.x + wa + 1, w: r.w.saturating_sub(wa + 1), ..r }, (r.x + wa, r.y, r.h)) }
+                    Dir::Down => { let ha = cut(r.h, *ratio); (Rect { h: ha, ..r }, Rect { y: r.y + ha + 1, h: r.h.saturating_sub(ha + 1), ..r }, (r.x, r.y + ha, r.w)) }
+                };
+                divs.push(Divider { dir: *dir, x: div.0, y: div.1, len: div.2, path: path.clone(), rect: r });
+                path.push(false); a.walk(ra, out, divs, path); path.pop();
+                path.push(true); b.walk(rb, out, divs, path); path.pop();
+            }
+        }
+    }
+
+    /// `target` becomes a split of itself (first child) and `new` (second child); `ratio` is what the old pane keeps.
+    pub fn split(&mut self, target: u32, new: u32, dir: Dir, ratio: f32) -> bool {
+        match self {
+            Node::Leaf(p) if *p == target => { *self = Node::Split { dir, ratio: ratio.clamp(0.05, 0.95), a: Box::new(Node::Leaf(target)), b: Box::new(Node::Leaf(new)) }; true }
+            Node::Leaf(_) => false,
+            Node::Split { a, b, .. } => a.split(target, new, dir, ratio) || b.split(target, new, dir, ratio),
+        }
+    }
+
+    /// Takes a pane out; its sibling takes the place of their split. False when it is the only pane (or not there).
+    pub fn remove(&mut self, target: u32) -> bool {
+        match self {
+            Node::Leaf(_) => false,
+            Node::Split { a, b, .. } => {
+                if matches!(**a, Node::Leaf(p) if p == target) { *self = (**b).clone(); return true; }
+                if matches!(**b, Node::Leaf(p) if p == target) { *self = (**a).clone(); return true; }
+                a.remove(target) || b.remove(target)
+            }
+        }
+    }
+
+    pub fn swap(&mut self, x: u32, y: u32) {
+        match self {
+            Node::Leaf(p) => { if *p == x { *p = y } else if *p == y { *p = x } }
+            Node::Split { a, b, .. } => { a.swap(x, y); b.swap(x, y); }
+        }
+    }
+
+    fn at_mut(&mut self, path: &[bool]) -> Option<&mut Node> {
+        let mut n = self;
+        for &second in path { match n { Node::Split { a, b, .. } => n = if second { b } else { a }, _ => return None } }
+        Some(n)
+    }
+
+    /// The splits above a pane, root first: (path, axis, the pane lies in the first child).
+    fn ancestors(&self, target: u32) -> Vec<(Vec<bool>, Dir, bool)> {
+        let mut out = Vec::new();
+        let mut path = Vec::new();
+        let mut n = self;
+        loop {
+            match n {
+                Node::Leaf(_) => return out,
+                Node::Split { dir, a, b, .. } => {
+                    let in_a = a.contains(target);
+                    if !in_a && !b.contains(target) { return Vec::new(); }
+                    out.push((path.clone(), *dir, in_a));
+                    path.push(!in_a);
+                    n = if in_a { a } else { b };
+                }
+            }
+        }
+    }
+
+    /// Moves a divider of the pane by `amount` (a share of that split) toward `side`. The divider on that side of the pane
+    /// is taken; a pane at the edge moves its inner divider that way (the nearest split along the axis).
+    pub fn resize(&mut self, target: u32, side: Side, amount: f32) -> bool {
+        let anc = self.ancestors(target);
+        let pick = anc.iter().rev().find(|(_, d, in_a)| *d == side.axis() && *in_a == side.forward()).or_else(|| anc.iter().rev().find(|(_, d, _)| *d == side.axis())).cloned();
+        let Some((path, _, _)) = pick else { return false };
+        if let Some(Node::Split { ratio, .. }) = self.at_mut(&path) {
+            *ratio = (*ratio + if side.forward() { amount } else { -amount }).clamp(0.05, 0.95);
+            return true;
+        }
+        false
+    }
+
+    /// The ratio of the divider at `path` is set so that its position is `pos` cells from the start of `rect`.
+    pub fn set_divider(&mut self, path: &[bool], rect: Rect, pos: u16) {
+        if let Some(Node::Split { dir, ratio, .. }) = self.at_mut(path) {
+            let total = match dir { Dir::Right => rect.w, Dir::Down => rect.h }.saturating_sub(1).max(1);
+            *ratio = (pos as f32 / total as f32).clamp(0.05, 0.95);
+        }
+    }
+}
+
+/// The pane next to `target` on a side: the nearest one that touches its edge with an overlap (the first in reading order on a tie).
+pub fn neighbor(rects: &[(u32, Rect)], target: u32, side: Side) -> Option<u32> {
+    let t = rects.iter().find(|(p, _)| *p == target)?.1;
+    let (t_end_x, t_end_y) = (t.x + t.w, t.y + t.h);
+    let mut best: Option<(u32, u32, u16)> = None; // pane, distance, overlap
+    for (p, r) in rects {
+        if *p == target { continue; }
+        let (dist, overlap) = match side {
+            Side::Left if r.x + r.w <= t.x => (t.x - (r.x + r.w), ov(t.y, t_end_y, r.y, r.y + r.h)),
+            Side::Right if r.x >= t_end_x => (r.x - t_end_x, ov(t.y, t_end_y, r.y, r.y + r.h)),
+            Side::Up if r.y + r.h <= t.y => (t.y - (r.y + r.h), ov(t.x, t_end_x, r.x, r.x + r.w)),
+            Side::Down if r.y >= t_end_y => (r.y - t_end_y, ov(t.x, t_end_x, r.x, r.x + r.w)),
+            _ => continue,
+        };
+        if overlap == 0 { continue; }
+        let d = dist as u32;
+        if best.map_or(true, |(_, bd, bo)| d < bd || (d == bd && overlap > bo)) { best = Some((*p, d, overlap)); }
+    }
+    best.map(|b| b.0)
+}
+fn ov(a0: u16, a1: u16, b0: u16, b1: u16) -> u16 { a1.min(b1).saturating_sub(a0.max(b0)) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn rects(n: &Node, w: u16, h: u16) -> Vec<(u32, Rect)> { let (mut o, mut d) = (Vec::new(), Vec::new()); n.rects(Rect { x: 0, y: 0, w, h }, &mut o, &mut d); o }
+
+    #[test]
+    fn split_and_rects() {
+        let mut n = Node::Leaf(1);
+        assert!(n.split(1, 2, Dir::Right, 0.5));
+        let r = rects(&n, 81, 24);
+        assert_eq!(r[0], (1, Rect { x: 0, y: 0, w: 40, h: 24 }));
+        assert_eq!(r[1], (2, Rect { x: 41, y: 0, w: 40, h: 24 }));
+        n.split(2, 3, Dir::Down, 0.5);
+        let r = rects(&n, 81, 25);
+        assert_eq!(r[1].1, Rect { x: 41, y: 0, w: 40, h: 12 });
+        assert_eq!(r[2].1, Rect { x: 41, y: 13, w: 40, h: 12 });
+        // the rectangles plus the dividers cover the area: no overlap
+        let mut seen = std::collections::HashSet::new();
+        for (_, q) in &r { for x in q.x..q.x + q.w { for y in q.y..q.y + q.h { assert!(seen.insert((x, y))); } } }
+    }
+
+    #[test]
+    fn remove_swap_neighbor() {
+        let mut n = Node::Leaf(1);
+        n.split(1, 2, Dir::Right, 0.5); n.split(2, 3, Dir::Down, 0.5);
+        let r = rects(&n, 81, 25);
+        assert_eq!(neighbor(&r, 1, Side::Right), Some(2));
+        assert_eq!(neighbor(&r, 3, Side::Up), Some(2));
+        assert_eq!(neighbor(&r, 3, Side::Left), Some(1));
+        assert_eq!(neighbor(&r, 1, Side::Left), None);
+        n.swap(1, 3);
+        assert_eq!(rects(&n, 81, 25)[0].0, 3);
+        assert!(n.remove(2));
+        let mut l = Vec::new(); n.leaves(&mut l); assert_eq!(l, vec![3, 1]);
+        assert!(n.remove(3)); assert_eq!(n, Node::Leaf(1));
+        assert!(!n.remove(1));
+    }
+
+    #[test]
+    fn resize_moves_the_divider() {
+        let mut n = Node::Leaf(1);
+        n.split(1, 2, Dir::Right, 0.5);
+        assert!(n.resize(2, Side::Left, 0.25)); // pane 2 grows to the left
+        match &n { Node::Split { ratio, .. } => assert!((ratio - 0.25).abs() < 1e-6), _ => panic!() }
+        assert!(n.resize(1, Side::Left, 0.05)); // pane 1 sits at the edge: its inner divider still moves left
+        match &n { Node::Split { ratio, .. } => assert!((ratio - 0.20).abs() < 1e-6), _ => panic!() }
+        assert!(!n.resize(1, Side::Up, 0.1));
+    }
+}

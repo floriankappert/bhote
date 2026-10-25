@@ -26,24 +26,48 @@ impl vt100::Callbacks for Hooks {
 
 pub struct Pane {
     pub id: u32,
+    /// workspace id, the number inside it and the id of its tab (names: w1:p2, w1:t1)
+    pub ws: u32,
+    pub n: u32,
+    pub tab: u32,
     pub parser: vt100::Parser<Hooks>,
     pub pty: Pty,
     pub label: String,
     pub cwd: String,
     pub cmd: Vec<String>,
+    /// display-only metadata (`pane report-metadata --token key=value`), as herdr keeps it
+    pub tokens: serde_json::Map<String, serde_json::Value>,
+    /// counts up with every change of the screen
+    pub rev: u64,
+    /// the agent that runs here and what it does (agent.rs fills these from the hooks)
+    pub agent: Option<String>,
+    pub status: String,
+    pub session: Option<serde_json::Value>,
 }
 
 fn nz(n: u16) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(n.max(1)).unwrap() }
 
 impl Pane {
-    pub fn new(id: u32, pty: Pty, cols: u16, rows: u16, cmd: Vec<String>, cwd: String) -> Pane {
-        Pane { id, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd }
+    pub fn new(id: u32, (ws, n, tab): (u32, u32, u32), pty: Pty, cols: u16, rows: u16, cmd: Vec<String>, cwd: String) -> Pane {
+        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None }
+    }
+    pub fn agent_name(&self) -> Option<&str> { self.agent.as_deref() }
+    pub fn agent_status(&self) -> &str { if self.status.is_empty() { "unknown" } else { &self.status } }
+    pub fn agent_session(&self) -> Option<serde_json::Value> { self.session.clone() }
+    pub fn name(&self) -> String { super::world::pane_name(self.ws, self.n) }
+    /// The process group in front of the terminal and its folder (Linux: /proc; elsewhere the folder the pane started in).
+    pub fn foreground(&self) -> (i32, String) {
+        use std::os::fd::AsRawFd;
+        let g = unsafe { libc::tcgetpgrp(self.pty.master.as_raw_fd()) };
+        let cwd = std::fs::read_link(format!("/proc/{g}/cwd")).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| self.cwd.clone());
+        (g, cwd)
     }
     pub fn screen(&self) -> &vt100::Screen { self.parser.screen() }
     pub fn title(&self) -> &str { self.parser.callbacks().title.as_deref().unwrap_or("") }
     /// Terminal output of the child: into the state; what the state has to answer goes back into the pty.
     pub fn output(&mut self, bytes: &[u8]) {
         self.parser.process(bytes);
+        self.rev += 1;
         let reply = std::mem::take(&mut self.parser.callbacks_mut().reply);
         if !reply.is_empty() { self.input(&reply); }
     }

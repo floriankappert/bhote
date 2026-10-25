@@ -1,8 +1,10 @@
 //! `bhoted mux`: the pane server. One event loop owns all state; threads only read (ptys, sockets) and send events.
+use super::layout::{Dir, Node, Rect};
 use super::pane::Pane;
 use super::proto::{self, read_frame, write_frame};
 use super::pty::{self, Pty};
-use super::render::{self, Grid};
+use super::render::{self, Cell, Grid};
+use super::world::{self, Tab, World};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -11,6 +13,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
+use vt100::Color;
 
 pub enum Ev {
     PaneOut(u32, Vec<u8>),
@@ -55,76 +58,134 @@ impl Modes {
 
 pub struct Client { pub id: u32, pub stream: UnixStream, pub cols: u16, pub rows: u16, prev: Option<Grid>, modes: Modes, prefix: bool }
 
+/// What a new pane is started with.
+#[derive(Default, Clone)]
+pub struct Spawn { pub cmd: Vec<String>, pub cwd: Option<String>, pub env: Vec<(String, String)> }
+
 pub struct Server {
     tx: Sender<Ev>,
     pub panes: BTreeMap<u32, Pane>,
-    pub focus: u32,
+    pub world: World,
     next_pane: u32,
     pub clients: Vec<Client>,
-    dirty: bool,
-    quit: bool,
+    pub dirty: bool,
+    pub quit: bool,
     pub cwd: String,
+    /// added to the environment of every pane: PATH with the `herdr` shim in front, the socket
+    pub env: Vec<(String, String)>,
 }
 
-fn pane_name(id: u32) -> String { format!("p{id}") }
-
 impl Server {
-    fn new(tx: Sender<Ev>) -> Server {
-        Server { tx, panes: BTreeMap::new(), focus: 0, next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default() }
+    fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env }
     }
 
-    /// A new pane (a shell when `cmd` is empty) of the given size; it gets the focus.
-    pub fn spawn_pane(&mut self, cmd: Vec<String>, cwd: Option<String>, cols: u16, rows: u16) -> std::io::Result<u32> {
+    /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
+    pub fn area(&self) -> Rect {
+        let (c, r) = self.clients.iter().map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))).unwrap_or((80, 24));
+        Rect { x: 0, y: 0, w: c, h: r.saturating_sub(1).max(1) }
+    }
+
+    /// A pane process in the workspace `ws` for tab `tab` (not yet in the tree).
+    fn make_pane(&mut self, wi: usize, tab: u32, sp: &Spawn) -> std::io::Result<u32> {
         let id = self.next_pane; self.next_pane += 1;
-        let cwd = cwd.unwrap_or_else(|| self.cwd.clone());
-        let env = vec![("BHOTE_MUX".to_string(), "native".to_string()), ("BHOTE_PANE".to_string(), pane_name(id))];
-        let pty = Pty::spawn(&cmd, Some(std::path::Path::new(&cwd)), cols, rows, &env)?;
+        let w = &mut self.world.ws[wi];
+        let n = w.next_pane; w.next_pane += 1;
+        let cwd = sp.cwd.clone().unwrap_or_else(|| if w.cwd.is_empty() { self.cwd.clone() } else { w.cwd.clone() });
+        let name = world::pane_name(w.id, n);
+        let mut env = self.env.clone();
+        env.extend([("HERDR_PANE_ID".to_string(), name), ("HERDR_TAB_ID".to_string(), world::tab_name(w.id, tab)), ("HERDR_WORKSPACE_ID".to_string(), world::ws_name(w.id)), ("BHOTE_MUX".to_string(), "native".to_string())]);
+        env.extend(sp.env.iter().cloned());
+        let a = self.area();
+        let pty = Pty::spawn(&sp.cmd, Some(std::path::Path::new(&cwd)), a.w, a.h, &env)?;
         let reader = pty.reader()?;
         let tx = self.tx.clone();
         std::thread::spawn(move || { pty::read_loop(reader, |b| tx.send(Ev::PaneOut(id, b)).is_ok()); let _ = tx.send(Ev::PaneExit(id)); });
-        self.panes.insert(id, Pane::new(id, pty, cols, rows, cmd, cwd));
-        self.focus = id; self.dirty = true;
+        self.panes.insert(id, Pane::new(id, (self.world.ws[wi].id, n, tab), pty, a.w, a.h, sp.cmd.clone(), cwd));
         Ok(id)
     }
 
-    /// The size the panes have: what the smallest attached client shows (80x24 without a client).
-    fn view_size(&self) -> (u16, u16) {
-        match self.clients.iter().map(|c| (c.cols, c.rows)).reduce(|a, b| (a.0.min(b.0), a.1.min(b.1))) { Some(s) => s, None => (80, 24) }
+    fn undo_pane(&mut self, wi: usize, id: u32) { self.panes.remove(&id); let _ = wi; }
+
+    pub fn create_workspace(&mut self, label: &str, sp: &Spawn, focus: bool) -> std::io::Result<(usize, u32)> {
+        let cwd = sp.cwd.clone().unwrap_or_else(|| self.cwd.clone());
+        let label = if label.is_empty() { std::path::Path::new(&cwd).file_name().map(|f| f.to_string_lossy().into_owned()).filter(|s| !s.is_empty()).unwrap_or_else(|| "/".into()) } else { label.to_string() };
+        let wi = self.world.new_workspace(&label, &cwd);
+        let pid = match self.make_pane(wi, 1, sp) { Ok(p) => p, Err(e) => { self.world.ws.remove(wi); self.world.next_ws -= 1; return Err(e); } };
+        let w = &mut self.world.ws[wi];
+        w.next_tab = 2;
+        w.tabs.push(Tab { id: 1, label: "1".into(), root: Node::Leaf(pid), focus: pid, zoomed: None });
+        if focus || self.world.ws.len() == 1 { self.world.active = wi; }
+        self.after_change();
+        Ok((wi, pid))
     }
 
-    fn fit_panes(&mut self) {
-        let (cols, rows) = self.view_size();
-        for p in self.panes.values_mut() { p.resize(cols, rows); }
+    pub fn create_tab(&mut self, wi: usize, label: &str, sp: &Spawn, focus: bool) -> std::io::Result<(u32, u32)> {
+        let tid = self.world.ws[wi].next_tab;
+        let pid = self.make_pane(wi, tid, sp)?;
+        let w = &mut self.world.ws[wi];
+        w.next_tab += 1;
+        let label = if label.is_empty() { (w.tabs.len() + 1).to_string() } else { label.to_string() };
+        w.tabs.push(Tab { id: tid, label, root: Node::Leaf(pid), focus: pid, zoomed: None });
+        if focus { w.active = w.tabs.len() - 1; self.world.active = wi; }
+        self.after_change();
+        Ok((tid, pid))
+    }
+
+    /// `target` is cut in two; the new pane is on the right or below. `ratio` is what the old pane keeps.
+    pub fn split_pane(&mut self, target: u32, dir: Dir, ratio: f32, sp: &Spawn, focus: bool) -> std::io::Result<u32> {
+        let (wi, ti) = self.world.tab_of_pane(target).ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no such pane"))?;
+        let tab = self.world.ws[wi].tabs[ti].id;
+        let mut sp = sp.clone();
+        if sp.cwd.is_none() { sp.cwd = self.panes.get(&target).map(|p| p.foreground().1); }
+        let pid = self.make_pane(wi, tab, &sp)?;
+        let t = &mut self.world.ws[wi].tabs[ti];
+        t.zoomed = None;
+        if !t.root.split(target, pid, dir, ratio) { self.undo_pane(wi, pid); return Err(std::io::Error::new(std::io::ErrorKind::NotFound, "no such pane")); }
+        if focus { t.focus = pid; self.world.active = wi; self.world.ws[wi].active = ti; }
+        self.after_change();
+        Ok(pid)
+    }
+
+    pub fn close_pane(&mut self, id: u32) {
+        self.panes.remove(&id);
+        self.world.remove_pane(id);
+        if self.world.ws.is_empty() { self.end_clients("exited"); self.quit = true; }
+        self.after_change();
+    }
+
+    /// The panes get the size their rectangle has now (also those of tabs that are not shown).
+    pub fn after_change(&mut self) {
+        let area = self.area();
+        let mut sizes = Vec::new();
+        for w in &self.world.ws { for t in &w.tabs { let (r, _) = World::rects(t, area); sizes.extend(r); } }
+        for (id, r) in sizes { if let Some(p) = self.panes.get_mut(&id) { p.resize(r.w, r.h); } }
+        self.dirty = true;
     }
 
     pub fn handle(&mut self, ev: Ev) {
         match ev {
             Ev::PaneOut(id, b) => if let Some(p) = self.panes.get_mut(&id) { p.output(&b); self.dirty = true; },
-            Ev::PaneExit(id) => {
-                self.panes.remove(&id);
-                if self.focus == id { self.focus = self.panes.keys().next().copied().unwrap_or(0); }
-                if self.panes.is_empty() { self.end_clients("exited"); self.quit = true; }
-                self.dirty = true;
-            }
+            Ev::PaneExit(id) => if self.panes.contains_key(&id) { self.close_pane(id); },
             Ev::NewClient { id, stream, cols, rows } => {
                 self.clients.push(Client { id, stream, cols, rows, prev: None, modes: Modes::default(), prefix: false });
-                self.fit_panes(); self.dirty = true;
+                self.after_change();
             }
             Ev::Frame(id, t, p) => match t {
                 b'I' => self.client_input(id, &p),
                 b'R' => if let Some((c, r)) = proto::parse_resize(&p) {
                     if let Some(cl) = self.clients.iter_mut().find(|c| c.id == id) { cl.cols = c; cl.rows = r; cl.prev = None; }
-                    self.fit_panes(); self.dirty = true;
+                    self.after_change();
                 },
                 b'D' => self.detach(id, "detached"),
                 _ => {}
             },
-            Ev::ClientGone(id) => { self.clients.retain(|c| c.id != id); self.fit_panes(); }
+            Ev::ClientGone(id) => { self.clients.retain(|c| c.id != id); self.after_change(); }
             Ev::Control(req, reply) => { let _ = reply.send(self.control(&req)); }
         }
     }
 
-    fn end_clients(&mut self, reason: &str) {
+    pub fn end_clients(&mut self, reason: &str) {
         for c in &mut self.clients { let _ = write_frame(&mut c.stream, b'Q', reason.as_bytes()); }
         self.clients.clear();
     }
@@ -135,7 +196,7 @@ impl Server {
             let _ = write_frame(&mut c.stream, b'Q', reason.as_bytes());
             let _ = c.stream.shutdown(std::net::Shutdown::Both);
         }
-        self.fit_panes();
+        self.after_change();
     }
 
     /// Keys of a client: the prefix key (ctrl+b) and what follows is ours, everything else goes to the focused pane.
@@ -148,25 +209,59 @@ impl Server {
                 match b { b'd' => detach = true, 0x02 => fwd.push(0x02), _ => {} }
             } else if b == 0x02 { c.prefix = true } else { fwd.push(b) }
         }
-        if !fwd.is_empty() { if let Some(p) = self.panes.get_mut(&self.focus) { p.input(&fwd); } }
+        if !fwd.is_empty() { if let Some(p) = self.world.focused_pane().and_then(|f| self.panes.get_mut(&f)) { p.input(&fwd); } }
         if detach { self.detach(id, "detached"); }
     }
 
-    /// The picture of the focused pane for one client of this size.
+    /// The bar under the panes: the workspaces, then the tabs of the shown workspace.
+    fn bar(&self, g: &mut Grid, y: u16) {
+        let base = Cell { fg: Color::Rgb(170, 176, 200), bg: Color::Rgb(30, 32, 48), ..Cell::default() };
+        let hi = Cell { fg: Color::Rgb(20, 22, 34), bg: Color::Rgb(137, 220, 235), bold: true, ..Cell::default() };
+        let cols = g.cols;
+        g.fill(0, y, cols, 1, &base);
+        let mut x = 1u16;
+        let mut put = |g: &mut Grid, x: &mut u16, text: String, st: &Cell| { g.put(*x, y, &text, st); *x += text.chars().map(|c| if render::wide(c) { 2 } else { 1 }).sum::<u16>(); };
+        for (i, w) in self.world.ws.iter().enumerate() {
+            put(g, &mut x, format!(" {} {} ", i + 1, w.label), if i == self.world.active { &hi } else { &base });
+        }
+        if let Some(w) = self.world.ws.get(self.world.active) {
+            put(g, &mut x, " │ ".into(), &base);
+            for (i, t) in w.tabs.iter().enumerate() { put(g, &mut x, format!(" {} ", t.label), if i == w.active { &hi } else { &base }); }
+        }
+    }
+
+    /// The picture for a client: the panes of the shown tab, the dividers, the bar.
     fn compose(&self, cols: u16, rows: u16) -> (Grid, Modes) {
         let mut g = Grid::new(cols, rows);
-        let Some(p) = self.panes.get(&self.focus) else { return (g, Modes::default()) };
-        let s = p.screen();
-        let (pr, pc) = s.size();
-        g.blit(s, 0, 0, pc.get().min(cols), pr.get().min(rows));
-        if !s.hide_cursor() { let (r, c) = s.cursor_position(); if r < rows && c < cols { g.cursor = Some((c, r)); } }
-        (g, Modes::of(s))
+        let Some((_, tab)) = self.world.current() else { return (g, Modes::default()) };
+        let area = self.area();
+        let (rects, divs) = World::rects(tab, area);
+        let dim = Cell { fg: Color::Idx(8), ..Cell::default() };
+        for d in &divs {
+            match d.dir {
+                Dir::Right => for y in d.y..d.y + d.len { g.put(d.x, y, "│", &dim); },
+                Dir::Down => for x in d.x..d.x + d.len { g.put(x, d.y, "─", &dim); },
+            }
+        }
+        let mut modes = Modes::default();
+        for (id, r) in &rects {
+            let Some(p) = self.panes.get(id) else { continue };
+            let s = p.screen();
+            let (pr, pc) = s.size();
+            g.blit(s, r.x, r.y, pc.get().min(r.w), pr.get().min(r.h));
+            if *id == tab.focus {
+                modes = Modes::of(s);
+                if !s.hide_cursor() { let (cr, cc) = s.cursor_position(); if cr < r.h && cc < r.w { g.cursor = Some((r.x + cc, r.y + cr)); } }
+            }
+        }
+        if area.h < rows { self.bar(&mut g, area.h); }
+        (g, modes)
     }
 
     fn render(&mut self) {
         self.dirty = false;
         let mut extra = String::new();
-        if let Some(p) = self.panes.get_mut(&self.focus) {
+        if let Some(p) = self.world.focused_pane().and_then(|f| self.panes.get_mut(&f)) {
             let h = p.parser.callbacks_mut();
             for c in h.clipboard.drain(..) { extra.push_str(&c); }
             if std::mem::take(&mut h.bell) { extra.push('\x07'); }
@@ -183,49 +278,7 @@ impl Server {
             c.modes = modes; c.prev = Some(g);
             if write_frame(&mut c.stream, b'O', out.as_bytes()).is_err() { gone.push(c.id); }
         }
-        for id in gone { self.clients.retain(|c| c.id != id); self.fit_panes(); }
-    }
-
-    fn resolve(&self, params: &Value) -> Option<u32> {
-        match params.get("pane_id").or_else(|| params.get("pane")) {
-            None | Some(Value::Null) => Some(self.focus),
-            Some(Value::Number(n)) => n.as_u64().map(|n| n as u32),
-            Some(Value::String(s)) => s.trim_start_matches('p').parse().ok(),
-            _ => None,
-        }.filter(|id| self.panes.contains_key(id))
-    }
-
-    pub fn pane_json(&self, p: &Pane) -> Value {
-        let (r, c) = p.screen().size();
-        json!({"pane_id": pane_name(p.id), "focused": p.id == self.focus, "cols": c.get(), "rows": r.get(), "title": p.title(), "label": p.label, "cwd": p.cwd, "pid": p.pty.pid(), "command": p.cmd})
-    }
-
-    fn control(&mut self, req: &Value) -> Value {
-        let id = req.get("id").cloned().unwrap_or(Value::Null);
-        let empty = json!({});
-        let params = req.get("params").unwrap_or(&empty);
-        let err = |code: &str, msg: String| json!({"id": id, "error": {"code": code, "message": msg}});
-        let ok = |r: Value| json!({"id": id, "result": r});
-        match req.get("method").and_then(|m| m.as_str()).unwrap_or("") {
-            "ping" => ok(json!({"pong": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id()})),
-            "server.stop" => { self.end_clients("stopped"); self.quit = true; ok(json!({"stopped": true})) }
-            "pane.list" => ok(json!({"panes": self.panes.values().map(|p| self.pane_json(p)).collect::<Vec<_>>()})),
-            "pane.send_text" => match self.resolve(params) {
-                Some(pid) => { let t = params.get("text").and_then(|t| t.as_str()).unwrap_or(""); self.panes.get_mut(&pid).unwrap().input(t.as_bytes()); ok(json!({})) }
-                None => err("not_found", "no such pane".into()),
-            },
-            "pane.read" => match self.resolve(params) {
-                Some(pid) => {
-                    let s = self.panes[&pid].screen();
-                    let (_, cols) = s.size();
-                    let mut rows: Vec<String> = s.rows(0, cols.get()).collect();
-                    while rows.last().map_or(false, |r| r.is_empty()) { rows.pop(); }
-                    ok(json!({"text": rows.join("\n")}))
-                }
-                None => err("not_found", "no such pane".into()),
-            },
-            m => err("unknown_method", format!("no method {m}")),
-        }
+        if !gone.is_empty() { self.clients.retain(|c| !gone.contains(&c.id)); self.after_change(); }
     }
 }
 
@@ -256,6 +309,16 @@ fn serve_conn(stream: UnixStream, tx: Sender<Ev>, next_client: Arc<AtomicU32>) -
     }
 }
 
+/// A directory with a `herdr` that is this program: scripts and tools of bhote call `herdr ...`, inside a native pane they get the mux.
+pub fn shim_dir(sock: &std::path::Path) -> Option<std::path::PathBuf> {
+    let dir = sock.parent()?.join("bin");
+    std::fs::create_dir_all(&dir).ok()?;
+    let exe = std::env::current_exe().ok()?;
+    let link = dir.join("herdr");
+    if std::fs::read_link(&link).ok().as_deref() != Some(exe.as_path()) { let _ = std::fs::remove_file(&link); std::os::unix::fs::symlink(&exe, &link).ok()?; }
+    Some(dir)
+}
+
 pub fn run() -> i32 {
     let path = proto::sock_path();
     if let Some(dir) = path.parent() {
@@ -277,8 +340,12 @@ pub fn run() -> i32 {
             }
         });
     }
-    let mut s = Server::new(tx);
-    if let Err(e) = s.spawn_pane(Vec::new(), None, 80, 24) { eprintln!("bhoted mux: no pane: {e}"); let _ = std::fs::remove_file(&path); return 1; }
+    let mut env = vec![("BHOTE_MUX_SOCK".to_string(), path.to_string_lossy().into_owned()), ("HERDR_SOCKET_PATH".to_string(), path.to_string_lossy().into_owned())];
+    if let Some(d) = shim_dir(&path) {
+        env.push(("PATH".into(), format!("{}:{}", d.display(), std::env::var("PATH").unwrap_or_default())));
+    }
+    let mut s = Server::new(tx, env);
+    if let Err(e) = s.create_workspace("", &Spawn::default(), true) { eprintln!("bhoted mux: no pane: {e}"); let _ = std::fs::remove_file(&path); return 1; }
     while !s.quit {
         let wait = if s.dirty { Duration::from_millis(4) } else { Duration::from_secs(3600) };
         match rx.recv_timeout(wait) {

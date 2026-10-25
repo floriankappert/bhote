@@ -13,3 +13,7 @@ pub mod render;
 pub mod pane;
 pub mod server;
 pub mod client;
+pub mod layout;
+pub mod world;
+pub mod api;
+pub mod herdrcli;
