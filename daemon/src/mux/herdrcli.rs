@@ -39,15 +39,19 @@ fn pane_param(a: &Args, positional: bool) -> Option<String> {
         .or_else(|| std::env::var("HERDR_PANE_ID").ok().filter(|s| !s.is_empty() && (a.flag("current") || a.get("pane").is_none())))
 }
 
-pub fn run(args: &[String]) -> i32 {
+/// The command: its exit code, what it prints, what it says on stderr.
+pub fn exec(args: &[String]) -> (i32, String, String) {
+    let (mut so, mut se) = (String::new(), String::new());
+    macro_rules! out { ($($a:tt)*) => { { so.push_str(&format!($($a)*)); so.push('\n'); } } }
+    macro_rules! err { ($($a:tt)*) => { { se.push_str(&format!($($a)*)); se.push('\n'); } } }
     // `--machine X` reaches another machine through kharka (M8); here only this one
     // after a lone `--` come the words that start the agent again (report-agent)
     let (args, resume): (&[String], Vec<String>) = match args.iter().position(|x| x == "--") { Some(i) => (&args[..i], args[i + 1..].to_vec()), None => (args, Vec::new()) };
     let a = Args::parse(args);
-    if a.get("machine").is_some() { eprintln!("herdr: --machine is not supported by the native mux"); return 1; }
+    if a.get("machine").is_some() { err!("herdr: --machine is not supported by the native mux"); return (1, so, se); }
     let noun = a.pos.first().map(|s| s.as_str()).unwrap_or("");
     let verb = a.pos.get(1).map(|s| s.as_str()).unwrap_or("");
-    if noun == "--version" || a.flag("version") || noun == "version" { println!("bhote-mux {}", env!("CARGO_PKG_VERSION")); return 0; }
+    if noun == "--version" || a.flag("version") || noun == "version" { out!("bhote-mux {}", env!("CARGO_PKG_VERSION")); return (0, so, se); }
     let pane = |positional: bool| pane_param(&a, positional);
     let rest = |from: usize| a.pos.iter().skip(from).cloned().collect::<Vec<_>>();
     let mut p = Map::new();
@@ -55,8 +59,8 @@ pub fn run(args: &[String]) -> i32 {
     let method: String;
     let mut raw_text = false;
     match (noun, verb) {
-        ("machine", "list") => return 0,
-        ("server", "reload-config") | ("config", "check") => { println!("{}", json!({"id": "cli:server:reload-config", "result": {"status": "applied", "diagnostics": []}})); return 0; }
+        ("machine", "list") => return (0, so, se),
+        ("server", "reload-config") | ("config", "check") => { out!("{}", json!({"id": "cli:server:reload-config", "result": {"status": "applied", "diagnostics": []}})); return (0, so, se); }
         ("notification", "show") => method = "notification.show".into(),
         ("api", "snapshot") => method = "api.snapshot".into(),
         ("pane", "list") => { method = "pane.list".into(); if let Some(w) = a.get("workspace") { put("workspace_id", json!(w)); } if let Some(t) = a.get("tab") { put("tab_id", json!(t)); } }
@@ -113,17 +117,39 @@ pub fn run(args: &[String]) -> i32 {
         ("agent", "prompt") => { method = "agent.prompt".into(); put("pane_id", json!(pane(true))); put("text", json!(rest(3).join(" "))); }
         ("agent", "read") => { method = "agent.read".into(); raw_text = true; put("pane_id", json!(pane(true))); if let Some(l) = a.get("lines").and_then(|l| l.parse::<u64>().ok()) { put("lines", json!(l)); } if let Some(s) = a.get("source") { put("source", json!(s)); } }
         ("agent", "send-keys") => { method = "pane.send_keys".into(); put("pane_id", json!(pane(true))); put("keys", json!(rest(3))); }
-        _ => { eprintln!("herdr: the native mux has no `{noun} {verb}`"); return 2; }
+        _ => { err!("herdr: the native mux has no `{noun} {verb}`"); return (2, so, se); }
     }
     if !resume.is_empty() && matches!((noun, verb), ("tab", "create") | ("pane", "split") | ("workspace", "create")) { p.insert("command".into(), json!(resume)); }   // after `--`: what the new pane runs
-    match call(&method, Value::Object(p)) {
+    let code = match call(&method, Value::Object(p)) {
         Ok(v) => {
-            if let Some(e) = v.get("error") { eprintln!("{}", json!({"id": format!("cli:{noun}:{verb}"), "error": e})); return 1; }
+            if let Some(e) = v.get("error") { err!("{}", json!({"id": format!("cli:{noun}:{verb}"), "error": e})); return (1, so, se); }
             let result = v.get("result").cloned().unwrap_or(Value::Null);
-            if raw_text { println!("{}", result.get("text").and_then(|t| t.as_str()).unwrap_or("")); }
-            else { println!("{}", json!({"id": format!("cli:{noun}:{verb}"), "result": result})); }
+            if raw_text { out!("{}", result.get("text").and_then(|t| t.as_str()).unwrap_or("")); }
+            else { out!("{}", json!({"id": format!("cli:{noun}:{verb}"), "result": result})); }
             0
         }
-        Err(e) => { eprintln!("herdr: {e}"); 1 }
-    }
+        Err(e) => { err!("herdr: {e}"); 1 }
+    };
+    (code, so, se)
+}
+
+/// `herdr ...` from the command line (also through the `herdr` link of the mux, and `bhoted herdr`): the native mux, or herdr itself when that is what is wanted and there.
+/// The `herdr` link of the mux: always the mux (whoever calls the link means it).
+pub fn run_native(args: &[String]) -> i32 {
+    let (code, so, se) = exec(args);
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(so.as_bytes());
+    let _ = std::io::stderr().write_all(se.as_bytes());
+    code
+}
+
+pub fn run(args: &[String]) -> i32 {
+    // `herdr --real-path`: where a herdr program is (exit 1 when there is none): the script asks
+    if args == ["--real-path".to_string()] { return match super::backend::real_herdr() { Some(p) => { println!("{}", p.display()); 0 } None => 1 }; }
+    if !super::backend::native() { super::backend::exec_real(args); }
+    let (code, so, se) = exec(args);
+    use std::io::Write;
+    let _ = std::io::stdout().write_all(so.as_bytes());
+    let _ = std::io::stderr().write_all(se.as_bytes());
+    code
 }

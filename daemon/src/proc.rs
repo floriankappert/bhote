@@ -9,6 +9,12 @@ use std::time::{Duration, Instant};
 
 /// Runs a command with a time limit: (exit code, stdout, stderr); None when it could not start. A call that takes too long is killed (code -9).
 pub fn run(cmd: &str, args: &[&str], secs: u64, stdin: Option<&[u8]>) -> Option<(i32, Vec<u8>, Vec<u8>)> {
+    // `herdr ...` goes to the native mux when that is the multiplexer (no process, no herdr needed)
+    if cmd == "herdr" && crate::mux::backend::native() {
+        let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        let (code, so, se) = crate::mux::herdrcli::exec(&a);
+        return Some((code, so.into_bytes(), se.into_bytes()));
+    }
     let mut c = Command::new(cmd); c.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
     if stdin.is_some() { c.stdin(Stdio::piped()); } else { c.stdin(Stdio::null()); }
     let mut ch = c.spawn().ok()?;
@@ -115,4 +121,10 @@ mod tests {
         { let h = fs::File::create(&f).unwrap(); h.set_len(17 << 20).unwrap(); }
         assert!(read_cap(&f).is_err()); let _ = fs::remove_file(&f);
     }
+}
+
+/// `herdr <args>` without waiting and without output (a focus, a notification): the native mux or herdr, as `run` decides.
+pub fn herdr_detached(args: &[&str]) {
+    if crate::mux::backend::native() { let a: Vec<String> = args.iter().map(|s| s.to_string()).collect(); std::thread::spawn(move || { let _ = crate::mux::herdrcli::exec(&a); }); return; }
+    let mut c = Command::new("herdr"); c.args(args); detached(c);
 }

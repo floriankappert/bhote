@@ -24,3 +24,4 @@ pub mod panels;
 pub mod agent;
 pub mod session;
 pub mod sidecar;
+pub mod backend;

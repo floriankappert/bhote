@@ -258,7 +258,7 @@ impl Panel {
     }
     fn agent_jump(&mut self, m: &str, p: &str) {
         if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
-        if m == self.host { let mut c = Command::new("herdr"); c.args(["agent", "focus", p]); crate::proc::detached(c); self.note_focus(p); }
+        if m == self.host { crate::proc::herdr_detached(&["agent", "focus", p]); self.note_focus(p); }
         else { self.act(&["flash", m, p], "flash", true); }
     }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {

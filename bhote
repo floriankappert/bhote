@@ -420,6 +420,13 @@ bhoted_bin_set() {  # bhoted_bin_set <var>: the daemon binary (the environment B
     [ -n "$_b" ] || for _b in "$_d/daemon/target/release/bhoted" "$_d/bhoted" "$(command -v bhoted 2>/dev/null)"; do [ -x "$_b" ] && break; _b=""; done
     printf -v "$1" '%s' "$_b"
 }
+# The multiplexer's command line. bhote needs no herdr: `bhoted herdr ...` answers it from the native mux, or hands it to herdr itself where that is the multiplexer
+# (BHOTE_MUX, herdr's own panes, no mux server; see daemon/src/mux/backend.rs). Without the daemon: herdr.
+herdr() {
+    [ -n "${_HERDR_VIA+x}" ] || bhoted_bin_set _HERDR_VIA
+    if [ -n "$_HERDR_VIA" ]; then "$_HERDR_VIA" herdr "$@"; else command herdr "$@"; fi
+}
+herdr_real_there() { local b; bhoted_bin_set b; if [ -n "$b" ]; then "$b" herdr --real-path >/dev/null 2>&1; else type -P herdr >/dev/null 2>&1; fi; }   # a herdr program is installed (not the link of the mux)
 bhoted_alive() {  # 0 when the daemon runs for THIS topic folder (its pid file says which; a builtin check, no process)
     local pid dir off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1
     [ -r "$SHARED_DIR/bhoted.pid" ] || return 1
@@ -5159,7 +5166,12 @@ cli_mod() {  # bhote mod [install|remove|status]: the Claude Code mod bhote-topi
 }
 cli_reload() {  # bhote reload: restarts every bhote panel of this machine (after an update). Never types into a panel that still runs:
     # the old panel is ended first (its main process, by group), and only a pane that is a plain shell again gets the command.
-    command -v herdr >/dev/null 2>&1 || { echo "bhote: herdr is not here" >&2; return 1; }
+    local bd; bhoted_bin_set bd
+    if [ -n "$bd" ] && [ "${BHOTE_MUX:-}" != herdr ] && { [ "${BHOTE_MUX:-}" = native ] || ! herdr_real_there || "$bd" mux status >/dev/null 2>&1; }; then   # (the native mux: its panels are started again by the server)
+        "$bd" mux-call server.reload_panels >/dev/null 2>&1 && { echo "panels restarted"; return 0; }
+        echo "bhote: no mux server is running" >&2; return 1
+    fi
+    herdr_real_there || { echo "bhote: herdr is not here" >&2; return 1; }
     local pane pgid cl n=0 skipped=0 k alive bin; bin=$(command -v bhote 2>/dev/null); [ -n "$bin" ] || bin="$HOME/.local/bin/bhote"
     while IFS= read -r pane; do
         [ -n "$pane" ] || continue
@@ -5372,7 +5384,7 @@ w_gate() {  # at the start of a step (again): what is set, then ⏎ change · �
         esac
     done
 }
-setup_sum_checks() { w_ok "jq · herdr" "$(command -v jq >/dev/null && echo ok || echo missing) · $(command -v herdr >/dev/null && echo ok || echo missing)"; w_ok "herdr plugin" "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo linked || echo not linked)"; }
+setup_sum_checks() { w_ok "jq · mux" "$(command -v jq >/dev/null && echo ok || echo missing) · $( { bhoted_bin_set _b; [ -n "$_b" ] && echo "native"; } || { herdr_real_there && echo herdr; } || echo missing)"; w_ok "herdr plugin" "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo linked || echo not linked)"; }
 setup_sum_name() { w_ok "this machine" "$HOST"; }
 setup_sum_machines() { local l n=0; while IFS=$US read -r l _ _; do [ -n "$l" ] && { w_ok "machine" "$l"; n=$(( n + 1 )); }; done <<< "$(w_machines)"; [ "$n" -gt 0 ] || w_warn "machines" "none saved"; }
 setup_sum_twoway() { w_ok "other machines" "can reach $HOST over ssh (checked in the last step)"; }
@@ -5527,8 +5539,8 @@ setup_step_checks() {
     w_say "What bhote needs on this machine. Nothing is changed in this step unless you say so."; w_line
     local cdir=${CLAUDE_CONFIG_DIR:-$HOME/.claude} dir hook r; hook="$cdir/settings.json"
     command -v jq >/dev/null 2>&1 && w_ok "jq" "$(jq --version 2>/dev/null)" || w_bad "jq" "install it: brew install jq / pacman -S jq"
-    if command -v herdr >/dev/null 2>&1; then w_ok "herdr" "${HERDR_V:-?}"; else w_bad "herdr" "not found: bhote lives next to herdr"; fi
-    herdr pane list >/dev/null 2>&1 && w_ok "herdr server" "running" || w_warn "herdr server" "not reachable right now"
+    if herdr_real_there; then w_ok "herdr" "${HERDR_V:-?} (optional: the native mux needs none)"; else w_ok "herdr" "not needed: bhote has its own mux (bhote attach)"; fi
+    herdr pane list >/dev/null 2>&1 && w_ok "mux server" "running" || w_warn "mux server" "not running (bhote starts it)"
     command -v bhote >/dev/null 2>&1 && w_ok "bhote command" "$(command -v bhote | sed "s#^$HOME#~#")" || w_warn "bhote command" "not on PATH (install.sh links ~/.local/bin/bhote)"
     for t in gzip base64 perl; do command -v "$t" >/dev/null 2>&1 && w_ok "$t" "" || w_warn "$t" "missing: some extras are off"; done
     if w_inbound_ssh; then w_ok "ssh into here" "open (other machines can reach $HOST)"; else w_warn "ssh into here" "closed: step 4 can switch it on"; fi
@@ -5985,7 +5997,7 @@ bhote_setup() {  # the whole wizard, in a normal (cooked) terminal
 }
 setup_status_json() {  # `bhote setup --json`: what is in place, nothing changes
     printf '{"machine":%s,"jq":%s,"herdr":%s,"plugin":%s,"claude_hook":%s,"machines":[' "$(json_str "$HOST")" \
-        "$(command -v jq >/dev/null 2>&1 && echo true || echo false)" "$(command -v herdr >/dev/null 2>&1 && echo true || echo false)" \
+        "$(command -v jq >/dev/null 2>&1 && echo true || echo false)" "$(herdr_real_there && echo true || echo false)" \
         "$(herdr plugin list 2>/dev/null | grep -q bhote.panel && echo true || echo false)" "$(grep -q 'bhote current' "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" 2>/dev/null && echo true || echo false)"
     local label host en first=1 known node down cmds
     if agents_kharka; then                                     # the machines in kharka: reachable = writes its agents, prompts = takes them
@@ -6318,7 +6330,6 @@ topic_ref() {  # topic_ref <ref>  ->  prints the file. ref: the number from `bho
 notify() {  # notify <title> <body> [sound: done|request|none]: a herdr notification, never blocking, never failing
     [ -n "${BHOTE_INTENT_LOG:-}" ] && printf 'notify|%s|%s|%s|@%s\n' "${1//[[:cntrl:]]/}" "${2//[[:cntrl:]]/}" "${3:-done}" "$(date +%s)" >> "$BHOTE_INTENT_LOG"
     [ "$(cfg_get NOTIFY on)" = on ] || return 0
-    command -v herdr >/dev/null 2>&1 || return 0
     ( herdr notification show "${1//[[:cntrl:]]/}" --body "${2//[[:cntrl:]]/}" --sound "${3:-done}" >/dev/null 2>&1 & ) 2>/dev/null
     return 0
 }
@@ -7294,11 +7305,11 @@ bhote_launch() {  # what `bhote` does in a terminal; BHOTE_LAUNCH_DRY=1 only say
     if [ "$mux" = native ] && [ -n "${HERDR_PANE_ID:-}" ]; then say_ "the panel (BHOTE_MUX=native and HERDR_PANE_ID=$HERDR_PANE_ID: inside a native pane)"; return 1; fi
     [ -z "$mux" ] && mux=$(cfg_get MUX native)
     if [ "$mux" = herdr ] && [ -n "${HERDR_PANE_ID:-}" ]; then say_ "the panel (MUX=herdr and HERDR_PANE_ID=$HERDR_PANE_ID: inside a herdr pane)"; return 1; fi
-    if [ "$mux" = herdr ]; then say_ "start herdr (MUX=herdr)" && return 0; command -v herdr >/dev/null 2>&1 || { echo "bhote: MUX=herdr, but herdr is not installed" >&2; return 1; }; exec herdr; fi
+    if [ "$mux" = herdr ]; then say_ "start herdr (MUX=herdr)" && return 0; herdr_real_there || { echo "bhote: MUX=herdr, but herdr is not installed" >&2; return 1; }; exec "$(type -P herdr)"; fi
     bhoted_bin_set bin
     if [ -z "$bin" ]; then
         say_ "the panel (bhoted not found)" && return 1
-        command -v herdr >/dev/null 2>&1 && { echo "bhote: the native mux needs the Rust daemon (bhoted); starting herdr instead" >&2; exec herdr; }
+        herdr_real_there && { echo "bhote: the native mux needs the Rust daemon (bhoted); starting herdr instead" >&2; exec "$(type -P herdr)"; }
         echo "bhote: the native mux needs the Rust daemon (bhoted): build it with cargo build --release in daemon/" >&2; return 1
     fi
     say_ "start the native mux ($bin attach)" && return 0
@@ -7317,8 +7328,8 @@ cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of h
     local keys=${BHOTE_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/keys}
     [ -f "$keys" ] && say ok "keymap: $keys" || say info "no keymap file ($keys): the defaults (prefix ctrl+b); herdr's config.toml is not read"
     command -v jq >/dev/null 2>&1 && say ok "jq" || say FAIL "jq is missing"
-    command -v herdr >/dev/null 2>&1 && say info "herdr is installed ($(herdr --version 2>/dev/null)): MUX=herdr still starts it; it goes after this release" || say ok "herdr is not needed"
-    if command -v herdr >/dev/null 2>&1 && herdr plugin list 2>/dev/null | grep -q bhote.panel; then say info "the herdr plugin bhote.panel is linked: it only matters with MUX=herdr (the native mux makes the panels itself)"; fi
+    herdr_real_there && say info "a herdr is installed: only MUX=herdr starts it; bhote does not need it" || say ok "herdr is not needed (and not installed)"
+    if herdr_real_there && "$(type -P herdr)" plugin list 2>/dev/null | grep -q bhote.panel; then say info "the herdr plugin bhote.panel is linked: it only matters with MUX=herdr (the native mux makes the panels itself)"; fi
     if [ "$(cfg_get STORE local)" = kharka ] || [ "$(cfg_get AGENTS_VIA herdr)" = kharka ]; then
         local hk; hk=$(ps -A -o command= 2>/dev/null | grep '[h]erdr-kharka')
         if [ -z "$hk" ]; then say info "kharka: no herdr-kharka runs (the mux starts one with its server)"

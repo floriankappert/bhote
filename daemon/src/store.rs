@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn now() -> u64 { SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs()) }
@@ -190,7 +189,7 @@ impl<'a> Sink for Live<'a> {
     fn write_file(&mut self, file: &Path, content: &str) { self.n += 1; if fs::write(file, content).is_ok() { let _ = fs::write(self.env.shared.join("dirty"), ""); } }
     fn notify(&mut self, title: &str, body: &str, sound: &str) {
         if !self.notify_on { return; }
-        let mut c = Command::new("herdr"); c.args(["notification", "show", &nocntrl(title), "--body", &nocntrl(body), "--sound", sound]); crate::proc::detached(c);
+        crate::proc::herdr_detached(&["notification", "show", &nocntrl(title), "--body", &nocntrl(body), "--sound", sound]);
     }
     fn herdr(&mut self, args: &[String]) { self.n += 1; let a: Vec<&str> = args.iter().map(|x| x.as_str()).collect(); let _ = crate::proc::run("herdr", &a, 20, None); }
     fn is_shadow(&self) -> bool { false }

@@ -21,6 +21,8 @@ fn or_empty(v: Option<&Value>) -> Value { match v { None | Some(Value::Null) | S
 fn truthy(v: Option<&Value>) -> bool { !matches!(v, None | Some(Value::Null) | Some(Value::Bool(false))) }
 
 fn herdr(args: &[&str], secs: u64) -> Option<Value> {
+    // the native mux answers in this process (no program needed)
+    if crate::mux::backend::native() { let o = crate::proc::run("herdr", args, secs, None).filter(|o| o.0 == 0)?; return serde_json::from_slice(&o.1).ok(); }
     let mut child = Command::new("herdr").args(args).stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null()).spawn().ok()?;
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || { let mut s = String::new(); let _ = out.read_to_string(&mut s); s });

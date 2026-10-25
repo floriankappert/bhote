@@ -158,6 +158,11 @@ impl Server {
         match method {
             "ping" => Ok(json!({"pong": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id()})),
             "server.stop" => { self.end_clients("stopped"); self.quit = true; Ok(json!({"stopped": true})) }
+            "server.reload_panels" => {   // the side panels are started again (after an update): their programs end, the server makes them anew
+                let ids: Vec<u32> = self.sidebars.iter().map(|s| s.pane).collect();
+                for id in ids { self.panes.remove(&id); self.sidebar_closed(id); }
+                self.sb_dismissed.clear(); self.sb_focus = None; self.after_change(); Ok(json!({"reloaded": true}))
+            }
             "server.restart_sidecar" => { let was = self.sidecar.is_some(); self.sidecar_stop(); self.sidecar_at = None; Ok(json!({"restarted": was})) }
             "server.reload_config" => { self.bar_mode = bar_mode_load_pub(); self.km = super::keymap::Keymap::load(&super::actions::keys_path()); self.after_change(); Ok(json!({"status": "applied", "diagnostics": []})) }
             "notification.show" => {
