@@ -130,7 +130,10 @@ check(c.wait_exit() and c.status == 0, "prefix+d detaches")
 
 # a keymap file: another prefix, a rebinding, a command
 E.fresh()
-open(f"{E.T}/keys", "w").write(f"prefix = ctrl+space\nsplit_vertical = prefix+s\ndetach = none\nrun prefix+t touch {E.T}/ran_$HERDR_PANE_ID\n")
+open(f"{E.T}/keys", "w").write(f"prefix = ctrl+space\nsplit_vertical = prefix+s\ndetach = none\nrun prefix+t touch {E.T}/ran_$HERDR_PANE_ID\npopup ctrl+alt+f bhote find\n")
+import subprocess as _sp
+_toml = _sp.run([BIN, "mux", "keys-toml"], capture_output=True, text=True, env=E.env).stdout
+check('prefix = "ctrl+space"' in _toml and 'key = "ctrl+alt+f"' in _toml and "bhote.panel.search" in _toml, "the panel reads the keys of the mux in the form of herdr\'s config (prefix, jump key, find key)", _toml)
 c = E.client(100, 30)
 assert c.wait_for("$ ")
 c.send("\x00s"); E.settle()

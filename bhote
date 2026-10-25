@@ -2406,6 +2406,11 @@ view_head() {  # one line: name and version in colour, the tagline; then a rule 
 # The herdr key that jumps between agent and panel (the plugin action bhote.panel.focus), as herdr's config.toml binds it:
 # a [[keys.command]] block, or the inline form term-theme writes. "prefix+t" is shown with the prefix: "^b t".
 HERDR_CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/herdr/config.toml; HERDR_CONFIG_OWN=$HERDR_CONFIG
+# In the native mux the keys are the mux's own (~/.config/bhote/keys): the panel reads them in the form of herdr's config.toml, made from the keymap
+if [ "${BHOTE_MUX:-}" = native ]; then
+    for _bd in "${BHOTED_BIN:-}" "$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "$0")")/daemon/target/release/bhoted" "$(command -v bhoted 2>/dev/null)"; do [ -x "$_bd" ] && break; _bd=""; done
+    if [ -n "$_bd" ] && mkdir -p "$SHARED_DIR" 2>/dev/null && "$_bd" mux keys-toml > "$SHARED_DIR/mux-keys.toml.$$" 2>/dev/null; then mv -f "$SHARED_DIR/mux-keys.toml.$$" "$SHARED_DIR/mux-keys.toml"; HERDR_CONFIG=$SHARED_DIR/mux-keys.toml; HERDR_CONFIG_OWN=$HERDR_CONFIG; fi
+fi
 # The keys belong to the herdr you TYPE into: with the panel on another machine than that herdr (a Mac attached to this Linux
 # session) HERDR_KEYS_MACHINE names it, and its config.toml is read from a copy the collector keeps (keys_fetch).
 keys_cache_set() { local _km; cfg_var _km HERDR_KEYS_MACHINE any; KEYS_CACHE=""

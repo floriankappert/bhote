@@ -124,6 +124,7 @@ pub fn call_main(args: &[String]) -> i32 {
 
 /// `bhote mux stop|status|restart`: the server of this user (the session stays: the next start restores it).
 pub fn control_cmd(what: &str) -> i32 {
+    if what == "keys-toml" { print!("{}", super::keymap::Keymap::load(&super::actions::keys_path()).herdr_toml()); return 0; }
     let running = call("ping", json!({})).ok().and_then(|v| v.pointer("/result/pid").and_then(|p| p.as_u64()));
     match (what, running) {
         ("status", Some(pid)) => { println!("mux server running (pid {pid}, {})", proto::sock_path().display()); 0 }

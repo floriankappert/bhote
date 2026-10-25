@@ -167,7 +167,7 @@ fn main() {
     let a: Vec<String> = std::env::args().collect();
     if std::path::Path::new(&a[0]).file_name().map_or(false, |n| n == "herdr") { std::process::exit(mux::herdrcli::run_native(&a[1..])); } // started through the `herdr` link of the mux: the mux
     if a.len() >= 2 && a[1] == "panel" { std::process::exit(panel::run()); }
-    if a.len() >= 3 && a[1] == "mux" && matches!(a[2].as_str(), "stop" | "status" | "restart") { std::process::exit(mux::client::control_cmd(&a[2])); } // bhote mux stop|status|restart
+    if a.len() >= 3 && a[1] == "mux" && matches!(a[2].as_str(), "stop" | "status" | "restart" | "keys-toml") { std::process::exit(mux::client::control_cmd(&a[2])); } // bhote mux stop|status|restart
     if a.len() >= 2 && a[1] == "mux" { std::process::exit(mux::server::run()); }                     // the pane server (docs/mux-protocol.md)
     if a.len() >= 2 && a[1] == "herdr" { std::process::exit(mux::herdrcli::run(&a[2..])); }       // the herdr command line, answered by the native mux
     if a.len() >= 2 && a[1] == "chat" { std::process::exit(chat::run()); }                         // the chat panel: an input field and the history of an agent

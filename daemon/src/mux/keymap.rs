@@ -127,6 +127,21 @@ impl Keymap {
         g.first().map(|k| k.to_string())
     }
 
+    /// The first key of a `popup` (or `run`) binding whose command starts with `cmd`, as "prefix+x" or the plain key.
+    pub fn key_of_command(&self, action: &str, cmd: &str) -> Option<String> {
+        let mut v: Vec<String> = self.prefixed.iter().filter(|(_, b)| b.action == action && b.arg.as_deref().map_or(false, |a| a.starts_with(cmd))).map(|(k, _)| format!("prefix+{k}"))
+            .chain(self.global.iter().filter(|(_, b)| b.action == action && b.arg.as_deref().map_or(false, |a| a.starts_with(cmd))).map(|(k, _)| k.clone())).collect();
+        v.sort(); v.into_iter().next()
+    }
+
+    /// The keys in the form of herdr's config.toml (what the panel reads to show "prefix t" for the jump key and the find key).
+    pub fn herdr_toml(&self) -> String {
+        let mut o = format!("[keys]\nprefix = \"{}\"\n", self.prefix);
+        if let Some(k) = self.show("focus_panel") { o.push_str(&format!("[[keys.command]]\nkey = \"{k}\"\ntype = \"plugin_action\"\ncommand = \"bhote.panel.focus\"\n")); }
+        if let Some(k) = self.key_of_command("popup", "bhote find") { o.push_str(&format!("[[keys.command]]\nkey = \"{k}\"\ntype = \"plugin_action\"\ncommand = \"bhote.panel.search\"\n")); }
+        o
+    }
+
     /// All bindings for the help screen: (keys, action).
     pub fn list(&self) -> Vec<(String, String)> {
         let mut v: Vec<(String, String)> = self.prefixed.iter().map(|(k, b)| (format!("prefix+{k}"), b.action.clone())).chain(self.global.iter().map(|(k, b)| (k.clone(), b.action.clone()))).collect();
