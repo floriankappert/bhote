@@ -7243,18 +7243,21 @@ bhote_cli() {
 }
 
 # `bhote` typed in a plain terminal starts the multiplexer (the native mux, or herdr with MUX=herdr); inside one of its panes it is the panel.
-bhote_launch() {
-    local mux=${BHOTE_MUX:-} bin
-    [ -n "${BHOTE_PANEL:-}" ] && return 1                                           # (a panel pane: the mux and the herdr plugin say so)
-    [ "$mux" = native ] && [ -n "${HERDR_PANE_ID:-}" ] && return 1                  # (inside a native pane, where BHOTE_MUX=native is set: the panel, not a second mux)
+bhote_launch() {  # what `bhote` does in a terminal; BHOTE_LAUNCH_DRY=1 only says it (bhote doctor)
+    local mux=${BHOTE_MUX:-} bin d=${BHOTE_LAUNCH_DRY:-}
+    say_() { if [ -n "$d" ]; then echo "$1"; return 0; fi; return 1; }
+    if [ -n "${BHOTE_PANEL:-}" ]; then say_ "the panel (BHOTE_PANEL is set: this is a panel pane)"; return 1; fi
+    if [ "$mux" = native ] && [ -n "${HERDR_PANE_ID:-}" ]; then say_ "the panel (BHOTE_MUX=native and HERDR_PANE_ID=$HERDR_PANE_ID: inside a native pane)"; return 1; fi
     [ -z "$mux" ] && mux=$(cfg_get MUX native)
-    [ "$mux" = herdr ] && [ -n "${HERDR_PANE_ID:-}" ] && return 1                   # (MUX=herdr: in one of its panes `bhote` is the panel, as before)
-    if [ "$mux" = herdr ]; then command -v herdr >/dev/null 2>&1 || { echo "bhote: MUX=herdr, but herdr is not installed" >&2; return 1; }; exec herdr; fi
+    if [ "$mux" = herdr ] && [ -n "${HERDR_PANE_ID:-}" ]; then say_ "the panel (MUX=herdr and HERDR_PANE_ID=$HERDR_PANE_ID: inside a herdr pane)"; return 1; fi
+    if [ "$mux" = herdr ]; then say_ "start herdr (MUX=herdr)" && return 0; command -v herdr >/dev/null 2>&1 || { echo "bhote: MUX=herdr, but herdr is not installed" >&2; return 1; }; exec herdr; fi
     bhoted_bin_set bin
     if [ -z "$bin" ]; then
+        say_ "the panel (bhoted not found)" && return 1
         command -v herdr >/dev/null 2>&1 && { echo "bhote: the native mux needs the Rust daemon (bhoted); starting herdr instead" >&2; exec herdr; }
         echo "bhote: the native mux needs the Rust daemon (bhoted): build it with cargo build --release in daemon/" >&2; return 1
     fi
+    say_ "start the native mux ($bin attach)" && return 0
     exec "$bin" attach
 }
 cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of herdr
@@ -7266,6 +7269,7 @@ cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of h
         r=$("$bin" mux-call ping 2>/dev/null) && say ok "mux server running ($(printf '%s' "$r" | jq -r '.result.pid // "?"' 2>/dev/null))" || say info "no mux server running (bhote starts one)"
     fi
     say info "MUX=$(cfg_get MUX native)${BHOTE_MUX:+ (BHOTE_MUX=$BHOTE_MUX)}"
+    say info "typing bhote in this terminal: $(BHOTE_LAUNCH_DRY=1 bhote_launch || true)"
     local keys=${BHOTE_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/keys}
     [ -f "$keys" ] && say ok "keymap: $keys" || say info "no keymap file ($keys): the defaults (prefix ctrl+b); herdr's config.toml is not read"
     command -v jq >/dev/null 2>&1 && say ok "jq" || say FAIL "jq is missing"
