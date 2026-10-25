@@ -106,7 +106,7 @@ impl Panel {
     fn view(&self, mcodes: Vec<(String, String)>) -> View {
         let note = self.update_note();
         let newfeat = !self.c("SETUP_DONE", "").is_empty() && (self.c("WIZARD_LEVEL", "1").parse::<u64>().unwrap_or(1)) < FEATURE_LEVEL;
-        let head_rows = (!note.is_empty()) as i64 + newfeat as i64;
+        let head_rows = if self.side != 0 { 0 } else { (!note.is_empty()) as i64 + newfeat as i64 };   // (the two panels of a tab have no head)
         View { sel_id: self.sel_id.clone(), hover_id: self.hover_id.clone(), expanded: self.expanded.clone(), scope_project: self.c("TOPICS_SCOPE", "all") == "project", cur_proj: self.current_project(),
             spin_ch: SPIN_FRAMES[self.spin_tick % SPIN_FRAMES.len()].to_string(), bored_small: false, archive_days: self.c("ARCHIVE_DAYS", "7").parse().unwrap_or(7), github: self.c("GITHUB_BRANCHES", "on") != "off",
             host: self.host.clone(), mach_fg: self.herdr_machine_fg(), line_max: 10, done_max: self.num("DONE_MAX", 4), mcodes,
@@ -125,7 +125,7 @@ impl Panel {
         let mut cards = Cards::new(&ctx, &view); cards.rows_total = self.rows as i64;
         let av = agentsui::agent_view(&view, &ctx.cfg, &ctx.shared);
         let b = agentsui::bottom_side(&cards, &av, &mc, self.side != 2);   // (the right panel has no agent overview: that is the left one's)
-        let head = agentsui::head(&ctx, &view.head_view());
+        let head = if self.side != 0 { String::new() } else { agentsui::head(&ctx, &view.head_view()) };   // (no Bhote + version header in the two panels: it takes the room)
         let lay = Layout { cards: &cards, rows: self.rows as i64, head, bottom: b.text, run_dir: PathBuf::new(), prev_toff: self.prev_toff, side: self.side };
         let o = lay.view_out();
         self.prev_toff = o.toff;
@@ -227,6 +227,24 @@ impl Panel {
             self.redraw = true;
         }
     }
+    /// A click on a workspace shows it (herdr itself, no script); then focus.pane is written from herdr's own answer, so that the panels move their highlight at once
+    fn focus_workspace(&mut self, id: &str) {
+        if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
+        let (id, shared) = (id.to_string(), self.shared.clone());
+        std::thread::spawn(move || {
+            let _ = crate::proc::run("herdr", &["workspace", "focus", &id], 5, None);
+            if let Some(o) = crate::proc::run("herdr", &["pane", "list"], 5, None).filter(|o| o.0 == 0) {
+                let v: serde_json::Value = serde_json::from_slice(&o.1).unwrap_or(serde_json::Value::Null);
+                if let Some(p) = v["result"]["panes"].as_array().and_then(|a| a.iter().find(|p| p["focused"] == true)) {
+                    let (pane, tab) = (p["pane_id"].as_str().unwrap_or(""), p["tab_id"].as_str().unwrap_or(""));
+                    if !pane.is_empty() && !tab.is_empty() {
+                        let tmp = shared.join(format!("focus.pane.tmp.{}", std::process::id()));
+                        if std::fs::write(&tmp, format!("{} {}\n", pane, tab)).is_ok() { let _ = std::fs::rename(&tmp, shared.join("focus.pane")); }
+                    }
+                }
+            }
+        });
+    }
     /// The agent that was just shown is the focused pane: written to focus.pane at once (pane and tab), so that every panel moves its highlight now and not with the
     /// next round of the collector (which writes the truth again)
     fn note_focus(&self, pane: &str) {
@@ -310,7 +328,7 @@ impl Panel {
         }
         if !press { return; }
         if b == 2 {   // the right button: the topic's menu
-            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("agent:")) { self.sel_id = id; self.open_menu(term); } }
+            if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("agent:") || id.starts_with("ws:")) { self.sel_id = id; self.open_menu(term); } }
             return;
         }
         if b != 0 { return; }
@@ -324,6 +342,7 @@ impl Panel {
         if div == 0 || y < div {   // above it: a topic?
             if let Some(t) = self.ref_at(y).cloned() {
                 let id = t.clone();
+                if let Some(wid) = id.strip_prefix("ws:") { self.focus_workspace(wid); return; }   // (a workspace of the left panel: show it)
                 if let Some(rest) = id.strip_prefix("agent:") {   // an idle agent's card: show the agent
                     if let Some((m, pane)) = rest.rsplit_once('/') { let (m, pane) = (m.to_string(), pane.to_string()); self.agent_jump(&m, &pane); }
                     self.redraw = true; return;

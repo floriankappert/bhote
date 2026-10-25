@@ -40,16 +40,17 @@ def bad(m):
         print("  last output (%d bytes, alive=%s): %s" % (len(p.out), p.alive, tail), flush=True)
 
 class Panel:
-    def __init__(self, cols=70, rows=40, cfg="", topics=None, side=None):
+    def __init__(self, cols=70, rows=40, cfg="", topics=None, side=None, files=None):
         self.T = tempfile.mkdtemp(); T = self.T
         for d in ("data/topics", "shared", "home"): os.makedirs(f"{T}/{d}")
         open(f"{T}/config", "w").write("BHOTED_PANEL=on\nCARD_GROUPING=status\nNOTIFY=off\nSETUP_DONE=1\nWIZARD_LEVEL=9\nUPDATE_CHECK=off\nSPLASH_AUTOCLOSE=off\n" + cfg)
+        for name, text in (files or {}).items(): open(f"{T}/{name}", "w").write(text)
         self.now = int(time.time())
         for t in (topics or DEFAULT):
             self.topic(**t)
         os.makedirs(f"{T}/bin", exist_ok=True)   # a herdr that notes when an agent is shown (and hands everything else to the real one)
         real = shutil.which("herdr") or "/bin/false"
-        open(f"{T}/bin/herdr", "w").write(f'#!/bin/sh\ncase "$1 $2" in "agent focus") echo "$(date +%s%N) $3" >> "{T}/focus.log"; exit 0 ;; *) exec "{real}" "$@" ;; esac\n')
+        open(f"{T}/bin/herdr", "w").write(f'#!/bin/sh\ncase "$1 $2" in "workspace list") if [ -f "{T}/ws.json" ]; then cat "{T}/ws.json"; exit 0; else exec "{real}" "$@"; fi ;; "agent focus"|"workspace focus") echo "$(date +%s%N) $1 $3" >> "{T}/focus.log"; exit 0 ;; *) exec "{real}" "$@" ;; esac\n')
         os.chmod(f"{T}/bin/herdr", 0o755)
         env = dict(os.environ, **({"BHOTE_SIDE": side} if side else {}), PATH=f"{T}/bin:" + os.environ.get("PATH", ""), BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
         for k in ("NO_COLOR", "HERDR_PANE_ID", "HERDR_TAB_ID", "CLAUDECODE"): env.pop(k, None)
@@ -221,6 +222,22 @@ while time.time() - t0 < 2 and seen is None:
 if seen is None: bad("a click on a card did not ask herdr to show the agent")
 elif seen - t0 > 0.25: bad("a click on a card showed the agent after %.0f ms" % ((seen - t0) * 1000))
 else: ok("a click on a card shows its agent at once (herdr asked after %.0f ms)" % max(0, (seen - t0) * 1000))
+p.close()
+p = Panel()
+
+# 7e) the left panel has the workspaces on top; a click on one asks herdr to show it
+p.close()
+US = "\x1f"
+p = Panel(side="left", files={"ws.json": '{"result":{"workspaces":[{"workspace_id":"w1","label":"Alpha space","number":1,"focused":false,"agent_status":"idle"},{"workspace_id":"w2","label":"Beta space","number":2,"focused":true,"agent_status":"working"}]}}'})
+p.expect("Beta space", 6); sc = "\n".join(p.screen())
+if "Workspaces" in sc and "Alpha space" in sc and "Beta space" in sc and sc.index("Workspaces") < sc.index("First review"): ok("the left panel: the workspaces on top of the cards")
+else: bad("workspaces: " + sc.replace("\n", " | ")[:300])
+y = p.row("Alpha space"); t0 = time.time()
+if y: os.write(p.fd, f"\x1b[<0;10;{y}M\x1b[<0;10;{y}m".encode())
+log = os.path.join(p.T, "focus.log"); got = ""
+while time.time() - t0 < 3 and "workspace w1" not in got:
+    time.sleep(0.05); got = open(log).read() if os.path.exists(log) else ""
+ok("a click on a workspace asks herdr to show it") if "workspace w1" in got else bad("workspace click: " + got)
 p.close()
 p = Panel()
 

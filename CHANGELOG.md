@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- The left panel starts with the **workspaces** of this machine (number, name, the state of their agents; the one you are in highlighted; a click shows the workspace; `workspaces.local`, written by the daemon). The two panels have no `Bhote` + version header: it takes the room.
 - Panel sides (step 1 of two panels per tab): the Rust panel can be the **left** panel (the agents' cards and the agent overview) or the **right** one (the lines of the topics, done, deployments, tests), by the pane label `bhote-left` / `bhote-right` or `BHOTE_SIDE`; new setting `PANEL_LAYOUT` (`single` is the panel as before, `split` for two). The herdr plugin that makes the two panes and the workspace list for the left panel follow.
 
 ### Changed
@@ -15,6 +16,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - Claude Code mod: the band above the prompt no longer shows the status of the agent's topic. It shows a **friendly reminder** instead: now and then, at random (at the earliest every ten minutes, for 45 seconds), in orange with a dog, a topic that waits, is next or is parked, with its description under it. New setting `FRIENDLY_REMINDER` (settings › *Show Friendly Reminder*, on); new command `bhote reminder`. The pane and `/topic` stay. After `bhote mod install` Claude Code needs `/reload-plugins`.
 
 ### Fixed
+- A topic that says it waits for a deployment while none runs is a plain waiting line, in its place among the others: `Waiting` no longer stands twice (before and after `Next`).
 - A review card of an agent that works on the same thing again (same title, the topic is now at work) is put away, and of two reviews with the same title the older one: the same work no longer shows as a review card and a working card at once.
 - An agent is always there: when the last topic of an agent was set to done, its card was gone and nothing showed the agent (and herdr's `done` state, a finished agent, never had a card). Every agent without a card of its own now has one (ungrouped: idle, done, working, needs you; grouped: idle and done in the group IDLE, the others in the list at the bottom as before). An agent that works or needs you shows in its colour, an idle one dimmed; the list at the bottom keeps only what is not on a card (offline machines) and no longer counts idle or done agents as inactive.
 - A click on a card shows its agent at once (3 ms until herdr is asked, was about 200 ms): the Rust panel asks herdr itself for an agent of this machine (`herdr agent focus`, no script started), does not repaint for the click, and no longer waits half a second for a possible double click. A double click still works: the last click is kept in the shared folder, so the panel of the tab the first click went to takes the second. The panels notice a changed focus (`focus.pane`) within 150 ms, a click writes it at once: the highlight moves with the agent shown instead of after the next round of the collector (up to 3 s).

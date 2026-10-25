@@ -63,7 +63,14 @@ impl<'a> Cards<'a> {
         // a topic that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows; without one it is a line in the Waiting list
         if ts.iter().any(|t| t.status == "waiting" && t.dep == "1") {
             let names: HashMap<String, String> = crate::ui::projects(c).into_iter().map(|p| (p.id, p.name)).collect();
-            for t in ts.iter_mut() { if t.status == "waiting" && t.dep == "1" && deploy_lookup_pub(&shared, &c.topics, &names, t).is_none() { t.dep = String::new(); } }
+            let mut pruned = vec![false; ts.len()];
+            for (i, t) in ts.iter_mut().enumerate() { if t.status == "waiting" && t.dep == "1" && deploy_lookup_pub(&shared, &c.topics, &names, t).is_none() { t.dep = String::new(); pruned[i] = true; } }
+            if pruned.iter().any(|p| *p) {   // such a topic is a plain waiting line: it moves from the place of the deployment waits to the start of the waiting lines (else Waiting would stand twice)
+                let (mut rest, mut moved) = (Vec::new(), Vec::new());
+                for (i, t) in ts.drain(..).enumerate() { if pruned[i] { moved.push(t); } else { rest.push(t); } }
+                let pos = rest.iter().position(|t| matches!(t.status.as_str(), "waiting" | "later" | "done")).unwrap_or(rest.len());
+                rest.splice(pos..pos, moved); ts = rest;
+            }
         }
         let mut ag = rows(&shared.join("agents.local")); ag.extend(rows(&shared.join("agents.remote")));
         // topics_projects: a topic's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)
@@ -117,6 +124,24 @@ impl<'a> Cards<'a> {
             if f.len() > 2 && f[2] == tab { if f[1] == fp { return Some(fp); } if first.is_none() { first = Some(f[1].to_string()); } }
         }
         first
+    }
+    /// The workspaces of this machine for the left panel (workspaces.local): a caption and a line each, "number  name  state"; the focused one on the highlighted ground; a click
+    /// on a line shows that workspace (ref ws:<id>)
+    pub fn workspaces_block(&self) -> String {
+        let t = crate::proc::read_cap(self.shared.join("workspaces.local")).unwrap_or_default();
+        if t.trim().is_empty() { return String::new(); }
+        let g = |k: &str| self.g(k).to_string(); let x = g("X");
+        let mut out = format!("\n{}", crate::ui::dash_caption_pub(self.c, "Workspaces"));
+        let w = self.c.cols - 4;
+        for l in t.lines() {
+            let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { continue; }
+            let (num, id, label, focused, st) = (f[0], f[1], f[2], f[3] == "1", f[4]);
+            let ic = match st { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), _ => format!("{}○", g("D")) };
+            let name = clip(label, w - 7); let nw = dw(&name);
+            let (bg, tc) = if focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL"))) } else { (String::new(), g("L")) };
+            out.push_str(&format!("{}{}{}  {}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", REF, format!("ws:{}", id), REF, bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x));
+        }
+        out
     }
     pub fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }
     pub fn expanded(&self, st: &str) -> bool { self.v.expanded.contains(&format!(" {} ", st)) }
@@ -696,8 +721,9 @@ impl<'a> Layout<'a> {
         let trim = |s: String| s.trim_end_matches('\n').to_string();
         let head = trim(self.head.clone()); let bottom = trim(self.bottom.clone());
         let mut topics = if self.side == 2 { String::new() } else { trim(c.block("cards")) };
+        if self.side == 1 { let ws = trim(c.workspaces_block()); if !ws.is_empty() { topics = format!("{}\n{}", ws, topics); } }   // (the left panel: the workspaces on top, then the agents)
         let lists = if self.side == 1 { String::new() } else { trim(c.block("lists")) };
-        let (hh, mut th, bh) = (count_lines(&head), count_lines(&topics), count_lines(&bottom));
+        let (hh, mut th, bh) = (if head.is_empty() { 0 } else { count_lines(&head) }, count_lines(&topics), count_lines(&bottom));
         let mut dn = if self.side == 1 { 0 } else { c.v.done_max }; if self.side != 1 && c.expanded("done") { dn = c.done_total(); }
         let mut dblk = if self.side == 1 { String::new() } else { trim(c.done_block(dn)) }; let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
         while dh > 0 && dn > 0 && rows - hh - bh - dh < th.min(6) { dn -= 1; dblk = trim(c.done_block(dn)); dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) }; }
@@ -708,7 +734,7 @@ impl<'a> Layout<'a> {
         if rows - hh - bh - dh - mh - lcut < need { lcut = rows - hh - bh - dh - mh - need; if lcut < 0 { lcut = 0; } }
         let avail = rows - hh - bh - dh - mh - lcut;
         if topics.contains("the agents are bored") && th > avail { topics = trim(c.block_with("cards", true)); th = count_lines(&topics); }
-        let mut out = format!("{}\n", head);
+        let mut out = if head.is_empty() { String::new() } else { format!("{}\n", head) };
         let mut vp = Vp { row: hh, map: String::new(), spin: String::new() };
         fn put(vp: &mut Vp, p: &[Parsed], from: i64, to: i64, out: &mut String) {
             let mut i = from;

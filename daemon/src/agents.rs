@@ -96,6 +96,17 @@ fn put_list(path: &Path, text: &str) -> bool {
     put_tmp(path, text)
 }
 
+/// workspaces.local: one line per workspace of this machine, for the left panel: number, id, label, 1 when it is the focused one, the state of its agents
+pub fn workspaces_text(ws: &Value) -> String {
+    let empty = Vec::new();
+    let mut out = String::new();
+    for w in ws.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty) {
+        let f = [tostr(&or_empty(w.get("number"))), tostr(&or_empty(w.get("workspace_id"))), clean(&tostr(w.get("label").unwrap_or(&Value::Null))), (if truthy(w.get("focused")) { "1" } else { "0" }).to_string(), tostr(&or_empty(w.get("agent_status")))];
+        out.push_str(&f.iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&US.to_string())); out.push('\n');
+    }
+    out
+}
+
 /// One collection of this machine: asks herdr, writes the files. false when herdr did not answer (the old files stay).
 pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
     let Some(panes) = herdr(&["pane", "list"], 20) else { return false };
@@ -106,6 +117,7 @@ pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
     let b = put_list(&shared.join("agents.local"), &o.local);
     let _ = put_tmp(&shared.join("agents.cwd"), &o.cwd);
     let _ = put_tmp(&shared.join("focus.pane"), &o.focus);
+    let _ = put_tmp(&shared.join("workspaces.local"), &workspaces_text(&ws));
     if a || b {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));

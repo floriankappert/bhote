@@ -2017,12 +2017,26 @@ topics_block() {  # topics_block [cards|lists]: the topics on now, grouped by st
     [ "$mode" = lists ] || [ "$grp" != status ] || idle_cards       # (grouped: the group IDLE at the end; ungrouped: they are in the sequence)
     TI_AGN=""
 }
+topic_order_set() {  # topic_order_set: ORD = the topic indices in the order of the lists: a topic that says it waits for a deployment while none runs (T_DNO) is a plain waiting line, so it
+    # moves from the place of the deployment waits to the start of the waiting lines (else Waiting would stand twice, before and after Next)
+    local i pos=-1 pr=() rest=() k n=0; ORD=()
+    for (( i = 0; i < T_N; i++ )); do
+        if [ "${T_STATUS[$i]}" = waiting ] && [ "${T_DEP[$i]:-}" = 1 ] && [ -n "${T_DNO[$i]:-}" ]; then pr[${#pr[@]}]=$i; else rest[${#rest[@]}]=$i; fi
+    done
+    if [ "${#pr[@]}" -eq 0 ]; then ORD=("${rest[@]}"); return 0; fi
+    for (( k = 0; k < ${#rest[@]}; k++ )); do case "${T_STATUS[${rest[$k]}]}" in waiting|later|done) pos=$k; break ;; esac; done
+    [ "$pos" -ge 0 ] || pos=${#rest[@]}
+    for (( k = 0; k < pos; k++ )); do ORD[$n]=${rest[$k]}; n=$(( n + 1 )); done
+    for k in "${pr[@]}"; do ORD[$n]=$k; n=$(( n + 1 )); done
+    for (( k = pos; k < ${#rest[@]}; k++ )); do ORD[$n]=${rest[$k]}; n=$(( n + 1 )); done
+}
 cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topics_block goes through. Grouped: the topics in their order. Ungrouped: the cards in the
     # order of the agents (as herdr lists them: the agent list; the other machines above this one), an agent's cards, or a card "a<index>" for an idle one without a card; then the cards that have no agent in
     # that list; then (mode all) the lines. Every entry is a topic index.
     local mode=$1 grp=$2 i k m id st used=$'\n' c any
     seq=(); T_CARD=()
-    if [ "$grp" = status ] || [ "$mode" = lists ]; then for (( i = 0; i < T_N; i++ )); do seq[$i]=$i; done; return 0; fi
+    local ORD=() o; topic_order_set
+    if [ "$grp" = status ] || [ "$mode" = lists ]; then seq=("${ORD[@]}"); return 0; fi
     for (( i = 0; i < T_N; i++ )); do
         case "${T_STATUS[$i]}" in review|now|testing|finished) T_CARD[$i]=1 ;; waiting) [ "${T_DEP[$i]:-}" = 1 ] && [ -z "${T_DNO[$i]:-}" ] && T_CARD[$i]=1 ;; esac
     done
@@ -2038,7 +2052,7 @@ cards_sequence() {  # cards_sequence <mode> <ungrouped|status>: seq = what topic
     done; done
     for (( i = 0; i < T_N; i++ )); do [ -n "${T_CARD[$i]:-}" ] && case "$used" in *$'\n'"$i"$'\n'*) ;; *) seq[${#seq[@]}]=$i ;; esac; done   # (no agent in the list)
     [ "$mode" = cards ] && return 0
-    for (( i = 0; i < T_N; i++ )); do [ -z "${T_CARD[$i]:-}" ] && seq[${#seq[@]}]=$i; done
+    for o in "${ORD[@]}"; do [ -z "${T_CARD[$o]:-}" ] && seq[${#seq[@]}]=$o; done
 }
 idle_card() {  # idle_card <agent index>: the card of an agent without a card of its own: two rows (the agent, its last task); idle (also herdr's done) dimmed, one that works or needs
     # you in its colour; a click shows the agent (ref agent:<machine>/<pane>). An agent is always there.
