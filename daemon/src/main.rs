@@ -16,6 +16,7 @@ mod cards;
 mod follow;
 mod mux;
 mod chat;
+mod worktrees;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
@@ -226,7 +227,7 @@ fn main() {
             }
             if a[2] == "frame" {   // the whole main view: bhoted block frame --head F --bottom F --rows N --run DIR
                 let cards = cards::Cards::new(&ctx, &view);
-                let lay = cards::Layout { cards: &cards, rows: opt("--rows").and_then(|v| v.parse().ok()).unwrap_or(40), head: crate::proc::read_cap(opt("--head").unwrap_or_default()).unwrap_or_default(), bottom: crate::proc::read_cap(opt("--bottom").unwrap_or_default()).unwrap_or_default(), run_dir: PathBuf::from(opt("--run").unwrap_or_default()), prev_toff: None, side: match opt("--side").as_deref() { Some("left") => 1, Some("right") => 2, _ => 0 } };
+                let lay = cards::Layout { cards: &cards, rows: opt("--rows").and_then(|v| v.parse().ok()).unwrap_or(40), head: crate::proc::read_cap(opt("--head").unwrap_or_default()).unwrap_or_default(), bottom: crate::proc::read_cap(opt("--bottom").unwrap_or_default()).unwrap_or_default(), run_dir: PathBuf::from(opt("--run").unwrap_or_default()), prev_toff: None, sec: match opt("--sections").and_then(|s| cards::Sections::parse(&s)) { Some(s) => s, None => cards::Sections::by_side(match opt("--side").as_deref() { Some("left") => 1, Some("right") => 2, _ => 0 }) } };
                 let out = lay.view(); use std::io::Write; let _ = std::io::stdout().write_all(out.as_bytes()); return;
             }
             let out = match a[2].as_str() { "monitors" => ui::monitors(&ctx), "cards" => cards::Cards::new(&ctx, &view).block("cards"), "lists" => cards::Cards::new(&ctx, &view).block("lists"), "done" => cards::Cards::new(&ctx, &view).done_block(opt("--max").and_then(|v| v.parse().ok()).unwrap_or(4)), _ => { eprintln!("bhoted: no block {}", a[2]); std::process::exit(2) } };

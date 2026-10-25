@@ -6353,7 +6353,7 @@ act_slack() {                                                                   
     else FLASH_MSG="✗ ${perr#bhote: }"; fi
     printf '%s' "$FLASH_MSG"
 }
-act_clamp() { panel_width_clamp "$@"; }                                                         # (the width of the panel pane is kept between the two settings)
+act_clamp() { [ "${BHOTE_MUX:-}" = native ] && return 0; panel_width_clamp "$@"; }   # (the native mux keeps the widths itself)                                                         # (the width of the panel pane is kept between the two settings)
 act_mountws() { ui_load; remote_workspace "$1" "$2" >/dev/null 2>&1; }   # <machine> <workspace id>: a click on a workspace of another machine (the left panel)
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID

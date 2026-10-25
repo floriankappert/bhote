@@ -5,7 +5,7 @@ use crate::store::{self, Topic};
 use crate::ui::{abbr as _abbr, clip, dw, Ctx};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const US: char = '\u{1f}';
 const REF: char = '\u{1d}';    // \035
@@ -160,6 +160,31 @@ impl<'a> Cards<'a> {
             if *mach == self.host { out.push_str(&format!("{}ws:+new{}   {}+ new{}\n", REF, REF, g("D"), x)); }   // (a click makes a workspace on this machine)
         }
         out.push_str(&format!("  {}{}{}\n", g("B"), "─".repeat((self.c.cols - 5).max(0) as usize), x));   // the divider under the workspaces
+        out
+    }
+    /// The worktrees section: the git worktrees of the repositories the agents of this machine work in, with the agent that works in each (a click shows it).
+    pub fn worktrees_block(&self) -> String {
+        let g = |k: &str| self.g(k).to_string(); let x = g("X");
+        let cwds: Vec<String> = crate::proc::read_cap(self.shared.join("agents.cwd")).unwrap_or_default().lines().filter_map(|l| l.split(US).nth(1).map(String::from)).filter(|c| !c.is_empty()).collect();
+        let wts = crate::worktrees::cached(&self.shared, cwds.clone());
+        if wts.is_empty() { return String::new(); }
+        // who works where: the pane of an agent whose folder is in the worktree, and its state (agents.local: machine, pane, state, workspace, task)
+        let panes: Vec<(String, String)> = crate::proc::read_cap(self.shared.join("agents.cwd")).unwrap_or_default().lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 1 { Some((f[0].to_string(), f[1].to_string())) } else { None } }).collect();
+        let states: Vec<(String, String)> = crate::proc::read_cap(self.shared.join("agents.local")).unwrap_or_default().lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 2 { Some((f[1].to_string(), f[2].to_string())) } else { None } }).collect();
+        let w = (self.c.cols - 4).max(10);
+        let mut out = format!("\n{}", crate::ui::dash_caption_pub(self.c, "Worktrees"));
+        let mut last = String::new();
+        for t in &wts {
+            if t.repo != last { out.push_str(&format!("{}{}{}{}\n", g("BLUE"), g("BOLD"), clip(&t.repo, w + 2), x)); last = t.repo.clone(); }
+            let pane = panes.iter().find(|(_, c)| *c == t.path || c.starts_with(&format!("{}/", t.path))).map(|(p, _)| p.clone());
+            let st = pane.as_ref().and_then(|p| states.iter().find(|(q, _)| q == p)).map(|(_, s)| s.as_str()).unwrap_or("");
+            let ic = match st { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), "idle" => format!("{}○", g("D")), _ => format!("{} ", g("D")) };
+            let name = Path::new(&t.path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let dirty = if t.dirty { format!("{}±{}", g("ORANGE"), x) } else { " ".to_string() };
+            let label = clip(&format!("⎇ {}  {}", t.branch, name), w - 6); let lw = dw(&label);
+            let line = format!(" {}{}{}{} {}{}{}{}\n", g("L"), label, x, sp(w - 5 - lw), dirty, ic, x, x);
+            match &pane { Some(p) => out.push_str(&format!("{}agent:{}/{}{}{}", REF, self.host, p, REF, line)), None => out.push_str(&line) }
+        }
         out
     }
     pub fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }
@@ -719,8 +744,38 @@ fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
 
 struct Vp { row: i64, map: String, spin: String }
 pub struct Out { pub frame: String, pub tmap: String, pub spin: String, pub divrow: i64, pub toff: Option<i64> }
-/// side: 0 one panel with everything, 1 the left panel (the agents' cards and the agent overview), 2 the right one (the lines of the topics, done, deployments and tests)
-pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64>, pub side: u8 }
+/// What a panel shows: its sections. A panel of the native mux gets them from BHOTE_SECTIONS (the settings PANEL_LEFT, PANEL_RIGHT), the herdr panels from their side.
+/// head (Bhote + version), workspaces (of all machines), agents (the cards), overview (the agents' summary and the keys at the bottom), topics (the lines: next,
+/// waiting, later), done, deployments, tests, worktrees (the git worktrees and who works in them).
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Sections { pub head: bool, pub workspaces: bool, pub agents: bool, pub overview: bool, pub topics: bool, pub done: bool, pub deployments: bool, pub tests: bool, pub worktrees: bool }
+
+impl Sections {
+    const NONE: Sections = Sections { head: false, workspaces: false, agents: false, overview: false, topics: false, done: false, deployments: false, tests: false, worktrees: false };
+    /// one panel with everything (as it was before there were two)
+    pub fn single() -> Sections { Sections { head: true, agents: true, overview: true, topics: true, done: true, deployments: true, tests: true, ..Sections::NONE } }
+    /// the left panel: the workspaces on top, the agents' cards, the agent overview
+    pub fn left() -> Sections { Sections { workspaces: true, agents: true, overview: true, ..Sections::NONE } }
+    /// the right panel: the lines of the topics, done, deployments and tests
+    pub fn right() -> Sections { Sections { topics: true, done: true, deployments: true, tests: true, ..Sections::NONE } }
+    pub fn by_side(side: u8) -> Sections { match side { 1 => Sections::left(), 2 => Sections::right(), _ => Sections::single() } }
+    /// A list of section names ("workspaces,agents,worktrees"); None when it names nothing known.
+    pub fn parse(list: &str) -> Option<Sections> {
+        let mut s = Sections::NONE;
+        for w in list.split(|c: char| c == ',' || c.is_whitespace()).filter(|w| !w.is_empty()) {
+            match w { "head" => s.head = true, "workspaces" => s.workspaces = true, "agents" => s.agents = true, "overview" => s.overview = true, "topics" => s.topics = true, "done" => s.done = true,
+                "deployments" | "deliveries" => s.deployments = true, "tests" => s.tests = true, "worktrees" => s.worktrees = true, _ => {} }
+        }
+        if s == Sections::NONE { None } else { Some(s) }
+    }
+    /// For the width groups and the labels: 1 when only the agent side is there, 2 when only the topic side, else 0
+    pub fn side(&self) -> u8 {
+        let left = self.workspaces || self.agents || self.overview || self.worktrees; let right = self.topics || self.done || self.deployments || self.tests;
+        match (left, right) { (true, false) => 1, (false, true) => 2, _ => 0 }
+    }
+}
+
+pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64>, pub sec: Sections }
 impl<'a> Layout<'a> {
     /// bhote_view: head on top, the topics below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
     /// the run folder (tmap, spinrows, divrow, toff), as the script writes them.
@@ -739,14 +794,16 @@ impl<'a> Layout<'a> {
         let rows = self.rows;
         let trim = |s: String| s.trim_end_matches('\n').to_string();
         let head = trim(self.head.clone()); let bottom = trim(self.bottom.clone());
-        let mut topics = if self.side == 2 { String::new() } else { trim(c.block("cards")) };
-        if self.side == 1 { let ws = trim(c.workspaces_block()); if !ws.is_empty() { topics = format!("{}\n{}", ws, topics); } }   // (the left panel: the workspaces on top, then the agents)
-        let lists = if self.side == 1 { String::new() } else { trim(c.block("lists")) };
+        let sec = self.sec;
+        let mut topics = if sec.agents { trim(c.block("cards")) } else { String::new() };
+        if sec.workspaces { let ws = trim(c.workspaces_block()); if !ws.is_empty() { topics = if topics.is_empty() { ws } else { format!("{}\n{}", ws, topics) }; } }   // (the workspaces on top, then the agents)
+        if sec.worktrees { let wt = trim(c.worktrees_block()); if !wt.is_empty() { topics = if topics.is_empty() { wt } else { format!("{}\n{}", topics, wt) }; } }
+        let lists = if sec.topics { trim(c.block("lists")) } else { String::new() };
         let (hh, mut th, bh) = (if head.is_empty() { 0 } else { count_lines(&head) }, count_lines(&topics), count_lines(&bottom));
-        let mut dn = if self.side == 1 { 0 } else { c.v.done_max }; if self.side != 1 && c.expanded("done") { dn = c.done_total(); }
-        let mut dblk = if self.side == 1 { String::new() } else { trim(c.done_block(dn)) }; let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
+        let mut dn = if !sec.done { 0 } else { c.v.done_max }; if sec.done && c.expanded("done") { dn = c.done_total(); }
+        let mut dblk = if !sec.done { String::new() } else { trim(c.done_block(dn)) }; let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
         while dh > 0 && dn > 0 && rows - hh - bh - dh < th.min(6) { dn -= 1; dblk = trim(c.done_block(dn)); dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) }; }
-        let mut mblk = if self.side == 1 { String::new() } else { trim(crate::ui::monitors(c.c)) }; { /* the star of a running monitor dances with the others */ let sp = c.v.spin_ch.clone(); mblk = mblk.split('\n').map(|l| if l.starts_with("\u{1c}x\u{1c}") { l.replacen('✶', &sp, 1) } else { l.to_string() }).collect::<Vec<_>>().join("\n"); } let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
+        let mut mblk = if !sec.deployments && !sec.tests { String::new() } else { trim(crate::ui::monitors_of(c.c, sec.deployments, sec.tests)) }; { /* the star of a running monitor dances with the others */ let sp = c.v.spin_ch.clone(); mblk = mblk.split('\n').map(|l| if l.starts_with("\u{1c}x\u{1c}") { l.replacen('✶', &sp, 1) } else { l.to_string() }).collect::<Vec<_>>().join("\n"); } let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
         if mh > 0 && rows - hh - bh - dh - mh < th.min(6) { mblk.clear(); mh = 0; }
         let lh = if lists.is_empty() { 0 } else { count_lines(&lists) };
         let mut lcut = lh; let need = th.min(6);
@@ -783,11 +840,12 @@ impl<'a> Layout<'a> {
             put(&mut vp, &tl, off, off + content, &mut out);
             out.push_str(&format!(" {}↑↓ {} more lines{}\n", g("D"), th - content, g("X"))); vp.row += 1;
         } else { put(&mut vp, &tl, 0, n.min(avail), &mut out); }
-        if self.side != 2 { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }
+        let fill_top = !sec.agents && !sec.workspaces && !sec.worktrees;   // (a panel of lines only: filled from the top, the keys at the bottom)
+        if !fill_top { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }
         if lcut > 0 { let (p, _) = parse_lines(&lists); put(&mut vp, &p, 0, lcut, &mut out); }
         if dh > 0 { let (p, _) = parse_lines(&dblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
         if mh > 0 { let (p, _) = parse_lines(&mblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
-        if self.side == 2 { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }   // (the right panel is filled from the top, the keys at the bottom)
+        if fill_top { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }
         out.push_str(&bottom);
         Out { frame: out, tmap: vp.map, spin: vp.spin, divrow: rows - bh + 1, toff: toff_out }
     }

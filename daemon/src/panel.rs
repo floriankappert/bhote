@@ -1,7 +1,7 @@
 //! The panel in Rust (step 6): the terminal, the keys and the mouse, the main view, and the actions on it. The views that are not ported yet
 //! (the topic's menu, settings, the wizard, the choosers) run as the script's own view in a child on the same terminal, then this takes over again.
 use crate::agentsui;
-use crate::cards::{Cards, Layout, View};
+use crate::cards::{self, Cards, Layout, View};
 use crate::store::{self, Env, Live, Sink};
 use crate::term::{Ev, Term};
 use crate::theme;
@@ -33,7 +33,7 @@ pub struct Panel {
     sel_id: String, hover_id: String, hover_btn: bool, expanded: String,
     flash: Option<(String, Instant)>, pane_focus: Option<bool>, tab_visible: bool, dirty: bool,
     tmap: Vec<(i64, String)>, divrow: i64, agmap: Vec<String>, spin_any: bool, prev_toff: Option<i64>,
-    side: u8, last_fp: String, focus_m: Option<std::time::SystemTime>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
+    side: u8, sec: cards::Sections, last_fp: String, focus_m: Option<std::time::SystemTime>, spin_tick: usize, last_tick: u64, files_sig: String, last_chk: u64, select_seen: Option<String>,
     pending: Vec<Pending>, collector: Option<Child>, redraw: bool, clamp_at: Option<Instant>, clamp_adopt: bool, shown_at: Option<Instant>,
     screen: Screen, pmap: Vec<(i64, String)>, menu_flash: Option<(String, Instant)>, collector_at: Instant, collector_tries: u32,
 }
@@ -47,8 +47,8 @@ impl Panel {
         Panel { host: envs("BHOTE_HOST"), script: PathBuf::from(envs("BHOTE_SCRIPT")), topics: data.join("topics"), shared, data, cfg_path: PathBuf::from(envs("BHOTE_CONFIG")), version: envs("BHOTE_VER"), vlabel: envs("BHOTE_VLABEL"),
             has_machines: envs("BHOTE_HAS_MACHINES") == "1", pane_id: envs("HERDR_PANE_ID"), tab_id: envs("HERDR_TAB_ID"),
             cfg: HashMap::new(), cfg_sig: String::new(), theme: theme::apply(&HashMap::new(), true, ""), color: std::env::var("NO_COLOR").map_or(true, |v| v.is_empty()),
-            cols: cols.clamp(MIN_COLS, 64), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
-            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, side: match envs("BHOTE_SIDE").as_str() { "left" => 1, "right" => 2, _ => 0 }, last_fp: String::new(), focus_m: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
+            cols: cols.max(MIN_COLS).min(if envs("BHOTE_MUX") == "native" { 400 } else { 64 }), rows, real_cols: cols, real_rows: rows, sel_id: String::new(), hover_id: String::new(), hover_btn: false, expanded: " ".into(),
+            flash: None, pane_focus: None, tab_visible: true, dirty: false, tmap: Vec::new(), divrow: 0, agmap: Vec::new(), spin_any: false, prev_toff: None, sec: cards::Sections::single(), side: match envs("BHOTE_SIDE").as_str() { "left" => 1, "right" => 2, _ => 0 }, last_fp: String::new(), focus_m: None, spin_tick: 0, last_tick: 0, files_sig: String::new(), last_chk: 0, select_seen: None,
             pending: Vec::new(), collector: None, redraw: true, clamp_at: Some(Instant::now() + Duration::from_secs(2)), clamp_adopt: true, shown_at: None, screen: Screen::Main, pmap: Vec::new(), menu_flash: None, collector_at: Instant::now(), collector_tries: 0 }
     }
     fn reload_cfg(&mut self) {
@@ -56,7 +56,7 @@ impl Panel {
         let sig: String = ["THEME", "COLOR_TEXT", "COLOR_DIM", "COLOR_FRAME", "COLOR_SELECTION", "COLOR_ACCENT", "COLOR_NOW", "COLOR_WAITING", "COLOR_REVIEW", "COLOR_LATER", "COLOR_DONE", "COLOR_ERROR"].iter().map(|k| self.cfg.get(*k).cloned().unwrap_or_default()).collect::<Vec<_>>().join("|");
         if sig != self.cfg_sig || self.theme.vars.is_empty() { self.cfg_sig = sig; self.theme = theme::apply(&self.cfg, self.color, &format!("Bhote v{}", self.vlabel)); }
         let max: u32 = self.cfg.get("PANEL_MAX_WIDTH").and_then(|v| v.parse().ok()).unwrap_or(64);
-        self.cols = self.real_cols.min(max).max(MIN_COLS);
+        self.cols = self.real_cols.min(if envs("BHOTE_MUX") == "native" { 400 } else { max }).max(MIN_COLS);   // (the native mux: the panel is as wide as its pane)
     }
     fn c(&self, k: &str, d: &str) -> String { self.cfg.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string()) }
     fn num(&self, k: &str, d: i64) -> i64 { self.c(k, "").parse().unwrap_or(d) }
@@ -106,7 +106,7 @@ impl Panel {
     fn view(&self, mcodes: Vec<(String, String)>) -> View {
         let note = self.update_note();
         let newfeat = !self.c("SETUP_DONE", "").is_empty() && (self.c("WIZARD_LEVEL", "1").parse::<u64>().unwrap_or(1)) < FEATURE_LEVEL;
-        let head_rows = if self.side != 0 { 0 } else { (!note.is_empty()) as i64 + newfeat as i64 };   // (the two panels of a tab have no head)
+        let head_rows = if !self.sec.head { 0 } else { (!note.is_empty()) as i64 + newfeat as i64 };   // (the two panels of a tab have no head)
         View { sel_id: self.sel_id.clone(), hover_id: self.hover_id.clone(), expanded: self.expanded.clone(), scope_project: self.c("TOPICS_SCOPE", "all") == "project", cur_proj: self.current_project(),
             spin_ch: SPIN_FRAMES[self.spin_tick % SPIN_FRAMES.len()].to_string(), bored_small: false, archive_days: self.c("ARCHIVE_DAYS", "7").parse().unwrap_or(7), github: self.c("GITHUB_BRANCHES", "on") != "off",
             host: self.host.clone(), mach_fg: self.herdr_machine_fg(), line_max: 10, done_max: self.num("DONE_MAX", 4), mcodes,
@@ -124,9 +124,9 @@ impl Panel {
         let view = self.view(mc.clone());
         let mut cards = Cards::new(&ctx, &view); cards.rows_total = self.rows as i64;
         let av = agentsui::agent_view(&view, &ctx.cfg, &ctx.shared);
-        let b = agentsui::bottom_side(&cards, &av, &mc, self.side != 2);   // (the right panel has no agent overview: that is the left one's)
-        let head = if self.side != 0 { String::new() } else { agentsui::head(&ctx, &view.head_view()) };   // (no Bhote + version header in the two panels: it takes the room)
-        let lay = Layout { cards: &cards, rows: self.rows as i64, head, bottom: b.text, run_dir: PathBuf::new(), prev_toff: self.prev_toff, side: self.side };
+        let b = agentsui::bottom_side(&cards, &av, &mc, self.sec.overview);   // (the right panel has no agent overview: that is the left one's)
+        let head = if !self.sec.head { String::new() } else { agentsui::head(&ctx, &view.head_view()) };   // (no Bhote + version header in the two panels: it takes the room)
+        let lay = Layout { cards: &cards, rows: self.rows as i64, head, bottom: b.text, run_dir: PathBuf::new(), prev_toff: self.prev_toff, sec: self.sec };
         let o = lay.view_out();
         self.prev_toff = o.toff;
         self.tmap = o.tmap.lines().filter_map(|l| { let mut p = l.splitn(2, '\u{1e}'); Some((p.next()?.parse().ok()?, p.next()?.to_string())) }).collect();
@@ -270,7 +270,7 @@ impl Panel {
             }
         }
         *term = Term::enter(true);
-        self.reload_cfg(); self.real_cols = Term::size().0; self.real_rows = Term::size().1; self.cols = self.real_cols.min(self.num("PANEL_MAX_WIDTH", 64).max(30) as u32).max(MIN_COLS); self.rows = self.real_rows;
+        self.reload_cfg(); self.real_cols = Term::size().0; self.real_rows = Term::size().1; self.cols = self.real_cols.min(if envs("BHOTE_MUX") == "native" { 400 } else { self.num("PANEL_MAX_WIDTH", 64) as u32 }.max(30) as u32).max(MIN_COLS); self.rows = self.real_rows;
         self.redraw = true; self.clamp_adopt = true; self.clamp_at = Some(Instant::now() + self.clamp_wait());   // (the size may have changed under the page: no lead)
     }
 
@@ -501,6 +501,8 @@ pub fn run() -> i32 {
     if !Term::is_tty() { eprintln!("bhoted panel: needs a terminal"); return 1; }
     let mut p = Panel::new();
     if p.side == 0 && !p.pane_id.is_empty() { p.side = side_from_label(&p.pane_id); }   // (the plugin labels the two panes of a tab bhote-left and bhote-right)
+    // what the panel shows: BHOTE_SECTIONS (the native mux: PANEL_LEFT, PANEL_RIGHT), else what its side shows
+    p.sec = match cards::Sections::parse(&envs("BHOTE_SECTIONS")) { Some(s) => { p.side = s.side(); s } None => cards::Sections::by_side(p.side) };
     p.reload_cfg();
     p.start_collector();
     let mut term = Term::enter(true);

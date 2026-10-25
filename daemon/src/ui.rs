@@ -218,12 +218,14 @@ fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
 }
 
 /// monitors_block: both monitors, when on
-pub fn monitors(c: &Ctx) -> String {
+pub fn monitors(c: &Ctx) -> String { monitors_of(c, true, true) }
+/// The deployments and/or the tests block (a panel can show one of them).
+pub fn monitors_of(c: &Ctx, deploys: bool, tests: bool) -> String {
     let r: usize = { let v = c.cfg("MONITOR_ROWS", "4"); if v.bytes().all(|b| b.is_ascii_digit()) && !v.is_empty() { v.parse().unwrap_or(4) } else { 4 } };
     let ps = projects(c);
     let mut out = String::new();
-    if c.cfg("DEPLOY_MONITOR", "off") == "on" { out.push_str(&monitor_block(c, "deploys", r, &ps)); }
-    if c.cfg("TEST_MONITOR", "off") == "on" { out.push_str(&monitor_block(c, "tests", r, &ps)); }
+    if deploys && c.cfg("DEPLOY_MONITOR", "off") == "on" { out.push_str(&monitor_block(c, "deploys", r, &ps)); }
+    if tests && c.cfg("TEST_MONITOR", "off") == "on" { out.push_str(&monitor_block(c, "tests", r, &ps)); }
     out
 }
 #[allow(dead_code)]

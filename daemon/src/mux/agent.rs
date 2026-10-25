@@ -15,7 +15,7 @@ pub fn agent_of_cmdline(cmdline: &str) -> Option<&'static str> {
         for (name, keys) in KINDS {
             for k in *keys {
                 if base == *k || base.starts_with(&format!("{k}-")) && *name == "claude" { return Some(name); }
-                if *name == "claude" && path.contains("claude-code") { return Some(name); }
+                if *name == "claude" && (path.contains("claude-code") || path.contains("/claude/versions/") || path.contains("/.claude/local/")) { return Some(name); }
                 if *name == "codex" && path.contains("/codex/") { return Some(name); }
             }
         }
@@ -49,13 +49,16 @@ impl Server {
             if p.chk.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(1000)) {
                 p.chk = Some(now);
                 let (g, _) = p.foreground();
-                let cmd = std::fs::read(format!("/proc/{g}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).ok()
-                    .or_else(|| std::process::Command::new("ps").args(["-o", "command=", "-p", &g.to_string()]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or_default();
+                #[cfg(target_os = "linux")]
+                let cmd = std::fs::read(format!("/proc/{g}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default();
+                // elsewhere ps and lsof do it, in a thread of their own (they must not hold up the keys and the screen): the answer of the last round counts
+                #[cfg(not(target_os = "linux"))]
+                let cmd = { let _ = self.proc_req.send((id, g)); p.fg_cmd.clone() };
                 let mut name = agent_of_cmdline(&cmd).map(String::from);
                 // an agent that reported itself stays while something other than a shell is in front (its own helper process, a wrapper)
                 let first = cmd.split_whitespace().next().unwrap_or("").rsplit('/').next().unwrap_or("").trim_start_matches('-');
                 let shell = matches!(first, "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "nu" | "") && agent_of_cmdline(&cmd).is_none();
-                if name.is_none() && p.reported.is_some() && !shell { name = p.agent.clone(); }
+                if name.is_none() && (p.reported.is_some() || p.session.is_some()) && !shell { name = p.agent.clone(); }
                 if name != p.agent {
                     p.agent = name;
                     if p.agent.is_none() { p.status.clear(); p.base.clear(); p.reported = None; p.pend = None; p.session = None; }
@@ -111,6 +114,7 @@ mod tests {
     use super::*;
     #[test]
     fn kinds() {
+        assert_eq!(agent_of_cmdline("/Users/f/.local/share/claude/versions/2.1.45 --resume x"), Some("claude"));
         assert_eq!(agent_of_cmdline("claude --resume abc"), Some("claude"));
         assert_eq!(agent_of_cmdline("/home/u/.local/bin/claude"), Some("claude"));
         assert_eq!(agent_of_cmdline("node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"), Some("claude"));
