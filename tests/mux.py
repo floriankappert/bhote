@@ -115,6 +115,8 @@ call("server.stop")
 check(c2.wait_exit() and b"[stopped]" in c2.out, "server.stop ends the clients")
 time.sleep(0.3)
 check(not os.path.exists(SOCK), "the socket is gone")
+try: os.remove(f"{T}/state.json")
+except OSError: pass
 # 9. the shell ending ends the server
 c3 = Client()
 check(c3.wait_for("$ "), "a fresh server starts again")

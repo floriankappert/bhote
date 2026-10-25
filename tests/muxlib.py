@@ -38,6 +38,11 @@ class Env:
         for _ in range(60):
             if self.call("ping").get("result"): return
             time.sleep(0.1)
+    def fresh(self):
+        """Stops the server and forgets the session: the next one starts empty."""
+        self.call("server.stop"); time.sleep(0.6)
+        try: os.remove(f"{self.T}/state.json")
+        except OSError: pass
     def client(self, cols=100, rows=30):
         c = Client(self, cols, rows); self.clients.append(c); return c
     def settle(self, t=0.25): time.sleep(t)

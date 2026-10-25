@@ -52,7 +52,7 @@ class Panel:
         real = shutil.which("herdr") or "/bin/false"
         open(f"{T}/bin/herdr", "w").write(f'#!/bin/sh\ncase "$1 $2" in "workspace list") if [ -f "{T}/ws.json" ]; then cat "{T}/ws.json"; exit 0; else exec "{real}" "$@"; fi ;; "agent focus"|"workspace focus") echo "$(date +%s%N) $1 $3" >> "{T}/focus.log"; exit 0 ;; *) exec "{real}" "$@" ;; esac\n')
         os.chmod(f"{T}/bin/herdr", 0o755)
-        env = dict(os.environ, **({"BHOTE_SIDE": side} if side else {}), PATH=f"{T}/bin:" + os.environ.get("PATH", ""), BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1")
+        env = dict(os.environ, **({"BHOTE_SIDE": side} if side else {}), PATH=f"{T}/bin:" + os.environ.get("PATH", ""), BHOTE_CONFIG=f"{T}/config", BHOTE_DATA=f"{T}/data", BHOTE_SHARED=f"{T}/shared", HOME=f"{T}/home", TMPDIR=T, TERM="xterm-256color", BHOTE_FORCE_COLOR="1", BHOTE_NO_LAUNCH="1")
         for k in ("NO_COLOR", "HERDR_PANE_ID", "HERDR_TAB_ID", "CLAUDECODE"): env.pop(k, None)
         self.pid, self.fd = pty.fork()
         if self.pid: LIVE.append(self.pid)

@@ -50,7 +50,7 @@ E.call("pane.resize", {"pane_id": newleft, "direction": "right", "amount": 0.05}
 check(E.rect(newleft)["width"] > w0, "pane resize widens the left panel", (w0, E.rect(newleft)["width"]))
 # the popup
 c.kill()
-E.call("server.stop"); time.sleep(0.5)
+E.fresh()
 open(f"{E.T}/keys", "w").write("popup ctrl+alt+t echo popup_$((6*7)); read x; echo got_$x; sleep 1\n")
 open(f"{E.T}/config", "w").write("AUTOSTART=off\n")
 c = E.client(120, 40)

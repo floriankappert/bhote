@@ -13,5 +13,6 @@
 | [Configuration](configuration.md) | Every setting in `~/.config/bhote/config`. |
 | [Deployment and test monitor](monitors.md) | The last deployments and test runs above the agents: GitHub Actions, CircleCI, local runs. |
 | [Data and sync](data-and-sync.md) | Topic files, the replica and how it merges, what panels share. |
+| [The native mux](mux.md) | `bhote` starts its own pane server instead of herdr: keys, mouse, panels, chat, sessions ([protocol](mux-protocol.md)). |
 | [herdr plugin](herdr-plugin.md) | Opening the panel next to your agents. |
 | [Architecture](architecture.md) | For contributors: processes, shared files, the sections of the script, how a frame is drawn. |

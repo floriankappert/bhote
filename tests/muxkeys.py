@@ -127,7 +127,7 @@ c.send(P + "d")
 check(c.wait_exit() and c.status == 0, "prefix+d detaches")
 
 # a keymap file: another prefix, a rebinding, a command
-E.call("server.stop"); time.sleep(0.5)
+E.fresh()
 open(f"{E.T}/keys", "w").write(f"prefix = ctrl+space\nsplit_vertical = prefix+s\ndetach = none\nrun prefix+t touch {E.T}/ran_$HERDR_PANE_ID\n")
 c = E.client(100, 30)
 assert c.wait_for("$ ")

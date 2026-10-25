@@ -1,7 +1,9 @@
 # Plan: bhote replaces herdr
 
 Goal: start `bhote` from the console instead of `herdr`. bhote runs the panes itself; herdr is dropped at the end.
-Branch: `rust/mux` (started right away, PR #33 stays open in parallel). Status: plan, nothing built.
+Branch: `rust/mux` (started right away, PR #33 stays open in parallel). Status: M0–M9 built on this branch (see [mux.md](mux.md)); herdr stays selectable (`MUX=herdr`) for one release, then the plugin and herdr's config go.
+
+Deviations from the plan: the `Mux` trait became a `herdr` link (the server puts it in front of the PATH of every pane: the scripts and Rust call sites run unchanged); the suites of herdr's era keep their fake herdr (their data is fixed), the verbs have their own suites (`muxcli`, `muxkeys`, `muxpanels`, `muxagents`, `muxchat`, `muxsession`, `muxkharka`, `muxlaunch`); `vt100` was chosen in M0 (`docs/mux-protocol.md`); not tested on macOS yet.
 
 ## What herdr does for bhote today
 

@@ -88,6 +88,9 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
+MUX|native|enum:native:herdr|What `bhote` starts from a plain terminal: the native mux (the pane server of bhote, bhote attach) or herdr (kept for one release; the environment variable BHOTE_MUX=herdr says the same)
+CHAT_PANEL|off|enum:off:bottom:right|The chat pane of the native mux (an input field and the history of an agent; bhote chat): under the main pane (bottom) or under the right panel (right)
+CHAT_HEIGHT|14|int:6:80|Rows of the chat pane
 PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 PANEL_LAYOUT|single|enum:single:split|One panel per tab (single), or two (split): the cards of the agents on the left, the topics, deployments and tests on the right (the Rust panel, BHOTED_PANEL=on)
@@ -7047,6 +7050,7 @@ bhote — topics and agents next to herdr.
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
+  bhote doctor                       what the native mux needs, and what is left of herdr
   bhote attach                       the native mux: a terminal on the pane server (starts it); ctrl+b d detaches   bhote chat: the chat panel
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
@@ -7090,6 +7094,7 @@ bhote_cli() {
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
         monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
+        doctor) cli_doctor ;;
         chat|attach|mux) local _bd; bhoted_bin_set _bd; [ -n "$_bd" ] || { echo "bhote: $cmd needs the Rust daemon (bhoted not found)" >&2; return 1; }; exec "$_bd" "$cmd" "$@" ;;   # (the chat panel, the native mux: a terminal on the pane server, the server itself)
         version|--version|-V) version_label_set; if [ -n "$json" ]; then printf '{"version":%s,"build":%s}\n' "$(json_str "$VERSION")" "$(json_str "$VERSION_LABEL")"; else echo "bhote $VERSION_LABEL"; fi ;;
         add)  local title="" who="" st="" desc="" arg pin="" proj="" dep="" depl=""
@@ -7237,7 +7242,39 @@ bhote_cli() {
     esac
 }
 
+# `bhote` typed in a plain terminal starts the multiplexer (the native mux, or herdr with MUX=herdr); inside one of its panes it is the panel.
+bhote_launch() {
+    local mux=${BHOTE_MUX:-} bin
+    [ "$mux" = native ] && [ -n "${HERDR_PANE_ID:-}" ] && return 1                  # (a native pane: BHOTE_MUX=native is set there, too)
+    [ -z "$mux" ] && mux=$(cfg_get MUX native)
+    if [ "$mux" = herdr ]; then command -v herdr >/dev/null 2>&1 || { echo "bhote: MUX=herdr, but herdr is not installed" >&2; return 1; }; exec herdr; fi
+    bhoted_bin_set bin
+    if [ -z "$bin" ]; then
+        command -v herdr >/dev/null 2>&1 && { echo "bhote: the native mux needs the Rust daemon (bhoted); starting herdr instead" >&2; exec herdr; }
+        echo "bhote: the native mux needs the Rust daemon (bhoted): build it with cargo build --release in daemon/" >&2; return 1
+    fi
+    exec "$bin" attach
+}
+cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of herdr
+    local bin ok=0 line r
+    say() { printf '%-5s %s\n' "$1" "$2"; [ "$1" = FAIL ] && ok=1; return 0; }
+    bhoted_bin_set bin
+    [ -n "$bin" ] && say ok "bhoted: $bin" || say FAIL "bhoted not found (cargo build --release in daemon/)"
+    if [ -n "$bin" ]; then
+        r=$("$bin" mux-call ping 2>/dev/null) && say ok "mux server running ($(printf '%s' "$r" | jq -r '.result.pid // "?"' 2>/dev/null))" || say info "no mux server running (bhote starts one)"
+    fi
+    say info "MUX=$(cfg_get MUX native)${BHOTE_MUX:+ (BHOTE_MUX=$BHOTE_MUX)}"
+    local keys=${BHOTE_KEYS:-${XDG_CONFIG_HOME:-$HOME/.config}/bhote/keys}
+    [ -f "$keys" ] && say ok "keymap: $keys" || say info "no keymap file ($keys): the defaults (prefix ctrl+b); herdr's config.toml is not read"
+    command -v jq >/dev/null 2>&1 && say ok "jq" || say FAIL "jq is missing"
+    command -v herdr >/dev/null 2>&1 && say info "herdr is installed ($(herdr --version 2>/dev/null)): MUX=herdr still starts it; it goes after this release" || say ok "herdr is not needed"
+    if command -v herdr >/dev/null 2>&1 && herdr plugin list 2>/dev/null | grep -q bhote.panel; then say info "the herdr plugin bhote.panel is linked: it only matters with MUX=herdr (the native mux makes the panels itself)"; fi
+    [ -n "${HERDR_PANE_ID:-}" ] && [ "${BHOTE_MUX:-}" = native ] && say ok "this pane is a native pane ($HERDR_PANE_ID)"
+    return $ok
+}
+
 # BHOTE_SOURCE_ONLY=1 loads the functions without starting the panel (the tests do that).
 if [ -n "${BHOTE_SOURCE_ONLY:-}" ]; then :
 elif [ $# -gt 0 ]; then bhote_cli "$@"
+elif [ -t 0 ] && [ -t 1 ] && [ -z "${HERDR_PANE_ID:-}" ] && [ -z "${BHOTE_NO_LAUNCH:-}" ] && bhote_launch; then :
 else bhote_main; fi
