@@ -48,7 +48,12 @@ pub fn exec(args: &[String]) -> (i32, String, String) {
     // after a lone `--` come the words that start the agent again (report-agent)
     let (args, resume): (&[String], Vec<String>) = match args.iter().position(|x| x == "--") { Some(i) => (&args[..i], args[i + 1..].to_vec()), None => (args, Vec::new()) };
     let a = Args::parse(args);
-    if a.get("machine").is_some() { err!("herdr: --machine is not supported by the native mux"); return (1, so, se); }
+    // another machine: the same command is run over there through ssh (kharka knows the machines: agents.nodes), the answer comes back as it is
+    if let Some(m) = a.get("machine") {
+        let mut rest: Vec<String> = Vec::new(); let mut skip = false;
+        for x in args { if skip { skip = false; continue; } if x == "--machine" { skip = true; continue; } if x.starts_with("--machine=") { continue; } rest.push(x.clone()); }
+        return remote(m, &rest);
+    }
     let noun = a.pos.first().map(|s| s.as_str()).unwrap_or("");
     let verb = a.pos.get(1).map(|s| s.as_str()).unwrap_or("");
     if noun == "--version" || a.flag("version") || noun == "version" { out!("bhote-mux {}", env!("CARGO_PKG_VERSION")); return (0, so, se); }
@@ -152,4 +157,30 @@ pub fn run(args: &[String]) -> i32 {
     let _ = std::io::stdout().write_all(so.as_bytes());
     let _ = std::io::stderr().write_all(se.as_bytes());
     code
+}
+
+/// `herdr --machine <label> ...`: ssh to the machine (its kharka node name) and run `bhoted herdr ...` there (herdr itself when only that is installed).
+fn remote(machine: &str, args: &[String]) -> (i32, String, String) {
+    let shared = std::env::var_os("BHOTE_SHARED").map(std::path::PathBuf::from).unwrap_or_else(|| {
+        let base = std::env::var_os("XDG_RUNTIME_DIR").or_else(|| std::env::var_os("TMPDIR")).map(std::path::PathBuf::from).unwrap_or_else(|| "/tmp".into());
+        base.join(format!("bhote-{}", unsafe { libc::getuid() }))
+    });
+    let nodes = std::fs::read_to_string(shared.join("agents.nodes")).unwrap_or_default();
+    let node = nodes.lines().filter_map(|l| { let f: Vec<&str> = l.split('\u{1f}').collect(); if f.len() > 1 && f[0] == machine && !f[1].is_empty() { Some(f[1].to_string()) } else { None } }).next();
+    let Some(node) = node else { return (1, String::new(), format!("herdr: no machine {machine} (kharka does not know it)\n")) };
+    let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
+    let quoted: Vec<String> = args.iter().map(|a| q(a)).collect();
+    let line = quoted.join(" ");
+    // over there: the daemon next to bhote, else herdr (no login shell: the usual places)
+    let remote = format!("sh -c {}", q(&format!("for d in \"$HOME/.local/bin\" \"$HOME/.cargo/bin\" /opt/homebrew/bin /usr/local/bin /usr/bin; do if [ -x \"$d/bhote\" ]; then b=$(readlink -f \"$d/bhote\" 2>/dev/null || echo \"$d/bhote\"); x=$(dirname \"$b\")/daemon/target/release/bhoted; [ -x \"$x\" ] && exec \"$x\" herdr {line}; fi; done; PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; exec herdr {line}")));
+    let cfg = crate::config_read(&super::panels::config_path());
+    let tmpl = cfg.get("REMOTE_SSH").cloned().unwrap_or_else(|| "ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m".into());
+    let mut words: Vec<String> = tmpl.split_whitespace().filter(|w| *w != "-t").map(String::from).collect();
+    words.retain(|w| w != "{node}");
+    if !words.iter().any(|w| w.starts_with("BatchMode")) { words.push("-o".into()); words.push("BatchMode=yes".into()); words.push("-o".into()); words.push("ConnectTimeout=8".into()); }
+    let prog = words.remove(0);
+    match std::process::Command::new(prog).args(&words).arg(&node).arg(remote).stdin(std::process::Stdio::null()).output() {
+        Ok(o) => (o.status.code().unwrap_or(1), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned()),
+        Err(e) => (1, String::new(), format!("herdr: ssh: {e}\n")),
+    }
 }

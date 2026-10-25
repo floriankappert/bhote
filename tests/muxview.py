@@ -7,7 +7,7 @@ from muxlib import *
 E = Env()
 check = E.check
 os.makedirs(f"{E.T}/bin"); os.makedirs(f"{E.T}/shared")
-open(f"{E.T}/fakessh", "w").write('#!/bin/sh\n# fake ssh: ssh -t <node> <command>: runs the command here\nshift; [ "$1" = "-t" ] && shift; shift\nexec sh -c "$1"\n'); os.chmod(f"{E.T}/fakessh", 0o755)
+open(f"{E.T}/fakessh", "w").write('#!/bin/sh\n# fake ssh: ssh [-t] [-o x]... <node> <command>: runs the command here\nwhile [ "$1" = "-t" ] || [ "$1" = "-o" ]; do if [ "$1" = "-o" ]; then shift 2; else shift; fi; done\nshift\nexec sh -c "$1"\n'); os.chmod(f"{E.T}/fakessh", 0o755)
 os.symlink(os.path.join(ROOT, "bhote"), f"{E.T}/bin/bhote")
 os.makedirs(f"{E.T}/.local/bin"); os.symlink(os.path.join(ROOT, "bhote"), f"{E.T}/.local/bin/bhote")   # (where remote_cmd looks on the other machine)
 open(f"{E.T}/shared/agents.nodes", "w").write("Omarchy\x1fnode-omarchy\x1f0\x1fagent.prompt\n")
@@ -51,4 +51,15 @@ if mount:
     # nobody looks any more: the views end (the ssh connection and the size over there are let go)
     c.kill(); time.sleep(4)
     check(not any(w["label"] == "Omarchy · IMS (wt1)" for w in E.result("workspace.list", {"all": True})["workspaces"]), "without a client the view ends after the grace time")
+# herdr --machine <label> ...: the command runs over there (here: the same server) and the answer comes back
+lnk = f"{E.T}/lnk"; os.makedirs(lnk); os.symlink(BIN, f"{lnk}/herdr")
+henv = dict(E.env, PATH=f"{lnk}:" + E.env["PATH"])
+r = subprocess.run(["herdr", "--machine", "Omarchy", "pane", "list"], env=henv, capture_output=True, text=True)
+check(r.returncode == 0 and '"panes"' in r.stdout, "herdr --machine <label> pane list is answered by the other machine", r.stdout[:200] + r.stderr)
+pid0 = E.panes()[0]["pane_id"]
+E.call("pane.send_text", {"pane_id": pid0, "text": "echo marker_$((6*7))\r"}); time.sleep(0.5)
+r = subprocess.run(["herdr", "--machine", "Omarchy", "pane", "read", pid0, "--source", "visible"], env=henv, capture_output=True, text=True)
+check(r.returncode == 0 and "marker_42" in r.stdout, "also with options and a text answer (pane read)", r.stdout[:200] + r.stderr)
+r = subprocess.run(["herdr", "--machine", "Nowhere", "pane", "list"], env=henv, capture_output=True, text=True)
+check(r.returncode == 1 and "no machine Nowhere" in r.stderr, "an unknown machine is an error")
 E.done()
