@@ -35,7 +35,7 @@ E.call("pane.run", {"pane_id": other, "command": "echo agent_text_here; cat"}); 
 ws = other.split(":")[0]
 open(f"{E.T}/shared/workspaces.remote", "w").write(f"Omarchy\x1f{ws}\x1fIMS (wt1)\x1f1\x1fidle\n")
 open(f"{E.T}/shared/agents.meta.remote", "w").write(f"Omarchy\x1f{other}\x1fw1:t1\x1fa\x1f\x1f\x1f/tmp\n")
-call = f"BHOTE_SOURCE_ONLY=1 . {ROOT}/bhote; HOST=Mac; BHOTE_MUX=native; remote_workspace Omarchy {ws}"
+call = f"bash -c 'BHOTE_SOURCE_ONLY=1 . {ROOT}/bhote; HOST=Mac; BHOTE_MUX=native; remote_workspace Omarchy {ws}'"   # (bash: on Ubuntu /bin/sh is dash)
 E.call("pane.run", {"pane_id": "w1:p1", "command": call}); E.settle(2.0)
 check([w["label"] for w in E.workspaces()] == [E.workspaces()[0]["label"]], "the mounted workspace is not in the workspace list", E.workspaces())
 allws = E.result("workspace.list", {"all": True})["workspaces"]

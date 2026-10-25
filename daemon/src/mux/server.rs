@@ -3,7 +3,7 @@ use super::input;
 use super::keymap::Keymap;
 use super::layout::{Dir, Rect};
 use super::pane::Pane;
-use super::proto::{self, read_frame, write_frame};
+use super::proto::{self, read_frame, frame_bytes, send_nb};
 use super::panels::{Edge, Sidebar};
 use super::pty::{self, Pty};
 use super::render::{self, Cell, Grid};
@@ -25,6 +25,19 @@ fn host_name() -> String {
     let n = b.iter().position(|&x| x == 0).unwrap_or(0);
     let full = if ok { String::from_utf8_lossy(&b[..n]).into_owned() } else { String::new() };
     full.split('.').next().unwrap_or("").to_string()
+}
+
+/// Sends what is queued for a client as far as the socket takes it. False: the client is gone.
+fn flush_client(c: &mut Client) -> bool {
+    while !c.out.is_empty() {
+        match send_nb(&c.stream, &c.out) {
+            Ok(0) => { if c.stuck_since.is_none() { c.stuck_since = Some(Instant::now()); } return true; }
+            Ok(n) => { c.out.drain(..n); c.stuck_since = None; }
+            Err(_) => return false,
+        }
+    }
+    c.stuck_since = None;
+    true
 }
 
 fn bar_mode_load() -> String {
@@ -72,6 +85,8 @@ impl Modes {
 
 pub struct Client {
     pub title: String,
+    /// what is not yet sent to this client (it reads slowly or not at all), and since when
+    pub out: Vec<u8>, pub stuck_since: Option<Instant>, pub behind: bool,
     pub id: u32, pub stream: UnixStream, pub cols: u16, pub rows: u16,
     /// a viewer of one pane (`bhote view`): shows that pane only, sends every key to it, and does not change any pane's size
     pub view: Option<String>,
@@ -296,6 +311,10 @@ impl Server {
         for (_, id, b) in due { if let Some(p) = self.panes.get_mut(&id) { p.input(&b); } }
         if self.last_detect.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(400)) { self.last_detect = Some(now); self.detect_agents(); }
         if self.toast.as_ref().map_or(false, |(_, t)| *t <= now) { self.toast = None; self.dirty = true; }
+        // clients that were behind: take what the socket takes now; when they are through they get a whole picture
+        let mut dead = Vec::new();
+        for c in &mut self.clients { if !c.out.is_empty() { if !flush_client(c) { dead.push(c.id); } else if c.out.is_empty() { self.dirty = true; } } }
+        if !dead.is_empty() { self.clients.retain(|c| !dead.contains(&c.id)); self.after_change(); }
         self.save_state(false);
         self.sidecar_tick();
         self.warm_tick();
@@ -312,7 +331,7 @@ impl Server {
             Ev::PaneOut(id, b) => if let Some(p) = self.panes.get_mut(&id) { p.output(&b); self.dirty = true; },
             Ev::PaneExit(id) => if self.panes.contains_key(&id) { self.close_pane(id); },
             Ev::NewClient { id, stream, cols, rows, view } => {
-                self.clients.push(Client { title: String::new(), id, stream, cols, rows, view, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
+                self.clients.push(Client { title: String::new(), out: Vec::new(), stuck_since: None, behind: false, id, stream, cols, rows, view, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
                 self.after_change();
             }
             Ev::Frame(id, t, p) => match t {
@@ -336,19 +355,20 @@ impl Server {
         let line = format!("{}\n", json!({"event": ty, "data": data}));
         self.subs.retain_mut(|(st, filters)| {
             if !filters.iter().any(|(t, p)| t == ty && (p.is_none() || p.as_deref() == pane)) { return true; }
-            st.write_all(line.as_bytes()).is_ok()
+            // a subscriber that cannot take the line at once is too slow: it is let go (it subscribes again and reads the state)
+            matches!(send_nb(st, line.as_bytes()), Ok(n) if n == line.len())
         });
     }
 
     pub fn end_clients(&mut self, reason: &str) {
-        for c in &mut self.clients { let _ = write_frame(&mut c.stream, b'Q', reason.as_bytes()); }
+        for c in &mut self.clients { let _ = send_nb(&c.stream, &frame_bytes(b'Q', reason.as_bytes())); }
         self.clients.clear();
     }
 
     pub fn detach_client(&mut self, id: u32, reason: &str) {
         if let Some(i) = self.clients.iter().position(|c| c.id == id) {
             let mut c = self.clients.remove(i);
-            let _ = write_frame(&mut c.stream, b'Q', reason.as_bytes());
+            let _ = send_nb(&c.stream, &frame_bytes(b'Q', reason.as_bytes()));
             let _ = c.stream.shutdown(std::net::Shutdown::Both);
         }
         self.after_change();
@@ -504,6 +524,10 @@ impl Server {
         for i in 0..self.clients.len() {
             let (g, modes) = self.compose(i);
             let c = &mut self.clients[i];
+            // a client that is behind gets nothing new until it has taken what is queued; then one whole picture (not every step it missed)
+            if !flush_client(c) { gone.push(c.id); continue; }
+            if !c.out.is_empty() { c.behind = true; self.dirty = true; if c.stuck_since.map_or(false, |t| t.elapsed() > Duration::from_secs(30)) || c.out.len() > 16 << 20 { gone.push(c.id); } continue; }
+            if c.behind { c.behind = false; c.prev = None; }
             let same = c.prev.as_ref().map_or(false, |p| p.cells == g.cells && p.cursor == g.cursor) && c.modes == modes;
             if same && extra.is_empty() { continue; }
             let mut out = modes.diff(&c.modes);
@@ -512,7 +536,8 @@ impl Server {
             if !same { out.push_str(&render::diff(c.prev.as_ref(), &g)); }
             out.push_str(&extra);
             c.modes = modes; c.prev = Some(g);
-            if write_frame(&mut c.stream, b'O', out.as_bytes()).is_err() { gone.push(c.id); }
+            c.out.extend_from_slice(&frame_bytes(b'O', out.as_bytes()));
+            if !flush_client(c) { gone.push(c.id); }
         }
         if !gone.is_empty() { self.clients.retain(|c| !gone.contains(&c.id)); self.after_change(); }
     }

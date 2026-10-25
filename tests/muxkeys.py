@@ -3,6 +3,7 @@
 copy mode (OSC 52), the mouse (focus, divider, wheel, selection) and a keymap file. Usage: python3 tests/muxkeys.py"""
 import base64, re
 from muxlib import *
+import time
 E = Env(keys="")   # an empty keys file: the defaults (prefix ctrl+b)
 c = E.client(100, 30)
 assert c.wait_for("$ "), c.out[-200:]
@@ -76,15 +77,19 @@ c.send(P + "?"); E.settle()
 check(c.wait_for("detach"), "prefix+? shows the keys")
 c.send("q"); E.settle()
 # bracketed paste into a pane that did not ask for it, and into one that did
+def wait_pane(text, t=6):   # (the screen of the focused pane: the bytes the client got are cut where the screen did not change)
+    end = time.time() + t
+    while time.time() < end:
+        if text in E.result("pane.read", {"source": "visible"}).get("text", ""): return True
+        time.sleep(0.15)
+    return False
 c.send("cat -v\r"); E.settle()
-n = len(c.out)
 c.send("\x1b[200~pasted text\x1b[201~"); c.send("\r")
-check(c.wait_for("pasted text", since=n), "paste arrives as text")
+check(wait_pane("pasted text"), "paste arrives as text")
 c.send("\x03")
 E.call("pane.run", {"command": "printf '\\033[?2004h'; cat -v"}); E.settle(0.4)
-n = len(c.out)
 c.send("\x1b[200~wrapped\x1b[201~"); c.send("\r")
-check(c.wait_for("^[[200~wrapped^[[201~", since=n), "bracketed paste is passed on when the pane asked for it", c.out[n:][-200:])
+check(wait_pane("^[[200~wrapped^[[201~"), "bracketed paste is passed on when the pane asked for it", E.result("pane.read", {"source": "visible"}).get("text", "")[-200:])
 c.send("\x03"); E.call("pane.run", {"command": "printf '\\033[?2004l'"}); E.settle(0.3)
 # mouse: focus by click (a fresh split side by side)
 c.send(P + "v"); E.settle()

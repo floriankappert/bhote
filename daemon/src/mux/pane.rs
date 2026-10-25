@@ -57,13 +57,17 @@ pub struct Pane {
     pub evsent: String,
     /// since when (unix ms) the status is what it is
     pub status_ms: u64,
+    /// keys and pastes for the program: written by a thread of its own (a program that does not read must not hold the server up)
+    wtx: std::sync::mpsc::Sender<Vec<u8>>,
 }
 
 fn nz(n: u16) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(n.max(1)).unwrap() }
 
 impl Pane {
     pub fn new(id: u32, (ws, n, tab): (u32, u32, u32), pty: Pty, cols: u16, rows: u16, cmd: Vec<String>, cwd: String) -> Pane {
-        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new(), status_ms: 0 }
+        let (wtx, wrx) = std::sync::mpsc::channel::<Vec<u8>>();
+        if let Ok(mut w) = pty.master.try_clone() { std::thread::spawn(move || { while let Ok(b) = wrx.recv() { if w.write_all(&b).is_err() { break; } } }); }
+        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new(), status_ms: 0, wtx }
     }
     pub fn agent_name(&self) -> Option<&str> { self.agent.as_deref() }
     pub fn agent_status(&self) -> &str { if self.status.is_empty() { "unknown" } else { &self.status } }
@@ -85,7 +89,7 @@ impl Pane {
         let reply = std::mem::take(&mut self.parser.callbacks_mut().reply);
         if !reply.is_empty() { self.input(&reply); }
     }
-    pub fn input(&mut self, bytes: &[u8]) { let _ = (&self.pty.master).write_all(bytes); }
+    pub fn input(&mut self, bytes: &[u8]) { let _ = self.wtx.send(bytes.to_vec()); }
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let (r, c) = self.parser.screen().size();
         if (r.get(), c.get()) == (rows.max(1), cols.max(1)) { return; }

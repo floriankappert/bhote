@@ -11,6 +11,8 @@ sysbin = "/usr/bin:/bin"
 assert not any(os.path.exists(os.path.join(d, "herdr")) for d in sysbin.split(":")), "herdr in the system path: this test needs a machine where it is not"
 for d in ("data/topics", "shared"): os.makedirs(f"{E.T}/{d}")
 os.makedirs(f"{E.T}/abin"); open(f"{E.T}/abin/claude", "w").write("#!/bin/sh\nexec cat\n"); os.chmod(f"{E.T}/abin/claude", 0o755)
+tools = {os.path.dirname(shutil.which(x)) for x in ("jq", "git", "python3") if shutil.which(x)}   # (where the tools are, but no herdr)
+sysbin = ":".join([sysbin] + sorted(d for d in tools if d not in sysbin.split(":") and not os.path.exists(os.path.join(d, "herdr"))))
 E.env.update(PATH=f"{E.T}/abin:{sysbin}", BHOTE_BIN=os.path.join(ROOT, "bhote"), BHOTED_BIN=BIN, BHOTE_DATA=f"{E.T}/data", BHOTE_SHARED=f"{E.T}/shared", NO_COLOR="1")
 E.env.pop("BHOTE_MUX", None)
 E.start(); c = E.client(220, 50)

@@ -337,11 +337,12 @@ case "$1 $2" in
 "pane layout") echo '{"result":{"layout":{"panes":[{"pane_id":"p1","rect":{"width":200}}]}}}';;
 esac
 EOF2
-chmod +x "$pt/bin/herdr"; printf 'PANEL_LAYOUT=split\nBHOTED_PANEL=on\nPANEL_LEFT_WIDTH=42\n' > "$pt/cfg"
-out=$(BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
+chmod +x "$pt/bin/herdr"; printf '#!/bin/sh\n' > "$pt/bin/bhote"; chmod +x "$pt/bin/bhote"   # (the plugin needs a bhote to type into a pane)
+printf 'PANEL_LAYOUT=split\nBHOTED_PANEL=on\nPANEL_LEFT_WIDTH=42\n' > "$pt/cfg"
+out=$(PATH="$pt/bin:$PATH" BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
 echo "$out" | grep -q 'rename <new> bhote-right' && echo "$out" | grep -q 'rename <new> bhote-left' && echo "$out" | grep -q 'resize <new> to 42' && ok "plugin split: right and left panel, left 42 wide" || bad "plugin split: $out"
 printf 'PANEL_LAYOUT=single\n' > "$pt/cfg"
-out=$(BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
+out=$(PATH="$pt/bin:$PATH" BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
 echo "$out" | grep -q 'bhote-left' && bad "plugin single: no left panel expected: $out" || ok "plugin single: one panel, no left one"
 rm -rf "$pt"
 

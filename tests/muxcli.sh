@@ -7,7 +7,7 @@ BIN=$PWD/daemon/target/release/bhoted
 T=$(mktemp -d); printf "AUTOSTART=off\n" > "$T/config"; export BHOTE_MUX_STATE=$T/state.json BHOTE_CONFIG=$T/config BHOTE_MUX_SOCK=$T/mux.sock SHELL=/bin/sh HOME=$T ENV=/dev/null
 unset HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_SOCKET_PATH HERDR_ENV HERDR_BIN_PATH BHOTE_MUX CLAUDECODE
 mkdir -p "$T/bin"; ln -s "$BIN" "$T/bin/herdr"; export PATH="$T/bin:$PATH"
-( cd "$T" && exec setsid "$BIN" mux >/dev/null 2>&1 ) &
+( cd "$T" && exec "$BIN" mux </dev/null >/dev/null 2>&1 ) &   # (no setsid: macOS has none)
 for _ in $(seq 50); do herdr pane list >/dev/null 2>&1 && break; sleep 0.1; done
 trap '"$BIN" mux-call server.stop >/dev/null 2>&1; rm -rf "$T"' EXIT
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }

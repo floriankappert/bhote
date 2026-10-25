@@ -49,4 +49,14 @@ for i in range(20):
     t0 = time.perf_counter(); E.call("workspace.focus", {"workspace_id": "w1" if i % 2 else "w2"}); t.append((time.perf_counter() - t0) * 1000)
 print(f"     workspace.focus under load: median {statistics.median(t):.1f} ms")
 check(statistics.median(t) < 60, "a switch of workspace answers within 60 ms even while a pane writes", statistics.median(t))
+# 5. a client that does not read (a terminal that hangs, a slow ssh): the server must not wait for it, and it gets the right picture when it reads again
+E.call("workspace.focus", {"workspace_id": "w1"}); E.call("pane.focus", {"pane_id": "w1:p1"})
+E.call("pane.send_keys", {"pane_id": "w1:p1", "keys": ["ctrl+c"]}); time.sleep(0.3)
+E.call("pane.send_text", {"pane_id": "w1:p1", "text": "clear; for i in $(seq 1 3000); do echo line_$i; done; echo STUCK_DONE_$((6*7))\r"})
+t = []
+for i in range(15):
+    t0 = time.perf_counter(); E.call("ping"); t.append((time.perf_counter() - t0) * 1000); time.sleep(0.1)   # (the client is not read from meanwhile)
+print(f"     ping while a client does not read: max {max(t):.1f} ms")
+check(max(t) < 500, "the server answers while a client does not read", max(t))
+check(c.wait_for("STUCK_DONE_42", t=20), "and the client that reads again gets the picture", c.out[-200:])
 E.done()

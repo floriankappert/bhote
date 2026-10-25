@@ -37,7 +37,7 @@ check(E.result("ping").get("pid") not in (None, pid), "a new server runs")
 E.settle(1.5)
 after = {p["pane_id"]: (p.get("label", ""), p["cwd"]) for p in E.panes()}
 check(set(after) == set(before), "the same panes with the same names", (sorted(before), sorted(after)))
-check(after["w1:p2"][0] == "work" and after["w1:p2"][1] == f"{E.T}/proj", "label and folder of a pane", after.get("w1:p2"))
+check(after["w1:p2"][0] == "work" and os.path.realpath(after["w1:p2"][1]) == os.path.realpath(f"{E.T}/proj"), "label and folder of a pane", after.get("w1:p2"))   # (macOS: /var is /private/var)
 check([t["label"] for t in E.tabs() if t["workspace_id"] == "w1"] == ["1", "second"], "the tabs and their names", E.tabs())
 check([w["label"] for w in E.workspaces()] == [E.workspaces()[0]["label"], "other"] and E.workspaces()[0]["focused"], "the workspaces; the shown one is shown", E.workspaces())
 check(E.focused() == "w1:p2", "the focused pane", E.focused())
