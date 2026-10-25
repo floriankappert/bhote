@@ -36,7 +36,7 @@ Copy mode (`prefix [`): `hjkl`, `w b 0 $ g G`, `ctrl+u/d/b/f`, `v` / `V` select,
 
 ## Panels and chat
 
-Every tab gets the panels of bhote as panes (what the herdr plugin did): the right one, and with `PANEL_LAYOUT=split` the left one
+Every tab gets the panels of bhote as panes (what the herdr plugin did): the right one and, by default (`PANEL_LAYOUT=split`; `single` turns it off), the left one, both the Rust panel (the mux starts it with `BHOTE_RUST_PANEL=1`, no `BHOTED_PANEL` needed). The left panel needs room: the main pane keeps at least 64 columns, so about 160 columns in all
 (`PANEL_LEFT_WIDTH`, `PANEL_MIN_WIDTH`, `PANEL_MAX_WIDTH`), unless `AUTOSTART=off`. A panel you close stays closed in that tab until `prefix b`.
 `CHAT_PANEL=bottom|right` (`CHAT_HEIGHT`) adds the chat pane (`bhote chat`): the history of an agent from its Claude Code transcript, an input field
 (`alt+enter` new line, `up` earlier messages), `@` picks the agent, `enter` sends it to the agent's prompt.

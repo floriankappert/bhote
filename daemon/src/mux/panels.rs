@@ -27,7 +27,7 @@ impl PanelCfg {
         let want = std::env::var("BHOTE_PANEL_WIDTH").ok().and_then(|v| v.parse::<u16>().ok()).unwrap_or(56);
         PanelCfg {
             enabled: cfg.get("AUTOSTART").map_or(true, |v| v != "off") && bhote_bin().is_some(),
-            split: cfg.get("PANEL_LAYOUT").map_or(false, |v| v == "split"),
+            split: cfg.get("PANEL_LAYOUT").map_or(true, |v| v != "single"),
             left: num(&cfg, "PANEL_LEFT_WIDTH", 40, 30, 64),
             right: want.clamp(lo, hi.max(lo)),
             keep: std::env::var("BHOTE_AGENT_MIN_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(64),
@@ -54,7 +54,7 @@ impl Server {
 
     fn panel_spawn(&self, side: &str) -> Option<Spawn> {
         let bin = bhote_bin()?;
-        Some(Spawn { cmd: vec![bin.to_string_lossy().into_owned()], cwd: None, env: vec![("BHOTE_PANEL".into(), "1".into()), ("BHOTE_SIDE".into(), if side == LEFT { "left".into() } else { "right".into() })] })
+        Some(Spawn { cmd: vec![bin.to_string_lossy().into_owned()], cwd: None, env: vec![("BHOTE_PANEL".into(), "1".into()), ("BHOTE_RUST_PANEL".into(), "1".into()), ("BHOTE_SIDE".into(), if side == LEFT { "left".into() } else { "right".into() })] })
     }
 
     fn chat_spawn(&self) -> Option<Spawn> {

@@ -93,7 +93,7 @@ CHAT_PANEL|off|enum:off:bottom:right|The chat pane of the native mux (an input f
 CHAT_HEIGHT|14|int:6:80|Rows of the chat pane
 PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
-PANEL_LAYOUT|single|enum:single:split|One panel per tab (single), or two (split): the cards of the agents on the left, the topics, deployments and tests on the right (the Rust panel, BHOTED_PANEL=on)
+PANEL_LAYOUT|split|enum:single:split|Two panels per tab (split, the default in the native mux): the cards of the agents on the left, the topics, deployments and tests on the right (the Rust panel; the native mux starts it by itself), or one (single). The herdr plugin only splits when this is set to split in the config file and BHOTED_PANEL=on
 PANEL_LEFT_WIDTH|40|int:30:64|Width of the left panel in the split layout (columns); the herdr plugin makes it that wide, a dragged divider changes it for all tabs
 LOCAL_EVERY|3|int:1:3600|Seconds between two queries of the agents of this machine
 REMOTE_EVERY|5|int:1:3600|Seconds between two queries of the other machines and the regular merge
@@ -5982,7 +5982,7 @@ bhote_main() {
         collect_local; [ "$(cfg_get REMOTE_AGENTS off)" = on ] && collect_remote
         COLS=${BHOTE_COLS:-44}; ROWS=${BHOTE_ROWS:-40}; REAL_COLS=$COLS; REAL_ROWS=$ROWS; splash_geometry; [ "$COLS" -gt "$MAX_COLS" ] && COLS=$MAX_COLS; RULE_LINE=$(hline $(( COLS - 5 ))); DASH_LINE=$(dline $(( COLS - 5 ))); ui_load; bhote_draw "$view" | tr -d '\001'; rm -f "$AGENT_LOCAL" "$AGENT_REMOTE"; return
     fi
-    if [ -z "${BHOTE_DELEGATE:-}" ] && [ -t 0 ] && [ "$(cfg_get BHOTED_PANEL off)" = on ] && bhoted_rust_panel; then :; fi   # (execs when it can: the daemon's panel takes over)
+    if [ -z "${BHOTE_DELEGATE:-}" ] && [ -t 0 ] && { [ "$(cfg_get BHOTED_PANEL off)" = on ] || [ -n "${BHOTE_RUST_PANEL:-}" ]; } && bhoted_rust_panel; then :; fi   # (execs when it can: the daemon's panel takes over)
     printf '\033]2;Bhote\007'
     dog_init; dog_warm; term_size
     # never set up on this machine: the wizard opens once, in the first panel only (herdr may start several at a time)
