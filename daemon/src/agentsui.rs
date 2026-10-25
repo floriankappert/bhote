@@ -115,8 +115,8 @@ impl<'a> Cards<'a> {
         let ag = self.agent_rows();
         if compact && !ag.is_empty() {
             let (mut act, mut needs, mut inact) = (0, 0, 0);
-            for r in ag { match r.st.trim_start_matches("off-") { "working" | "testing" => act += 1, "blocked" => needs += 1, "idle" | "" => {} _ => inact += 1 } }   // (an idle agent is on a card: its own, or in the group IDLE)
-            let (mut ac, mut ab) = (g("ORANGE"), format!("{}{}", g("BOLD"), g("ORANGE"))); if act == 0 { ac = g("D"); ab = g("D"); }
+            for r in ag { match r.st.trim_start_matches("off-") { "working" | "testing" => act += 1, "blocked" => needs += 1, "idle" | "done" | "" => {} _ => inact += 1 } }   // (an idle agent is on a card: its own, or in the group IDLE)
+            let (mut ac, mut ab) = (g("GREEN"), format!("{}{}", g("BOLD"), g("GREEN"))); if act == 0 { ac = g("D"); ab = g("D"); }
             out.push_str(&format!("  {}✶{} {}{} active{}", ac, x, ab, act, x));
             if needs > 0 { out.push_str(&format!(" {}·{} {}◉ {} need you{}", g("D"), x, g("NN"), needs, x)); }
             if inact > 0 { out.push_str(&format!(" {}·{} {}○ {} inactive{}", g("D"), x, g("D"), inact, x)); }
@@ -140,7 +140,8 @@ impl<'a> Cards<'a> {
         order.push("-".into());
         let code_of = |m: &str| mcodes.iter().find(|(n, _)| n == m).map(|(_, c)| c.clone());
         let (mut lines, mut lc, mut lid, mut rid): (Vec<String>, Vec<i64>, Vec<String>, Vec<String>) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-        let idle = |i: usize| -> bool { ag[i].st.is_empty() || ag[i].st == "idle" };   // (an idle agent is on a card: its own, or in the group IDLE; here only the others)
+        let grouped = self.c.cfg("CARD_GROUPING", "ungrouped") == "status";
+        let idle = |i: usize| -> bool { match ag[i].st.as_str() { "" | "idle" | "done" => true, "working" | "testing" | "blocked" => !grouped, _ => false } };   // (an idle agent is on a card: its own, or in the group IDLE; here only the others)
         let in_pm = |pm: &str, i: usize| -> bool { if idle(i) { return false; } if pm == "-" { pname_of(&apj[i]).is_none() } else { apj[i] == pm } };
         let rule_len = (cols - 5).max(0);
         for pm in &order {
@@ -217,9 +218,11 @@ impl<'a> Cards<'a> {
 }
 
 /// view_bottom: the agents, a dash line and the keys (or a short note instead)
-pub fn bottom(cards: &Cards, av: &AgentView, mcodes: &[(String, String)]) -> Bottom {
+pub fn bottom(cards: &Cards, av: &AgentView, mcodes: &[(String, String)]) -> Bottom { bottom_side(cards, av, mcodes, true) }
+/// the bottom of the frame: the agent overview, a rule and the keys; with_agents false (the right panel): the rule and the keys only
+pub fn bottom_side(cards: &Cards, av: &AgentView, mcodes: &[(String, String)], with_agents: bool) -> Bottom {
     let g = |k: &str| cards.c.c.g(k).to_string(); let x = g("X");
-    let (mut text, agrows, agmap) = cards.agents_block(av, mcodes);
+    let (mut text, agrows, agmap) = if with_agents { cards.agents_block(av, mcodes) } else { (String::new(), "1\n".to_string(), "0\n".to_string()) };
     text.push_str(&format!("  {}{}{}\n", g("MUTED"), "┈".repeat((cards.c.cols - 5).max(0) as usize), x));
     let room = cards.c.cols - 4;
     if !av.flash.is_empty() { text.push_str(&format!("  {}{}{}", g("S"), clip(&av.flash, room), x)); }

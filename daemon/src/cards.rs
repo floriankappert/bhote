@@ -41,6 +41,8 @@ fn rows(p: &std::path::Path) -> Vec<Row> {
 fn sp(n: i64) -> String { " ".repeat(n.unsigned_abs() as usize) }
 fn pre(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 fn clean(s: &str) -> String { s.chars().filter(|c| !c.is_control()).collect() }
+/// "Waiting for New Work" is not a task: the agent is idle (the card shows the topic's title, an idle card says no more than idle)
+fn no_idle_task(t: &str) -> String { if t.trim().to_lowercase().starts_with("waiting for new work") { String::new() } else { t.to_string() } }
 fn digits(s: &str) -> bool { !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) }
 
 /// age_set + ago_set: "just now", "5m ago", "3h ago", "2d ago" (relative to now)
@@ -61,7 +63,14 @@ impl<'a> Cards<'a> {
         // a topic that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows; without one it is a line in the Waiting list
         if ts.iter().any(|t| t.status == "waiting" && t.dep == "1") {
             let names: HashMap<String, String> = crate::ui::projects(c).into_iter().map(|p| (p.id, p.name)).collect();
-            for t in ts.iter_mut() { if t.status == "waiting" && t.dep == "1" && deploy_lookup_pub(&shared, &c.topics, &names, t).is_none() { t.dep = String::new(); } }
+            let mut pruned = vec![false; ts.len()];
+            for (i, t) in ts.iter_mut().enumerate() { if t.status == "waiting" && t.dep == "1" && deploy_lookup_pub(&shared, &c.topics, &names, t).is_none() { t.dep = String::new(); pruned[i] = true; } }
+            if pruned.iter().any(|p| *p) {   // such a topic is a plain waiting line: it moves from the place of the deployment waits to the start of the waiting lines (else Waiting would stand twice)
+                let (mut rest, mut moved) = (Vec::new(), Vec::new());
+                for (i, t) in ts.drain(..).enumerate() { if pruned[i] { moved.push(t); } else { rest.push(t); } }
+                let pos = rest.iter().position(|t| matches!(t.status.as_str(), "waiting" | "later" | "done")).unwrap_or(rest.len());
+                rest.splice(pos..pos, moved); ts = rest;
+            }
         }
         let mut ag = rows(&shared.join("agents.local")); ag.extend(rows(&shared.join("agents.remote")));
         // topics_projects: a topic's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)
@@ -93,20 +102,65 @@ impl<'a> Cards<'a> {
     pub fn sel_index(&self) -> i64 {
         if self.v.sel_id.starts_with("more:") { return -1; }
         for (i, t) in self.ts.iter().enumerate() { if t.id == self.v.sel_id { return i as i64; } }
-        // nothing chosen: the active card, the first one of an agent of this machine that sits in this panel's tab (the agent you are working with)
-        let tab = std::env::var("HERDR_TAB_ID").unwrap_or_default();
-        if !tab.is_empty() {
-            let meta = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
-            let panes: Vec<&str> = meta.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 2 && f[2] == tab { Some(f[1]) } else { None } }).collect();
-            if !panes.is_empty() {
-                for (i, t) in self.ts.iter().enumerate() {
-                    let card = matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
-                    if card && !t.ap.is_empty() && (t.am.is_empty() || t.am == self.host) && self.in_scope(i) && panes.contains(&t.ap.as_str()) { return i as i64; }
-                }
+        // nothing chosen: the active card, the first one of the active agent (the one herdr shows in this panel's tab)
+        if let Some(ap) = self.active_agent() {
+            for (i, t) in self.ts.iter().enumerate() {
+                let card = matches!(t.status.as_str(), "review" | "now" | "testing" | "finished") || (t.status == "waiting" && t.dep == "1");
+                if card && t.ap == ap && (t.am.is_empty() || t.am == self.host) && self.in_scope(i) { return i as i64; }
             }
         }
         for (i, t) in self.ts.iter().enumerate() { if Self::shows(&t.status) && self.in_scope(i) { return i as i64; } }
         0
+    }
+    /// active_agent: the agent that herdr shows in the main area of this panel's tab: the focused pane when it is an agent of the tab, else the first agent of the tab
+    /// (None outside herdr, or in a tab without an agent of this machine)
+    pub fn active_agent(&self) -> Option<String> {
+        let tab = std::env::var("HERDR_TAB_ID").unwrap_or_default(); if tab.is_empty() { return None; }
+        let fp = crate::proc::read_cap(self.shared.join("focus.pane")).unwrap_or_default().split_whitespace().next().unwrap_or("").to_string();
+        let meta = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default();
+        let mut first: Option<String> = None;
+        for l in meta.lines() {
+            let f: Vec<&str> = l.split(US).collect();
+            if f.len() > 2 && f[2] == tab { if f[1] == fp { return Some(fp); } if first.is_none() { first = Some(f[1].to_string()); } }
+        }
+        first
+    }
+    /// The workspaces of this machine for the left panel (workspaces.local): a caption and a line each, "number  name  state"; the focused one on the highlighted ground; a click
+    /// on a line shows that workspace (ref ws:<id>)
+    pub fn workspaces_block(&self) -> String {
+        let loc = crate::proc::read_cap(self.shared.join("workspaces.local")).unwrap_or_default();
+        let rem = crate::proc::read_cap(self.shared.join("workspaces.remote")).unwrap_or_default();
+        if loc.trim().is_empty() && rem.trim().is_empty() { return String::new(); }
+        let g = |k: &str| self.g(k).to_string(); let x = g("X");
+        let mut out = format!("\n{}", crate::ui::dash_caption_pub(self.c, "Workspaces"));
+        let w = self.c.cols - 4;
+        // grouped by machine: this one first (rows of workspaces.local), then each other machine (workspaces.remote: machine, id, label, number, state)
+        let mut groups: Vec<(String, Vec<(String, String, String, bool, String, bool)>)> = Vec::new();
+        let mine: Vec<_> = loc.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { None } else { Some((f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3] == "1", f[4].to_string(), true)) } }).collect();
+        groups.push((self.host.clone(), mine));
+        for l in rem.lines() {
+            let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { continue; }
+            let row = (f[3].to_string(), f[1].to_string(), f[2].to_string(), false, f[4].to_string(), false);
+            match groups.iter_mut().find(|g| g.0 == f[0]) { Some(gr) => gr.1.push(row), None => groups.push((f[0].to_string(), vec![row])) }
+        }
+        let many = groups.iter().filter(|g| !g.1.is_empty()).count() > 1;
+        for (mach, rows) in &groups {
+            if rows.is_empty() && *mach != self.host { continue; }
+            if many {
+                let col = if *mach == self.host { g("D") } else { g("BLUE") };
+                out.push_str(&format!("{}{}{}{}\n", col, g("BOLD"), clip(mach, w + 2), x));
+            }
+            for (num, id, label, focused, st, local) in rows {
+                let ic = match st.as_str() { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), _ => format!("{}○", g("D")) };
+                let name = clip(label, w - 7); let nw = dw(&name);
+                let (bg, tc) = if *focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL"))) } else { (String::new(), g("L")) };
+                let line = format!("{}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x);
+                if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&line); }
+            }
+            if *mach == self.host { out.push_str(&format!("{}ws:+new{}   {}+ new{}\n", REF, REF, g("D"), x)); }   // (a click makes a workspace on this machine)
+        }
+        out.push_str(&format!("  {}{}{}\n", g("B"), "─".repeat((self.c.cols - 5).max(0) as usize), x));   // the divider under the workspaces
+        out
     }
     pub fn done_total(&self) -> i64 { (0..self.ts.len()).filter(|&i| self.ts[i].status == "done" && self.in_scope(i) && !self.archived(i)).count() as i64 }
     pub fn expanded(&self, st: &str) -> bool { self.v.expanded.contains(&format!(" {} ", st)) }
@@ -141,7 +195,7 @@ impl<'a> Cards<'a> {
     }
 
     fn agent_state(&self, m: &str, id: &str) -> String { for r in &self.ag { if r.m == m && r.id == id { return if r.st.is_empty() { "idle".into() } else { r.st.clone() }; } } "gone".into() }
-    fn agent_task(&self, m: &str, id: &str) -> String { for r in &self.ag { if r.m == m && r.id == id { return r.task.clone(); } } String::new() }
+    fn agent_task(&self, m: &str, id: &str) -> String { for r in &self.ag { if r.m == m && r.id == id { return no_idle_task(&r.task); } } String::new() }
     fn agent_now(&self, m: &str, id: &str) -> String {
         let mut n = String::new();
         for r in &self.now_l { if r.m == m && r.id == id { n = r.st.clone(); break; } }
@@ -167,7 +221,7 @@ impl<'a> Cards<'a> {
                         "working" => { state = "working".into(); sc = self.g("ORANGE").into(); }
                         "testing" => { state = "running tests".into(); sc = self.g("ORANGE").into(); }
                         "blocked" => { state = "needs you".into(); sc = self.g("NN").into(); }
-                        "idle" | "done" => { state = "finished".into(); sc = self.g("GREEN").into(); }
+                        "idle" | "done" => { state = "finished".into(); sc = self.g("GREEN").into(); tm = ago(self.c.now, &upd); }
                         s if s.starts_with("off-") => { state = format!("offline ({} reconnecting)", t.am); sc = self.g("D").into(); }
                         _ => { state = "gone".into(); sc = self.g("D").into(); }
                     }
@@ -219,13 +273,27 @@ impl<'a> Cards<'a> {
             bg = g("CARDSEL");
         }
         if hov { bar = "\u{1b}[38;2;255;111;97m".into(); }
-        let dim = o.dim && !hov;   // (an idle agent: all text dimmed, it is not what matters now)
-        if dim { tc = d_.clone(); gc = g("MUTED"); mc = g("MUTED"); }
+        let dim = o.dim && !hov && !sel;   // (an idle agent: all text dimmed, it is not what matters now)
+        if dim { tc = d_.clone(); mc = d_.clone(); }
         let bl = format!("{}▌{}{} ", bar, x, bg);
         let xb = format!("{}{}", x, bg);
         let mut out = String::new();
+        // the bars of tests and of a deployment: small, on the right of the rows under the status ("client ■■■□□ 19%", at most two)
+        let mut segs: Vec<(String, i64)> = Vec::new(); let mut bi = 0usize;
+        let mut add_seg = |d: i64, t: i64, nm: &str| {
+            if segs.len() >= 2 || t <= 0 { return; }
+            let pf = ((d * 5 + t / 2) / t).min(5);
+            let (bf, be) = ("■".repeat(pf as usize), "■".repeat((5 - pf) as usize));
+            let pct = d * 100 / t;
+            let mut seg = format!("{}{}{}{}{}{} {}{}%{}{} ", g("ORANGE"), bf, g("MUTED"), be, x, bg, gc, pct, x, bg);
+            let mut txt = format!("{}{} {}% ", bf, be, pct);
+            if !nm.is_empty() { let n8 = clip(nm, 8); seg = format!("{}{} {}", gc, n8, seg); txt = format!("{} {}", n8, txt); }
+            segs.push((seg, dw(&txt)));
+        };
+        if !o.prog.is_empty() { let mut it = o.prog.split(' '); let pd: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0); let pt: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0); add_seg(pd, pt, ""); }
+        if !o.tbars.is_empty() { for tl in o.tbars.split('\n') { let mut p = tl.splitn(3, ' '); let td: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tt: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); add_seg(td, tt, p.next().unwrap_or("")); } }
         if !o.agn.is_empty() {
-            let mcol = if dim { g("MUTED") } else if self.v.mach_fg.is_empty() || self.v.mach_fg == "none" { g("PINK") } else { self.v.mach_fg.clone() };
+            let mcol = if o.agm != self.host { g("BLUE") } else if self.v.mach_fg.is_empty() || self.v.mach_fg == "none" { g("PINK") } else { self.v.mach_fg.clone() };   // (this machine in herdr's machine colour, another one in blue)
             let am = clip(&o.agm, 12); let amw = dw(&am);
             let lead = if am.is_empty() { 2 } else { 2 + amw + 3 };
             let (mut tm, st) = (time.to_string(), state.to_string());
@@ -246,18 +314,21 @@ impl<'a> Cards<'a> {
             let spk = if bg == g("CARDSEL") || bg == g("SELBG") { 's' } else if bg == g("CARDHOV") { 'h' } else { 'n' };
             let spin = if o.spin { format!("{}{}{}", SPIN, spk, SPIN) } else { String::new() };
             out.push_str(&format!("{}{}{}{}{}{} {}{}{}{}{}{}{}\n", spin, rm, mk, bg, bl, icon, amc, format!("{}{}", g("BOLD"), tc), an, xb, sp(cw - lead - anw - rw), rtc, x));
-            let t2 = clip(if o.agtask.is_empty() { title } else { &o.agtask }, w - 5); let tw2 = dw(&t2);
-            if !t2.is_empty() { out.push_str(&format!("{}{}{}{}∟ {}{}{}{}{}\n", rm, bg, bl, gc, tc, t2, xb, sp(w - 4 - tw2), x)); }
+            let ex = if bi < segs.len() { segs[bi].1 + 1 } else { 0 };
+            let t2 = clip(if o.agtask.is_empty() { title } else { &o.agtask }, w - 5 - ex); let tw2 = dw(&t2);
+            if !t2.is_empty() { out.push_str(&format!("{}{}{}{}∟ {}{}{}{}{}{}\n", rm, bg, bl, gc, tc, t2, xb, sp(w - 4 - tw2 - if ex > 0 { ex - 1 } else { 0 }), if ex > 0 { segs[bi].0.as_str() } else { "" }, x)); if ex > 0 { bi += 1; } }
             if !o.now.is_empty() {
-                let t3 = clip(&o.now, w - 5); let tw3 = dw(&t3);
-                out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, g("ORANGE"), t3, xb, sp(w - 4 - tw3), x));
+                let ex = if bi < segs.len() { segs[bi].1 + 1 } else { 0 };
+                let t3 = clip(&o.now, w - 5 - ex); let tw3 = dw(&t3);
+                out.push_str(&format!("{}{}{}  {}{}{}{}{}{}\n", rm, bg, bl, g("ORANGE"), t3, xb, sp(w - 4 - tw3 - if ex > 0 { ex - 1 } else { 0 }), if ex > 0 { segs[bi].0.as_str() } else { "" }, x)); if ex > 0 { bi += 1; }
             }
             let mut brp = String::new();
             if !branch.is_empty() { brp = format!("⎇ {}", branch); }
             if !who.is_empty() { if !brp.is_empty() { brp.push_str(" · "); } brp.push_str(who); }
             if !brp.is_empty() {
-                let brp = clip(&brp, w - 4); let bw = dw(&brp);
-                out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, gc, brp, xb, sp(w - 4 - bw), x));
+                let ex = if bi < segs.len() { segs[bi].1 + 1 } else { 0 };
+                let brp = clip(&brp, w - 4 - ex); let bw = dw(&brp);
+                out.push_str(&format!("{}{}{}  {}{}{}{}{}{}\n", rm, bg, bl, gc, brp, xb, sp(w - 4 - bw - if ex > 0 { ex - 1 } else { 0 }), if ex > 0 { segs[bi].0.as_str() } else { "" }, x)); if ex > 0 { bi += 1; }
             }
             if sel && !desc.is_empty() { let d = clip(desc, w - 4); let dw2 = dw(&d); out.push_str(&format!("{}{}{}  {}{}{}{}{}\n", rm, bg, bl, dc, d, xb, sp(w - 4 - dw2), x)); }
         } else {
@@ -289,28 +360,8 @@ impl<'a> Cards<'a> {
             }
             if sel && !desc.is_empty() { let d = clip(desc, w - 3); let dw2 = dw(&d); out.push_str(&format!("{}{}{}{}{}{}{}{}\n", rm, bg, bl, dc, d, xb, sp(w - 2 - dw2), x)); }
         }
-        if !o.prog.is_empty() {
-            let mut it = o.prog.split(' '); let pd: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0); let pt: i64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
-            let pw = w - 10;
-            if pt > 0 && pw > 3 {
-                let mut pf = (pd * pw + pt / 2) / pt; if pf > pw { pf = pw; }
-                let (bf, be): (String, String) = ("■".repeat(pf as usize), "■".repeat((pw - pf) as usize));
-                out.push_str(&format!("{}{}{}  {}{}{}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, g("ORANGE"), bf, g("MUTED"), be, x, bg, gc, pd * 100 / pt, format!("{}{}", x, bg), x));
-            }
-        }
-        if !o.tbars.is_empty() {
-            let lines: Vec<&str> = o.tbars.split('\n').collect();
-            let mut tw0 = 0usize;
-            for tl in &lines { let tn = tl.splitn(3, ' ').nth(2).unwrap_or(""); tw0 = tw0.max(tn.chars().count()); }
-            let tw0 = tw0.min(13) as i64; let pw = w - 10 - tw0 - 1;
-            for tl in &lines {
-                let mut p = tl.splitn(3, ' '); let td: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tt: i64 = p.next().and_then(|v| v.parse().ok()).unwrap_or(0); let tsn = p.next().unwrap_or("");
-                if !(tt > 0 && pw > 3) { continue; }
-                let tn = clip(tsn, tw0); let tn = format!("{:<width$}", tn, width = tw0 as usize);
-                let mut pf = (td * pw + tt / 2) / tt; if pf > pw { pf = pw; }
-                let (bf, be) = ("■".repeat(pf as usize), "■".repeat((pw - pf) as usize));
-                out.push_str(&format!("{}{}{}  {}{} {}{}{}{} {}{:>3}%{} {}\n", rm, bg, bl, gc, tn, g("ORANGE"), bf, g("MUTED"), be, gc, td * 100 / tt, format!("{}{}", x, bg), x));
-            }
+        while bi < segs.len() {   // bars that found no row beside a text row: a row of their own, on the right
+            out.push_str(&format!("{}{}{}{}{}{}\n", rm, bg, bl, sp(w - 2 - segs[bi].1 - 1), segs[bi].0, x)); bi += 1;
         }
         out
     }
@@ -474,8 +525,9 @@ impl<'a> Cards<'a> {
         if open == 0 && mode != "lists" { out.push_str(&self.bored()); }
         let mut prev = String::new();
         let grouped = self.c.cfg("CARD_GROUPING", "ungrouped") == "status";
+        let active = self.active_agent();
         for ent in self.cards_sequence(mode, grouped) {
-            let i = match ent { Seq::Idle(k) => { out.push_str(&self.idle_card(&self.ag[k])); continue; } Seq::Topic(i) => i };
+            let i = match ent { Seq::Idle(k) => { out.push_str(&self.idle_card(&self.ag[k], active.as_deref())); continue; } Seq::Topic(i) => i };
             let t = &self.ts[i]; let st = t.status.as_str();
             let gk = if st == "waiting" && t.dep == "1" { "deploying" } else { st };
             if st == "done" { continue; }
@@ -511,8 +563,7 @@ impl<'a> Cards<'a> {
             }
             let lc = match gk { "deploying" => g("Y"), "finished" => g("GREEN"), "now" => g("ORANGE"), "testing" => g("C"), "review" => g("BLUE"), _ => g("D") };
             let _ = &mut tm;
-            if st == "now" && state == "finished" && i as i64 == sel_idx { state = "finished · x = done".into(); }
-            let sl = i as i64 == sel_idx;
+            let sl = match &active { Some(ap) => t.ap == *ap && (t.am.is_empty() || t.am == self.host), None => i as i64 == sel_idx };   // the active agent's cards have the highlighted ground (one to one with herdr)
             let bar = if st == "now" && state.starts_with("finished") { g("GREEN") } else { lc.clone() };   // (its agent has stopped: the bar is green like the text, not orange like a working one)
             let mut o = Item { id: t.id.clone(), bar, prog, ..Default::default() };
             if st == "testing" && !t.ap.is_empty() {
@@ -567,18 +618,25 @@ impl<'a> Cards<'a> {
                 let t = &self.ts[i];
                 if card(t) && t.ap == r.id && (if t.am.is_empty() { &self.host } else { &t.am }) == &r.m { seq.push(Seq::Topic(i)); used[i] = true; any = true; }
             }
-            if !any && (r.st.is_empty() || r.st == "idle") { seq.push(Seq::Idle(k)); }
+            if !any && matches!(r.st.as_str(), "" | "idle" | "done" | "working" | "testing" | "blocked") { seq.push(Seq::Idle(k)); }   // (every agent is on a card: its own, else one that says what it does)
         }
         for i in 0..n { if card(&self.ts[i]) && !used[i] { seq.push(Seq::Topic(i)); } }
         if mode != "cards" { for i in 0..n { if !card(&self.ts[i]) { seq.push(Seq::Topic(i)); } } }
         seq
     }
 
-    /// idle_card: the card of an idle agent without a card, two rows; a click shows the agent (ref agent:<machine>/<pane>)
-    fn idle_card(&self, r: &Row) -> String {
+    /// idle_card: the card of an agent without a card of its own, two rows (the agent, its last task): idle (also herdr's done) dimmed, one that works or needs you in its colour;
+    /// a click shows the agent (ref agent:<machine>/<pane>). An agent is always there.
+    fn idle_card(&self, r: &Row, active: Option<&str>) -> String {
         let g = |k: &str| self.g(k).to_string();
-        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: r.task.clone(), dim: true, ..Default::default() };
-        format!("\n{}", self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o))
+        let (sc, ic, state, dim) = match r.st.as_str() {
+            "working" | "testing" => (g("ORANGE"), format!("{}{}", g("ORANGE"), self.v.spin_ch), "working", false),
+            "blocked" => (g("NN"), format!("{}◉", g("NN")), "needs you", false),
+            _ => (g("D"), format!("{}○", g("D")), "idle", true),
+        };
+        let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: sc.clone(), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: ic, agtask: no_idle_task(&r.task), dim, ..Default::default() };
+        let act = active == Some(r.id.as_str()) && r.m == self.host;   // (the agent herdr shows: not dimmed, the highlighted ground)
+        format!("\n{}", self.card(act, &sc, "", &g("TITLE"), "", "", "", state, "", &o))
     }
 
     /// idle_cards: the agents that are idle and have no card (nothing in review, now, testing, deploying or recently finished): a group IDLE of their own,
@@ -592,10 +650,11 @@ impl<'a> Cards<'a> {
         }
         let mut out = String::new(); let mut first = true;
         for r in &self.ag {
-            if !(r.st.is_empty() || r.st == "idle") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
+            if !matches!(r.st.as_str(), "" | "idle" | "done") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
             if first { out.push_str(&format!("\n  {}IDLE{}\n", g("D"), x)); first = false; } else { out.push('\n'); }
-            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("MUTED")), agtask: r.task.clone(), dim: true, ..Default::default() };
-            out.push_str(&self.card(false, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
+            let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("D")), agtask: no_idle_task(&r.task), dim: true, ..Default::default() };
+            let act = self.active_agent().as_deref() == Some(r.id.as_str()) && r.m == self.host;
+            out.push_str(&self.card(act, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
         }
         out
     }
@@ -660,7 +719,8 @@ fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
 
 struct Vp { row: i64, map: String, spin: String }
 pub struct Out { pub frame: String, pub tmap: String, pub spin: String, pub divrow: i64, pub toff: Option<i64> }
-pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64> }
+/// side: 0 one panel with everything, 1 the left panel (the agents' cards and the agent overview), 2 the right one (the lines of the topics, done, deployments and tests)
+pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64>, pub side: u8 }
 impl<'a> Layout<'a> {
     /// bhote_view: head on top, the topics below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
     /// the run folder (tmap, spinrows, divrow, toff), as the script writes them.
@@ -679,19 +739,21 @@ impl<'a> Layout<'a> {
         let rows = self.rows;
         let trim = |s: String| s.trim_end_matches('\n').to_string();
         let head = trim(self.head.clone()); let bottom = trim(self.bottom.clone());
-        let mut topics = trim(c.block("cards")); let lists = trim(c.block("lists"));
-        let (hh, mut th, bh) = (count_lines(&head), count_lines(&topics), count_lines(&bottom));
-        let mut dn = c.v.done_max; if c.expanded("done") { dn = c.done_total(); }
-        let mut dblk = trim(c.done_block(dn)); let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
+        let mut topics = if self.side == 2 { String::new() } else { trim(c.block("cards")) };
+        if self.side == 1 { let ws = trim(c.workspaces_block()); if !ws.is_empty() { topics = format!("{}\n{}", ws, topics); } }   // (the left panel: the workspaces on top, then the agents)
+        let lists = if self.side == 1 { String::new() } else { trim(c.block("lists")) };
+        let (hh, mut th, bh) = (if head.is_empty() { 0 } else { count_lines(&head) }, count_lines(&topics), count_lines(&bottom));
+        let mut dn = if self.side == 1 { 0 } else { c.v.done_max }; if self.side != 1 && c.expanded("done") { dn = c.done_total(); }
+        let mut dblk = if self.side == 1 { String::new() } else { trim(c.done_block(dn)) }; let mut dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) };
         while dh > 0 && dn > 0 && rows - hh - bh - dh < th.min(6) { dn -= 1; dblk = trim(c.done_block(dn)); dh = if dblk.is_empty() { 0 } else { count_lines(&dblk) }; }
-        let mut mblk = trim(crate::ui::monitors(c.c)); let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
+        let mut mblk = if self.side == 1 { String::new() } else { trim(crate::ui::monitors(c.c)) }; { /* the star of a running monitor dances with the others */ let sp = c.v.spin_ch.clone(); mblk = mblk.split('\n').map(|l| if l.starts_with("\u{1c}x\u{1c}") { l.replacen('✶', &sp, 1) } else { l.to_string() }).collect::<Vec<_>>().join("\n"); } let mut mh = if mblk.is_empty() { 0 } else { count_lines(&mblk) };
         if mh > 0 && rows - hh - bh - dh - mh < th.min(6) { mblk.clear(); mh = 0; }
         let lh = if lists.is_empty() { 0 } else { count_lines(&lists) };
         let mut lcut = lh; let need = th.min(6);
         if rows - hh - bh - dh - mh - lcut < need { lcut = rows - hh - bh - dh - mh - need; if lcut < 0 { lcut = 0; } }
         let avail = rows - hh - bh - dh - mh - lcut;
         if topics.contains("the agents are bored") && th > avail { topics = trim(c.block_with("cards", true)); th = count_lines(&topics); }
-        let mut out = format!("{}\n", head);
+        let mut out = if head.is_empty() { String::new() } else { format!("{}\n", head) };
         let mut vp = Vp { row: hh, map: String::new(), spin: String::new() };
         fn put(vp: &mut Vp, p: &[Parsed], from: i64, to: i64, out: &mut String) {
             let mut i = from;
@@ -721,10 +783,11 @@ impl<'a> Layout<'a> {
             put(&mut vp, &tl, off, off + content, &mut out);
             out.push_str(&format!(" {}↑↓ {} more lines{}\n", g("D"), th - content, g("X"))); vp.row += 1;
         } else { put(&mut vp, &tl, 0, n.min(avail), &mut out); }
-        for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0);
+        if self.side != 2 { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }
         if lcut > 0 { let (p, _) = parse_lines(&lists); put(&mut vp, &p, 0, lcut, &mut out); }
         if dh > 0 { let (p, _) = parse_lines(&dblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
         if mh > 0 { let (p, _) = parse_lines(&mblk); put(&mut vp, &p, 0, p.len() as i64, &mut out); }
+        if self.side == 2 { for _ in 0..pad.max(0) { out.push('\n'); } vp.row += pad.max(0); }   // (the right panel is filled from the top, the keys at the bottom)
         out.push_str(&bottom);
         Out { frame: out, tmap: vp.map, spin: vp.spin, divrow: rows - bh + 1, toff: toff_out }
     }

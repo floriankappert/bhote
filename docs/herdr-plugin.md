@@ -27,6 +27,7 @@ Rules the plugin follows:
 - A tab that already shows a pane titled `Bhote` is left alone.
 - It labels the panes it creates `bhote`. A pane with that label that does not run bhote any more (restored after a restart)
   gets `bhote` started in it. A pane is never typed into because of its title alone, and never when it runs an agent.
+- With `PANEL_LAYOUT=split` (and `BHOTED_PANEL=on`) every tab gets two panes: `bhote-left` (`PANEL_LEFT_WIDTH` columns, left of the agent) and `bhote-right`; in `single` the left one is closed again
 - It splits only when the agent keeps at least 64 columns (`BHOTE_AGENT_MIN_WIDTH`); the panel width is `BHOTE_PANEL_WIDTH`, kept between the settings `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH`
   (56).
 - `AUTOSTART=off` in the settings switches the startup and event hooks off.

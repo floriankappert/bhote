@@ -9,6 +9,8 @@ export type Lists = Record<string, { total: number; items: Listed[] }>
 export type Context = { pr: Pr | null; siblings: Sibling[]; lists?: Lists }
 export type ReviewAction = { label: string; reply: string | null; jump: boolean }
 
+export type Reminder = { id: string; title: string; description: string | null; status: string; waitingFor: string | null }
+
 export type Topic = {
   id: string
   n: number
@@ -29,6 +31,6 @@ export type Topic = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'bhote-topic': { topic: Topic | null; isHidden: boolean }
+    'bhote-topic': { topic: Topic | null; isHidden: boolean; reminder: Reminder | null }
   }
 }

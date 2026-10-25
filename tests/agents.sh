@@ -2,7 +2,7 @@
 # Tests of the agent lists: a running test makes an agent busy, escape codes are stripped, and exactly one panel collects.
 # A fake herdr answers; nothing touches the real one. Usage: bash tests/agents.sh
 cd "$(dirname "$0")/.." || exit 1
-unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
+unset HERDR_TAB_ID HERDR_PANE_ID CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_SOURCE_ONLY=1 TMPDIR=$T BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data BHOTE_SHARED=$T/shared
 mkdir -p "$T/bin"
 cat > "$T/bin/herdr" <<'SH'
@@ -21,6 +21,7 @@ chmod +x "$T/bin/herdr"; export PATH="$T/bin:$PATH"
 # shellcheck disable=SC1091
 . ./bhote
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
+cfg_set CARD_GROUPING status   # (the tests of the lists and headings run grouped; the ungrouped test says so itself)
 cfg_set TESTS_BUSY off
 out=$(collect_one Mac)
 echo "$out" | grep -q "^Mac${US}w1:p1${US}idle" && ok "setting off: a running test does not change the state" || bad "default must ignore tests: $out"
@@ -461,6 +462,53 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   HERDR_TAB_ID=t9; sel_index; [ "${T_ID[$SEL_IDX]}" = "$(topic_id "$mine")" ] || exit 2                                       # (in tab t9: its agent's card)
   SEL_ID=$(topic_id "$o1"); sel_index; [ "${T_ID[$SEL_IDX]}" = "$(topic_id "$o1")" ] || exit 3                               # (a chosen one stays)
   exit 0 ) && ok "the active card: nothing chosen selects the card of the agent in this panel's tab" || bad "active card: step $?"
+# a recently finished card with the same title as another card of its agent (at work, review, waiting, a newer finished one) is put away; a different title stays
+( rm -f "$TOPIC_DIR"/*.topic; HOST=Omarchy
+  mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a1; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w4:p4; topic_set "$f" status "$2"; printf '%s' "$f"; }
+  now_f=$(mk "Same work" now); old_f=$(mk "Same work" finished); other_f=$(mk "Other work" finished); topics_load; agent_dedup
+  [ "$(topic_get "$old_f" status)" = later ] && [ "$(topic_get "$old_f" dismissed)" = 1 ] || exit 1      # (the same work twice: put away)
+  [ "$(topic_get "$other_f" status)" = finished ] && [ "$(topic_get "$now_f" status)" = now ] || exit 2   # (another title stays, the card at work stays)
+  rv_f=$(mk "Same work" review); topics_load; agent_dedup; [ "$(topic_get "$rv_f" status)" = later ] && [ "$(topic_get "$rv_f" dismissed)" = 1 ] || exit 4   # (a review of an earlier turn, the agent works on it again: superseded)
+  r2=$(mk "Review twice" review); sed -i.bak 's/^updated=.*/updated=1000/' "$r2"; rm -f "$r2.bak"; r3=$(mk "Review twice" review); topics_load; agent_dedup
+  [ "$(topic_get "$r2" status)" = later ] && [ "$(topic_get "$r3" status)" = review ] || exit 5                 # (two reviews of the same title: the older one goes)
+  w_f=$(mk "Waiting for New Work" review); topics_load; agent_dedup; [ "$(topic_get "$w_f" status)" = later ] && [ "$(topic_get "$w_f" dismissed)" = 1 ] || exit 3   # (an agent that waits for new work is idle: no review card)
+  exit 0 ) && ok "a finished card that repeats a card of its agent is put away; \"Waiting for New Work\" is never a card" || bad "finished duplicate: step $?"
+# "Waiting for New Work" as the task of an agent (herdr's task token) is no task: the card of its topic shows the topic's title, an idle card has no task row
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Real topic title" "" ""; rf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$rf" agent W2; topic_set "$rf" agent_machine Omarchy; topic_set "$rf" agent_pane w5:p1; topic_set "$rf" status review
+  AG_LINES=("Omarchy${US}w5:p1${US}idle${US}W2${US}Waiting for New Work" "Omarchy${US}w6:p1${US}idle${US}W3${US}Waiting for New Work"); AG_N=2; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"
+  COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  printf '%s\n' "$out" | grep -q "∟ Real topic title" || exit 1; printf '%s\n' "$out" | grep -q "Waiting for New Work" && exit 2
+  exit 0 ) && ok "the task \"Waiting for New Work\" is shown nowhere: the card has its topic's title, an idle card only idle" || bad "waiting for new work task: step $?"
+# the highlighted ground is the active agent's, one to one with what herdr shows in the tab of the panel (also an idle agent); the focus moves it
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Card of Alpha" "" ""; ta="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$ta" agent Alpha; topic_set "$ta" agent_machine Omarchy; topic_set "$ta" agent_pane w1:p1; topic_set "$ta" status now
+  topic_new "Card of Beta" "" ""; tb="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$tb" agent Beta; topic_set "$tb" agent_machine Omarchy; topic_set "$tb" agent_pane w2:p1; topic_set "$tb" status review
+  AG_LINES=("Omarchy${US}w1:p1${US}working${US}Alpha${US}x" "Omarchy${US}w2:p1${US}idle${US}Beta${US}y" "Omarchy${US}w3:p1${US}idle${US}Gamma${US}z"); AG_N=3; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"
+  printf 'Omarchy%sw1:p1%st1%sx\nOmarchy%sw2:p1%st1%sx\nOmarchy%sw3:p1%st3%sx\n' "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" "$US" > "$AGENT_META_L"
+  COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); topics_load
+  marks() { topics_block cards | grep -a $'\001' | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | grep -ao 'Omarchy · [A-Za-z]*' | tr '\n' ' '; }
+  export HERDR_TAB_ID=t1; rm -f "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Alpha " ] || exit 1                       # tab t1, nothing focused: its first agent
+  printf 'w2:p1 t1\n' > "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Beta " ] || exit 2                          # the focus is on Beta (same tab): Beta's card only
+  export HERDR_TAB_ID=t3; [ "$(marks)" = "Omarchy · Gamma " ] || exit 3                                                        # tab t3 shows the idle agent Gamma: its idle card is the highlighted one
+  export HERDR_TAB_ID=t1; printf 'w1:p1 t1\n' > "$SHARED_DIR/focus.pane"; [ "$(marks)" = "Omarchy · Alpha " ] || exit 4         # the focus moves back
+  exit 0 ) && ok "the highlighted card is the active agent's (herdr's tab, its focused agent), also an idle one" || bad "active highlight: step $?"
+# a card that says finished always says when (also a now card whose agent has stopped, also when it is the chosen one), and never "x = done"
+( cfg_set CARD_GROUPING status; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  topic_new "Stopped one" "" ""; sf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$sf" agent S1; topic_set "$sf" agent_machine Omarchy; topic_set "$sf" agent_pane w1:p1; topic_set "$sf" status now
+  AG_LINES=("Omarchy${US}w1:p1${US}idle${US}S1${US}t"); AG_N=1; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); topics_load
+  for sel in "" "$(topic_id "$sf")"; do SEL_ID=$sel; out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+      printf '%s\n' "$out" | grep -q "just now · finished\|[0-9]m ago · finished" || exit 1; printf '%s\n' "$out" | grep -q "x = done" && exit 2; done
+  exit 0 ) && ok "finished always with its age, never x = done" || bad "finished age: step $?"
+# every agent is always on a card: ungrouped, one without a topic (idle, done, working, needs you) has a card of its own; the list at the bottom keeps none of them
+( cfg_set CARD_GROUPING ungrouped; mkdir -p "$RUN_DIR"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
+  AG_LINES=("Omarchy${US}w1:p1${US}idle${US}A1${US}t" "Omarchy${US}w2:p1${US}done${US}A2${US}t" "Omarchy${US}w3:p1${US}working${US}A3${US}t" "Omarchy${US}w4:p1${US}blocked${US}A4${US}t" "Omarchy${US}w5:p1${US}gone${US}A5${US}t"); AG_N=5; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"
+  COLS=50; ROWS=60; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s); topics_load
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
+  for a in A1 A2 A3 A4; do printf '%s\n' "$out" | grep -q "Omarchy · $a" || exit 1; done; printf '%s\n' "$out" | grep -q "A5" && exit 2     # (a gone agent has no card)
+  printf '%s\n' "$out" | grep -q "Omarchy · A4 *needs you" && printf '%s\n' "$out" | grep -q "Omarchy · A3 *working" || exit 3
+  ag=$(agents_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); for a in A1 A2 A3 A4; do printf '%s\n' "$ag" | grep -q "$a" && exit 4; done   # (not twice)
+  exit 0 ) && ok "every agent is on a card (idle, done, working, needs you), and not in the list at the bottom" || bad "every agent a card: step $?"
 # one topic per agent is bound to a deployment (its newest), and an agent whose topic waits for a deployment gets no second card (that would be bound again, for ever)
 ( mkdir -p "$RUN_DIR/cards"; rm -f "$TOPIC_DIR"/*.topic; : > "$AGENT_REMOTE"; HOST=Omarchy
   mk() { topic_new "$1" "" ""; local f="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$f" agent a5; topic_set "$f" agent_machine Omarchy; topic_set "$f" agent_pane w3:p5; topic_set "$f" agent_branch fix/z; topic_set "$f" status finished; sed -i.bak "s/^updated=.*/updated=$2/" "$f"; rm -f "$f.bak"; printf '%s' "$f"; }
@@ -475,7 +523,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_new "Pushed" "" ""; cf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$cf" agent a1; topic_set "$cf" agent_machine Omarchy; topic_set "$cf" agent_pane w1:p1; topic_set "$cf" agent_branch fix/ci; topic_set "$cf" status now
   AG_LINES=("Omarchy${US}w1:p1${US}working${US}a1${US}x"); AG_N=1; printf '%s\n' "${AG_LINES[@]}" > "$AGENT_LOCAL"; COLS=60; ROWS=60; ui_load; NOW=$(date +%s)
   printf '%s\n' "$NOW${US}IMS${US}build-backend${US}running${US}0${US}1${US}fix/ci|~|${US}https://ci/1" "$NOW${US}IMS${US}build-frontend${US}running${US}0${US}1${US}other|~|${US}https://ci/2" "$NOW${US}IMS${US}server${US}ok${US}6${US}6${US}fix/ci|~|37 passed${US}" > "$SHARED_DIR/tests.list"
-  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "build-backend ■" || exit 1
+  out=$(topics_block cards | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "build-b… ■" || exit 1
   printf '%s\n' "$out" | grep -q "build-frontend" && exit 2; printf '%s\n' "$out" | grep -q "server ■" && exit 3          # (another branch's job, a job that is over: no bar)
   exit 0 ) && ok "cards: a CI test job that runs for the card's branch has a bar on it" || bad "CI bars: step $?"
 # a click on a topic: every row of an entry selects it, captions and gaps do not; the window stays while the selection is in it
@@ -634,7 +682,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   topic_set "$af" updated "$NOW"; topics_load; [ -z "$(done_block 4)" ] || exit 8                                          # (nothing done, nothing archived: no section)
   exit 0 ) && ok "done and archived: one section, ✓ done · ▤ archived on its last line" || bad "done/archived: step $?"
 # the machine name in an agent card has the colour herdr gives it in its agent rows (pink wins), and the third line is indented like the rows above
-( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'
+( color=1; rgb() { printf '\033[38;2;%sm' "$1"; }; BOLD=$'\033[1m'; HOST=Omarchy
   HERDR_CONFIG=$T/h.toml; printf '%s\n' 'rows = [["state_icon", { token = "machine", fg = "#112233", bold = true, rules = [{ equals = "Local", hide = true }] }]]' > "$HERDR_CONFIG"
   MACH_FG_CACHE=""; machine_fg_set v; [ "$v" = $'\033[38;2;17;34;51m' ] || exit 1                                   # (herdr's own colour)
   : > "$HERDR_CONFIG"; MACH_FG_CACHE=""; machine_fg_set v; [ "$v" = $'\033[38;2;255;62;165m' ] || exit 2             # (none there: herdr's default pink)
@@ -700,7 +748,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
 ( rm -f "$TOPIC_DIR"/*.topic; RUN_DIR=$T/run2; mkdir -p "$RUN_DIR"; COLS=50; ROWS=40; TOO_SMALL=0; view=main
   printf '%s\n' "Omarchy${US}w1:p1${US}working${US}a${US}x" "Omarchy${US}w2:p1${US}testing${US}b${US}x" "Omarchy${US}w3:p1${US}idle${US}c${US}x" "Omarchy${US}w4:p1${US}done${US}d${US}x" "Omarchy${US}w5:p1${US}blocked${US}e${US}x" > "$AGENT_LOCAL"
   cfg_set AGENTS_COMPACT on; ui_load; RULE_LINE=$(hline 45); DASH_LINE=$(dline 45); NOW=$(date +%s)
-  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you · ○ 1 inactive" || exit 1            # working + testing, blocked, done (an idle agent is on a card)
+  out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "✶ 2 active · ◉ 1 need you" || exit 1; printf '%s\n' "$out" | grep -q "inactive" && exit 13   # working + testing, blocked; idle and done agents are on cards, not counted
   printf '%s\n' "$out" | grep -q "↕" || exit 2                                                                                                  # the button on the divider
   cfg_set AGENTS_COMPACT off; ui_load; out=$(bhote_draw main | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g'); printf '%s\n' "$out" | grep -q "active" && exit 3     # (the full list again)
   echo 30 > "$RUN_DIR/divrow"; MOUSE_KEY=""; mouse_event "0;47;30" M; [ "$MOUSE_KEY" = AGMENU ] || exit 4                                  # a click on the button
@@ -738,7 +786,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "DEPLOYING" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" -ge 38 ] || exit 5                                                              # 44 of 56 steps
+  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" = 5 ] || exit 5   # 44 of 56 steps: five boxes (a card with an agent has them on the right of its second row; this one has none: a row of its own)
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "DEPLOYING" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   # without a deployment of its project (an agent said "waiting for a deployment" and none runs) it is no card in DEPLOYING: a line in the Waiting list

@@ -81,6 +81,11 @@ fixture() {  # fixture <dir>: topics, agents and state files, deterministic
     printf '%s\n' "P46${US}$d/mergerepo" >> "$d/shared/agents.cwd"
     printf '%s\n' "$(( N - 20 ))${US}IMS${US}Backend${US}running${US}1${US}3${US}feat-q (#77)${US}https://ci/77" >> "$d/shared/deploys.list"
     UPD=$(( N - 3000 )) tp "$d" dp5 title=Finished\ long\ ago status=finished agent_pane=P46 agent_machine=$H agent=a46 agent_branch=wip/old project=proj-ims
+    UPD=$N tp "$d" dq1 title=Same\ work status=now agent_pane=P48 agent_machine=$H agent=a48
+    UPD=$N tp "$d" dq2 title=Same\ work status=finished agent_pane=P48 agent_machine=$H agent=a48
+    UPD=$N tp "$d" dq4 title=Waiting\ for\ New\ Work status=review agent_pane=P49 agent_machine=$H agent=a49
+    UPD=$(( N - 4 * 3600 )) tp "$d" dq5 title=Same\ work status=review agent_pane=P48 agent_machine=$H agent=a48
+    UPD=$N tp "$d" dq3 title=Other\ work status=finished agent_pane=P48 agent_machine=$H agent=a48
     UPD=$N tp "$d" dp4 title=Went\ back\ to\ its\ branch status=finished agent_pane=P46 agent_machine=$H agent=a46 agent_branch=wip/own project=proj-ims
     UPD=$N tp "$d" dp3 title=Stopped\ but\ shipping status=finished agent_pane=P45 agent_machine=$H agent=a45 agent_branch=feat/ship project=proj-ims
     UPD=$N tp "$d" dp2 title=Waits\ and\ it\ went\ through status=waiting deploy_wait=1 project=proj-ims deploy_url=https://ci/8 waiting_for=Deployment waiting_since=$(( N - 500 ))
