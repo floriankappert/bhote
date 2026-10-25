@@ -88,7 +88,7 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
-KHARKA_SIDECAR|auto|enum:auto:off|The native mux runs herdr-kharka against its own socket (auto: with STORE=kharka or AGENTS_VIA=kharka), so that the other machines see this one's workspaces and agents and can focus and prompt them. Stop the old herdr-kharka service (it points at herdr) when you switch
+KHARKA_SIDECAR|auto|enum:auto:off|The native mux runs herdr-kharka against its own socket (auto: with STORE=kharka or AGENTS_VIA=kharka), so that the other machines see the workspaces and agents of this machine and can focus and prompt them. Stop the old herdr-kharka service (it points at herdr) when you switch
 KHARKA_LABEL||text|The name of this machine in kharka for the sidecar (empty: the kharka node name)
 MUX|native|enum:native:herdr|What `bhote` starts from a plain terminal: the native mux (the pane server of bhote, bhote attach) or herdr (kept for one release; the environment variable BHOTE_MUX=herdr says the same)
 CHAT_PANEL|off|enum:off:bottom:right|The chat pane of the native mux (an input field and the history of an agent; bhote chat): under the main pane (bottom) or under the right panel (right)
