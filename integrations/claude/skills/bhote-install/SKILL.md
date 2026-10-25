@@ -1,34 +1,34 @@
 ---
 name: bhote-install
-description: Install and set up bhote (the topics and agents side panel for herdr) completely on this machine, through its CLI and the herdr API, without the interactive wizard: the program, jq/herdr, the herdr plugin, the Omarchy bar widget, the Claude Code hook and skills in every Claude profile, the settings, the connection to other machines, the monitors. Use it when the user asks to install, set up, repair, update or check bhote on a machine ("bhote-install", "install bhote here", "set up bhote on the Mac").
+description: Install and set up bhote (the terminal workspace with its own multiplexer, the topics and agents panels; herdr is not needed) completely on this machine, through its CLI, without the interactive wizard: the program and the daemon (bhoted), jq, the Claude Code hook and skills in every Claude profile, the settings, the connection to other machines (kharka over ssh), the monitors, the Omarchy bar widget. Use it when the user asks to install, set up, repair, update or check bhote on a machine ("bhote-install", "install bhote here", "set up bhote on the Mac").
 ---
 
 # bhote-install: set bhote up completely
 
 You do what the setup wizard does, but through commands, and you check each step. Work in this order; after every step
 say in one line what is in place. **Ask the user before**: anything with a secret (tokens are never printed or put on a
-command line), opening ssh to another machine, changing herdr's `config.toml`, enabling Slack/CircleCI, and restarting
+command line), opening ssh to another machine, stopping an old herdr-kharka service, enabling Slack/CircleCI, and restarting
 panels that may show a wizard. Never restart the Omarchy shell while the session is locked: touching a plugin file
 reloads it.
 
 ## 1. Look first (changes nothing)
 
 ```sh
-uname -s; command -v bhote herdr jq gh git ssh curl claude
-bhote version; bhote setup --json          # what is in place: jq, herdr, plugin, claude_hook, machines
-herdr plugin list; herdr machine list
+uname -s; command -v bhote bhoted jq gh git ssh curl claude cargo
+bhote version; bhote doctor                 # what is in place: the daemon, the mux server, jq, the keymap, kharka
+bhote integration status claude             # the Claude Code hook, per profile
 echo "$CLAUDE_CONFIG_DIR"; ls -d ~/.claude* 2>/dev/null     # every Claude Code profile on this machine
 ```
 
-## 2. The program
+## 2. The program (herdr is not needed)
 
-- macOS or Linux with Homebrew: `brew install floriankappert/bhote/bhote`, then `herdr plugin link "$(brew --prefix)/share/bhote/herdr-plugin"`.
-- Arch/Omarchy: `git clone https://github.com/floriankappert/bhote && cd bhote/packaging/arch && makepkg -si`.
-- Any other system, or to work from a checkout: `git clone https://github.com/floriankappert/bhote && cd bhote && ./install.sh`
-  (links `~/.local/bin/bhote`, the herdr plugin `bhote.panel` and, on Omarchy, the widget `bhote.bar`).
-- Needs `jq` and `herdr` (`brew install jq` / `pacman -S jq`; herdr from herdr.dev). `gh` is optional (deployment and test monitor).
-
-Check: `bhote version`, `herdr plugin list | grep bhote.panel`.
+- From a checkout, any macOS or Linux: `git clone https://github.com/floriankappert/bhote && cd bhote && ./install.sh`. It links `~/.local/bin/bhote`, builds the daemon
+  `bhoted` (needs Rust: https://rustup.rs; or `cargo build --release --manifest-path daemon/Cargo.toml`), installs the Claude Code hook in every profile
+  and, on Omarchy, the widget `bhote.bar`. Needs `jq`. `gh` is optional (deployment and test monitor).
+- Check: `bhote version`, `bhote doctor` (it says "herdr is not needed").
+- Start it: type `bhote` in a plain terminal (it starts the pane server and attaches; `ctrl+b d` detaches; `bhote mux stop|status|restart`). Keys: `~/.config/bhote/keys`
+  (`prefix = ctrl+space` for herdr's old prefix). The panels, the chat strip and the sections are settings: `PANEL_LEFT`, `PANEL_RIGHT`, `CHAT_PANEL` (docs/mux.md).
+- If herdr is still installed and should stay what `bhote` starts: `bhote config set MUX herdr` (the plugin is linked by install.sh then).
 
 ## 3. Omarchy bar widget (Linux/Omarchy only)
 
@@ -39,6 +39,7 @@ Reload by `touch ~/.config/omarchy/plugins/bhote.bar/BarWidget.qml`; read errors
 
 For each profile directory `<dir>` (`${CLAUDE_CONFIG_DIR:-~/.claude}` and every other `~/.claude*` the user uses):
 
+- the state hook: `bhote integration install claude` (every profile; it tells the mux exactly what a session does: working, blocked, idle, its session id).
 - the hook: `<dir>/settings.json` needs a SessionStart command `command -v bhote >/dev/null 2>&1 && bhote current 2>/dev/null; true`
   (`grep -q 'bhote current' <dir>/settings.json`). `settings.json` may be a symlink into a config repo: write THROUGH it
   (`cat new > file`), never replace it with `mv`.
@@ -49,9 +50,9 @@ For each profile directory `<dir>` (`${CLAUDE_CONFIG_DIR:-~/.claude}` and every 
 
 ```sh
 bhote config list                         # every setting with its value
-bhote config set STORE remote; bhote config set STORE_MACHINE <label>; bhote config set SYNC_VIA herdr
-bhote config set REMOTE_AGENTS on         # the agents of the saved machines too
-bhote config set HERDR_KEYS_MACHINE <label>   # the machine whose herdr you TYPE into (a Mac attached to a Linux session): its keys are shown
+bhote config set STORE kharka; bhote config set AGENTS_VIA kharka   # topics and agents of all machines through kharka (see 6)
+bhote config set REMOTE_AGENTS on         # the agents of the other machines too
+bhote config set KHARKA_LABEL <name>      # this machine's name in kharka (e.g. Mac, Omarchy)
 bhote config set DEPLOY_MONITOR on; bhote config set TEST_MONITOR on
 bhote config set CLAUDE_CONFIG_DIR ~/.claude2 # the profile with the Slack connector (only if Slack watch is wanted)
 ```
@@ -59,14 +60,15 @@ bhote config set CLAUDE_CONFIG_DIR ~/.claude2 # the profile with the Slack conne
 Machine codes (three capitals, MAC/OMR) are set in the panel's settings › Connections. The CircleCI token: ask the user to enter it
 in settings › Connections (or `bhote config set CIRCLECI_TOKEN …` typed by the user); never read it back.
 
-## 6. Other machines
+## 6. Other machines (kharka over ssh)
 
-`herdr machine list` shows saved machines; add one with `herdr machine add` (the user authenticates) and check
-`herdr machine status`. Both machines must know each other (ssh both ways; Tailscale makes names resolve). bhote itself reports it
-in `bhote setup --json` (`reachable`, `knows_this_machine`). Install bhote on the other machine the same way, with the SAME machine name.
-With kharka and herdr-kharka on every machine, `bhote config set AGENTS_VIA kharka` lists the other machines' agents without
-ssh between them; then each herdr-kharka needs `--label` set to its machine's bhote name, and `--allow-method agent.prompt`
-where agents should get prompts (`machines[].prompts` in `bhote setup --json`).
+Machines see each other through kharka: one machine runs `kharka serve` (the hub), every machine `kharka daemon --hub <ssh destination of the hub>` (kharka reaches the hub
+over ssh: an ssh tunnel, no open port); Tailscale makes the names resolve. With `STORE=kharka` and `AGENTS_VIA=kharka` the native mux runs `herdr-kharka` itself (the sidecar:
+it writes this machine's workspaces and agents into kharka and runs the commands other machines send: focus, prompt) and the panels list every machine's workspaces and agents.
+A click on a workspace or an agent of another machine opens it here over ssh (`bhote view` there; `REMOTE_SSH` changes the ssh command; the kharka node name is the host).
+Install bhote the same way on every machine. Stop an old `herdr-kharka` service on a machine that runs the mux (Linux: `systemctl --user disable --now herdr-kharka`;
+macOS: `launchctl bootout gui/$(id -u)/dev.kharka.herdr`); `bhote doctor` says which one runs. ssh must work from each machine to the others without a password
+(`ssh <node> true`).
 
 ## 7. Project CI (monitors)
 
@@ -75,8 +77,8 @@ where agents should get prompts (`machines[].prompts` in `bhote setup --json`).
 
 ## 8. Start and verify
 
-- Panels: `bhote reload` restarts every bhote panel of this machine safely (it ends the old panel and only then starts the new one; it never types into a panel that still runs). Run it on each machine (`ssh <host> bhote reload`). Never use `herdr pane run`/`send-keys` on a pane that may still run bhote: the text lands in the panel as keys (t, then Enter, starts a hand-over). Ask first if a panel might be inside the wizard.
-- `bhote setup --json` shows jq, herdr, plugin, claude_hook true and every machine reachable.
+- Panels: `bhote reload` restarts the side panels of the mux (it never types into a panel). Run it on each machine (`ssh <host> bhote reload`). Never use `herdr pane run`/`send-keys` on a pane that may still run bhote: the text lands in the panel as keys (t, then Enter, starts a hand-over).
+- `bhote doctor` shows the daemon, the mux server, the keymap and kharka; `bhote setup --json` jq, claude_hook and every machine reachable.
 - `bhote bar`, `bhote list`, `bhote update` (is a newer version out, and the command that updates it).
 - From a checkout: `for t in tests/*.sh; do bash $t | grep ^FAIL; done` (no output = fine).
 
