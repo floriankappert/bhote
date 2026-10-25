@@ -55,13 +55,15 @@ pub struct Pane {
     pub resume: Vec<String>,
     /// the last status an event was sent for
     pub evsent: String,
+    /// since when (unix ms) the status is what it is
+    pub status_ms: u64,
 }
 
 fn nz(n: u16) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(n.max(1)).unwrap() }
 
 impl Pane {
     pub fn new(id: u32, (ws, n, tab): (u32, u32, u32), pty: Pty, cols: u16, rows: u16, cmd: Vec<String>, cwd: String) -> Pane {
-        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new() }
+        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new(), status_ms: 0 }
     }
     pub fn agent_name(&self) -> Option<&str> { self.agent.as_deref() }
     pub fn agent_status(&self) -> &str { if self.status.is_empty() { "unknown" } else { &self.status } }

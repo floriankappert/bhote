@@ -74,10 +74,13 @@ impl Server {
             let seen = shown == Some(id);
             // work that ends while nobody looks at the pane stays "done" until the pane is shown
             let new = if p.base == "idle" && (p.status == "done" || was_working) && !seen { "done".to_string() } else { p.base.clone() };
-            if new != p.status { p.status = new; p.rev += 1; }
+            if new != p.status { p.status = new; p.rev += 1; p.status_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64); }
             if p.status != p.evsent { p.evsent = p.status.clone(); events.push(id); }
         }
-        for id in events { self.agent_event(id); self.dirty = true; }
+        for id in events {
+            self.agent_event(id); self.dirty = true;
+            if let Some(p) = self.panes.get(&id) { let (n, pj, st) = (p.name(), self.pane_json(p), p.agent_status().to_string()); self.emit("pane.agent_status_changed", Some(&n.clone()), json!({"pane_id": n, "agent_status": st, "pane": pj})); }
+        }
     }
 
     /// bhote hears of a changed state (what the herdr plugin did on `pane.agent_status_changed`): `bhote event` with the event as JSON.

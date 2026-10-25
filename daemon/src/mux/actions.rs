@@ -4,7 +4,8 @@ use super::keymap::Keymap;
 use super::layout::{self, Dir, Rect, Side};
 use super::render::{Cell, Grid};
 use super::server::{Server, Spawn};
-use super::world::World;
+use super::world::{self, World};
+use serde_json::json;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use vt100::{Color, MouseProtocolEncoding as Enc, MouseProtocolMode as MMode};
@@ -159,6 +160,7 @@ impl Server {
         if prev != Some(pane) { self.last_focus = prev; }
         self.world.focus_pane(pane);
         self.dirty = true;
+        if prev != Some(pane) { if let Some(p) = self.panes.get(&pane) { let (n, w, t) = (p.name(), world::ws_name(p.ws), world::tab_name(p.ws, p.tab)); self.emit("pane.focused", Some(&n.clone()), json!({"pane_id": n, "workspace_id": w, "tab_id": t})); } }
     }
     fn follow_cwd(&self) -> Spawn { Spawn { cwd: self.world.focused_pane().and_then(|f| self.panes.get(&f)).map(|p| p.foreground().1), ..Default::default() } }
     fn tab_rects(&self) -> Vec<(u32, Rect)> { self.world.current().map(|(_, t)| World::rects(t, self.area()).0).unwrap_or_default() }

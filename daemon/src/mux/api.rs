@@ -67,7 +67,7 @@ impl Server {
         let m = o.as_object_mut().unwrap();
         if !p.label.is_empty() { m.insert("label".into(), json!(p.label)); }
         if !p.tokens.is_empty() { m.insert("tokens".into(), Value::Object(p.tokens.clone())); }
-        if let Some(a) = p.agent_name() { m.insert("agent".into(), json!(a)); }
+        if let Some(a) = p.agent_name() { m.insert("agent".into(), json!(a)); m.insert("status_since_unix_ms".into(), json!(p.status_ms)); }
         if let Some(sess) = p.agent_session() { m.insert("agent_session".into(), sess); }
         o
     }
@@ -278,7 +278,7 @@ impl Server {
                 let (wi, pid) = self.create_workspace(s(p, "label").unwrap_or(""), &spawn_of(p), flag(p, "focus").unwrap_or(false)).map_err(|e| ("create_failed", e.to_string()))?;
                 Ok(json!({"workspace": self.ws_json(wi), "tab": self.tab_json(wi, 0), "pane": self.pane_json(&self.panes[&pid]), "type": "workspace_info"}))
             }
-            "workspace.focus" => { let wi = self.ws_of(p)?; self.world.active = wi; self.dirty = true; Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
+            "workspace.focus" => { let wi = self.ws_of(p)?; self.world.active = wi; self.dirty = true; { let w = world::ws_name(self.world.ws[wi].id); self.emit("workspace.focused", None, json!({"workspace_id": w})); } Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
             "workspace.rename" => { let wi = self.ws_of(p)?; self.world.ws[wi].label = s(p, "label").unwrap_or("").to_string(); self.dirty = true; Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
             "workspace.close" => {
                 let wi = self.ws_of(p)?;

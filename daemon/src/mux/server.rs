@@ -24,6 +24,7 @@ pub enum Ev {
     Frame(u32, u8, Vec<u8>),
     ClientGone(u32),
     Control(Value, Sender<Value>),
+    Subscribe(UnixStream, Vec<(String, Option<String>)>),
 }
 
 /// What the terminal of a client has to be told about the focused pane (keys and mouse come back in the form the program asked for).
@@ -92,11 +93,13 @@ pub struct Server {
     pub state_file: Option<std::path::PathBuf>,
     pub state_saved: String,
     pub state_at: Option<Instant>,
+    /// event subscribers (events.subscribe): the connection and what it wants (event type, optional pane)
+    pub subs: Vec<(UnixStream, Vec<(String, Option<String>)>)>,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new() }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -124,6 +127,8 @@ impl Server {
         let tx = self.tx.clone();
         std::thread::spawn(move || { pty::read_loop(reader, |b| tx.send(Ev::PaneOut(id, b)).is_ok()); let _ = tx.send(Ev::PaneExit(id)); });
         self.panes.insert(id, Pane::new(id, (self.world.ws[wi].id, n, tab), pty, a.w, a.h, sp.cmd.clone(), cwd));
+        let (name, pj) = (self.panes[&id].name(), self.pane_json(&self.panes[&id]));
+        self.emit("pane.created", None, json!({"pane": pj, "pane_id": name}));
         Ok(id)
     }
 
@@ -139,6 +144,8 @@ impl Server {
         w.tabs.push(Tab::new(1, "1".into(), pid));
         if focus || self.world.ws.len() == 1 { self.world.active = wi; }
         self.after_change();
+        let wid = world::ws_name(self.world.ws[wi].id);
+        self.emit("workspace.created", None, json!({"workspace_id": wid}));
         Ok((wi, pid))
     }
 
@@ -171,8 +178,10 @@ impl Server {
 
     pub fn close_pane(&mut self, id: u32) {
         if self.is_panel(id) { if let Some((wi, ti)) = self.world.tab_of_pane(id) { self.world.ws[wi].tabs[ti].no_panels = true; } }
+        let closed = self.panes.get(&id).map(|p| (p.name(), world::ws_name(p.ws)));
         self.panes.remove(&id);
         self.world.remove_pane(id);
+        if let Some((n, w)) = closed { self.emit("pane.closed", Some(&n.clone()), json!({"pane_id": n, "workspace_id": w})); }
         if self.world.ws.is_empty() { self.end_clients("exited"); self.quit = true; if let Some(f) = &self.state_file { let _ = std::fs::remove_file(f); } self.state_file = None; }
         self.after_change();
     }
@@ -219,7 +228,18 @@ impl Server {
             },
             Ev::ClientGone(id) => { self.clients.retain(|c| c.id != id); self.after_change(); }
             Ev::Control(req, reply) => { let _ = reply.send(self.control(&req)); }
+            Ev::Subscribe(stream, filters) => self.subs.push((stream, filters)),
         }
+    }
+
+    /// Tells the subscribers of events.subscribe: one line `{"event": type, "data": ...}`; a subscriber that cannot be written to is dropped.
+    pub fn emit(&mut self, ty: &str, pane: Option<&str>, data: Value) {
+        if self.subs.is_empty() { return; }
+        let line = format!("{}\n", json!({"event": ty, "data": data}));
+        self.subs.retain_mut(|(st, filters)| {
+            if !filters.iter().any(|(t, p)| t == ty && (p.is_none() || p.as_deref() == pane)) { return true; }
+            st.write_all(line.as_bytes()).is_ok()
+        });
     }
 
     pub fn end_clients(&mut self, reason: &str) {
@@ -364,6 +384,17 @@ fn serve_conn(stream: UnixStream, tx: Sender<Ev>, next_client: Arc<AtomicU32>) -
             if tx.send(Ev::NewClient { id, stream: w.try_clone()?, cols, rows }).is_err() { return Ok(()); }
             while let Ok((t, p)) = read_frame(&mut r) { if tx.send(Ev::Frame(id, t, p)).is_err() { return Ok(()); } }
             let _ = tx.send(Ev::ClientGone(id));
+            return Ok(());
+        }
+        if req.get("method").and_then(|m| m.as_str()) == Some("events.subscribe") {
+            let subs = req.pointer("/params/subscriptions").and_then(|s| s.as_array()).cloned().unwrap_or_default();
+            let mut f = Vec::new();
+            for sub in &subs {
+                let Some(t) = sub.get("type").and_then(|t| t.as_str()) else { writeln!(w, "{}", json!({"id": req.get("id"), "error": {"code": "invalid_request", "message": "missing field `type`"}}))?; return Ok(()); };
+                f.push((t.to_string(), sub.get("pane_id").and_then(|p| p.as_str()).map(String::from)));
+            }
+            writeln!(w, "{}", json!({"id": req.get("id"), "result": {"type": "subscription_started"}}))?;
+            let _ = tx.send(Ev::Subscribe(w.try_clone()?, f));
             return Ok(());
         }
         let (rtx, rrx) = mpsc::channel();
