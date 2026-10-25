@@ -4,7 +4,7 @@ Decision (M0): terminal state is the `vt100` crate (0.18). It passed the replay 
 
 ## Socket
 
-`$XDG_RUNTIME_DIR/bhote/mux.sock` (fallback `/tmp/bhote-<uid>/mux.sock`, mode 0700 dir). `BHOTE_MUX_SOCK` overrides. The server starts on demand (`bhote attach` forks `bhoted mux` when nothing listens) and outlives every client.
+`$XDG_RUNTIME_DIR/bhote/mux.sock` (fallback `/tmp/bhote-mux-<uid>/mux.sock`, mode 0700 dir). `BHOTE_MUX_SOCK` overrides. The server starts on demand (`bhote attach` forks `bhoted mux` when nothing listens) and outlives every client.
 
 ## Control connection
 

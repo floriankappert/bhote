@@ -6,7 +6,7 @@ pub fn sock_path() -> PathBuf {
     if let Some(p) = std::env::var_os("BHOTE_MUX_SOCK") { return PathBuf::from(p); }
     let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(d) if !d.is_empty() => PathBuf::from(d).join("bhote"),
-        _ => PathBuf::from(format!("/tmp/bhote-{}", unsafe { libc::getuid() })),
+        _ => PathBuf::from(format!("/tmp/bhote-mux-{}", unsafe { libc::getuid() })),
     };
     dir.join("mux.sock")
 }
