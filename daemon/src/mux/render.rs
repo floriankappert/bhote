@@ -14,6 +14,7 @@ pub struct Grid { pub cols: u16, pub rows: u16, pub cells: Vec<Cell>, pub cursor
 impl Grid {
     pub fn new(cols: u16, rows: u16) -> Grid { Grid { cols, rows, cells: vec![Cell::default(); cols as usize * rows as usize], cursor: None } }
     pub fn get(&self, x: u16, y: u16) -> &Cell { &self.cells[y as usize * self.cols as usize + x as usize] }
+    pub fn cell_mut(&mut self, x: u16, y: u16) -> Option<&mut Cell> { if x < self.cols && y < self.rows { let i = y as usize * self.cols as usize + x as usize; self.cells.get_mut(i) } else { None } }
     fn set(&mut self, x: u16, y: u16, c: Cell) { if x < self.cols && y < self.rows { let i = y as usize * self.cols as usize + x as usize; self.cells[i] = c; } }
 
     /// The text of a row (for tests and `pane.read` of the whole frame).

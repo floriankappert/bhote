@@ -1,4 +1,6 @@
 //! `bhoted mux`: the pane server. One event loop owns all state; threads only read (ptys, sockets) and send events.
+use super::input;
+use super::keymap::Keymap;
 use super::layout::{Dir, Node, Rect};
 use super::pane::Pane;
 use super::proto::{self, read_frame, write_frame};
@@ -12,7 +14,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use vt100::Color;
 
 pub enum Ev {
@@ -30,12 +32,8 @@ pub struct Modes { cursor_keys: bool, keypad: bool, paste: bool, mouse: u8, enc:
 
 impl Modes {
     fn of(s: &vt100::Screen) -> Modes {
-        use vt100::{MouseProtocolEncoding as E, MouseProtocolMode as M};
-        Modes {
-            cursor_keys: s.application_cursor(), keypad: s.application_keypad(), paste: s.bracketed_paste(),
-            mouse: match s.mouse_protocol_mode() { M::None => 0, M::Press => 1, M::PressRelease => 2, M::ButtonMotion => 3, M::AnyMotion => 4 },
-            enc: match s.mouse_protocol_encoding() { E::Default => 0, E::Utf8 => 1, E::Sgr => 2 },
-        }
+        // the mouse is always reported to the mux (button motion, SGR); it hands the events on to the pane that asked for them
+        Modes { cursor_keys: s.application_cursor(), keypad: s.application_keypad(), paste: s.bracketed_paste(), mouse: 3, enc: 2 }
     }
     /// The bytes that turn what the terminal has (`prev`) into `self`.
     fn diff(&self, prev: &Modes) -> String {
@@ -56,7 +54,13 @@ impl Modes {
     }
 }
 
-pub struct Client { pub id: u32, pub stream: UnixStream, pub cols: u16, pub rows: u16, prev: Option<Grid>, modes: Modes, prefix: bool }
+pub struct Client {
+    pub id: u32, pub stream: UnixStream, pub cols: u16, pub rows: u16,
+    pub(super) prev: Option<Grid>, pub(super) modes: Modes,
+    pub parser: input::Parser, pub mode: super::actions::Mode, pub sel: Option<super::actions::Selection>, pub drag: Option<super::actions::Drag>,
+    /// when a lone escape byte is the escape key (no more bytes came)
+    pub esc_at: Option<Instant>,
+}
 
 /// What a new pane is started with.
 #[derive(Default, Clone)]
@@ -73,11 +77,15 @@ pub struct Server {
     pub cwd: String,
     /// added to the environment of every pane: PATH with the `herdr` shim in front, the socket
     pub env: Vec<(String, String)>,
+    pub km: Keymap,
+    pub last_focus: Option<u32>,
+    /// OSC 52 sequences to hand to every terminal
+    pub clip: Vec<String>,
 }
 
 impl Server {
-    fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env }
+    pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new() }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -168,7 +176,7 @@ impl Server {
             Ev::PaneOut(id, b) => if let Some(p) = self.panes.get_mut(&id) { p.output(&b); self.dirty = true; },
             Ev::PaneExit(id) => if self.panes.contains_key(&id) { self.close_pane(id); },
             Ev::NewClient { id, stream, cols, rows } => {
-                self.clients.push(Client { id, stream, cols, rows, prev: None, modes: Modes::default(), prefix: false });
+                self.clients.push(Client { id, stream, cols, rows, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
                 self.after_change();
             }
             Ev::Frame(id, t, p) => match t {
@@ -177,7 +185,7 @@ impl Server {
                     if let Some(cl) = self.clients.iter_mut().find(|c| c.id == id) { cl.cols = c; cl.rows = r; cl.prev = None; }
                     self.after_change();
                 },
-                b'D' => self.detach(id, "detached"),
+                b'D' => self.detach_client(id, "detached"),
                 _ => {}
             },
             Ev::ClientGone(id) => { self.clients.retain(|c| c.id != id); self.after_change(); }
@@ -190,7 +198,7 @@ impl Server {
         self.clients.clear();
     }
 
-    fn detach(&mut self, id: u32, reason: &str) {
+    pub fn detach_client(&mut self, id: u32, reason: &str) {
         if let Some(i) = self.clients.iter().position(|c| c.id == id) {
             let mut c = self.clients.remove(i);
             let _ = write_frame(&mut c.stream, b'Q', reason.as_bytes());
@@ -199,41 +207,50 @@ impl Server {
         self.after_change();
     }
 
-    /// Keys of a client: the prefix key (ctrl+b) and what follows is ours, everything else goes to the focused pane.
-    fn client_input(&mut self, id: u32, bytes: &[u8]) {
-        let mut fwd = Vec::new(); let mut detach = false;
-        let Some(c) = self.clients.iter_mut().find(|c| c.id == id) else { return };
-        for &b in bytes {
-            if c.prefix {
-                c.prefix = false;
-                match b { b'd' => detach = true, 0x02 => fwd.push(0x02), _ => {} }
-            } else if b == 0x02 { c.prefix = true } else { fwd.push(b) }
-        }
-        if !fwd.is_empty() { if let Some(p) = self.world.focused_pane().and_then(|f| self.panes.get_mut(&f)) { p.input(&fwd); } }
-        if detach { self.detach(id, "detached"); }
-    }
+    fn client_input(&mut self, id: u32, bytes: &[u8]) { super::actions::on_input(self, id, bytes); }
 
-    /// The bar under the panes: the workspaces, then the tabs of the shown workspace.
-    fn bar(&self, g: &mut Grid, y: u16) {
+    /// The bar under the panes: workspaces, tabs, and on the right what the mode of the client is.
+    fn bar(&self, g: &mut Grid, y: u16, c: &Client) {
         let base = Cell { fg: Color::Rgb(170, 176, 200), bg: Color::Rgb(30, 32, 48), ..Cell::default() };
         let hi = Cell { fg: Color::Rgb(20, 22, 34), bg: Color::Rgb(137, 220, 235), bold: true, ..Cell::default() };
+        let warn = Cell { fg: Color::Rgb(20, 22, 34), bg: Color::Rgb(250, 179, 135), bold: true, ..Cell::default() };
         let cols = g.cols;
         g.fill(0, y, cols, 1, &base);
+        if let super::actions::Mode::Prompt(p) = &c.mode {
+            g.put(1, y, &format!("{}: {}", p.label(), p.text), &warn);
+            return;
+        }
+        for (x, text, _, active) in self.bar_items() { g.put(x, y, &text, if active { &hi } else { &base }); }
+        let tag = c.mode.tag(&self.km);
+        if !tag.is_empty() { let w = tag.chars().count() as u16 + 2; g.put(cols.saturating_sub(w), y, &format!(" {tag} "), &warn); }
+    }
+
+    /// What is on the bar: x, text, what a click does, whether it is the shown one.
+    pub fn bar_items(&self) -> Vec<(u16, String, super::actions::Click, bool)> {
+        let mut v = Vec::new();
         let mut x = 1u16;
-        let mut put = |g: &mut Grid, x: &mut u16, text: String, st: &Cell| { g.put(*x, y, &text, st); *x += text.chars().map(|c| if render::wide(c) { 2 } else { 1 }).sum::<u16>(); };
+        let width = |t: &str| t.chars().map(|c| if render::wide(c) { 2 } else { 1 }).sum::<u16>();
         for (i, w) in self.world.ws.iter().enumerate() {
-            put(g, &mut x, format!(" {} {} ", i + 1, w.label), if i == self.world.active { &hi } else { &base });
+            let t = format!(" {} {} ", i + 1, w.label);
+            let n = width(&t); v.push((x, t, super::actions::Click::Workspace(i), i == self.world.active)); x += n;
         }
         if let Some(w) = self.world.ws.get(self.world.active) {
-            put(g, &mut x, " │ ".into(), &base);
-            for (i, t) in w.tabs.iter().enumerate() { put(g, &mut x, format!(" {} ", t.label), if i == w.active { &hi } else { &base }); }
+            x += 3;
+            for (i, t) in w.tabs.iter().enumerate() {
+                let tx = format!(" {} ", t.label);
+                let n = width(&tx); v.push((x, tx, super::actions::Click::Tab(i), i == w.active)); x += n;
+            }
+            // the separator between workspaces and tabs
+            v.push((v.iter().filter(|i| matches!(i.2, super::actions::Click::Workspace(_))).map(|i| i.0 + width(&i.1)).max().unwrap_or(1), " │ ".into(), super::actions::Click::None, false));
         }
+        v
     }
 
     /// The picture for a client: the panes of the shown tab, the dividers, the bar.
-    fn compose(&self, cols: u16, rows: u16) -> (Grid, Modes) {
+    fn compose(&self, ci: usize) -> (Grid, Modes) {
+        let (cols, rows) = (self.clients[ci].cols, self.clients[ci].rows);
         let mut g = Grid::new(cols, rows);
-        let Some((_, tab)) = self.world.current() else { return (g, Modes::default()) };
+        let Some((_, tab)) = self.world.current() else { return (g, Modes { mouse: 3, enc: 2, ..Modes::default() }) };
         let area = self.area();
         let (rects, divs) = World::rects(tab, area);
         let dim = Cell { fg: Color::Idx(8), ..Cell::default() };
@@ -243,7 +260,7 @@ impl Server {
                 Dir::Down => for x in d.x..d.x + d.len { g.put(x, d.y, "─", &dim); },
             }
         }
-        let mut modes = Modes::default();
+        let mut modes = Modes { mouse: 3, enc: 2, ..Modes::default() };
         for (id, r) in &rects {
             let Some(p) = self.panes.get(id) else { continue };
             let s = p.screen();
@@ -254,7 +271,8 @@ impl Server {
                 if !s.hide_cursor() { let (cr, cc) = s.cursor_position(); if cr < r.h && cc < r.w { g.cursor = Some((r.x + cc, r.y + cr)); } }
             }
         }
-        if area.h < rows { self.bar(&mut g, area.h); }
+        super::actions::overlay(self, ci, &rects, &mut g);
+        if area.h < rows { self.bar(&mut g, area.h, &self.clients[ci]); }
         (g, modes)
     }
 
@@ -264,11 +282,12 @@ impl Server {
         if let Some(p) = self.world.focused_pane().and_then(|f| self.panes.get_mut(&f)) {
             let h = p.parser.callbacks_mut();
             for c in h.clipboard.drain(..) { extra.push_str(&c); }
+            for c in self.clip.drain(..) { extra.push_str(&c); }
             if std::mem::take(&mut h.bell) { extra.push('\x07'); }
         }
         let mut gone = Vec::new();
         for i in 0..self.clients.len() {
-            let (g, modes) = self.compose(self.clients[i].cols, self.clients[i].rows);
+            let (g, modes) = self.compose(i);
             let c = &mut self.clients[i];
             let same = c.prev.as_ref().map_or(false, |p| p.cells == g.cells && p.cursor == g.cursor) && c.modes == modes;
             if same && extra.is_empty() { continue; }
@@ -347,13 +366,14 @@ pub fn run() -> i32 {
     let mut s = Server::new(tx, env);
     if let Err(e) = s.create_workspace("", &Spawn::default(), true) { eprintln!("bhoted mux: no pane: {e}"); let _ = std::fs::remove_file(&path); return 1; }
     while !s.quit {
-        let wait = if s.dirty { Duration::from_millis(4) } else { Duration::from_secs(3600) };
+        let wait = if s.dirty { Duration::from_millis(4) } else if s.clients.iter().any(|c| c.esc_at.is_some()) { Duration::from_millis(10) } else { Duration::from_secs(3600) };
         match rx.recv_timeout(wait) {
             Ok(ev) => s.handle(ev),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(_) => break,
         }
         for _ in 0..512 { match rx.try_recv() { Ok(ev) => s.handle(ev), Err(_) => break } }
+        super::actions::flush_esc(&mut s);
         if s.dirty { s.render(); }
     }
     let _ = std::fs::remove_file(&path);

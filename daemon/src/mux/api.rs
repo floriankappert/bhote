@@ -243,7 +243,7 @@ impl Server {
                     Some(side) => { let (wi, ti) = self.world.tab_of_pane(id).ok_or_else(|| nf("tab"))?; let (r, _) = World::rects(&self.world.ws[wi].tabs[ti], self.area()); layout::neighbor(&r, id, side).ok_or_else(|| ("no_neighbor", "no pane on that side".to_string()))? }
                     None => id,
                 };
-                self.world.focus_pane(target); self.dirty = true;
+                self.set_focus(target);
                 Ok(json!({"pane": self.pane_json(&self.panes[&target]), "type": "pane_info"}))
             }
             "pane.zoom" => {
@@ -300,7 +300,7 @@ impl Server {
                 Ok(json!({}))
             }
             // ── agents (the state comes from the hooks, see agent.rs)
-            "agent.focus" => { let id = self.pane_of(p)?; self.world.focus_pane(id); self.dirty = true; Ok(json!({"pane": self.pane_json(&self.panes[&id]), "type": "pane_info"})) }
+            "agent.focus" => { let id = self.pane_of(p)?; self.set_focus(id); Ok(json!({"pane": self.pane_json(&self.panes[&id]), "type": "pane_info"})) }
             m => Err(("unknown_method", format!("no method {m}"))),
         }
     }

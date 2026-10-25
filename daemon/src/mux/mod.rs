@@ -17,3 +17,6 @@ pub mod layout;
 pub mod world;
 pub mod api;
 pub mod herdrcli;
+pub mod input;
+pub mod keymap;
+pub mod actions;
