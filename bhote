@@ -7047,6 +7047,7 @@ bhote — topics and agents next to herdr.
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
+  bhote attach                       the native mux: a terminal on the pane server (starts it); ctrl+b d detaches   bhote chat: the chat panel
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
 
@@ -7089,6 +7090,7 @@ bhote_cli() {
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
         monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
+        chat|attach|mux) local _bd; bhoted_bin_set _bd; [ -n "$_bd" ] || { echo "bhote: $cmd needs the Rust daemon (bhoted not found)" >&2; return 1; }; exec "$_bd" "$cmd" "$@" ;;   # (the chat panel, the native mux: a terminal on the pane server, the server itself)
         version|--version|-V) version_label_set; if [ -n "$json" ]; then printf '{"version":%s,"build":%s}\n' "$(json_str "$VERSION")" "$(json_str "$VERSION_LABEL")"; else echo "bhote $VERSION_LABEL"; fi ;;
         add)  local title="" who="" st="" desc="" arg pin="" proj="" dep="" depl=""
               while [ $# -gt 0 ]; do

@@ -31,9 +31,9 @@ fn winsize() -> (u16, u16) {
     if unsafe { libc::ioctl(1, libc::TIOCGWINSZ as _, &mut ws) } == 0 && ws.ws_col > 0 && ws.ws_row > 0 { (ws.ws_col, ws.ws_row) } else { (80, 24) }
 }
 
-struct Raw { saved: libc::termios }
+pub struct Raw { saved: libc::termios }
 impl Raw {
-    fn enter() -> Option<Raw> {
+    pub fn enter() -> Option<Raw> {
         let mut t: libc::termios = unsafe { std::mem::zeroed() };
         if unsafe { libc::tcgetattr(0, &mut t) } != 0 { return None; }
         let saved = t;

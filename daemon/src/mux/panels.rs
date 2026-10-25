@@ -6,8 +6,10 @@ use std::path::PathBuf;
 
 pub const LEFT: &str = "bhote-left";
 pub const RIGHT: &str = "bhote-right";
+pub const CHAT: &str = "bhote-chat";
 
-pub struct PanelCfg { pub enabled: bool, pub split: bool, pub left: u16, pub right: u16, pub keep: u16 }
+/// `chat`: off, bottom (under the main pane) or right (under the right panel); `chat_h` its height in rows
+pub struct PanelCfg { pub enabled: bool, pub split: bool, pub left: u16, pub right: u16, pub keep: u16, pub chat: String, pub chat_h: u16 }
 
 fn num(cfg: &std::collections::HashMap<String, String>, k: &str, d: u16, lo: u16, hi: u16) -> u16 { cfg.get(k).and_then(|v| v.parse::<u16>().ok()).filter(|v| *v >= lo && *v <= hi).unwrap_or(d) }
 
@@ -29,6 +31,8 @@ impl PanelCfg {
             left: num(&cfg, "PANEL_LEFT_WIDTH", 40, 30, 64),
             right: want.clamp(lo, hi.max(lo)),
             keep: std::env::var("BHOTE_AGENT_MIN_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(64),
+            chat: cfg.get("CHAT_PANEL").filter(|v| matches!(v.as_str(), "bottom" | "right")).cloned().unwrap_or_else(|| "off".into()),
+            chat_h: num(&cfg, "CHAT_HEIGHT", 14, 6, 80),
         }
     }
 }
@@ -46,11 +50,16 @@ pub fn bhote_bin() -> Option<PathBuf> {
 }
 
 impl Server {
-    pub fn is_panel(&self, pane: u32) -> bool { self.panes.get(&pane).map_or(false, |p| matches!(p.label.as_str(), LEFT | RIGHT | "bhote")) }
+    pub fn is_panel(&self, pane: u32) -> bool { self.panes.get(&pane).map_or(false, |p| matches!(p.label.as_str(), LEFT | RIGHT | CHAT | "bhote")) }
 
     fn panel_spawn(&self, side: &str) -> Option<Spawn> {
         let bin = bhote_bin()?;
         Some(Spawn { cmd: vec![bin.to_string_lossy().into_owned()], cwd: None, env: vec![("BHOTE_SIDE".into(), if side == LEFT { "left".into() } else { "right".into() })] })
+    }
+
+    fn chat_spawn(&self) -> Option<Spawn> {
+        let exe = std::env::current_exe().ok()?;
+        Some(Spawn { cmd: vec![exe.to_string_lossy().into_owned(), "chat".into()], cwd: None, env: Vec::new() })
     }
 
     /// Every tab without panels (that the user did not close them in) gets them, once a client shows a size to fit them into.
@@ -96,6 +105,21 @@ impl Server {
                 }
             }
         }
+        if cfg.chat != "off" { self.make_chat(wid, tid, cfg); }
+    }
+
+    /// (kept inside make_panels) the chat pane: under the main pane or under the right panel.
+    fn make_chat(&mut self, wid: u32, tid: u32, cfg: &PanelCfg) {
+        let Some((wi, ti)) = self.world.find_tab(wid, tid) else { return };
+        let mut leaves = Vec::new(); self.world.ws[wi].tabs[ti].root.leaves(&mut leaves);
+        if leaves.iter().any(|p| self.panes.get(p).map_or(false, |q| q.label == CHAT)) { return; }
+        let target = if cfg.chat == "right" { leaves.iter().copied().find(|p| self.panes.get(p).map_or(false, |q| matches!(q.label.as_str(), RIGHT | "bhote"))) } else { leaves.iter().copied().find(|p| !self.is_panel(*p)) };
+        let Some(target) = target else { return };
+        let h = self.tab_rects_of(wi, ti).iter().find(|(id, _)| *id == target).map(|(_, r)| r.h).unwrap_or(0);
+        if h < cfg.chat_h + 10 { return; }
+        let Some(sp) = self.chat_spawn() else { return };
+        let ratio = (h as f32 - 1.0 - cfg.chat_h as f32) / (h as f32 - 1.0);
+        if let Ok(new) = self.split_pane(target, Dir::Down, ratio, &sp, false) { self.panes.get_mut(&new).unwrap().label = CHAT.into(); }
     }
 
     pub fn tab_rects_of(&self, wi: usize, ti: usize) -> Vec<(u32, super::layout::Rect)> { super::world::World::rects(&self.world.ws[wi].tabs[ti], self.area()).0 }
