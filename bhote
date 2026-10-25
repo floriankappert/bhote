@@ -7051,6 +7051,7 @@ bhote — topics and agents next to herdr.
   bhote reload                       restart the bhote panels of this machine (after an update)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
   bhote doctor                       what the native mux needs, and what is left of herdr
+  bhote mux stop|status|restart      the native mux's server (stop keeps the session; the panels follow the settings after a restart)
   bhote attach                       the native mux: a terminal on the pane server (starts it); ctrl+b d detaches   bhote chat: the chat panel
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help

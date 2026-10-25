@@ -116,3 +116,22 @@ pub fn call_main(args: &[String]) -> i32 {
         Err(e) => { eprintln!("bhote: {e}"); 1 }
     }
 }
+
+/// `bhote mux stop|status|restart`: the server of this user (the session stays: the next start restores it).
+pub fn control_cmd(what: &str) -> i32 {
+    let running = call("ping", json!({})).ok().and_then(|v| v.pointer("/result/pid").and_then(|p| p.as_u64()));
+    match (what, running) {
+        ("status", Some(pid)) => { println!("mux server running (pid {pid}, {})", proto::sock_path().display()); 0 }
+        ("status", None) => { println!("no mux server running"); 1 }
+        ("stop", None) => { println!("no mux server running"); 0 }
+        ("stop", Some(_)) | ("restart", Some(_)) => {
+            let _ = call("server.stop", json!({}));
+            for _ in 0..50 { if call("ping", json!({})).is_err() { break; } std::thread::sleep(Duration::from_millis(100)); }
+            println!("mux server stopped (the session is kept)");
+            if what == "restart" { return match connect_or_start() { Ok(_) => { println!("mux server started"); 0 } Err(e) => { eprintln!("bhote: {e}"); 1 } }; }
+            0
+        }
+        ("restart", None) => match connect_or_start() { Ok(_) => { println!("mux server started"); 0 } Err(e) => { eprintln!("bhote: {e}"); 1 } },
+        _ => 2,
+    }
+}

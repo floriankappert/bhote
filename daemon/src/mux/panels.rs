@@ -20,6 +20,22 @@ pub fn config_path() -> String {
     })
 }
 
+/// The widths of the left and the right panel (0: none) for a row of `total` columns: the main pane keeps `keep`, the left panel
+/// has priority (it shrinks to 24 at the narrowest), the right one takes what is left (not below 30, else it stays out).
+pub fn plan_widths(total: u16, left: u16, right: u16, keep: u16) -> (u16, u16) {
+    let need = |l: u16, r: u16| l + r + keep + (l > 0) as u16 + (r > 0) as u16;
+    let (mut l, mut r) = (left, right);
+    if need(l, r) > total {
+        r = total.saturating_sub(keep + l + 2);
+        if r < 30 { r = 0; }
+    }
+    if need(l, r) > total {
+        l = total.saturating_sub(keep + 1);
+        if l < 24 { l = 0; }
+    }
+    (l, r)
+}
+
 impl PanelCfg {
     pub fn load() -> PanelCfg {
         let cfg = crate::config_read(&config_path());
@@ -30,7 +46,7 @@ impl PanelCfg {
             split: cfg.get("PANEL_LAYOUT").map_or(true, |v| v != "single"),
             left: num(&cfg, "PANEL_LEFT_WIDTH", 40, 30, 64),
             right: want.clamp(lo, hi.max(lo)),
-            keep: std::env::var("BHOTE_AGENT_MIN_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(64),
+            keep: std::env::var("BHOTE_AGENT_MIN_WIDTH").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
             chat: cfg.get("CHAT_PANEL").filter(|v| matches!(v.as_str(), "bottom" | "right")).cloned().unwrap_or_else(|| "off".into()),
             chat_h: num(&cfg, "CHAT_HEIGHT", 14, 6, 80),
         }
@@ -84,20 +100,23 @@ impl Server {
         let has_left = has(self, &[LEFT]);
         let Some(main) = leaves.iter().copied().find(|p| !self.is_panel(*p)) else { return };
         let total = |s: &Server, p: u32| s.tab_rects_of(wi, ti).iter().find(|(id, _)| *id == p).map(|(_, r)| r.w).unwrap_or(0);
+        let (want_l, want_r) = plan_widths(self.area().w, if cfg.split { cfg.left } else { 0 }, cfg.right, cfg.keep);
         if !has_right {
             let t = total(self, main);
-            if t >= cfg.right + cfg.keep {
+            if want_r > 0 && t >= want_r + cfg.keep {
                 if let Some(sp) = self.panel_spawn(RIGHT) {
-                    let ratio = (t as f32 - 1.0 - cfg.right as f32) / (t as f32 - 1.0);
+                    let ratio = (t as f32 - 1.0 - want_r as f32) / (t as f32 - 1.0);
                     if let Ok(new) = self.split_pane(main, Dir::Right, ratio, &sp, false) { self.panes.get_mut(&new).unwrap().label = RIGHT.into(); }
                 }
             }
         }
         if cfg.split && !has_left {
             let t = total(self, main);
-            if t >= cfg.left + cfg.keep {
+            // the left panel gets what plan_widths gave it, also when the right panel is not there (too narrow)
+            let want_l = if want_l > 0 { want_l } else { plan_widths(t, cfg.left, 0, cfg.keep).0 };
+            if want_l > 0 && t >= want_l + cfg.keep {
                 if let Some(sp) = self.panel_spawn(LEFT) {
-                    let ratio = cfg.left as f32 / (t as f32 - 1.0);
+                    let ratio = want_l as f32 / (t as f32 - 1.0);
                     if let Ok(new) = self.split_pane(main, Dir::Right, ratio, &sp, false) {
                         self.panes.get_mut(&new).unwrap().label = LEFT.into();
                         if let Some((wi, ti)) = self.world.find_tab(wid, tid) { self.world.ws[wi].tabs[ti].root.swap(main, new); }
@@ -151,5 +170,19 @@ impl Server {
         let t = &mut self.world.ws[wi].tabs[ti];
         t.popup_prev = t.focus; t.popup = Some(pid); t.focus = pid;
         self.after_change();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plan_widths;
+    #[test]
+    fn widths_for_narrow_windows() {
+        assert_eq!(plan_widths(200, 40, 56, 30), (40, 56));
+        assert_eq!(plan_widths(120, 40, 56, 30), (40, 48));   // the right panel gives way
+        assert_eq!(plan_widths(100, 40, 56, 30), (40, 0));    // too narrow for it: gone
+        assert_eq!(plan_widths(80, 40, 56, 30), (40, 0));
+        assert_eq!(plan_widths(60, 40, 56, 30), (29, 0));     // the left one shrinks, the main pane keeps 30
+        assert_eq!(plan_widths(50, 40, 56, 30), (0, 0));
     }
 }
