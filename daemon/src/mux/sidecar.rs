@@ -29,8 +29,7 @@ fn pid_file() -> PathBuf { super::proto::sock_path().with_file_name("kharka.pid"
 fn kill_stale() {
     let Ok(t) = std::fs::read_to_string(pid_file()) else { return };
     let Ok(pid) = t.trim().parse::<i32>() else { return };
-    let cmd = std::fs::read(format!("/proc/{pid}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).ok()
-        .or_else(|| Command::new("ps").args(["-o", "command=", "-p", &pid.to_string()]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())).unwrap_or_default();
+    let cmd = crate::procinfo::cmdline(pid).unwrap_or_default();
     if cmd.contains("herdr-kharka") { unsafe { libc::kill(pid, libc::SIGTERM); } }
     let _ = std::fs::remove_file(pid_file());
 }

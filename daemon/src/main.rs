@@ -17,6 +17,7 @@ mod follow;
 mod mux;
 mod chat;
 mod worktrees;
+mod procinfo;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;

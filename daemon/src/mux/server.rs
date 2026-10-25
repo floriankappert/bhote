@@ -18,26 +18,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use vt100::Color;
 
-/// ps and lsof for the process in front of a pane, one request after the other, away from the event loop.
-fn proc_thread(tx: Sender<Ev>) -> Sender<(u32, i32)> {
-    let (rtx, rrx) = mpsc::channel::<(u32, i32)>();
-    std::thread::spawn(move || {
-        while let Ok((id, g)) = rrx.recv() {
-            // (what piled up meanwhile: only the last request of a pane counts)
-            let mut latest = std::collections::HashMap::new(); latest.insert(id, g);
-            while let Ok((i, p)) = rrx.try_recv() { latest.insert(i, p); }
-            for (id, g) in latest {
-                if g <= 0 { continue; }
-                let cmd = std::process::Command::new("ps").args(["-o", "command=", "-p", &g.to_string()]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-                let cwd = std::process::Command::new("lsof").args(["-a", "-d", "cwd", "-p", &g.to_string(), "-Fn"]).output().ok()
-                    .and_then(|o| String::from_utf8_lossy(&o.stdout).lines().find_map(|l| l.strip_prefix('n').map(String::from)));
-                if tx.send(Ev::Proc(id, cmd, cwd)).is_err() { return; }
-            }
-        }
-    });
-    rtx
-}
-
 fn bar_mode_load() -> String {
     let v = crate::config_read(&super::panels::config_path()).get("MUX_BAR").cloned().unwrap_or_default();
     match v.as_str() { "on" | "full" | "off" => v, _ => "auto".into() }
@@ -51,8 +31,6 @@ pub enum Ev {
     ClientGone(u32),
     Control(Value, Sender<Value>),
     Subscribe(UnixStream, Vec<(String, Option<String>)>),
-    /// the answer of the process thread: pane, the command line and the folder of the process in front
-    Proc(u32, String, Option<String>),
 }
 
 /// What the terminal of a client has to be told about the focused pane (keys and mouse come back in the form the program asked for).
@@ -133,8 +111,6 @@ pub struct Server {
     pub bar_mode: String,
     pub no_client_at: Option<Instant>,
     pub warm_at: Option<Instant>,
-    /// asks the process thread about (pane, process group)
-    pub proc_req: Sender<(u32, i32)>,
     /// the side panels (panels.rs): one left, one right, one at the bottom, for all workspaces; the one that has the keys; hidden; the edges whose panel was closed; the sizes the user gave them
     pub sidebars: Vec<Sidebar>,
     pub sb_focus: Option<u32>,
@@ -146,8 +122,7 @@ pub struct Server {
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        let proc_req = proc_thread(tx.clone());
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None, warm_at: None, proc_req, sidebars: Vec::new(), sb_focus: None, sb_hidden: false, sb_dismissed: Vec::new(), sb_sizes: Default::default(), sb_n: 0 }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None, warm_at: None, sidebars: Vec::new(), sb_focus: None, sb_hidden: false, sb_dismissed: Vec::new(), sb_sizes: Default::default(), sb_n: 0 }
     }
 
     /// The size of the window the panes are laid out for: what the smallest attached client shows (80x24 without a client).
@@ -333,7 +308,6 @@ impl Server {
             Ev::ClientGone(id) => { self.clients.retain(|c| c.id != id); self.after_change(); }
             Ev::Control(req, reply) => { let _ = reply.send(self.control(&req)); }
             Ev::Subscribe(stream, filters) => self.subs.push((stream, filters)),
-            Ev::Proc(id, cmd, cwd) => if let Some(p) = self.panes.get_mut(&id) { p.fg_cmd = cmd; if cwd.is_some() { p.fg_cwd = cwd; } },
         }
     }
 

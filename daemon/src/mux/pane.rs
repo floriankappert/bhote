@@ -57,29 +57,23 @@ pub struct Pane {
     pub evsent: String,
     /// since when (unix ms) the status is what it is
     pub status_ms: u64,
-    /// elsewhere than on Linux: what ps and lsof said about the process in front (a thread asks, see server.rs)
-    pub fg_cmd: String,
-    pub fg_cwd: Option<String>,
 }
 
 fn nz(n: u16) -> std::num::NonZeroU16 { std::num::NonZeroU16::new(n.max(1)).unwrap() }
 
 impl Pane {
     pub fn new(id: u32, (ws, n, tab): (u32, u32, u32), pty: Pty, cols: u16, rows: u16, cmd: Vec<String>, cwd: String) -> Pane {
-        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new(), status_ms: 0, fg_cmd: String::new(), fg_cwd: None }
+        Pane { id, ws, n, tab, parser: vt100::Parser::new_with_callbacks(nz(rows), nz(cols), 5000, Hooks::default()), pty, label: String::new(), cwd, cmd, tokens: Default::default(), rev: 1, agent: None, status: String::new(), session: None, reported: None, base: String::new(), pend: None, chk: None, chk_rev: 0, resume: Vec::new(), evsent: String::new(), status_ms: 0 }
     }
     pub fn agent_name(&self) -> Option<&str> { self.agent.as_deref() }
     pub fn agent_status(&self) -> &str { if self.status.is_empty() { "unknown" } else { &self.status } }
     pub fn agent_session(&self) -> Option<serde_json::Value> { self.session.clone() }
     pub fn name(&self) -> String { super::world::pane_name(self.ws, self.n) }
-    /// The process group in front of the terminal and its folder (Linux: /proc; elsewhere the folder the pane started in).
+    /// The process group in front of the terminal and its folder.
     pub fn foreground(&self) -> (i32, String) {
         use std::os::fd::AsRawFd;
         let g = unsafe { libc::tcgetpgrp(self.pty.master.as_raw_fd()) };
-        #[cfg(target_os = "linux")]
-        let cwd = std::fs::read_link(format!("/proc/{g}/cwd")).map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| self.cwd.clone());
-        #[cfg(not(target_os = "linux"))]
-        let cwd = self.fg_cwd.clone().unwrap_or_else(|| self.cwd.clone());
+        let cwd = crate::procinfo::cwd(g).unwrap_or_else(|| self.cwd.clone());
         (g, cwd)
     }
     pub fn screen(&self) -> &vt100::Screen { self.parser.screen() }

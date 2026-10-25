@@ -197,8 +197,7 @@ impl Server {
             "pane.process_info" => {
                 let id = self.pane_of(p)?; let q = &self.panes[&id];
                 let (g, _) = q.foreground();
-                let cmdline = std::fs::read(format!("/proc/{g}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ").trim().to_string()).ok()
-                    .or_else(|| std::process::Command::new("ps").args(["-o", "command=", "-p", &g.to_string()]).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())).unwrap_or_default();
+                let cmdline = crate::procinfo::cmdline(g).unwrap_or_default();
                 Ok(json!({"process_info": {"pid": q.pty.pid(), "foreground_process_group_id": g, "foreground_processes": [{"pid": g, "cmdline": cmdline}]}, "type": "pane_process_info"}))
             }
             "pane.split" => {

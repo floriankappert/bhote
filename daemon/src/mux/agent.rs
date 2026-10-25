@@ -49,11 +49,7 @@ impl Server {
             if p.chk.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(1000)) {
                 p.chk = Some(now);
                 let (g, _) = p.foreground();
-                #[cfg(target_os = "linux")]
-                let cmd = std::fs::read(format!("/proc/{g}/cmdline")).map(|b| String::from_utf8_lossy(&b).replace('\0', " ")).unwrap_or_default();
-                // elsewhere ps and lsof do it, in a thread of their own (they must not hold up the keys and the screen): the answer of the last round counts
-                #[cfg(not(target_os = "linux"))]
-                let cmd = { let _ = self.proc_req.send((id, g)); p.fg_cmd.clone() };
+                let cmd = crate::procinfo::cmdline(g).unwrap_or_default();
                 let mut name = agent_of_cmdline(&cmd).map(String::from);
                 // an agent that reported itself stays while something other than a shell is in front (its own helper process, a wrapper)
                 let first = cmd.split_whitespace().next().unwrap_or("").rsplit('/').next().unwrap_or("").trim_start_matches('-');
