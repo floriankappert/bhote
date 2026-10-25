@@ -14,7 +14,7 @@ class Env:
         if panel_bin is not None:
             open(f"{self.T}/panel", "w").write(panel_bin); os.chmod(f"{self.T}/panel", 0o755)
         self.env = dict(os.environ, BHOTE_CONFIG=f"{self.T}/config", BHOTE_BIN=f"{self.T}/panel" if panel_bin is not None else "/nonexistent", BHOTE_MUX_SOCK=self.sock, BHOTE_MUX_STATE=f"{self.T}/state.json", SHELL="/bin/sh", PS1="$ ", TERM="xterm-256color", HOME=self.T, ENV="", BHOTE_KEYS=f"{self.T}/keys")
-        for k in ("HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "XDG_RUNTIME_DIR"): self.env.pop(k, None)
+        for k in ("HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_SOCKET_PATH", "HERDR_ENV", "HERDR_BIN_PATH", "BHOTE_MUX", "BHOTE_PANEL", "XDG_RUNTIME_DIR"): self.env.pop(k, None)   # (a test must never reach the herdr of the user)
         self.fails = 0; self.clients = []
         signal.signal(signal.SIGALRM, lambda *_: (print("FAIL the test ran out of time", flush=True), self.cleanup(), os._exit(1))); signal.alarm(limit)
     def ok(self, m): print("ok   " + m, flush=True)
