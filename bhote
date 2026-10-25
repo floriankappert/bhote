@@ -88,6 +88,8 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
+KHARKA_SIDECAR|auto|enum:auto:off|The native mux runs herdr-kharka against its own socket (auto: with STORE=kharka or AGENTS_VIA=kharka), so that the other machines see this one's workspaces and agents and can focus and prompt them. Stop the old herdr-kharka service (it points at herdr) when you switch
+KHARKA_LABEL||text|The name of this machine in kharka for the sidecar (empty: the kharka node name)
 MUX|native|enum:native:herdr|What `bhote` starts from a plain terminal: the native mux (the pane server of bhote, bhote attach) or herdr (kept for one release; the environment variable BHOTE_MUX=herdr says the same)
 CHAT_PANEL|off|enum:off:bottom:right|The chat pane of the native mux (an input field and the history of an agent; bhote chat): under the main pane (bottom) or under the right panel (right)
 CHAT_HEIGHT|14|int:6:80|Rows of the chat pane
@@ -7276,6 +7278,12 @@ cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of h
     command -v jq >/dev/null 2>&1 && say ok "jq" || say FAIL "jq is missing"
     command -v herdr >/dev/null 2>&1 && say info "herdr is installed ($(herdr --version 2>/dev/null)): MUX=herdr still starts it; it goes after this release" || say ok "herdr is not needed"
     if command -v herdr >/dev/null 2>&1 && herdr plugin list 2>/dev/null | grep -q bhote.panel; then say info "the herdr plugin bhote.panel is linked: it only matters with MUX=herdr (the native mux makes the panels itself)"; fi
+    if [ "$(cfg_get STORE local)" = kharka ] || [ "$(cfg_get AGENTS_VIA herdr)" = kharka ]; then
+        local hk; hk=$(pgrep -af herdr-kharka 2>/dev/null | grep -v pgrep)
+        if [ -z "$hk" ]; then say info "kharka: no herdr-kharka runs (the mux starts one with its server)"
+        elif printf '%s' "$hk" | grep -q -- '--herdr-socket'; then say ok "kharka: herdr-kharka runs against the mux socket"
+        else say WARN "kharka: a herdr-kharka runs against herdr's socket (a service?): it writes this machine's entry too; stop it (Linux: systemctl --user stop herdr-kharka; macOS: launchctl bootout gui/$(id -u)/dev.kharka.herdr)"; fi
+    fi
     [ -n "${HERDR_PANE_ID:-}" ] && [ "${BHOTE_MUX:-}" = native ] && say ok "this pane is a native pane ($HERDR_PANE_ID)"
     return $ok
 }

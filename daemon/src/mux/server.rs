@@ -95,11 +95,15 @@ pub struct Server {
     pub state_at: Option<Instant>,
     /// event subscribers (events.subscribe): the connection and what it wants (event type, optional pane)
     pub subs: Vec<(UnixStream, Vec<(String, Option<String>)>)>,
+    /// the kharka sidecar (sidecar.rs)
+    pub sidecar: Option<std::process::Child>,
+    pub sidecar_at: Option<Instant>,
+    pub sidecar_first: bool,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new() }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -207,6 +211,7 @@ impl Server {
         if self.last_detect.map_or(true, |t| now.duration_since(t) >= Duration::from_millis(400)) { self.last_detect = Some(now); self.detect_agents(); }
         if self.toast.as_ref().map_or(false, |(_, t)| *t <= now) { self.toast = None; self.dirty = true; }
         self.save_state(false);
+        self.sidecar_tick();
     }
 
     pub fn handle(&mut self, ev: Ev) {
@@ -455,6 +460,7 @@ pub fn run() -> i32 {
         if s.dirty { s.render(); }
     }
     s.save_state(true);
+    s.sidecar_stop();
     let _ = std::fs::remove_file(&path);
     0
 }

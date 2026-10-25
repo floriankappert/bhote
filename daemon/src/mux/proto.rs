@@ -4,9 +4,12 @@ use std::path::PathBuf;
 
 pub fn sock_path() -> PathBuf {
     if let Some(p) = std::env::var_os("BHOTE_MUX_SOCK") { return PathBuf::from(p); }
+    // the same place for every process of the user: also where XDG_RUNTIME_DIR is not set (a non-login ssh)
+    let uid = unsafe { libc::getuid() };
     let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(d) if !d.is_empty() => PathBuf::from(d).join("bhote"),
-        _ => PathBuf::from(format!("/tmp/bhote-mux-{}", unsafe { libc::getuid() })),
+        _ if std::path::Path::new(&format!("/run/user/{uid}")).is_dir() => PathBuf::from(format!("/run/user/{uid}/bhote")),
+        _ => PathBuf::from(format!("/tmp/bhote-mux-{uid}")),
     };
     dir.join("mux.sock")
 }

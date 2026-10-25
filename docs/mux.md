@@ -47,8 +47,16 @@ The agent in front of a pane is found from its process (`claude`, `codex`, `gemi
 screen shows (`esc to interrupt` = working, a question = blocked). Work that ends while nobody looks is `done` until the pane is shown. Every change runs
 `bhote event`, as the herdr plugin did.
 
+## Other machines (kharka)
+
+With `STORE=kharka` or `AGENTS_VIA=kharka` the server runs `herdr-kharka` against its own socket (the sidecar: started with the server, started again when it ends,
+ended with it; `KHARKA_SIDECAR=off` stops that, `KHARKA_LABEL` names the machine). The other machines then read this machine's workspaces and agents from kharka
+(`herdr/<node>`) and can focus and prompt its agents; this machine's panel shows theirs, whether they run herdr or the native mux. **Stop the old `herdr-kharka`
+service on a machine that runs the native mux** (it points at herdr's socket and writes the same entry): Linux `systemctl --user disable --now herdr-kharka`,
+macOS `launchctl bootout gui/$(id -u)/dev.kharka.herdr`. `bhote doctor` says which one runs. `bhote mux stop|status|restart` controls the server.
+
 ## Not done / not tested
 
 - macOS: the same code (`libc` constants, `ps` instead of `/proc`), but only built and tested on Linux so far.
-- `herdr --machine <label> ...` is not available in the native mux; other machines are reached through kharka (`herdr-kharka --herdr-socket <mux socket>`).
+- `herdr --machine <label> ...` (herdr's own ssh connection) is not available in the native mux; other machines are reached through kharka.
 - The herdr plugin and herdr's config are still in the repository for `MUX=herdr`; they go after one release.
