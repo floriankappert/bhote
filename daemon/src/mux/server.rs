@@ -109,11 +109,12 @@ pub struct Server {
     /// MUX_BAR: auto (the bar of the tabs only when a workspace has more than one tab), on (always), full (also the workspaces), off
     pub bar_mode: String,
     pub no_client_at: Option<Instant>,
+    pub warm_at: Option<Instant>,
 }
 
 impl Server {
     pub fn new(tx: Sender<Ev>, env: Vec<(String, String)>) -> Server {
-        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None }
+        Server { tx, panes: BTreeMap::new(), world: World::default(), next_pane: 1, clients: Vec::new(), dirty: true, quit: false, cwd: std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default(), env, km: Keymap::load(&super::actions::keys_path()), last_focus: None, clip: Vec::new(), ensuring: false, later: Vec::new(), toast: None, last_detect: None, state_file: None, state_saved: String::new(), state_at: None, subs: Vec::new(), sidecar: None, sidecar_at: None, sidecar_first: true, bar_mode: bar_mode_load(), no_client_at: None, warm_at: None }
     }
 
     /// The size panes are laid out for: what the smallest attached client shows (80x24 without a client), the last row is the bar.
@@ -227,6 +228,7 @@ impl Server {
         if self.toast.as_ref().map_or(false, |(_, t)| *t <= now) { self.toast = None; self.dirty = true; }
         self.save_state(false);
         self.sidecar_tick();
+        self.warm_tick();
         // views of workspaces of other machines hold an ssh connection (and a size over there): they end when nobody has looked for a while
         if self.clients.iter().all(|c| c.view.is_some()) { if self.no_client_at.is_none() { self.no_client_at = Some(now); } } else { self.no_client_at = None; }
         if self.no_client_at.map_or(false, |t| now.duration_since(t) > Duration::from_secs(std::env::var("BHOTE_VIEW_GRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(30))) {

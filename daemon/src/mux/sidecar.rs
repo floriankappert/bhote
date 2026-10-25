@@ -54,6 +54,20 @@ impl Server {
         if let Ok(ch) = c.spawn() { let _ = std::fs::write(pid_file(), ch.id().to_string()); self.sidecar = Some(ch); }
     }
 
+    /// The shared ssh connections to the other machines (kharka's nodes) are made before the first click needs them: at the start and every ten minutes.
+    pub fn warm_tick(&mut self) {
+        let now = Instant::now();
+        if self.clients.is_empty() || self.warm_at.map_or(false, |t| now.duration_since(t) < Duration::from_secs(600)) { return; }
+        self.warm_at = Some(now);
+        let cfg = crate::config_read(&super::panels::config_path());
+        if !wanted(&cfg) { return; }
+        let Some(bin) = super::panels::bhote_bin() else { return };
+        let mut c = Command::new(bin);
+        c.arg("remote-warm").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        for (k, v) in &self.env { c.env(k, v); }
+        if let Ok(mut ch) = c.spawn() { std::thread::spawn(move || { let _ = ch.wait(); }); }
+    }
+
     pub fn sidecar_stop(&mut self) {
         if let Some(mut c) = self.sidecar.take() { unsafe { libc::kill(c.id() as i32, libc::SIGTERM); } let _ = c.wait(); let _ = std::fs::remove_file(pid_file()); }
     }
