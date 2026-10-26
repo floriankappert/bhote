@@ -2721,8 +2721,8 @@ remote_workspace() {  # remote_workspace <machine> <workspace id> [pane]: the wo
     kharka_node_of "$m" && node=$KN_NODE || return 1
     [ -n "$node" ] || return 1
     # its name, and the pane that shows it: the agent of that workspace (else its first pane)
-    label=$w
-    if [ -r "$SHARED_DIR/workspaces.remote" ]; then while IFS=$US read -r l1 l2 l3 l4 l5; do [ "$l1" = "$m" ] && [ "$l2" = "$w" ] && { label=$l3; break; }; done < "$SHARED_DIR/workspaces.remote"; fi
+    label=${4:-$w}
+    if [ -z "${4:-}" ] && [ -r "$SHARED_DIR/workspaces.remote" ]; then while IFS=$US read -r l1 l2 l3 l4 l5; do [ "$l1" = "$m" ] && [ "$l2" = "$w" ] && { label=$l3; break; }; done < "$SHARED_DIR/workspaces.remote"; fi
     if [ -z "$pane" ] && [ -r "$AGENT_META_R" ]; then while IFS=$US read -r l1 l2 l3 l4 l5; do [ "$l1" = "$m" ] && [ "${l2%%:*}" = "$w" ] && [ "$l4" = a ] && { pane=$l2; break; }; done < "$AGENT_META_R"; fi
     [ -n "$pane" ] || pane="$w:p1"
     name="$m · ${label//[[:cntrl:]]/}"
@@ -6416,6 +6416,12 @@ act_slack() {                                                                   
 }
 act_clamp() { [ "${BHOTE_MUX:-}" = native ] && return 0; panel_width_clamp "$@"; }   # (the native mux keeps the widths itself)                                                         # (the width of the panel pane is kept between the two settings)
 act_mountws() { ui_load; remote_workspace "$1" "$2" >/dev/null 2>&1; }   # <machine> <workspace id>: a click on a workspace of another machine (the left panel)
+act_newws() {  # <machine>: "+ new" under another machine's workspaces: a workspace is made over there (its home folder) and shown here
+    ui_load; local m=$1 out w pn lb
+    out=$(herdr --machine "$m" workspace create --no-focus 2>/dev/null) || { FLASH_MSG="no new workspace on $m"; printf '%s' "$FLASH_MSG"; return 0; }
+    w=$(printf '%s' "$out" | jq -r '.result.workspace.workspace_id // empty' 2>/dev/null); lb=$(printf '%s' "$out" | jq -r '.result.workspace.label // empty' 2>/dev/null); pn=$(printf '%s' "$out" | jq -r '.result.pane.pane_id // empty' 2>/dev/null)
+    [ -n "$w" ] && remote_workspace "$m" "$w" "$pn" "$lb" >/dev/null 2>&1
+}
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
     [ -n "${CLAUDECODE:-}" ] && return 0
@@ -7187,7 +7193,7 @@ bhote_cli() {
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
         reminder) bhote_info; cli_reminder "$@" ;;
-        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|mountws|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
+        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|mountws|newws|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;

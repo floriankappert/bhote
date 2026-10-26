@@ -146,4 +146,12 @@ if mount:
     check(wait(lambda: "hello from A over kharka" in mux_call("A", "pane.read", {"pane_id": vp, "source": "visible"}).get("text", "")), "it shows B's agent pane (what B's agent printed), through ssh and bhote view", mux_call("A", "pane.read", {"pane_id": vp, "source": "visible"}))
     mux_call("A", "pane.send_text", {"pane_id": vp, "text": "typed on A into B\r"})
     check(wait(lambda: "you said: typed on A into B" in mux_call("B", "pane.read", {"pane_id": "w1:p1", "source": "visible"}).get("text", "")), "and what is typed there arrives in B's agent")
+# "+ new" under B's workspaces (a click on A's panel): a workspace is made on B and shown on A
+nb = len(mux_call("B", "workspace.list").get("workspaces", []))
+sc = f'BHOTE_SOURCE_ONLY=1; . {BH}; bhote_info; BHOTE_MUX=native; HERDR_PANE_ID=w1:p1; act_newws B; echo rc=$?'
+r = subprocess.run(["bash", "-c", sc], capture_output=True, text=True, env=dict(envs["A"], PATH=f"{W}/lnk:" + envs["A"]["PATH"], HERDR_PANE_ID="w1:p1", BHOTE_MUX="native"), timeout=60)
+wsb = mux_call("B", "workspace.list").get("workspaces", [])
+check(len(wsb) == nb + 1, "'+ new' under B makes a workspace on B (herdr --machine, ssh)", (nb, wsb, r.stdout, r.stderr[:300]))
+new = wsb[-1]["label"] if len(wsb) > nb else ""
+check(any(w["label"] == "B · " + new for w in mux_call("A", "workspace.list", {"all": True}).get("workspaces", [])), "and shows it on A as a workspace of its own", new)
 done()

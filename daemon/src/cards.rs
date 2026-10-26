@@ -125,6 +125,19 @@ impl<'a> Cards<'a> {
         }
         first
     }
+    /// active_remote: the workspace of another machine that is shown here (focus.remote): (machine, workspace id over there, name)
+    pub fn active_remote(&self) -> Option<(String, String, String)> {
+        let f = crate::proc::read_cap(self.shared.join("focus.remote")).unwrap_or_default();
+        let (m, n) = f.trim_end().split_once(US)?;
+        let rem = crate::proc::read_cap(self.shared.join("workspaces.remote")).unwrap_or_default();
+        let id = rem.lines().find_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() > 2 && f[0] == m && f[2] == n { Some(f[1].to_string()) } else { None } })?;
+        Some((m.to_string(), id, n.to_string()))
+    }
+    /// is_active: the agent (machine, pane) is the one shown in the main area: the active agent of this machine, or an agent of the workspace of another machine shown here
+    fn is_active(&self, m: &str, pane: &str, active: Option<&str>) -> bool {
+        if m == self.host { return active == Some(pane); }
+        self.active_remote().map_or(false, |(am, wid, _)| am == m && pane.split(':').next() == Some(wid.as_str()))
+    }
     /// The workspaces of this machine for the left panel (workspaces.local): a caption and a line each, "number  name  state"; the focused one on the highlighted ground; a click
     /// on a line shows that workspace (ref ws:<id>)
     pub fn workspaces_block(&self) -> String {
@@ -138,9 +151,10 @@ impl<'a> Cards<'a> {
         let mut groups: Vec<(String, Vec<(String, String, String, bool, String, bool)>)> = Vec::new();
         let mine: Vec<_> = loc.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { None } else { Some((f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3] == "1", f[4].to_string(), true)) } }).collect();
         groups.push((self.host.clone(), mine));
+        let ar = self.active_remote();
         for l in rem.lines() {
             let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { continue; }
-            let row = (f[3].to_string(), f[1].to_string(), f[2].to_string(), false, f[4].to_string(), false);
+            let row = (f[3].to_string(), f[1].to_string(), f[2].to_string(), ar.as_ref().map_or(false, |(m, id, _)| m == f[0] && id == f[1]), f[4].to_string(), false);
             match groups.iter_mut().find(|g| g.0 == f[0]) { Some(gr) => gr.1.push(row), None => groups.push((f[0].to_string(), vec![row])) }
         }
         let many = groups.iter().filter(|g| !g.1.is_empty()).count() > 1;
@@ -158,6 +172,7 @@ impl<'a> Cards<'a> {
                 if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&format!("{}rws:{}:{}{}{}", REF, mach, id, REF, line)); }   // (another machine's workspace: a click shows it here)
             }
             if *mach == self.host { out.push_str(&format!("{}ws:+new{}   {}+ new{}\n", REF, REF, g("D"), x)); }   // (a click makes a workspace on this machine)
+            else { out.push_str(&format!("{}rws:{}:+new{}   {}+ new{}\n", REF, mach, REF, g("D"), x)); }   // (on another machine: made over there, shown here)
         }
         out.push_str(&format!("  {}{}{}\n", g("B"), "─".repeat((self.c.cols - 5).max(0) as usize), x));   // the divider under the workspaces
         out
@@ -588,7 +603,7 @@ impl<'a> Cards<'a> {
             }
             let lc = match gk { "deploying" => g("Y"), "finished" => g("GREEN"), "now" => g("ORANGE"), "testing" => g("C"), "review" => g("BLUE"), _ => g("D") };
             let _ = &mut tm;
-            let sl = match &active { Some(ap) => t.ap == *ap && (t.am.is_empty() || t.am == self.host), None => i as i64 == sel_idx };   // the active agent's cards have the highlighted ground (one to one with herdr)
+            let sl = match &active { Some(ap) => (t.ap == *ap && (t.am.is_empty() || t.am == self.host)) || (!t.am.is_empty() && t.am != self.host && self.is_active(&t.am, &t.ap, None)), None => i as i64 == sel_idx };   // the active agent's cards have the highlighted ground (one to one with herdr)
             let bar = if st == "now" && state.starts_with("finished") { g("GREEN") } else { lc.clone() };   // (its agent has stopped: the bar is green like the text, not orange like a working one)
             let mut o = Item { id: t.id.clone(), bar, prog, ..Default::default() };
             if st == "testing" && !t.ap.is_empty() {
@@ -660,7 +675,7 @@ impl<'a> Cards<'a> {
             _ => (g("D"), format!("{}○", g("D")), "idle", true),
         };
         let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: sc.clone(), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: ic, agtask: no_idle_task(&r.task), dim, ..Default::default() };
-        let act = active == Some(r.id.as_str()) && r.m == self.host;   // (the agent herdr shows: not dimmed, the highlighted ground)
+        let act = self.is_active(&r.m, &r.id, active);   // (the agent herdr shows: not dimmed, the highlighted ground)
         format!("\n{}", self.card(act, &sc, "", &g("TITLE"), "", "", "", state, "", &o))
     }
 
@@ -678,7 +693,7 @@ impl<'a> Cards<'a> {
             if !matches!(r.st.as_str(), "" | "idle" | "done") || used.contains(&(r.m.clone(), r.id.clone())) { continue; }
             if first { out.push_str(&format!("\n  {}IDLE{}\n", g("D"), x)); first = false; } else { out.push('\n'); }
             let o = Item { id: format!("agent:{}/{}", r.m, r.id), bar: g("D"), agm: r.m.clone(), agn: r.name.strip_prefix(&format!("{} / ", r.m)).unwrap_or(&r.name).to_string(), agic: format!("{}○", g("D")), agtask: no_idle_task(&r.task), dim: true, ..Default::default() };
-            let act = self.active_agent().as_deref() == Some(r.id.as_str()) && r.m == self.host;
+            let act = self.is_active(&r.m, &r.id, self.active_agent().as_deref());
             out.push_str(&self.card(act, &g("D"), "", &g("TITLE"), "", "", "", "idle", "", &o));
         }
         out

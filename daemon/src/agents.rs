@@ -109,6 +109,20 @@ pub fn workspaces_text(ws: &Value) -> String {
     out
 }
 
+/// focus.remote: "machine US name" of the workspace of another machine that is shown here (a hidden workspace "<machine> · <name>" that has the focus), else empty.
+/// The list of the left panel has no hidden workspaces: none of them is focused then, and only then `workspace list --all` is asked.
+pub fn focus_remote(ws: &Value) -> String {
+    let empty = Vec::new();
+    if ws.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty).iter().any(|w| truthy(w.get("focused"))) { return String::new(); }
+    let Some(all) = herdr(&["workspace", "list", "--all"], 20) else { return String::new() };
+    for w in all.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty) {
+        if !truthy(w.get("focused")) { continue; }
+        let l = clean(&tostr(w.get("label").unwrap_or(&Value::Null)));
+        if let Some((m, n)) = l.split_once(" · ") { return format!("{}{US}{}\n", clean_lo(m), clean_lo(n)); }
+    }
+    String::new()
+}
+
 /// One collection of this machine: asks herdr, writes the files. false when herdr did not answer (the old files stay).
 pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
     let Some(panes) = herdr(&["pane", "list"], 20) else { return false };
@@ -120,6 +134,7 @@ pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
     let _ = put_tmp(&shared.join("agents.cwd"), &o.cwd);
     let _ = put_tmp(&shared.join("focus.pane"), &o.focus);
     let _ = put_tmp(&shared.join("workspaces.local"), &workspaces_text(&ws));
+    let _ = put_tmp(&shared.join("focus.remote"), &focus_remote(&ws));
     if a || b {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));
