@@ -5151,13 +5151,13 @@ cli_integration() {
         f=$prof/settings.json
         case "$act" in
             install)
-                [ -f "$f" ] || printf '{}\n' > "$f"
+                [ -f "$f" ] || printf '{}\n' > "$f"   # (hooks are written THROUGH the file: settings.json may be a link into a config repo)
                 tmp=$(mktemp "$prof/.settings.XXXXXX") || continue
                 if jq --arg cmd "sh $dest" --arg evs "$HOOK_EVENTS" '
                     .hooks = (.hooks // {}) | reduce ($evs | split(" ")[]) as $e (.;
                         if ([.hooks[$e][]?.hooks[]? | select(.command == $cmd)] | length) > 0 then .
                         else .hooks[$e] = ((.hooks[$e] // []) + [{"hooks": [{"type": "command", "command": $cmd}]}]) end)' "$f" > "$tmp" 2>/dev/null
-                then cat "$tmp" > "$f"; rm -f "$tmp"; printf 'hook -> %s\n' "${f/#$HOME/~}"; n=$(( n + 1 ));   # (written THROUGH the file: settings.json may be a link into a config repo) else rm -f "$tmp"; echo "bhote: could not change ${f/#$HOME/~}" >&2; fi ;;
+                then cat "$tmp" > "$f"; rm -f "$tmp"; printf 'hook -> %s\n' "${f/#$HOME/~}"; n=$(( n + 1 )); else rm -f "$tmp"; echo "bhote: could not change ${f/#$HOME/~}" >&2; fi ;;
             uninstall)
                 [ -f "$f" ] || continue
                 tmp=$(mktemp "$prof/.settings.XXXXXX") || continue
