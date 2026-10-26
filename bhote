@@ -2723,7 +2723,9 @@ remote_workspace() {  # remote_workspace <machine> <workspace id> [pane]: the wo
     name="$m · ${label//[[:cntrl:]]/}"
     id=$(herdr workspace list --all 2>/dev/null | jq -r --arg n "$name" '[.result.workspaces[] | select(.label == $n)][0].workspace_id // empty' 2>/dev/null)
     if [ -n "$id" ]; then herdr workspace focus "$id" >/dev/null 2>&1; return 0; fi
-    cfg_var ssh_cmd REMOTE_SSH "ssh -t $REMOTE_SSH_OPTS {node}"; ssh_cmd=${ssh_cmd//\{node\}/$node}
+    cfg_var ssh_cmd REMOTE_SSH "ssh -t $REMOTE_SSH_OPTS {node}"
+    case "$ssh_cmd" in *"{node}"*) ;; *) ssh_cmd="$ssh_cmd {node}" ;; esac    # (the destination comes last when the setting does not say where it goes: as herdr --machine does it)
+    ssh_cmd=${ssh_cmd//\{node\}/$node}
     # shellcheck disable=SC2086
     herdr workspace create --label "$name" --hidden --focus -- $ssh_cmd "$(remote_cmd "$pane")" >/dev/null 2>&1
 }
