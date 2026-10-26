@@ -2,7 +2,7 @@
 """Speed of the native mux: the echo of a key (typed in a client, shown in the client), a flood of output, control calls, a switch of workspace.
 The numbers are printed; the limits are generous (a loaded CI machine) but would catch a mux that is 10 times slower than it should be.
 Usage: python3 tests/muxperf.py"""
-import os, time, statistics, subprocess
+import os, time, statistics, subprocess, sys
 from muxlib import *
 E = Env(limit=180)
 check = E.check
@@ -46,7 +46,18 @@ E.call("workspace.create", {"label": "two", "focus": True}); time.sleep(0.3)
 E.call("pane.run", {"pane_id": "w1:p1", "command": "yes | head -n 2000000 >/dev/null; while :; do echo busy; sleep 0.01; done"})
 t = []
 for i in range(20):
-    t0 = time.perf_counter(); E.call("workspace.focus", {"workspace_id": "w1" if i % 2 else "w2"}); t.append((time.perf_counter() - t0) * 1000)
+    t0 = time.perf_counter()
+    try: E.call("workspace.focus", {"workspace_id": "w1" if i % 2 else "w2"})
+    except subprocess.TimeoutExpired:   # (diagnosis for a machine that is not here: where is the server stuck?)
+        pid = subprocess.run(["pgrep", "-n", "-f", "bhoted mux"], capture_output=True, text=True).stdout.split()
+        print("SERVER STUCK, pids", pid, flush=True)
+        if pid and sys.platform == "darwin":
+            r = subprocess.run(["sample", pid[0], "2", "-file", "/tmp/sample.txt"], capture_output=True, text=True, timeout=30)
+            print(open("/tmp/sample.txt").read()[:6000] if os.path.exists("/tmp/sample.txt") else r.stdout[:3000], flush=True)
+        elif pid:
+            print(subprocess.run(["sh", "-c", f"cat /proc/{pid[0]}/stack 2>/dev/null; ls /proc/{pid[0]}/task | wc -l; for t in /proc/{pid[0]}/task/*; do echo $t $(cat $t/wchan 2>/dev/null) $(cat $t/comm); done"], capture_output=True, text=True).stdout[:3000], flush=True)
+        check(False, "the server answers under load", "no answer in 10 s"); E.done()
+    t.append((time.perf_counter() - t0) * 1000)
 print(f"     workspace.focus under load: median {statistics.median(t):.1f} ms")
 check(statistics.median(t) < 60, "a switch of workspace answers within 60 ms even while a pane writes", statistics.median(t))
 # 5. a client that does not read (a terminal that hangs, a slow ssh): the server must not wait for it, and it gets the right picture when it reads again
