@@ -174,7 +174,8 @@ fn remote(machine: &str, args: &[String]) -> (i32, String, String) {
     // over there: the daemon next to bhote, else herdr (no login shell: the usual places)
     let remote = format!("sh -c {}", q(&format!("for d in \"$HOME/.local/bin\" \"$HOME/.cargo/bin\" /opt/homebrew/bin /usr/local/bin /usr/bin; do if [ -x \"$d/bhote\" ]; then b=$(readlink -f \"$d/bhote\" 2>/dev/null || echo \"$d/bhote\"); x=$(dirname \"$b\")/daemon/target/release/bhoted; [ -x \"$x\" ] && exec \"$x\" herdr {line}; fi; done; PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"; exec herdr {line}")));
     let cfg = crate::config_read(&super::panels::config_path());
-    let tmpl = cfg.get("REMOTE_SSH").cloned().unwrap_or_else(|| "ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m".into());
+    let key = std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".ssh/id_bhote")).filter(|k| k.is_file());   // (the key of bhote for the machines among themselves)
+    let tmpl = cfg.get("REMOTE_SSH").cloned().unwrap_or_else(|| format!("ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m{}", key.map_or(String::new(), |k| format!(" -i {} -o IdentitiesOnly=yes", k.display()))));
     let mut words: Vec<String> = tmpl.split_whitespace().filter(|w| *w != "-t").map(String::from).collect();
     words.retain(|w| w != "{node}");
     if !words.iter().any(|w| w.starts_with("BatchMode")) { words.push("-o".into()); words.push("BatchMode=yes".into()); words.push("-o".into()); words.push("ConnectTimeout=8".into()); }

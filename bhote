@@ -2694,7 +2694,8 @@ agent_row_type() {  # agent_row_type <row 1-9>: types herdr's key for that row i
 }
 # In the native mux an agent of another machine is "mounted" by a tab of its own that shows that agent's pane over ssh: bhote view there (the other
 # machine runs the native mux), else herdr agent attach (it runs herdr). The ssh destination is the kharka node name (REMOTE_SSH: another command, {node}).
-REMOTE_SSH_OPTS='-o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m -o ConnectTimeout=8'   # one connection per machine, kept for a quarter of an hour: the next tab is there at once
+REMOTE_SSH_OPTS='-o ControlMaster=auto -o ControlPath=~/.ssh/cm-bhote-%C -o ControlPersist=15m -o ConnectTimeout=8'
+[ -f "$HOME/.ssh/id_bhote" ] && REMOTE_SSH_OPTS="$REMOTE_SSH_OPTS -i $HOME/.ssh/id_bhote -o IdentitiesOnly=yes"   # (the key of bhote for the machines among themselves: see `bhote ssh-key`)   # one connection per machine, kept for a quarter of an hour: the next tab is there at once
 remote_cmd() {  # remote_cmd <pane>: what runs over there, without a login shell: the daemon next to bhote (the native mux), else herdr
     local p=$1
     printf '%s' "sh -c 'for d in \"\$HOME/.local/bin\" \"\$HOME/.cargo/bin\" /opt/homebrew/bin /usr/local/bin /usr/bin; do if [ -x \"\$d/bhote\" ]; then b=\$(readlink -f \"\$d/bhote\" 2>/dev/null || echo \"\$d/bhote\"); x=\$(dirname \"\$b\")/daemon/target/release/bhoted; [ -x \"\$x\" ] && exec \"\$x\" view $p; fi; done; PATH=\"\$HOME/.local/bin:\$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:\$PATH\"; exec herdr agent attach $p'"
@@ -7149,6 +7150,7 @@ bhote — topics and agents next to herdr.
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
+  bhote ssh-key                      a key of its own (no passphrase) for ssh between your machines; prints the line for the other machines
   bhote doctor                       what the native mux needs, and what is left of herdr
   bhote mux stop|status|restart      the native mux's server (stop keeps the session; the panels follow the settings after a restart)
   bhote attach                       the native mux: a terminal on the pane server (starts it); ctrl+b d detaches   bhote chat: the chat panel
@@ -7196,6 +7198,7 @@ bhote_cli() {
         monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;
         doctor) cli_doctor ;;
+        ssh-key) cli_ssh_key ;;
         remote-warm) bhote_info; remote_warm ;;
         chat|attach|mux|view) local _bd; bhoted_bin_set _bd; [ -n "$_bd" ] || { echo "bhote: $cmd needs the Rust daemon (bhoted not found)" >&2; return 1; }; exec "$_bd" "$cmd" "$@" ;;   # (the chat panel, the native mux: a terminal on the pane server, the server itself)
         version|--version|-V) version_label_set; if [ -n "$json" ]; then printf '{"version":%s,"build":%s}\n' "$(json_str "$VERSION")" "$(json_str "$VERSION_LABEL")"; else echo "bhote $VERSION_LABEL"; fi ;;
@@ -7361,6 +7364,16 @@ bhote_launch() {  # what `bhote` does in a terminal; BHOTE_LAUNCH_DRY=1 only say
     fi
     say_ "start the native mux ($bin attach)" && return 0
     exec "$bin" attach
+}
+# bhote ssh-key: a key of its own for ssh between your machines (no passphrase, used by nothing else): ~/.ssh/id_bhote. A daemon cannot type a passphrase;
+# with a key that has one (and no ssh-agent) a click on another machine's workspace, `herdr --machine` and the checks of `bhote doctor` fail.
+cli_ssh_key() {
+    local k="$HOME/.ssh/id_bhote"
+    mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+    if [ ! -f "$k" ]; then ssh-keygen -q -t ed25519 -N '' -C "bhote@$(hostname -s 2>/dev/null)" -f "$k" || return 1; echo "made $k (no passphrase; only bhote uses it)" >&2; fi
+    echo "Put this line into ~/.ssh/authorized_keys of every machine that should be reachable from here:" >&2
+    cat "$k.pub"
+    echo "(on the other machine: this command with the line in quotes: echo '<line>' >> ~/.ssh/authorized_keys; chmod 600 ~/.ssh/authorized_keys)" >&2
 }
 cli_doctor() {  # bhote doctor: what the native mux needs, and what is left of herdr
     local bin ok=0 line r

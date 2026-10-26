@@ -2,7 +2,7 @@
 # Tests of the command line (bhote add/list/show/done/...). Throw-away config and data; no network. Usage: bash tests/cli.sh
 cd "$(dirname "$0")/.." || exit 1
 unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID   # the tests must not run as "an agent"
-T=$(mktemp -d); export NO_COLOR=1 BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data TMPDIR=$T BHOTE_SHARED=$T/shared
+T=$(mktemp -d); export BHOTE_MUX_SOCK=$T/no-mux.sock BHOTE_MUX_STATE=$T/no-state.json NO_COLOR=1 BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data TMPDIR=$T BHOTE_SHARED=$T/shared
 # a fake herdr first on the PATH: nothing reaches the herdr you work in (notifications, prompts); every call is logged
 mkdir -p "$T/bin"; export FAKE_LOG=$T/herdr.log PATH="$T/bin:$PATH"
 cat > "$T/bin/herdr" <<'SH'
@@ -350,4 +350,9 @@ rm -rf "$pt"
 ids=""; for _ in 1 2 3 4 5 6; do ids="$ids $(B add "Same second $_" >/dev/null; B list --json --all | python3 -c "import sys,json; print(max(t['id'] for t in json.load(sys.stdin) if t['title'].startswith('Same second')))")"; done
 n=$(B list --json --all | python3 -c "import sys,json; print(len([t for t in json.load(sys.stdin) if t['title'].startswith('Same second')]))")
 [ "$n" = 6 ] && ok "six topics added in a row are six topics" || bad "topic ids collided: $n of 6"
+# bhote ssh-key: a key of its own, made once, its public line printed
+kh=$(mktemp -d); out=$(HOME=$kh B ssh-key 2>/dev/null)
+[ -f "$kh/.ssh/id_bhote" ] && echo "$out" | grep -q '^ssh-ed25519 ' && [ "$(HOME=$kh ssh-keygen -y -P '' -f "$kh/.ssh/id_bhote" 2>/dev/null | cut -d' ' -f1)" = ssh-ed25519 ] && ok "ssh-key: a key without passphrase, its line printed" || bad "ssh-key: $out"
+out2=$(HOME=$kh B ssh-key 2>/dev/null); [ "$out" = "$out2" ] && ok "ssh-key: the second call keeps the key" || bad "ssh-key twice"
+rm -rf "$kh"
 rm -rf "$T"; exit $fail
