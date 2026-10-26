@@ -171,9 +171,11 @@ impl<'a> Cards<'a> {
                 let line = format!("{}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x);
                 if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&format!("{}rws:{}:{}{}{}", REF, mach, id, REF, line)); }   // (another machine's workspace: a click shows it here)
             }
-            if *mach == self.host { out.push_str(&format!("{}ws:+new{}   {}+ new{}\n", REF, REF, g("D"), x)); }   // (a click makes a workspace on this machine)
-            else { out.push_str(&format!("{}rws:{}:+new{}   {}+ new{}\n", REF, mach, REF, g("D"), x)); }   // (on another machine: made over there, shown here)
         }
+        // the foot like herdr's: "new · <machine>", the machine whose workspace is shown (a click makes a workspace there)
+        let am = self.active_remote().map(|r| r.0).unwrap_or_else(|| self.host.clone());
+        let r = if am == self.host { "ws:+new".to_string() } else { format!("rws:{}:+new", am) };
+        out.push_str(&format!("\n{}{}{}  {}new · {}{}\n", REF, r, REF, g("D"), clip(&am, w - 8), x));
         out.push_str(&format!("  {}{}{}\n", g("B"), "─".repeat((self.c.cols - 5).max(0) as usize), x));   // the divider under the workspaces
         out
     }
