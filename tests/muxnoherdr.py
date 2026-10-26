@@ -21,7 +21,12 @@ time.sleep(6)
 sbs = {s["label"]: s["pane_id"] for s in E.layout().get("sidebars", [])}
 check(set(sbs) == {"bhote-left", "bhote-right"}, "both real panels are there", sbs)
 left = E.result("pane.read", {"pane_id": sbs["bhote-left"], "source": "visible"})["text"]
-check("Workspaces" in left and ("bhote (" in left or "tests" in left), "the left panel lists the workspaces (it asked the mux, there is no herdr)", left[:300])
+ok_ws = "Workspaces" in left and ("bhote (" in left or "tests" in left)
+diag = ""
+if not ok_ws:   # (for a machine that is not here: what is in the shared folder, what the mux says)
+    sh = f"{E.T}/shared"
+    diag = "shared: " + ", ".join(sorted(os.listdir(sh))) + "\n" + "".join(f"--- {f}\n{open(os.path.join(sh, f), errors='replace').read()[:300]}\n" for f in ("workspaces.local", "agents.local", "bhoted.pid") if os.path.exists(os.path.join(sh, f))) + "workspace list: " + json.dumps(E.result("workspace.list"))[:300] + "\npanel text:\n" + left[:600]
+check(ok_ws, "the left panel lists the workspaces (it asked the mux, there is no herdr)", diag)
 # an agent in the main pane: it shows in the panel and on the command line
 E.call("pane.run", {"pane_id": "w1:p1", "command": "claude"}); time.sleep(0.5)
 lnk = f"{E.T}/lnk"; os.makedirs(lnk); os.symlink(BIN, f"{lnk}/herdr")
