@@ -8,7 +8,9 @@ E = Env()
 check = E.check
 BH = os.path.join(ROOT, "bhote")
 prof = f"{E.T}/.claude2"; os.makedirs(prof)
-json.dump({"theme": "dark", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}, open(f"{prof}/settings.json", "w"))
+os.makedirs(f"{E.T}/repo")
+json.dump({"theme": "dark", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "echo mine"}]}]}}, open(f"{E.T}/repo/settings.json", "w"))
+os.symlink(f"{E.T}/repo/settings.json", f"{prof}/settings.json")   # (as in a config repo: settings.json is a link)
 env = dict(E.env, CLAUDE_CONFIG_DIR=prof, HOME=E.T, BHOTED_BIN=BIN)
 def bhote(*a): return subprocess.run(["bash", BH, *a], capture_output=True, text=True, env=env, timeout=60)
 r = bhote("integration", "install", "claude")
@@ -19,6 +21,7 @@ check(any(h["command"] == "echo mine" for g in st["hooks"]["Stop"] for h in g["h
 bhote("integration", "install", "claude"); st = json.load(open(f"{prof}/settings.json"))
 check(all(len(mine(e)) == 1 for e in st["hooks"] if mine(e)), "a second install changes nothing (no doubles)")
 check(os.access(f"{E.T}/.local/share/bhote/hooks/agent-state.sh", os.X_OK), "the script is copied to a place of its own")
+check(os.path.islink(f"{prof}/settings.json") and "agent-state.sh" in open(f"{E.T}/repo/settings.json").read(), "settings.json stays a link into the config repo, and the repo file has the hook")
 check("ok" in bhote("integration", "status", "claude").stdout, "status")
 # the hook at work
 os.makedirs(f"{E.T}/abin"); open(f"{E.T}/abin/claude", "w").write("#!/bin/sh\nexec cat\n"); os.chmod(f"{E.T}/abin/claude", 0o755)
