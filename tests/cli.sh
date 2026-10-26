@@ -346,4 +346,8 @@ out=$(PATH="$pt/bin:$PATH" BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr"
 echo "$out" | grep -q 'bhote-left' && bad "plugin single: no left panel expected: $out" || ok "plugin single: one panel, no left one"
 rm -rf "$pt"
 
+# the id of a new topic is never taken twice (bash 3.2 gives two subshells in a row the same $RANDOM)
+ids=""; for _ in 1 2 3 4 5 6; do ids="$ids $(B add "Same second $_" >/dev/null; B list --json --all | python3 -c "import sys,json; print(max(t['id'] for t in json.load(sys.stdin) if t['title'].startswith('Same second')))")"; done
+n=$(B list --json --all | python3 -c "import sys,json; print(len([t for t in json.load(sys.stdin) if t['title'].startswith('Same second')]))")
+[ "$n" = 6 ] && ok "six topics added in a row are six topics" || bad "topic ids collided: $n of 6"
 rm -rf "$T"; exit $fail

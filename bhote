@@ -385,10 +385,12 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
 }
 topic_new() {  # topic_new <title> [waiting for] [description]
     mkdir -p "$TOPIC_DIR"
-    local now id title status=now since=""; now=$(date +%s); id="$now-$RANDOM"
+    local now id title status=now since="" n=0; now=$(date +%s); id="$now-$RANDOM"
+    # (bash 3.2, as on a Mac, gives the same $RANDOM to two subshells in a row: the file is made at once, and a taken name is not used)
+    while ! ( set -C; : > "$TOPIC_DIR/$id.topic" ) 2>/dev/null; do n=$(( n + 1 )); [ "$n" -lt 1000 ] || return 1; id="$now-$RANDOM$n"; done
     title=${1//[[:cntrl:]]/}; title=$(printf '%s' "$title" | sed 's/^ *//; s/ *$//'); set -- "$title" "${2//[[:cntrl:]]/}" "${3//[[:cntrl:]]/}"
     set -- "${1:0:500}" "$2" "${3:0:$DESC_MAX}"
-    [ -n "$title" ] || return 1
+    [ -n "$title" ] || { rm -f "$TOPIC_DIR/$id.topic"; return 1; }
     [ -n "${BHOTE_INTENT_LOG:-}" ] && printf 'new|%s|%s|%s|@%s\n' "$title" "$2" "${3:-}" "$(date +%s)" >> "$BHOTE_INTENT_LOG"
     [ -n "$2" ] && { status=waiting; since=$now; }
     printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\n' \
