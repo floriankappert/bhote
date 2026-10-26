@@ -69,5 +69,6 @@ for i in range(15):
     t0 = time.perf_counter(); E.call("ping"); t.append((time.perf_counter() - t0) * 1000); time.sleep(0.1)   # (the client is not read from meanwhile)
 print(f"     ping while a client does not read: max {max(t):.1f} ms")
 check(max(t) < 500, "the server answers while a client does not read", max(t))
-check(c.wait_for("STUCK_DONE_42", t=20), "and the client that reads again gets the picture", c.out[-200:])
+ok_ = c.wait_for("STUCK_DONE_42", t=20)
+check(ok_, "and the client that reads again gets the picture", "pane: " + E.result("pane.read", {"pane_id": "w1:p1", "source": "visible"}).get("text", "")[-400:] + "\nclient bytes: " + str(len(c.out)) + " tail: " + repr(c.out[-300:]))
 E.done()

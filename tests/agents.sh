@@ -470,7 +470,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$other_f" status)" = finished ] && [ "$(topic_get "$now_f" status)" = now ] || exit 2   # (another title stays, the card at work stays)
   rv_f=$(mk "Same work" review); topics_load; agent_dedup; [ "$(topic_get "$rv_f" status)" = later ] && [ "$(topic_get "$rv_f" dismissed)" = 1 ] || exit 4   # (a review of an earlier turn, the agent works on it again: superseded)
   r2=$(mk "Review twice" review); sed -i.bak 's/^updated=.*/updated=1000/' "$r2"; rm -f "$r2.bak"; r3=$(mk "Review twice" review); topics_load; agent_dedup
-  [ "$(topic_get "$r2" status)" = later ] && [ "$(topic_get "$r3" status)" = review ] || exit 5                 # (two reviews of the same title: the older one goes)
+  [ "$(topic_get "$r2" status)" = later ] && [ "$(topic_get "$r3" status)" = review ] || { echo "DEBUG r2=$(topic_get "$r2" status)/$(topic_get "$r2" updated) r3=$(topic_get "$r3" status)/$(topic_get "$r3" updated) now=$(date +%s)" >&2; exit 5; }   # (two reviews of the same title: the older one goes)
   w_f=$(mk "Waiting for New Work" review); topics_load; agent_dedup; [ "$(topic_get "$w_f" status)" = later ] && [ "$(topic_get "$w_f" dismissed)" = 1 ] || exit 3   # (an agent that waits for new work is idle: no review card)
   exit 0 ) && ok "a finished card that repeats a card of its agent is put away; \"Waiting for New Work\" is never a card" || bad "finished duplicate: step $?"
 # "Waiting for New Work" as the task of an agent (herdr's task token) is no task: the card of its topic shows the topic's title, an idle card has no task row
@@ -786,7 +786,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   out=$(topics_block | LC_ALL=C sed 's/\x1b\[[0-9;]*[A-Za-z]//g')
   printf '%s\n' "$out" | grep -q "DEPLOYING" || exit 3
   printf '%s\n' "$out" | grep -q "IMS · Backend · deploying" || exit 4
-  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l)" = 5 ] || exit 5   # 44 of 56 steps: five boxes (a card with an agent has them on the right of its second row; this one has none: a row of its own)
+  bar=$(printf '%s\n' "$out" | LC_ALL=C grep -a "78%"); [ -n "$bar" ] && [ "$(printf '%s' "$bar" | LC_ALL=C grep -a -o '■' | wc -l | tr -d ' ')" = 5 ] || exit 5   # 44 of 56 steps: five boxes (a card with an agent has them on the right of its second row; this one has none: a row of its own)
   printf '%s\n' "$out" | grep -q "Plain wait" || exit 6
   [ "$(printf '%s\n' "$out" | grep -n "DEPLOYING" | head -1 | cut -d: -f1)" -lt "$(printf '%s\n' "$out" | grep -n "Plain wait" | head -1 | cut -d: -f1)" ] || exit 7
   # without a deployment of its project (an agent said "waiting for a deployment" and none runs) it is no card in DEPLOYING: a line in the Waiting list
