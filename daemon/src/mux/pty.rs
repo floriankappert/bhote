@@ -27,6 +27,8 @@ impl Pty {
         } else { let mut c = Command::new(&argv[0]); c.args(&argv[1..]); c };
         if let Some(d) = cwd { if d.is_dir() { cmd.current_dir(d); } }
         cmd.env("TERM", "xterm-256color").env("COLORTERM", "truecolor").env_remove("TERM_PROGRAM");
+        // what the server inherited from the session it was started in is not the panes' (a program started there would think it is a child of that Claude session and save no transcript)
+        for k in ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_PID", "CLAUDE_EFFORT", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"] { cmd.env_remove(k); }
         for (k, v) in env { cmd.env(k, v); }
         cmd.stdin(Stdio::from(slave.try_clone()?)).stdout(Stdio::from(slave.try_clone()?)).stderr(Stdio::from(slave));
         unsafe { cmd.pre_exec(|| { libc::setsid(); libc::ioctl(0, libc::TIOCSCTTY as _, 0); Ok(()) }); }

@@ -18,7 +18,8 @@ fn quote(w: &str) -> String { if !w.is_empty() && w.chars().all(|c| c.is_ascii_a
 /// How an agent is started again: what its hook said, else the usual command of the agent for its session.
 fn resume_of(agent: &str, session: &str, reported: &[String]) -> Vec<String> {
     if !reported.is_empty() { return reported.to_vec(); }
-    if session.is_empty() { return Vec::new(); }
+    // no session id (the hook did not report one): the last session of the folder
+    if session.is_empty() { return match agent { "claude" => vec!["claude".into(), "--continue".into()], "codex" => vec!["codex".into(), "resume".into(), "--last".into()], _ => Vec::new() }; }
     match agent { "claude" => vec!["claude".into(), "--resume".into(), session.into()], "codex" => vec!["codex".into(), "resume".into(), session.into()], _ => Vec::new() }
 }
 
