@@ -73,8 +73,13 @@ A click on an agent of another machine opens it in a tab of its own, named `<mac
 `herdr agent attach <pane>`. The ssh destination is the kharka node name; `REMOTE_SSH` changes the command (`{node}`). A second click shows the same tab.
 Close the tab (`prefix k`) to leave. The other machine needs `bhote` (or herdr) in the PATH of a login shell, and ssh from here to there must work.
 
-## Not done / not tested
+## What is tested, and what is not
 
-- macOS: the same code (`libc` constants, `ps` instead of `/proc`), but only built and tested on Linux so far.
-- `herdr --machine <label> ...` (herdr's own ssh connection) is not available in the native mux; other machines are reached through kharka.
-- The herdr plugin and herdr's config are still in the repository for `MUX=herdr`; they go after one release.
+- CI (`.github/workflows/tests.yml`, also for `rust/**`) runs every suite on **macOS (bash 3.2) and Linux (bash 5)**, plus clippy and the dependency advisories. The mux suites (`tests/mux*.sh`)
+  start real servers on throw-away sockets, drive them through a pseudo terminal and cover keys, mouse, panels, sessions, agents, the hook, kharka (with a real kharka daemon),
+  other machines (a fake ssh that runs the command here), no herdr on the PATH, and speed (key echo about 2 ms, 300000 lines of output in 0.5 s, a client that does not read does not hold the server up).
+- `bash tools/check-macos.sh` type-checks the daemon for macOS on any machine.
+- Not covered: two real machines (ssh between them is what you have to set up: `ssh <node> true` must work without a password both ways; `bhote doctor` checks it),
+  kitty graphics (not passed on), OSC 8 hyperlinks (not passed on), `herdr` plugins other than bhote's.
+
+`herdr --machine <label> <command>` works in the native mux: the command runs over ssh on that machine (its kharka node) and its answer comes back.
