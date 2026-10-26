@@ -332,6 +332,10 @@ impl Server {
             Ev::PaneExit(id) => if self.panes.contains_key(&id) { self.close_pane(id); },
             Ev::NewClient { id, stream, cols, rows, view } => {
                 self.clients.push(Client { title: String::new(), out: Vec::new(), stuck_since: None, behind: false, id, stream, cols, rows, view, prev: None, modes: Modes::default(), parser: input::Parser::default(), mode: super::actions::Mode::Normal, sel: None, drag: None, esc_at: None });
+                // a new terminal starts on a workspace of this machine, not on the view of another machine that was clicked open before
+                if self.clients.last().map_or(false, |c| c.view.is_none()) && self.world.ws.get(self.world.active).map_or(false, |w| w.hidden) {
+                    if let Some(i) = self.world.ws.iter().position(|w| !w.hidden) { self.world.active = i; }
+                }
                 self.after_change();
             }
             Ev::Frame(id, t, p) => match t {

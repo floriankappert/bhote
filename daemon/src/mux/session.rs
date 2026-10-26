@@ -48,7 +48,7 @@ pub fn snapshot(s: &Server) -> Value {
             let n_of = |p: u32| s.panes.get(&p).map(|q| q.n);
             tabs.push(json!({"id": t.id, "label": t.label, "no_panels": t.no_panels, "focus": n_of(t.focus), "zoomed": t.zoomed.and_then(n_of), "root": root}));
         }
-        if tabs.is_empty() { continue; }
+        if tabs.is_empty() || w.hidden { continue; }   // (the view of another machine, opened by a click: made again by the next click, not kept over a restart)
         wss.push(json!({"id": w.id, "label": w.label, "cwd": w.cwd, "next_tab": w.next_tab, "next_pane": w.next_pane, "hidden": w.hidden, "active_tab": w.tabs.get(w.active).map(|t| t.id), "tabs": tabs}));
     }
     json!({"version": 1, "sidebars": s.sb_sizes, "active_workspace": s.world.ws.get(s.world.active).map(|w| w.id), "workspaces": wss})
