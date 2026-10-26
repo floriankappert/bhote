@@ -469,7 +469,7 @@ echo "$frame" | grep -q " Fix th…" && bad "a parked topic is shown behind the 
   [ "$(topic_get "$old_f" status)" = later ] && [ "$(topic_get "$old_f" dismissed)" = 1 ] || exit 1      # (the same work twice: put away)
   [ "$(topic_get "$other_f" status)" = finished ] && [ "$(topic_get "$now_f" status)" = now ] || exit 2   # (another title stays, the card at work stays)
   rv_f=$(mk "Same work" review); topics_load; agent_dedup; [ "$(topic_get "$rv_f" status)" = later ] && [ "$(topic_get "$rv_f" dismissed)" = 1 ] || exit 4   # (a review of an earlier turn, the agent works on it again: superseded)
-  r2=$(mk "Review twice" review); sed -i.bak 's/^updated=.*/updated=1000/' "$r2"; rm -f "$r2.bak"; r3=$(mk "Review twice" review); topics_load; agent_dedup
+  r2=$(mk "Review twice" review); sed -i.bak 's/^updated=.*/updated=1000/' "$r2"; rm -f "$r2.bak"; r3=$(mk "Review twice" review); sed -i.bak 's/^updated=.*/updated=2000/' "$r3"; rm -f "$r3.bak"; topics_load; agent_dedup
   [ "$(topic_get "$r2" status)" = later ] && [ "$(topic_get "$r3" status)" = review ] || { echo "DEBUG r2=$(topic_get "$r2" status)/$(topic_get "$r2" updated) r3=$(topic_get "$r3" status)/$(topic_get "$r3" updated) now=$(date +%s)" >&2; exit 5; }   # (two reviews of the same title: the older one goes)
   w_f=$(mk "Waiting for New Work" review); topics_load; agent_dedup; [ "$(topic_get "$w_f" status)" = later ] && [ "$(topic_get "$w_f" dismissed)" = 1 ] || exit 3   # (an agent that waits for new work is idle: no review card)
   exit 0 ) && ok "a finished card that repeats a card of its agent is put away; \"Waiting for New Work\" is never a card" || bad "finished duplicate: step $?"
