@@ -289,8 +289,8 @@ fn main() {
             if let Err(e) = proc::check_private_dir(&shared) { eprintln!("bhoted: {}", e); std::process::exit(1); }
             let host = opt("--host").unwrap_or_default();
             let config = opt("--config");
-            // the agents duty needs inotify (the poke file wakes it): Linux only for now, bash keeps it on macOS
-            let duty = a.iter().any(|x| x == "--agents") && cfg!(target_os = "linux") && !host.is_empty();
+            // the agents duty: where inotify is (Linux) the poke file wakes it at once, elsewhere (macOS) the loop looks at the files every 100 ms
+            let duty = a.iter().any(|x| x == "--agents") && !host.is_empty();
             let monitors = a.iter().any(|x| x == "--monitors");
             let data = opt("--data").map(PathBuf::from).unwrap_or_else(|| dir.parent().unwrap_or(Path::new(".")).to_path_buf());
             let running = [Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))];
@@ -298,7 +298,7 @@ fn main() {
             let sync_duty = a.iter().any(|x| x == "--sync") && !host.is_empty();
             let sync_running = Arc::new(AtomicBool::new(false));
             let mut next_sync = Instant::now();
-            let remote_duty = a.iter().any(|x| x == "--remote") && cfg!(target_os = "linux") && !host.is_empty();
+            let remote_duty = a.iter().any(|x| x == "--remote") && !host.is_empty();
             let remote_running = Arc::new(AtomicBool::new(false));
             let mut next_remote = Instant::now();
             // one daemon per shared folder: another one that is alive keeps the work (two would do every follow-up twice)
@@ -308,6 +308,8 @@ fn main() {
             #[cfg(target_os = "linux")]
             let w = watch::open(&[(dir, watch::TOPICS), (&shared, watch::APPEAR)]);
             let mut next_collect = Instant::now();
+            #[cfg(not(target_os = "linux"))]
+            let mut seen: [Option<std::time::SystemTime>; 3] = [None, None, None];
             loop {
                 if let Some(p) = parent { if !alive(p) { if let Some(f) = &pid_file { let _ = fs::remove_file(f); let _ = fs::remove_file(format!("{}.agents", f)); let _ = fs::remove_file(format!("{}.monitors", f)); let _ = fs::remove_file(format!("{}.remote", f)); let _ = fs::remove_file(format!("{}.sync", f)); } return; } }
                 let sig = signature(dir);
@@ -367,6 +369,14 @@ fn main() {
                         if events.iter().any(|(i, n)| *i == 1 && n == "dirty") { next_sync = Instant::now(); }   // a change here, or kharka's watch: merge at once   // kharka's watch: another machine's agents moved
                         if events.iter().any(|(i, _)| *i == 0) { std::thread::sleep(Duration::from_millis(15)); let _ = w.wait(0); } // a burst of writes: one rebuild
                         continue;
+                    }
+                }
+                // without inotify: the signal files are looked at (the time they were written)
+                #[cfg(not(target_os = "linux"))]
+                {
+                    for (name, which) in [("poke", 0), ("remote.due", 1), ("dirty", 2)] {
+                        let t = fs::metadata(shared.join(name)).and_then(|m| m.modified()).ok();
+                        if t != seen[which] { if t.is_some() { match which { 0 => next_collect = Instant::now(), 1 => next_remote = Instant::now(), _ => next_sync = Instant::now() } } seen[which] = t; }
                     }
                 }
                 std::thread::sleep(Duration::from_millis(100));
