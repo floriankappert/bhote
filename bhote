@@ -436,8 +436,12 @@ bhoted_alive() {  # 0 when the daemon runs for THIS topic folder (its pid file s
     [ "$dir" = "$TOPIC_DIR" ] && [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 bhoted_keep() {  # bhoted_keep <collector pid>: the lead collector keeps the daemon running (it ends when the collector does)
-    local bin off; bhoted_alive && return 0; cfg_var off BHOTED auto; [ "$off" = off ] && return 0
+    local bin off opid; cfg_var off BHOTED auto; [ "$off" = off ] && return 0
     bhoted_bin_set bin; [ -n "$bin" ] || return 0
+    if bhoted_alive; then
+        [ "$bin" -nt "$SHARED_DIR/bhoted.pid" ] || return 0      # (a daemon older than its program, after an update: it still writes the old files, so it ends and the new one starts)
+        { read -r opid _; } < "$SHARED_DIR/bhoted.pid" 2>/dev/null; kill "$opid" 2>/dev/null; sleep 0.3
+    fi
     mkdir -p "$SHARED_DIR" 2>/dev/null; rmf "$SHARED_DIR/bhoted.pid"; rmf "$SHARED_DIR/bhoted.pid.agents"; rmf "$SHARED_DIR/bhoted.pid.monitors"; rmf "$SHARED_DIR/bhoted.pid.remote"; rmf "$SHARED_DIR/bhoted.pid.sync"
     ( "$bin" run "$TOPIC_DIR" "$SHARED_DIR/topics.idx" --parent "$1" --pid-file "$SHARED_DIR/bhoted.pid" --agents --remote --follow --sync --monitors --data "$DATA_DIR" --host "$HOST" --config "$CONFIG_FILE" >/dev/null 2>&1 & )
 }
