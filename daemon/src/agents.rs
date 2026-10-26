@@ -103,7 +103,8 @@ pub fn workspaces_text(ws: &Value) -> String {
     let empty = Vec::new();
     let mut out = String::new();
     for w in ws.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty) {
-        let f = [tostr(&or_empty(w.get("number"))), tostr(&or_empty(w.get("workspace_id"))), clean(&tostr(w.get("label").unwrap_or(&Value::Null))), (if truthy(w.get("focused")) { "1" } else { "0" }).to_string(), tostr(&or_empty(w.get("agent_status")))];
+        let f = [tostr(&or_empty(w.get("number"))), tostr(&or_empty(w.get("workspace_id"))), clean(&tostr(w.get("label").unwrap_or(&Value::Null))), (if truthy(w.get("focused")) { "1" } else { "0" }).to_string(), tostr(&or_empty(w.get("agent_status"))),
+            tostr(&or_empty(w.pointer("/tokens/branch"))), tostr(&or_empty(w.pointer("/tokens/repo"))), tostr(&or_empty(w.pointer("/tokens/worktree")))];
         out.push_str(&f.iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&US.to_string())); out.push('\n');
     }
     out
@@ -187,7 +188,8 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
         for w in wl {
             let id = tostr(&or_empty(w.get("id")));
             let st = if down { "off" } else { match wst.get(&id) { Some(4) => "working", Some(3) => "blocked", Some(2) => "done", _ => "idle" } };
-            wsout.push_str(&[m.clone(), id, clean(&tostr(&or_empty(w.get("label")))), tostr(&or_empty(w.get("number"))), st.to_string()].iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&us)); wsout.push('\n');
+            wsout.push_str(&[m.clone(), id, clean(&tostr(&or_empty(w.get("label")))), tostr(&or_empty(w.get("number"))), st.to_string(),
+                tostr(&or_empty(w.pointer("/tokens/branch"))), tostr(&or_empty(w.pointer("/tokens/repo"))), tostr(&or_empty(w.pointer("/tokens/worktree")))].iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&us)); wsout.push('\n');
         }
         for a in v.get("agents").and_then(|x| x.as_array()).into_iter().flatten() {
             if !a.is_object() { continue; }

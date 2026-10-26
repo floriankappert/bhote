@@ -161,6 +161,7 @@ impl Server {
         let prev = self.world.focused_pane();
         if prev != Some(pane) { self.last_focus = prev; }
         self.world.focus_pane(pane);
+        self.sb_focus = None;   // (a jump to an agent or a pane, also from a click in a panel: the keys go to the terminal then)
         self.dirty = true;
         if prev != Some(pane) { if let Some(p) = self.panes.get(&pane) { let (n, w, t) = (p.name(), world::ws_name(p.ws), world::tab_name(p.ws, p.tab)); self.emit("pane.focused", Some(&n.clone()), json!({"pane_id": n, "workspace_id": w, "tab_id": t})); } }
     }

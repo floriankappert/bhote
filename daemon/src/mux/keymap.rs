@@ -50,6 +50,7 @@ reload_config = prefix+q
 focus_panel = prefix+t
 toggle_sidebar = prefix+b
 open_panel = prefix+shift+b
+popup ctrl+alt+t bhote find
 ";
 
 /// A key as written in a file, as the input parser names it: modifiers in the order ctrl, alt, shift; capitals are shift+letter.

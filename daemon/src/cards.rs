@@ -148,13 +148,20 @@ impl<'a> Cards<'a> {
         let mut out = format!("\n{}", crate::ui::dash_caption_pub(self.c, "Workspaces"));
         let w = self.c.cols - 4;
         // grouped by machine: this one first (rows of workspaces.local), then each other machine (workspaces.remote: machine, id, label, number, state)
-        let mut groups: Vec<(String, Vec<(String, String, String, bool, String, bool)>)> = Vec::new();
-        let mine: Vec<_> = loc.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { None } else { Some((f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3] == "1", f[4].to_string(), true)) } }).collect();
+        struct Ws { id: String, label: String, focused: bool, st: String, local: bool, branch: String, repo: String, linked: bool }
+        let mut groups: Vec<(String, Vec<Ws>)> = Vec::new();
+        // tokens (branch, repo, worktree) come with the row when the machine knows them; else a name like "IMS (wt1)" is taken for a linked worktree of "IMS (…)"
+        let mk = |label: &str, focused: bool, st: &str, id: &str, local: bool, branch: &str, repo: &str, wt: &str| -> Ws {
+            let (r0, suf) = match label.rsplit_once(" (") { Some((r, s)) if s.ends_with(')') => (r.to_string(), s.trim_end_matches(')').to_string()), _ => (String::new(), String::new()) };
+            let linked = if !wt.is_empty() { wt == "linked" } else { suf.starts_with("wt") && suf[2..].chars().all(|c| c.is_ascii_digit()) };
+            Ws { id: id.into(), label: label.into(), focused, st: st.into(), local, branch: branch.into(), repo: if repo.is_empty() { r0 } else { repo.into() }, linked }
+        };
+        let mine: Vec<Ws> = loc.lines().filter_map(|l| { let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { None } else { Some(mk(f[2], f[3] == "1", f[4], f[1], true, f.get(5).copied().unwrap_or(""), f.get(6).copied().unwrap_or(""), f.get(7).copied().unwrap_or(""))) } }).collect();
         groups.push((self.host.clone(), mine));
         let ar = self.active_remote();
         for l in rem.lines() {
             let f: Vec<&str> = l.split(US).collect(); if f.len() < 5 { continue; }
-            let row = (f[3].to_string(), f[1].to_string(), f[2].to_string(), ar.as_ref().map_or(false, |(m, id, _)| m == f[0] && id == f[1]), f[4].to_string(), false);
+            let row = mk(f[2], ar.as_ref().map_or(false, |(m, id, _)| m == f[0] && id == f[1]), f[4], f[1], false, f.get(5).copied().unwrap_or(""), f.get(6).copied().unwrap_or(""), f.get(7).copied().unwrap_or(""));
             match groups.iter_mut().find(|g| g.0 == f[0]) { Some(gr) => gr.1.push(row), None => groups.push((f[0].to_string(), vec![row])) }
         }
         let many = groups.iter().filter(|g| !g.1.is_empty()).count() > 1;
@@ -164,12 +171,30 @@ impl<'a> Cards<'a> {
                 let col = if *mach == self.host { g("D") } else { g("BLUE") };
                 out.push_str(&format!("{}{}{}{}\n", col, g("BOLD"), clip(mach, w + 2), x));
             }
-            for (num, id, label, focused, st, local) in rows {
-                let ic = match st.as_str() { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), _ => format!("{}○", g("D")) };
-                let name = clip(label, w - 7); let nw = dw(&name);
-                let (bg, tc) = if *focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL"))) } else { (String::new(), g("L")) };
-                let line = format!("{}{:>2}{}  {}{}{}{}{}{}{}{}{}\n", bg, num, x, bg, tc, name, x, bg, sp(w - 6 - nw), ic, x, x);
-                if *local { out.push_str(&format!("{}ws:{}{}{}", REF, id, REF, line)); } else { out.push_str(&format!("{}rws:{}:{}{}{}", REF, mach, id, REF, line)); }   // (another machine's workspace: a click shows it here)
+            // the checkouts of a repository first, its linked worktrees under it (├─ └─); a linked one without its main checkout stands on its own
+            let mut order: Vec<(usize, bool, bool)> = Vec::new();   // (row, child, last child)
+            for (i, r) in rows.iter().enumerate() {
+                if r.linked && rows.iter().any(|m| !m.linked && m.repo == r.repo && !r.repo.is_empty()) { continue; }
+                order.push((i, false, false));
+                if !r.linked && !r.repo.is_empty() {
+                    let kids: Vec<usize> = rows.iter().enumerate().filter(|(_, k)| k.linked && k.repo == r.repo).map(|(j, _)| j).collect();
+                    for (n, j) in kids.iter().enumerate() { order.push((*j, true, n + 1 == kids.len())); }
+                }
+            }
+            for (i, child, last) in order {
+                let r = &rows[i];
+                let ic = match r.st.as_str() { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), "idle" => format!("{}○", g("GREEN")), _ => format!("{}·", g("D")) };
+                let (bg, tc, bc) = if r.focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL")), g("DSEL")) } else { (String::new(), format!("{}{}", g("BOLD"), g("L")), g("D")) };
+                let (indent, wi) = if child { (format!("{}{}{}", g("D"), if last { "└─ " } else { "├─ " }, x), 5) } else { (String::new(), 2) };
+                let name = clip(&r.label, w - 4 - wi); let nw = dw(&name);
+                let pad = sp((w - 3 - wi - nw).max(0));
+                let line = format!("{}{}{}{} {}{}{}{}{}{}{}\n", bg, if child { "   " } else { " " }, indent, ic, x, bg, tc, name, x, bg, format!("{}{}", pad, x));
+                let rf = if r.local { format!("ws:{}", r.id) } else { format!("rws:{}:{}", mach, r.id) };   // (another machine's workspace: a click shows it here)
+                out.push_str(&format!("{}{}{}{}", REF, rf, REF, line));
+                if !child && !r.branch.is_empty() {
+                    let br = clip(&r.branch, w - 4 - 3);
+                    out.push_str(&format!("{}{}{}{}{}   {}{}{}{}{}\n", REF, rf, REF, bg, "  ", bc, br, x, bg, format!("{}{}", sp((w - 3 - 2 - dw(&br)).max(0)), x)));
+                }
             }
         }
         // the foot like herdr's: "new · <machine>", the machine whose workspace is shown (a click makes a workspace there)
@@ -814,6 +839,7 @@ impl<'a> Layout<'a> {
         let head = trim(self.head.clone()); let bottom = trim(self.bottom.clone());
         let sec = self.sec;
         let mut topics = if sec.agents { trim(c.block("cards")) } else { String::new() };
+        if sec.agents && !sec.overview && !topics.is_empty() { topics = format!("{}\n{}", trim(crate::ui::dash_caption_pub(c.c, "Agents")), topics); }   // (the cards are the agents pane: with the heading of herdr's; with the overview its own heading is there)
         if sec.workspaces { let ws = trim(c.workspaces_block()); if !ws.is_empty() { topics = if topics.is_empty() { ws } else { format!("{}\n{}", ws, topics) }; } }   // (the workspaces on top, then the agents)
         if sec.worktrees { let wt = trim(c.worktrees_block()); if !wt.is_empty() { topics = if topics.is_empty() { wt } else { format!("{}\n{}", topics, wt) }; } }
         let lists = if sec.topics { trim(c.block("lists")) } else { String::new() };

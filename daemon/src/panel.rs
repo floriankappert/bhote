@@ -126,7 +126,7 @@ impl Panel {
         let view = self.view(mc.clone());
         let mut cards = Cards::new(&ctx, &view); cards.rows_total = self.rows as i64;
         let av = agentsui::agent_view(&view, &ctx.cfg, &ctx.shared);
-        let b = agentsui::bottom_side(&cards, &av, &mc, self.sec.overview);   // (the right panel has no agent overview: that is the left one's)
+        let b = agentsui::bottom_side(&cards, &av, &mc, self.sec.overview, self.sec.workspaces || self.sec.agents || self.sec.overview);   // (the right panel has no agent overview: that is the left one's)
         let head = if !self.sec.head { String::new() } else { agentsui::head(&ctx, &view.head_view()) };   // (no Bhote + version header in the two panels: it takes the room)
         let lay = Layout { cards: &cards, rows: self.rows as i64, head, bottom: b.text, run_dir: PathBuf::new(), prev_toff: self.prev_toff, sec: self.sec };
         let o = lay.view_out();
@@ -335,7 +335,7 @@ impl Panel {
             return;
         }
         if b != 0 { return; }
-        if self.sec.overview && y == self.rows as i64 - 1 && x < 12 { self.delegate(term, "settings", ""); return; }   // the menu button at the foot of the left panel
+        if (self.sec.workspaces || self.sec.agents || self.sec.overview) && y == self.rows as i64 && x < 12 { self.delegate(term, "settings", ""); return; }   // the menu button at the foot of the left panel
         if div > 0 && y >= div + 1 {   // below the divider: an agent?
             let split: i64 = self.agmap.first().and_then(|s| s.trim().parse().ok()).unwrap_or(0); let rel = y - div - 1;
             if split > 0 { if let Some(line) = self.agmap.iter().skip(1).find(|l| l.split('\u{1e}').next().and_then(|r| r.parse::<i64>().ok()) == Some(rel)) {

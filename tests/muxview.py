@@ -24,7 +24,9 @@ txt = E.result("pane.read", {"pane_id": vt, "source": "visible"})["text"]
 check("hello_from_p2" in txt, "bhote view shows the pane", txt)
 E.call("pane.send_text", {"pane_id": vt, "text": "typed_in_viewer\r"}); E.settle(0.6)
 check("typed_in_viewer" in E.result("pane.read", {"pane_id": "w1:p2", "source": "visible"})["text"], "keys of the viewer go to the viewed pane")
-check(E.rect("w1:p2")["width"] == size["width"], "a viewer does not change the width of the pane", (E.rect("w1:p2"), size))   # (its tab makes the bar appear: one row less)
+vr = E.rect(vt)
+rows = next(p for p in E.panes() if p["pane_id"] == "w1:p2")["scroll"]["viewport_rows"]
+check(rows == vr["height"], "a viewer gives the pane the size of its own window (a program there uses the whole window)", (rows, vr, size))
 E.call("pane.close", {"pane_id": "w1:p2"}); E.settle(1.0)
 check(vt not in [p["pane_id"] for p in E.panes()] or "pane closed" in E.result("pane.read", {"pane_id": vt, "source": "visible"}).get("text", "pane closed"), "the viewer ends with its pane")
 E.call("tab.close", {"tab_id": "w1:t2"}); E.settle(0.3)

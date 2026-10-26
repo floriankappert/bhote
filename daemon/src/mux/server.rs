@@ -247,6 +247,7 @@ impl Server {
         w.next_tab = 2;
         w.tabs.push(Tab::new(1, "1".into(), pid));
         if focus || self.world.ws.len() == 1 { self.world.active = wi; }
+        if focus { self.sb_focus = None; }
         self.after_change();
         let wid = world::ws_name(self.world.ws[wi].id);
         self.emit("workspace.created", None, json!({"workspace_id": wid}));
@@ -260,7 +261,7 @@ impl Server {
         w.next_tab += 1;
         let label = if label.is_empty() { (w.tabs.len() + 1).to_string() } else { label.to_string() };
         w.tabs.push(Tab::new(tid, label, pid));
-        if focus { w.active = w.tabs.len() - 1; self.world.active = wi; }
+        if focus { w.active = w.tabs.len() - 1; self.world.active = wi; self.sb_focus = None; }
         self.after_change();
         Ok((tid, pid))
     }

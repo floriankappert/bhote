@@ -67,7 +67,7 @@ impl PanelCfg {
             chat: cfg.get("CHAT_PANEL").map_or(false, |v| matches!(v.as_str(), "bottom" | "right" | "on")),
             chat_h: num(&cfg, "CHAT_HEIGHT", 14, 6, 80),
             // PANEL_LAYOUT=single: one panel on the right with everything (as the panel was before there were two)
-            left_sections: if single { None } else { list("PANEL_LEFT", "workspaces,agents,overview") },
+            left_sections: if single { None } else { list("PANEL_LEFT", "workspaces,agents") },
             extras: {
                 let mut v: Vec<Extra> = cfg.iter().filter_map(|(k, cmd)| {
                     let name = k.strip_prefix("PANEL_")?.strip_suffix("_CMD")?; if name.is_empty() || cmd.trim().is_empty() { return None; }

@@ -38,6 +38,29 @@ pub fn of_repo(dir: &str) -> Vec<Wt> {
     out
 }
 
+/// (branch, repository, linked): what a folder is in git, read from .git without a git call: the branch ("" when detached or outside a repository), the name of the
+/// repository's folder, and whether the folder is a linked worktree (its .git is a file that points into the main repository).
+pub fn info(dir: &str) -> (String, String, bool) {
+    let mut d = Path::new(dir).to_path_buf();
+    loop {
+        let g = d.join(".git");
+        if g.is_dir() {
+            let head = fs::read_to_string(g.join("HEAD")).unwrap_or_default();
+            let repo = d.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            return (head.trim().strip_prefix("ref: refs/heads/").unwrap_or("").to_string(), repo, false);
+        }
+        if g.is_file() {
+            let t = fs::read_to_string(&g).unwrap_or_default();
+            let gd = Path::new(t.trim().strip_prefix("gitdir:").unwrap_or("").trim()).to_path_buf();
+            let head = fs::read_to_string(gd.join("HEAD")).unwrap_or_default();
+            // <main>/.git/worktrees/<name>: the repository is <main>
+            let repo = gd.ancestors().nth(3).and_then(|m| m.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            return (head.trim().strip_prefix("ref: refs/heads/").unwrap_or("").to_string(), repo, true);
+        }
+        if !d.pop() { return (String::new(), String::new(), false); }
+    }
+}
+
 /// The name of a workspace that starts in `dir`, as herdr named them: `repo (branch)` in the main checkout, `repo (wt1)` in a linked worktree `repo-wt1`;
 /// the folder's name outside a git repository.
 pub fn label_for(dir: &str) -> String {

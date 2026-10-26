@@ -258,6 +258,16 @@ p.out = b""; os.write(p.fd, b","); sets = p.expect("ettings", 8) or p.expect("SE
 p.out = b""; os.write(p.fd, b"\x1b"); back = p.expect("Agents", 8)
 ok("comma: the settings (the script's view), Esc: back") if (sets and back) else bad(f"settings round trip (settings={sets}, back={back})")
 
+# 8b) the menu button at the foot of the left panel opens the settings
+p.close()
+p = Panel(side="left"); p.expect("menu", 6); y = p.row("menu")
+if y: os.write(p.fd, f"\x1b[<0;4;{y}M\x1b[<0;4;{y}m".encode())
+sets = p.expect("ettings", 8) or p.expect("SETTINGS", 1)
+ok("a click on the menu button opens the settings") if (y and sets) else bad(f"menu button (row={y}, settings={sets}): " + "\n".join(p.screen()).replace("\n", " | ")[:300])
+p.out = b""; os.write(p.fd, b"\x1b"); p.expect("menu", 8)
+p.close()
+p = Panel()
+
 # 9) the right button opens the menu as well; a click on the Done line selects it
 y = p.fresh_row("Working topic") or Y_WORKING
 os.write(p.fd, f"\x1b[<2;10;{y}M\x1b[<2;10;{y}m".encode())

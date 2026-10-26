@@ -85,7 +85,16 @@ impl Server {
     fn ws_json(&self, wi: usize) -> Value {
         let w = &self.world.ws[wi];
         let mut l = Vec::new(); for t in &w.tabs { t.root.leaves(&mut l); }
-        json!({"workspace_id": world::ws_name(w.id), "label": w.label, "number": wi + 1, "focused": wi == self.world.active, "active_tab_id": w.tabs.get(w.active).map(|t| world::tab_name(w.id, t.id)), "pane_count": l.len(), "tab_count": w.tabs.len(), "agent_status": self.status_of(&l)})
+        json!({"workspace_id": world::ws_name(w.id), "label": w.label, "number": wi + 1, "focused": wi == self.world.active, "active_tab_id": w.tabs.get(w.active).map(|t| world::tab_name(w.id, t.id)), "pane_count": l.len(), "tab_count": w.tabs.len(), "agent_status": self.status_of(&l), "tokens": self.ws_tokens(&l)})
+    }
+    /// What the left panel draws a workspace with: the branch, the repository and whether the folder is a linked worktree (kharka carries the tokens to the other machines).
+    fn ws_tokens(&self, panes: &[u32]) -> Value {
+        let Some(p) = panes.first().and_then(|id| self.panes.get(id)) else { return json!({}) };
+        let (branch, repo, linked) = crate::worktrees::info(&p.foreground().1);
+        let mut o = serde_json::Map::new();
+        if !branch.is_empty() { o.insert("branch".into(), json!(branch)); }
+        if !repo.is_empty() { o.insert("repo".into(), json!(repo)); o.insert("worktree".into(), json!(if linked { "linked" } else { "main" })); }
+        Value::Object(o)
     }
     /// The most urgent status of the agents among these panes (blocked, working, done, idle), "unknown" when there are none.
     fn status_of(&self, panes: &[u32]) -> String {
@@ -293,7 +302,7 @@ impl Server {
                 if flag(p, "hidden").unwrap_or(false) { self.world.ws[wi].hidden = true; self.after_change(); }
                 Ok(json!({"workspace": self.ws_json(wi), "tab": self.tab_json(wi, 0), "pane": self.pane_json(&self.panes[&pid]), "type": "workspace_info"}))
             }
-            "workspace.focus" => { let wi = self.ws_of(p)?; self.world.active = wi; self.dirty = true; { let w = world::ws_name(self.world.ws[wi].id); self.emit("workspace.focused", None, json!({"workspace_id": w})); } Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
+            "workspace.focus" => { let wi = self.ws_of(p)?; self.world.active = wi; self.sb_focus = None; self.dirty = true; { let w = world::ws_name(self.world.ws[wi].id); self.emit("workspace.focused", None, json!({"workspace_id": w})); } Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
             "workspace.rename" => { let wi = self.ws_of(p)?; self.world.ws[wi].label = s(p, "label").unwrap_or("").to_string(); self.dirty = true; Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
             "workspace.close" => {
                 let wi = self.ws_of(p)?;

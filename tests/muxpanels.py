@@ -21,7 +21,7 @@ main = E.layout()["panes"][0]["rect"]
 check(s["bhote-left"]["rect"]["x"] == 0 and main["x"] == 41 and s["bhote-right"]["rect"]["x"] == main["x"] + main["width"] + 1, "left, main area, right (a cell between each)", (s, main))
 check(len(E.panes()) == 1 and E.focused() == "w1:p1", "the panels are no panes of the workspace; the focus is on the main pane")
 env = open(f"{E.T}/side.left").read()
-check("sections=workspaces,agents,overview" in env and "global=1" in env, "the left panel gets its sections and knows it is global", env)
+check("sections=workspaces,agents" in env and "global=1" in env, "the left panel gets its sections and knows it is global", env)
 check("sections=topics,done,deployments,tests" in open(f"{E.T}/side.right").read(), "the right panel its sections")
 pids = {k: c.out.decode(errors="replace") for k in ()}
 def panel_pids(): return sorted(set(__import__("re").findall(rb"PANEL-(?:left|right) (\d+)", c.out)))
