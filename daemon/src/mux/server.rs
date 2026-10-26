@@ -3,7 +3,7 @@ use super::input;
 use super::keymap::Keymap;
 use super::layout::{Dir, Rect};
 use super::pane::Pane;
-use super::proto::{self, read_frame, frame_bytes, send_nb};
+use super::proto::{self, read_frame, frame_bytes, send_nb, PollRead};
 use super::panels::{Edge, Sidebar};
 use super::pty::{self, Pty};
 use super::render::{self, Cell, Grid};
@@ -559,6 +559,8 @@ fn serve_conn(stream: UnixStream, tx: Sender<Ev>, next_client: Arc<AtomicU32>) -
             let rows = p.get("rows").and_then(|v| v.as_u64()).unwrap_or(24).clamp(1, 1000) as u16;
             let id = next_client.fetch_add(1, Ordering::SeqCst);
             writeln!(w, "{}", json!({"id": req.get("id"), "result": {"attached": true, "client": id}}))?;
+            w.set_nonblocking(true)?;   // (for the server's writes, see proto::send_nb; this thread reads with poll)
+            let mut r = PollRead(r);
             let view = p.get("pane").and_then(|v| v.as_str()).map(String::from);
             if tx.send(Ev::NewClient { id, stream: w.try_clone()?, cols, rows, view }).is_err() { return Ok(()); }
             while let Ok((t, p)) = read_frame(&mut r) { if tx.send(Ev::Frame(id, t, p)).is_err() { return Ok(()); } }
@@ -573,6 +575,7 @@ fn serve_conn(stream: UnixStream, tx: Sender<Ev>, next_client: Arc<AtomicU32>) -
                 f.push((t.to_string(), sub.get("pane_id").and_then(|p| p.as_str()).map(String::from)));
             }
             writeln!(w, "{}", json!({"id": req.get("id"), "result": {"type": "subscription_started"}}))?;
+            w.set_nonblocking(true)?;
             let _ = tx.send(Ev::Subscribe(w.try_clone()?, f));
             return Ok(());
         }

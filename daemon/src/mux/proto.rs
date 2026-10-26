@@ -14,16 +14,35 @@ pub fn sock_path() -> PathBuf {
     dir.join("mux.sock")
 }
 
-/// Writes what fits into the socket right now and says how much (0: it is full). Never waits: a client that does not read must not hold the server up.
+/// Writes what fits into the socket right now and says how much (0: it is full). The socket is non-blocking (O_NONBLOCK, set when a client attaches):
+/// a client that does not read must not hold the server up. (MSG_DONTWAIT is no help: macOS does not honour it for these sockets.)
 pub fn send_nb(s: &std::os::unix::net::UnixStream, b: &[u8]) -> io::Result<usize> {
-    use std::os::fd::AsRawFd;
     if b.is_empty() { return Ok(0); }
-    #[cfg(target_os = "linux")] let flags = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
-    #[cfg(not(target_os = "linux"))] let flags = libc::MSG_DONTWAIT;
-    let n = unsafe { libc::send(s.as_raw_fd(), b.as_ptr() as *const libc::c_void, b.len(), flags) };
-    if n >= 0 { return Ok(n as usize); }
-    let e = io::Error::last_os_error();
-    match e.raw_os_error() { Some(c) if c == libc::EAGAIN || c == libc::EWOULDBLOCK || c == libc::EINTR => Ok(0), _ => Err(e) }
+    match (&*s).write(b) {
+        Ok(n) => Ok(n),
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::Interrupted => Ok(0),
+        Err(e) => Err(e),
+    }
+}
+
+/// A reader for a non-blocking socket: waits with poll when there is nothing yet (so the thread of a client can block on it, while the server writes to the same socket).
+pub struct PollRead<R>(pub R);
+impl PollRead<io::BufReader<std::os::unix::net::UnixStream>> {
+    pub fn wait_readable(&self) {
+        use std::os::fd::AsRawFd;
+        let mut p = libc::pollfd { fd: self.0.get_ref().as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        unsafe { libc::poll(&mut p, 1, 1000); }
+    }
+}
+impl Read for PollRead<io::BufReader<std::os::unix::net::UnixStream>> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            match self.0.read(buf) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::Interrupted => self.wait_readable(),
+                r => return r,
+            }
+        }
+    }
 }
 
 pub fn frame_bytes(t: u8, payload: &[u8]) -> Vec<u8> { let mut b = Vec::with_capacity(5 + payload.len()); b.push(t); b.extend_from_slice(&(payload.len() as u32).to_be_bytes()); b.extend_from_slice(payload); b }
