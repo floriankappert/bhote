@@ -261,7 +261,16 @@ impl Panel {
         if m == self.host { crate::proc::herdr_detached(&["agent", "focus", p]); self.note_focus(p); }
         else { self.act(&["flash", m, p], "flash", true); }
     }
+    /// The settings (the menu) in a popup over the main area, not inside the side panel: the native mux opens it, the view ends with its process.
+    fn popup_delegate(&mut self, view: &str, arg: &str) {
+        let mut words: Vec<String> = vec!["popup".into(), "open".into(), "--".into(), "env".into(), format!("BHOTE_DELEGATE={view}"), format!("BHOTE_SEL_ID={}", self.sel_id), format!("BHOTE_ARG={arg}")];
+        for (k, v) in std::env::vars() { if k.starts_with("BHOTE_") && !matches!(k.as_str(), "BHOTE_DELEGATE" | "BHOTE_SEL_ID" | "BHOTE_ARG") { words.push(format!("{k}={v}")); } }
+        words.push("bash".into()); words.push(self.script.to_string_lossy().into_owned());
+        let r: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+        let _ = crate::proc::run("herdr", &r, 5, None);
+    }
     fn delegate(&mut self, term: &mut Term, view: &str, arg: &str) {
+        if view == "settings" && envs("BHOTE_MUX") == "native" { self.popup_delegate(view, arg); return; }
         let mut o = std::io::stdout(); let _ = o.write_all(b"\x1b[?1003l\x1b[?1002l\x1b[?1006l\x1b[0m\x1b[?25h"); let _ = o.flush();
         // the view runs in a child; a SIGTERM or a closed terminal for this panel ends the child as well
         if let Ok(mut ch) = Command::new("bash").arg(&self.script).env("BHOTE_DELEGATE", view).env("BHOTE_SEL_ID", &self.sel_id).env("BHOTE_ARG", arg).spawn() {

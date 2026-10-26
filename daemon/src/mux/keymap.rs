@@ -51,6 +51,7 @@ focus_panel = prefix+t
 toggle_sidebar = prefix+b
 open_panel = prefix+shift+b
 popup ctrl+alt+t bhote find
+popup ctrl+t bhote find
 ";
 
 /// A key as written in a file, as the input parser names it: modifiers in the order ctrl, alt, shift; capitals are shift+letter.
@@ -152,6 +153,11 @@ impl Keymap {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn find_popup_keys() {
+        let k = Keymap::parse(DEFAULTS);
+        for key in ["ctrl+t", "ctrl+alt+t"] { assert_eq!(k.global(key).map(|b| (b.action.as_str(), b.arg.as_deref())), Some(("popup", Some("bhote find")))); }
+    }
     use super::*;
     #[test]
     fn canonical_names() {

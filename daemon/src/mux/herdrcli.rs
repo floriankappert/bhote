@@ -67,6 +67,7 @@ pub fn exec(args: &[String]) -> (i32, String, String) {
         ("machine", "list") => return (0, so, se),
         ("server", "reload-config") | ("config", "check") => { out!("{}", json!({"id": "cli:server:reload-config", "result": {"status": "applied", "diagnostics": []}})); return (0, so, se); }
         ("notification", "show") => method = "notification.show".into(),
+        ("popup", "open") => { method = "popup.open".into(); put("command", json!(resume)); }   // (the words after `--`: a floating pane over the shown tab)
         ("api", "snapshot") => method = "api.snapshot".into(),
         ("pane", "list") => { method = "pane.list".into(); if let Some(w) = a.get("workspace") { put("workspace_id", json!(w)); } if let Some(t) = a.get("tab") { put("tab_id", json!(t)); } }
         ("pane", "get") => { method = "pane.get".into(); put("pane_id", json!(pane(true))); }

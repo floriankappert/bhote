@@ -294,6 +294,11 @@ impl Server {
                 self.dirty = true;
                 Ok(json!({}))
             }
+            "popup.open" => {
+                let cmd: Vec<String> = p.get("command").and_then(|c| c.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
+                if cmd.is_empty() { return Err(("invalid_params", "popup.open needs a command".into())); }
+                self.open_popup(cmd); Ok(json!({}))
+            }
             // ── workspaces
             "workspace.list" => { let all = flag(p, "all").unwrap_or(false); Ok(json!({"workspaces": (0..self.world.ws.len()).filter(|i| all || !self.world.ws[*i].hidden).map(|i| self.ws_json(i)).collect::<Vec<_>>(), "type": "workspace_list"})) }
             "workspace.get" => { let wi = self.ws_of(p)?; Ok(json!({"workspace": self.ws_json(wi), "type": "workspace_info"})) }
