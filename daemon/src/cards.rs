@@ -573,6 +573,7 @@ impl<'a> Cards<'a> {
             let t = &self.ts[i]; let st = t.status.as_str();
             let gk = if st == "waiting" && t.dep == "1" { "deploying" } else { st };
             if st == "done" { continue; }
+            if matches!(st, "now" | "testing" | "finished") && !t.ap.is_empty() && self.agent_state(if t.am.is_empty() { &self.host } else { &t.am }, &t.ap) == "gone" { continue; }   // (an agent panel lists agents: a topic whose agent is gone is a topic of the right panel)
             match gk { "next" | "waiting" | "later" => if mode == "cards" { continue; }, _ => if mode == "lists" { continue; } }
             if !self.in_scope(i) { continue; }
             if !plan.before[i].is_empty() { let n = match plan.before[i].as_str() { "next" => plan.n_next, "waiting" => plan.n_waiting, _ => plan.n_later }; out.push_str(&self.more_row(&plan.before[i], n - self.v.line_max)); }

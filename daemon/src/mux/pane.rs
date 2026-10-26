@@ -3,7 +3,7 @@ use super::pty::Pty;
 use std::io::Write;
 
 #[derive(Default)]
-pub struct Hooks { pub reply: Vec<u8>, pub title: Option<String>, pub clipboard: Vec<String>, pub bell: bool }
+pub struct Hooks { pub kitty: Vec<u32>, pub reply: Vec<u8>, pub title: Option<String>, pub clipboard: Vec<String>, pub bell: bool }
 
 impl vt100::Callbacks for Hooks {
     fn set_window_title(&mut self, _: &mut vt100::Screen, t: &[u8]) { self.title = Some(String::from_utf8_lossy(t).into_owned()); }
@@ -19,6 +19,12 @@ impl vt100::Callbacks for Hooks {
             (Some(b'?'), None, 'n') if p0 == 6 => { let (r, c) = s.cursor_position(); self.reply.extend_from_slice(format!("\x1b[?{};{}R", r + 1, c + 1).as_bytes()) }
             (None, None, 'c') if p0 == 0 => self.reply.extend_from_slice(b"\x1b[?62;4;22c"),
             (Some(b'>'), None, 'c') => self.reply.extend_from_slice(b"\x1b[>0;0;0c"),
+            // the kitty keyboard protocol the program asks for: push (>), pop (<), set (=), ask (?)
+            (Some(b'>'), None, 'u') => { if self.kitty.len() < 32 { self.kitty.push(p0 as u32); } }
+            (Some(b'<'), None, 'u') => { for _ in 0..p0.max(1) { self.kitty.pop(); } }
+            (Some(b'='), None, 'u') => { let mode = params.get(1).and_then(|p| p.first()).copied().unwrap_or(1); let cur = self.kitty.last().copied().unwrap_or(0); let n = p0 as u32;
+                let v = match mode { 2 => cur | n, 3 => cur & !n, _ => n }; match self.kitty.last_mut() { Some(l) => *l = v, None => self.kitty.push(v) } }
+            (Some(b'?'), None, 'u') => self.reply.extend_from_slice(format!("\x1b[?{}u", self.kitty.last().copied().unwrap_or(0)).as_bytes()),
             _ => {}
         }
     }
@@ -89,6 +95,8 @@ impl Pane {
         let reply = std::mem::take(&mut self.parser.callbacks_mut().reply);
         if !reply.is_empty() { self.input(&reply); }
     }
+    /// The flags of the kitty keyboard protocol the program has switched on (0: it wants the old keys)
+    pub fn kitty_flags(&self) -> u32 { self.parser.callbacks().kitty.last().copied().unwrap_or(0) }
     pub fn input(&mut self, bytes: &[u8]) { let _ = self.wtx.send(bytes.to_vec()); }
     pub fn resize(&mut self, cols: u16, rows: u16) {
         let (r, c) = self.parser.screen().size();

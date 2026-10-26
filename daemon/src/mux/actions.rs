@@ -136,7 +136,7 @@ fn key(s: &mut Server, id: u32, k: Key) {
 fn forward(s: &mut Server, raw: &[u8]) {
     if let Some(p) = s.input_pane().and_then(|f| s.panes.get_mut(&f)) {
         if p.screen().scrollback() > 0 { p.parser.screen_mut().set_scrollback(0); }
-        p.input(raw);
+        if p.kitty_flags() == 0 { p.input(&super::input::legacy(raw)); } else { p.input(raw); }   // (the terminal sends the kitty form; a program that did not ask for it gets the old keys)
     }
 }
 

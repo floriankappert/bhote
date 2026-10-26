@@ -92,7 +92,7 @@ impl Panel {
         let latest = txt.lines().filter_map(|l| l.strip_prefix("latest=")).last().unwrap_or("").to_string();
         if latest.is_empty() || !latest.bytes().all(|b| b.is_ascii_digit() || b == b'.') { return String::new(); }
         let parse = |s: &str| -> u64 { let mut it = s.split('.').map(|x| x.parse::<u64>().unwrap_or(0)); it.next().unwrap_or(0) * 1_000_000 + it.next().unwrap_or(0) * 1000 + it.next().unwrap_or(0) };
-        if parse(&latest) > parse(&self.version) { format!("⬆ Update available v{} · , settings", latest) } else { String::new() }
+        if parse(&latest) > parse(&self.version) { format!("⬆ Update available v{}", latest) } else { String::new() }
     }
     fn current_project(&self) -> String {
         // a global side panel (the native mux) belongs to no tab: the project is that of the pane that is shown
@@ -335,6 +335,7 @@ impl Panel {
             return;
         }
         if b != 0 { return; }
+        if self.sec.overview && y == self.rows as i64 - 1 && x < 12 { self.delegate(term, "settings", ""); return; }   // the menu button at the foot of the left panel
         if div > 0 && y >= div + 1 {   // below the divider: an agent?
             let split: i64 = self.agmap.first().and_then(|s| s.trim().parse().ok()).unwrap_or(0); let rel = y - div - 1;
             if split > 0 { if let Some(line) = self.agmap.iter().skip(1).find(|l| l.split('\u{1e}').next().and_then(|r| r.parse::<i64>().ok()) == Some(rel)) {

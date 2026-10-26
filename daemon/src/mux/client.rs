@@ -39,7 +39,7 @@ impl Raw {
         let saved = t;
         unsafe { libc::cfmakeraw(&mut t); libc::tcsetattr(0, libc::TCSANOW, &t); }
         let mut o = std::io::stdout();
-        let _ = o.write_all(b"\x1b[?1049h\x1b[2J"); let _ = o.flush();
+        let _ = o.write_all(b"\x1b[?1049h\x1b[2J\x1b[>1u"); let _ = o.flush();
         Some(Raw { saved })
     }
 }
@@ -47,7 +47,7 @@ impl Drop for Raw {
     fn drop(&mut self) {
         // every mode the panes may have switched on goes back to the terminal's defaults
         let mut o = std::io::stdout();
-        let _ = o.write_all(b"\x1b[0m\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1l\x1b>\x1b[?1049l");
+        let _ = o.write_all(b"\x1b[0m\x1b[?25h\x1b[?2004l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l\x1b[?1l\x1b>\x1b[<u\x1b[?1049l");
         let _ = o.flush();
         unsafe { libc::tcsetattr(0, libc::TCSANOW, &self.saved); }
     }

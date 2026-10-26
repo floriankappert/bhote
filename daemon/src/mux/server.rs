@@ -300,6 +300,10 @@ impl Server {
             if let Some(p) = t.popup { let q = World::popup_rect(area); sizes.push((p, Rect { x: q.x + 1, y: q.y + 1, w: q.w.saturating_sub(2).max(1), h: q.h.saturating_sub(2).max(1) })); }
         } }
         for (id, r, _) in self.sidebar_rects() { sizes.push((id, r)); }
+        // a viewer (a pane of this machine shown on another one) gives its pane the size of its own window: the program uses the whole window there
+        for c in self.clients.iter().filter(|c| c.view.is_some()) {
+            if let Some(id) = c.view.as_deref().and_then(|n| self.pane_by_name(n)) { sizes.retain(|(i, _)| *i != id); sizes.push((id, Rect { x: 0, y: 0, w: c.cols.max(1), h: c.rows.max(1) })); }
+        }
         for (id, r) in sizes { if let Some(p) = self.panes.get_mut(&id) { p.resize(r.w, r.h); } }
         self.dirty = true;
     }

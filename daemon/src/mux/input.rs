@@ -160,6 +160,30 @@ impl Parser {
     }
 }
 
+/// legacy: a key in the kitty form (ESC [ code ; modifiers u) as the old terminals send it, for a program that did not ask for the kitty protocol; anything else unchanged.
+/// (Shift+Enter is a plain Enter there.)
+pub fn legacy(raw: &[u8]) -> Vec<u8> {
+    let Some(body) = raw.strip_prefix(b"\x1b[").and_then(|r| r.strip_suffix(b"u")) else { return raw.to_vec() };
+    let Ok(t) = std::str::from_utf8(body) else { return raw.to_vec() };
+    if t.starts_with(|c: char| !c.is_ascii_digit()) { return raw.to_vec(); }
+    let mut it = t.split(';');
+    let code: u32 = it.next().and_then(|c| c.split(':').next()).and_then(|c| c.parse().ok()).unwrap_or(0);
+    let m = it.next().and_then(|c| c.split(':').next()).and_then(|c| c.parse::<u32>().ok()).unwrap_or(1).max(1) - 1;
+    let (shift, alt, ctrl) = (m & 1 != 0, m & 2 != 0, m & 4 != 0);
+    let Some(ch) = char::from_u32(code) else { return raw.to_vec() };
+    let mut out: Vec<u8> = Vec::new();
+    match code {
+        9 if shift => { out.extend_from_slice(b"\x1b[Z"); return out; }
+        13 | 9 | 27 | 127 => out.push(code as u8),
+        _ if ctrl && ch.is_ascii_alphabetic() => out.push(ch.to_ascii_lowercase() as u8 & 0x1f),
+        32 if ctrl => out.push(0),
+        _ if ctrl && matches!(ch, '[' | '\\' | ']' | '^' | '_') => out.push(ch as u8 & 0x1f),
+        _ => { let c = if shift && ch.is_ascii_lowercase() { ch.to_ascii_uppercase() } else { ch }; let mut b = [0u8; 4]; out.extend_from_slice(c.encode_utf8(&mut b).as_bytes()); }
+    }
+    if alt { out.insert(0, 0x1b); }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,6 +198,10 @@ mod tests {
         assert_eq!(names(b"\x1b[3~\x1b[5~\x1b[1;3H\x1b[Z"), ["delete", "pageup", "alt+home", "shift+tab"]);
         assert_eq!(names("ä日".as_bytes()), ["ä", "日"]);
         assert_eq!(names(b"\x1b[13;2u"), ["shift+enter"]);
+        assert_eq!(legacy(b"\x1b[13;2u"), b"\r");
+        assert_eq!(legacy(b"\x1b[99;5u"), b"\x03");
+        assert_eq!(legacy(b"\x1b[27u"), b"\x1b");
+        assert_eq!(legacy(b"\x1b[1;5A"), b"\x1b[1;5A");
     }
     #[test]
     fn split_across_reads() {

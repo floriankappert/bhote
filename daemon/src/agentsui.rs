@@ -110,7 +110,7 @@ impl<'a> Cards<'a> {
         if let Some(n) = want { let mx = (rows - 3 - 4 - 4).max(1); maxr = n.max(1).min(mx).max(1); }
         let cw = (cols - 4) / 2;
         let mut out = crate::ui::dash_caption_agents(self.c, av.hover_btn);
-        let footer = if !av.remote_on && av.has_machines { format!("\n  {}{}{}\n", g("D"), clip("Remote agents off · , settings", cols - 4), x) } else { String::new() };
+        let footer = if !av.remote_on && av.has_machines { format!("\n  {}{}{}\n", g("D"), clip("Remote agents off", cols - 4), x) } else { String::new() };
         let compact = self.c.cfg.get("AGENTS_COMPACT").map_or(false, |v| v == "on");
         let ag = self.agent_rows();
         if compact && !ag.is_empty() {
@@ -226,7 +226,7 @@ pub fn bottom_side(cards: &Cards, av: &AgentView, mcodes: &[(String, String)], w
     text.push_str(&format!("  {}{}{}\n", g("MUTED"), "┈".repeat((cards.c.cols - 5).max(0) as usize), x));
     let room = cards.c.cols - 4;
     if !av.flash.is_empty() { text.push_str(&format!("  {}{}{}", g("S"), clip(&av.flash, room), x)); }
-    else { text.push_str(&format!("  {}{}{}", g("D"), clip(", settings", room), x)); }
+    else if with_agents { text.push_str(&format!("  {}{}{}", g("D"), clip("☰ menu", room), x)); }   // (the button of the left panel: a click opens the settings)
     Bottom { text, agrows, agmap }
 }
 #[allow(dead_code)]
