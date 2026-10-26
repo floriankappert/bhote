@@ -2,7 +2,7 @@
 """A pane of another machine in a tab of its own: `bhote view <pane>` shows one pane of a server (keys go to it, it is not resized, it ends with the pane),
 and a click on an agent of another machine (remote_view of the script) opens such a tab over ssh. Here ssh is a fake that runs the command on this machine,
 so the 'other machine' is the same server. Usage: python3 tests/muxview.py"""
-import os, time
+import os, time, subprocess
 from muxlib import *
 E = Env()
 check = E.check
@@ -50,6 +50,16 @@ if mount:
     E.call("pane.run", {"pane_id": "w1:p1", "command": call}); E.settle(1.0)
     allws = E.result("workspace.list", {"all": True})["workspaces"]
     check(len([w for w in allws if w["label"] == "Omarchy · IMS (wt1)"]) == 1 and next(w for w in allws if w["label"] == "Omarchy · IMS (wt1)")["focused"], "a second click shows the same one (no second)")
+    # the same without the script (bhoted mount: what a click in the panel does): the mount that is there is shown, none is made twice
+    E.call("workspace.focus", {"workspace_id": "w1"})
+    subprocess.run([BIN, "mount", "Omarchy", ws, other], env=E.env, capture_output=True, timeout=20); E.settle(1.0)
+    allws = E.result("workspace.list", {"all": True})["workspaces"]
+    check(len([w for w in allws if w["label"] == "Omarchy · IMS (wt1)"]) == 1 and next(w for w in allws if w["label"] == "Omarchy · IMS (wt1)")["focused"], "bhoted mount shows the mount that is there (no second one)", [(w["label"], w["focused"]) for w in allws])
+    open(f"{E.T}/shared/workspaces.remote", "a").write("Omarchy\x1fw9\x1fSecond one\x1f2\x1fidle\n")
+    subprocess.run([BIN, "mount", "Omarchy", "w9", other], env=E.env, capture_output=True, timeout=20); E.settle(1.2)
+    allws = E.result("workspace.list", {"all": True})["workspaces"]
+    sec = next((w for w in allws if w["label"] == "Omarchy · Second one"), None)
+    check(sec is not None and "agent_text_here" in E.result("pane.read", {"pane_id": next(p["pane_id"] for p in E.panes() if p["workspace_id"] == sec["workspace_id"]), "source": "visible"}).get("text", ""), "bhoted mount makes a mount that shows the pane (ssh + view)", [w["label"] for w in allws])
     # nobody looks any more: the views end (the ssh connection and the size over there are let go)
     c.kill(); time.sleep(4)
     check(not any(w["label"] == "Omarchy · IMS (wt1)" for w in E.result("workspace.list", {"all": True})["workspaces"]), "without a client the view ends after the grace time")
@@ -64,4 +74,5 @@ r = subprocess.run(["herdr", "--machine", "Omarchy", "pane", "read", pid0, "--so
 check(r.returncode == 0 and "marker_42" in r.stdout, "also with options and a text answer (pane read)", r.stdout[:200] + r.stderr)
 r = subprocess.run(["herdr", "--machine", "Nowhere", "pane", "list"], env=henv, capture_output=True, text=True)
 check(r.returncode == 1 and "no machine Nowhere" in r.stderr, "an unknown machine is an error")
+
 E.done()

@@ -185,15 +185,16 @@ impl<'a> Cards<'a> {
                 let r = &rows[i];
                 let ic = match r.st.as_str() { "working" => format!("{}✶", g("ORANGE")), "blocked" => format!("{}◉", g("NN")), "done" => format!("{}✓", g("GREEN")), "idle" => format!("{}○", g("GREEN")), _ => format!("{}·", g("D")) };
                 let (bg, tc, bc) = if r.focused { (g("CARDSEL"), format!("{}{}", g("BOLD"), g("DSEL")), g("DSEL")) } else { (String::new(), format!("{}{}", g("BOLD"), g("L")), g("D")) };
-                let (indent, wi) = if child { (format!("{}{}{}", g("D"), if last { "└─ " } else { "├─ " }, x), 5) } else { (String::new(), 2) };
-                let name = clip(&r.label, w - 4 - wi); let nw = dw(&name);
-                let pad = sp((w - 3 - wi - nw).max(0));
-                let line = format!("{}{}{}{} {}{}{}{}{}{}{}\n", bg, if child { "   " } else { " " }, indent, ic, x, bg, tc, name, x, bg, format!("{}{}", pad, x));
+                // every row of an item has the same width, so that the highlight is one full box
+                let (indent, lw) = if child { (format!("{}{}{}", g("D"), if last { "└─ " } else { "├─ " }, x), 6) } else { (String::new(), 1) };
+                let name = clip(&r.label, w - lw - 2); let nw = dw(&name);
+                let pad = sp((w - lw - 2 - nw).max(0));
+                let line = format!("{}{}{}{}{}{}{} {}{}{}{}{}{}\n", bg, if child { "   " } else { " " }, indent, bg, ic, x, bg, bg, tc, name, x, bg, format!("{}{}", pad, x));
                 let rf = if r.local { format!("ws:{}", r.id) } else { format!("rws:{}:{}", mach, r.id) };   // (another machine's workspace: a click shows it here)
                 out.push_str(&format!("{}{}{}{}", REF, rf, REF, line));
                 if !child && !r.branch.is_empty() {
-                    let br = clip(&r.branch, w - 4 - 3);
-                    out.push_str(&format!("{}{}{}{}{}   {}{}{}{}{}\n", REF, rf, REF, bg, "  ", bc, br, x, bg, format!("{}{}", sp((w - 3 - 2 - dw(&br)).max(0)), x)));
+                    let br = clip(&r.branch, w - 3);
+                    out.push_str(&format!("{}{}{}{}   {}{}{}{}{}{}\n", REF, rf, REF, bg, bc, br, x, bg, sp((w - 3 - dw(&br)).max(0)), x));
                 }
             }
         }

@@ -17,6 +17,7 @@ mod follow;
 mod mux;
 mod chat;
 mod worktrees;
+mod mount;
 mod procinfo;
 use std::collections::HashMap;
 use std::fs;
@@ -171,6 +172,12 @@ fn main() {
     if a.len() >= 2 && a[1] == "mux" { std::process::exit(mux::server::run()); }                     // the pane server (docs/mux-protocol.md)
     if a.len() >= 2 && a[1] == "herdr" { std::process::exit(mux::herdrcli::run(&a[2..])); }       // the herdr command line, answered by the native mux
     if a.len() >= 2 && a[1] == "chat" { std::process::exit(chat::run()); }                         // the chat panel: an input field and the history of an agent
+    if a.len() >= 4 && a[1] == "mount" {                                                              // bhoted mount <machine> <workspace> [pane]: a workspace of another machine shown here
+        std::env::set_var("BHOTE_MUX", "native");
+        let shared = std::path::PathBuf::from(std::env::var("BHOTE_SHARED").unwrap_or_default());
+        let cfg = config_read(&mux::panels::config_path());
+        std::process::exit(if mount::workspace(&shared, &cfg, &a[2], &a[3], a.get(4).map_or("", |p| p.as_str()), "") { 0 } else { 1 });
+    }
     if a.len() >= 3 && a[1] == "view" { std::process::exit(mux::client::view(&a[2])); }              // one pane of the server, without chrome (bhote view <pane>)
     if a.len() >= 2 && a[1] == "attach" { std::process::exit(mux::client::attach()); }               // a terminal on the pane server (starts it when none runs)
     if a.len() >= 3 && a[1] == "mux-call" { std::process::exit(mux::client::call_main(&a[2..])); }  // bhoted mux-call <method> [params json]

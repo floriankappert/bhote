@@ -256,9 +256,19 @@ impl Panel {
         let (f, tmp) = (self.shared.join("focus.pane"), self.shared.join(format!("focus.pane.tmp.{}", std::process::id())));
         if fs::write(&tmp, format!("{} {}\n", pane, tab)).is_ok() { let _ = fs::rename(&tmp, &f); }
     }
+    /// A workspace of another machine (or "+new" under it) shown here: done in a thread of this program, no script
+    fn mount(&mut self, m: String, w: String) {
+        if envs("BHOTE_MUX") != "native" { if w == "+new" { self.act(&["newws", &m], "flash", true); } else { self.act(&["mountws", &m, &w], "flash", false); } return; }
+        let (shared, cfg) = (self.shared.clone(), self.cfg.clone());
+        std::thread::spawn(move || { if w == "+new" { crate::mount::new_workspace(&shared, &cfg, &m); } else { crate::mount::workspace(&shared, &cfg, &m, &w, "", ""); } });
+    }
     fn agent_jump(&mut self, m: &str, p: &str) {
         if p.is_empty() || !p.chars().all(|c| c.is_ascii_alphanumeric() || ":_-".contains(c)) { return; }
         if m == self.host { crate::proc::herdr_detached(&["agent", "focus", p]); self.note_focus(p); }
+        else if envs("BHOTE_MUX") == "native" {   // (an agent of another machine: its workspace is shown here, no script)
+            let (shared, cfg, m, p) = (self.shared.clone(), self.cfg.clone(), m.to_string(), p.to_string());
+            std::thread::spawn(move || { let w = p.split(':').next().unwrap_or("").to_string(); crate::mount::workspace(&shared, &cfg, &m, &w, &p, ""); });
+        }
         else { self.act(&["flash", m, p], "flash", true); }
     }
     /// The settings (the menu) in a popup over the main area, not inside the side panel: the native mux opens it, the view ends with its process.
@@ -357,7 +367,7 @@ impl Panel {
                 let id = t.clone();
                 if let Some(wid) = id.strip_prefix("ws:") { self.focus_workspace(wid); return; }   // (a workspace of the left panel: show it)
                 if let Some(rest) = id.strip_prefix("rws:") {   // a workspace of another machine: shown here as a workspace of its own (over ssh)
-                    if let Some((m, w)) = rest.rsplit_once(':') { let (m, w) = (m.to_string(), w.to_string()); if w == "+new" { self.act(&["newws", &m], "flash", true); } else { self.act(&["mountws", &m, &w], "flash", false); } }
+                    if let Some((m, w)) = rest.rsplit_once(':') { let (m, w) = (m.to_string(), w.to_string()); self.mount(m, w); }
                     self.redraw = true; return;
                 }
                 if let Some(rest) = id.strip_prefix("agent:") {   // an idle agent's card: show the agent

@@ -7031,6 +7031,7 @@ find_draw() {  # find_draw <query> <selected hit> <note>: the hits under a capti
 }
 panel_focus_active() {  # the bhote panel of the tab under the popup gets the focus
     local act
+    [ "${BHOTE_MUX:-}" = native ] && { herdr panel focus --side right >/dev/null 2>&1; return; }   # (the native mux: its side panel is global, no pane of this tab)
     act=${HERDR_ACTIVE_PANE_ID:-}
     [ -n "$act" ] || act=$(printf '%s' "${HERDR_PLUGIN_CONTEXT_JSON:-}" | jq -r '[.. | objects | (.focused_pane_id? // .pane_id?) | strings][0] // empty' 2>/dev/null)
     [ -n "$act" ] || act=$(herdr pane list 2>/dev/null | jq -r '[.result.panes[] | select(.focused)][0].pane_id // empty')

@@ -1,6 +1,7 @@
 //! The control API of the mux (newline JSON on the socket): the verbs of herdr, with the shapes of its answers.
 use super::layout::{self, Dir, Rect, Side};
 use super::pane::Pane;
+use super::panels::Edge;
 use super::server::{Server, Spawn};
 use super::world::{self, World};
 use serde_json::{json, Value};
@@ -293,6 +294,11 @@ impl Server {
                 if let Some(c) = p.get("clear_tokens").and_then(|t| t.as_array()) { for k in c.iter().filter_map(|k| k.as_str()) { q.tokens.remove(k); } }
                 self.dirty = true;
                 Ok(json!({}))
+            }
+            "panel.focus" => {   // the keys go to a side panel (the right one unless `side` says left), as prefix+t does
+                let edge = if s(p, "side") == Some("left") { Edge::Left } else { Edge::Right };
+                let Some(pane) = self.sidebar_at(edge).map(|sb| sb.pane).or_else(|| self.sidebar_at(Edge::Left).map(|sb| sb.pane)) else { return Err(("not_found", "no side panel".into())) };
+                self.sb_focus = Some(pane); self.dirty = true; Ok(json!({}))
             }
             "popup.open" => {
                 let cmd: Vec<String> = p.get("command").and_then(|c| c.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()).unwrap_or_default();
