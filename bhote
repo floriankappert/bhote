@@ -117,6 +117,7 @@ DEPLOY_MONITOR|off|bool|Deployment monitor: the last deployments of the projects
 DEPLOY_EVERY|60|int:15:3600|Seconds between two deployment checks
 DEPLOY_GITHUB|on|bool|Deployment monitor: GitHub Actions (through gh and its login)
 DEPLOY_CIRCLECI|on|bool|Deployment monitor: CircleCI (its API v2, with the CircleCI token)
+DEPLOY_PIPELINES|on|bool|Deployment monitor: also the CircleCI pipelines that run now on other branches (a pull request of someone else), with the branch and who pushed (the daemon bhoted)
 TEST_MONITOR|off|bool|Test monitor: the last test runs (local runs, CI test jobs) above the agents
 TEST_EVERY|60|int:15:3600|Seconds between two test checks
 TEST_LOCAL|on|bool|Test monitor: local runs (bhote test run -- <command>) and live status files

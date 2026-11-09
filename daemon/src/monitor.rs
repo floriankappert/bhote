@@ -201,7 +201,7 @@ fn tests_github(c: &Ctx, proj: &str, slug: &str, names: &str) -> Option<Vec<Stri
 }
 
 // ── CircleCI ────────────────────────────────────────────────────────────────────────────────────────────────
-struct Wf { id: String, name: String, status: String, created: String, num: String, subj: String, branch: String }
+struct Wf { id: String, name: String, status: String, created: String, num: String, subj: String, branch: String, actor: String }
 fn circleci_workflows(c: &Ctx, slug: &str, branch: &str, k: usize) -> Vec<Wf> {
     let mut q = format!("project/{}/pipeline", slug); if !branch.is_empty() { q.push_str(&format!("?branch={}", branch)); }
     let mut out = Vec::new();
@@ -211,13 +211,14 @@ fn circleci_workflows(c: &Ctx, slug: &str, branch: &str, k: usize) -> Vec<Wf> {
         let mut out = Vec::new();
         let pid = s(&it["id"]); if pid.is_empty() { return out; }
         let (num, subj, br) = (s(&it["number"]), cc_ctrl(&s(&it["vcs"]["commit"]["subject"])), s(&it["vcs"]["branch"]));
+        let actor = cc_ctrl(&s(&it["trigger"]["actor"]["login"]));
         let Some(w) = circleci_get(c, &format!("pipeline/{}/workflow", pid)) else { return out };
         let mut by: BTreeMap<String, Value> = BTreeMap::new();   // group_by(.name) | max_by(.created_at)
         for x in w["items"].as_array().into_iter().flatten() {
             let n = s(&x["name"]);
             if by.get(&n).map_or(true, |o| s(&x["created_at"]) >= s(&o["created_at"])) { by.insert(n, x.clone()); }
         }
-        for (n, x) in by { out.push(Wf { id: s(&x["id"]), name: n, status: s(&x["status"]), created: s(&x["created_at"]), num: num.clone(), subj: subj.clone(), branch: br.clone() }); }
+        for (n, x) in by { out.push(Wf { id: s(&x["id"]), name: n, status: s(&x["status"]), created: s(&x["created_at"]), num: num.clone(), subj: subj.clone(), branch: br.clone(), actor: actor.clone() }); }
         out
     });
     for v in per { out.extend(v); }
@@ -289,6 +290,29 @@ fn deploys_circleci(c: &Ctx, proj: &str, slug: &str, branches: &str, names: &str
         out
     });
     per.into_iter().flatten().collect()
+}
+/// The pipelines that run now on a branch that is no deploy branch (a pull request of someone else, a feature branch): one row per
+/// running workflow, the label is the workflow's name, the note "branch|~|who · what was pushed". They are listed with the deployments
+/// so that what runs in CircleCI is seen, whoever started it (DEPLOY_PIPELINES=off leaves them out).
+fn running_circleci(c: &Ctx, proj: &str, slug: &str, branches: &str) -> Vec<String> {
+    let deploy: Vec<&str> = branches.split(',').filter(|e| !e.is_empty()).map(|e| e.split('=').next().unwrap_or("")).collect();
+    let wfs = circleci_workflows(c, slug, "", 15);
+    let live: Vec<&Wf> = wfs.iter().filter(|w| matches!(circleci_state(&w.status), Some("running" | "approval")) && !deploy.contains(&w.branch.as_str())
+        && !w.name.to_lowercase().starts_with("setup") && !w.name.to_lowercase().starts_with("path-filter")).collect();
+    let jobs = par_map(&live, |w| circleci_jobs(c, &w.id, &w.status));
+    let mut out = Vec::new();
+    for (w, j) in live.iter().zip(jobs) {
+        let Some(state) = circleci_state(&w.status) else { continue };
+        let Some(t) = iso(&w.created) else { continue };
+        let items: Vec<&Value> = j.as_ref().map(|j| j["items"].as_array().into_iter().flatten().collect()).unwrap_or_default();
+        let part: Vec<&&Value> = items.iter().filter(|x| !s(&x["name"]).to_lowercase().starts_with("notify") && s(&x["status"]) != "not_run").collect();
+        let d = part.iter().filter(|x| TERM_DEPLOY.contains(&s(&x["status"]).as_str())).count();
+        let who = if w.actor.is_empty() { String::new() } else { format!("{} · ", w.actor) };
+        let shipped: String = mon_shipped(&w.subj).chars().take(70).collect();
+        out.push(line(&[&t.to_string(), proj, &w.name, state, &d.to_string(), &part.len().to_string(), &format!("{}|~|{}{}", w.branch, who, shipped),
+            &format!("https://app.circleci.com/pipelines/{}/{}/workflows/{}", slug, w.num, w.id)]));
+    }
+    out
 }
 fn tests_circleci(c: &Ctx, proj: &str, slug: &str, names: &str) -> Vec<String> {
     let wanted: Vec<&str> = names.split(',').collect(); let mut out = Vec::new();
@@ -393,7 +417,11 @@ pub fn fetch(c: &Ctx, kind: &str) {
         let (br, nm, tn) = (first(&p.file, "deploy_branches"), first(&p.file, "deploy_names"), first(&p.file, "test_names"));
         match (kind, ci.split_once(':')) {
             ("deploys", Some(("github", slug))) => if c.on("DEPLOY_GITHUB", "on") && ghok() { deploys_github(&p.name, slug, &br, &nm).unwrap_or_default() } else { Vec::new() },
-            ("deploys", Some(("circleci", slug))) => if c.on("DEPLOY_CIRCLECI", "on") { deploys_circleci(c, &p.name, slug, &br, &nm) } else { Vec::new() },
+            ("deploys", Some(("circleci", slug))) => if c.on("DEPLOY_CIRCLECI", "on") {
+                let mut v = deploys_circleci(c, &p.name, slug, &br, &nm);
+                if c.on("DEPLOY_PIPELINES", "on") { v.extend(running_circleci(c, &p.name, slug, &br)); }
+                v
+            } else { Vec::new() },
             ("tests", Some(("github", slug))) => if c.on("TEST_GITHUB", "on") && ghok() { tests_github(c, &p.name, slug, &tn).unwrap_or_default() } else { Vec::new() },
             ("tests", Some(("circleci", slug))) => if c.on("TEST_CIRCLECI", "on") { tests_circleci(c, &p.name, slug, &tn) } else { Vec::new() },
             _ => Vec::new(),
