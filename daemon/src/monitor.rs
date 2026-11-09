@@ -201,7 +201,7 @@ fn tests_github(c: &Ctx, proj: &str, slug: &str, names: &str) -> Option<Vec<Stri
 }
 
 // ── CircleCI ────────────────────────────────────────────────────────────────────────────────────────────────
-struct Wf { id: String, status: String, created: String, num: String, subj: String, branch: String }
+struct Wf { id: String, name: String, status: String, created: String, num: String, subj: String, branch: String }
 fn circleci_workflows(c: &Ctx, slug: &str, branch: &str, k: usize) -> Vec<Wf> {
     let mut q = format!("project/{}/pipeline", slug); if !branch.is_empty() { q.push_str(&format!("?branch={}", branch)); }
     let mut out = Vec::new();
@@ -217,7 +217,7 @@ fn circleci_workflows(c: &Ctx, slug: &str, branch: &str, k: usize) -> Vec<Wf> {
             let n = s(&x["name"]);
             if by.get(&n).map_or(true, |o| s(&x["created_at"]) >= s(&o["created_at"])) { by.insert(n, x.clone()); }
         }
-        for (_, x) in by { out.push(Wf { id: s(&x["id"]), status: s(&x["status"]), created: s(&x["created_at"]), num: num.clone(), subj: subj.clone(), branch: br.clone() }); }
+        for (n, x) in by { out.push(Wf { id: s(&x["id"]), name: n, status: s(&x["status"]), created: s(&x["created_at"]), num: num.clone(), subj: subj.clone(), branch: br.clone() }); }
         out
     });
     for v in per { out.extend(v); }
@@ -250,17 +250,23 @@ fn deploys_circleci(c: &Ctx, proj: &str, slug: &str, branches: &str, names: &str
         if lab == b { lab.clear(); }
         let wfs = circleci_workflows(c, slug, b, 4);
         let jobs = par_map(&wfs, |w| circleci_state(&w.status).and_then(|_| circleci_jobs(c, &w.id, &w.status)));
-        for (w, jobs) in wfs.iter().zip(jobs) {
+        let mut rows: Vec<String> = Vec::new(); let mut cands: Vec<(usize, &'static str, Value)> = Vec::new();
+        for (wi, (w, jobs)) in wfs.iter().zip(jobs).enumerate() {
             let Some(state) = circleci_state(&w.status) else { continue };
             let Some(jobs) = jobs else { continue };
             let items: Vec<&Value> = jobs["items"].as_array().into_iter().flatten().collect();
             let all: Vec<String> = items.iter().map(|j| s(&j["name"])).collect();
-            let dj: Option<String> = if names.is_empty() {
-                all.iter().find(|n| n.to_lowercase().contains("deploy")).or_else(|| all.iter().find(|n| n.to_lowercase().contains("approv"))).cloned()
-            } else { map_entries(names).into_iter().map(|e| e.0).find(|k| all.contains(k)) };
-            let Some(dj) = dj else { continue };
+            // the deploy job of the workflow: one of the names map that it really has, else (a name that is no job, e.g. the name of a workflow group) the first job with
+            // "deploy" in its name, else a hold for approval
+            let auto: Option<String> = all.iter().find(|n| n.to_lowercase().contains("deploy")).or_else(|| all.iter().find(|n| n.to_lowercase().contains("approv"))).cloned();
+            let dj: Option<String> = if names.is_empty() { auto } else { map_entries(names).into_iter().map(|e| e.0).find(|k| all.contains(k)).or(auto) };
+            let Some(dj) = dj else {   // no deploy job in this workflow: a candidate (a row only when something needs a look, see below)
+                let wl = w.name.to_lowercase();
+                if matches!(state, "failed" | "canceled" | "approval") && !wl.starts_with("setup") && !wl.starts_with("path-filter") { cands.push((wi, state, jobs.clone())); }
+                continue;
+            };
             let djst = items.iter().find(|j| s(&j["name"]) == dj).map(|j| s(&j["status"])).unwrap_or_default();
-            if djst == "not_run" { continue; }
+            if djst == "not_run" && state == "ok" { continue; }   // the workflow went through, but this deploy was never part of it (a failed workflow shows: its deploy did not run because of that)
             let mut l = mon_job_label(&dj, names); if l.is_empty() { l = lab.clone(); }
             if l.is_empty() { l = mon_job_word(&dj); } if l.is_empty() { l = w.branch.clone(); }
             let part: Vec<&&Value> = items.iter().filter(|j| !s(&j["name"]).to_lowercase().starts_with("notify") && s(&j["status"]) != "not_run").collect();
@@ -268,6 +274,17 @@ fn deploys_circleci(c: &Ctx, proj: &str, slug: &str, branches: &str, names: &str
             let Some(t) = iso(&w.created) else { continue };
             let shipped: String = mon_shipped(&w.subj).chars().take(70).collect();
             out.push(line(&[&t.to_string(), proj, &l, state, &d.to_string(), &part.len().to_string(), &shipped, &format!("https://app.circleci.com/pipelines/{}/{}/workflows/{}", slug, w.num, w.id)]));
+            rows.push(w.num.clone());
+        }
+        // a pipeline on a deploy branch whose workflow failed (or waits) and has no deploy job: one row with the workflow's name
+        for (wi, state, jobs) in cands {
+            let w = &wfs[wi]; if rows.contains(&w.num) { continue; } rows.push(w.num.clone());
+            let items: Vec<&Value> = jobs["items"].as_array().into_iter().flatten().collect();
+            let part: Vec<&&Value> = items.iter().filter(|j| !s(&j["name"]).to_lowercase().starts_with("notify") && s(&j["status"]) != "not_run").collect();
+            let d = part.iter().filter(|j| TERM_DEPLOY.contains(&s(&j["status"]).as_str())).count();
+            let Some(t) = iso(&w.created) else { continue };
+            let shipped: String = mon_shipped(&w.subj).chars().take(70).collect();
+            out.push(line(&[&t.to_string(), proj, &w.name, state, &d.to_string(), &part.len().to_string(), &shipped, &format!("https://app.circleci.com/pipelines/{}/{}/workflows/{}", slug, w.num, w.id)]));
         }
         out
     });

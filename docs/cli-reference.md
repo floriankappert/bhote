@@ -247,6 +247,12 @@ nothing when there is none. `--json` adds `progress` (the [Claude Code mod](clau
 {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bhote current"}]}]}}
 ```
 
+### `bhote reminder`
+
+A random topic that waits, is next or is parked, as one JSON line (`id`, `title`, `description`, `status`, `waiting_for`): what the [Claude Code
+mod](claude-mod.md) shows as its friendly reminder. Not a wait for a deployment, not an automatic card, not a dismissed one, not
+`Waiting for New Work`. `{}` when there is none, `{"disabled":true}` with `FRIENDLY_REMINDER` off.
+
 ### `bhote event`
 
 Called by the [herdr plugin](herdr-plugin.md) on `pane.agent_status_changed` with the event in `HERDR_PLUGIN_EVENT_JSON`
@@ -286,7 +292,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0","build":"0.6.0"}`; from a checkout past the release tag both
-the text and `build` say the local build, `0.9.3 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
+the text and `build` say the local build, `0.9.2.1 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`

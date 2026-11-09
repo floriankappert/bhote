@@ -124,6 +124,14 @@ fn dash_caption(c: &Ctx, text: &str, section: &str, hover_btn: bool) -> String {
     format!("{}  {}┈┈{} {}{}{} {}{}{}{}\n", rf, c.c.g("MUTED"), c.c.g("X"), c.c.g("D"), text, c.c.g("X"), c.c.g("MUTED"), chars_to(&c.dash(c.rule_len()), rest as usize), c.c.g("X"), btn)
 }
 
+/// when, short, in the local time: 14:32 on today's date, 21.10. 14:32 on another day (localtime_r; the same time zone as the script's date)
+fn when_short(t: u64, now: u64) -> String {
+    #[repr(C)] struct Tm { sec: i32, min: i32, hour: i32, mday: i32, mon: i32, year: i32, wday: i32, yday: i32, isdst: i32, gmtoff: i64, zone: *const i8 }
+    extern "C" { fn localtime_r(t: *const i64, out: *mut Tm) -> *mut Tm; }
+    let at = |x: u64| -> Option<Tm> { let (tt, mut tm) = (x as i64, Tm { sec: 0, min: 0, hour: 0, mday: 0, mon: 0, year: 0, wday: 0, yday: 0, isdst: 0, gmtoff: 0, zone: std::ptr::null() }); if unsafe { localtime_r(&tt, &mut tm) }.is_null() { None } else { Some(tm) } };
+    let (Some(a), Some(n)) = (at(t), at(now)) else { return String::new() };
+    if a.yday == n.yday && a.year == n.year { format!("{:02}:{:02}", a.hour, a.min) } else { format!("{:02}.{:02}. {:02}:{:02}", a.mday, a.mon + 1, a.hour, a.min) }
+}
 fn compact(c: &Ctx, kind: &str) -> bool { c.cfg(&format!("{}_COMPACT", uc(kind)), "off") == "on" }
 
 fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
@@ -137,19 +145,23 @@ fn monitor_block(c: &Ctx, kind: &str, max: usize, ps: &[Project]) -> String {
     if lines.is_empty() { return out; }
     let g = |k: &str| c.c.g(k).to_string();
     if compact(c, kind) {
-        let (mut run, mut bad, mut fixed, mut seen) = (0, 0, 0, 0);
+        let (mut run, mut bad, mut fixed, mut seen) = (0, 0, 0, 0); let mut badt = String::new();
         let mut okk: Vec<String> = Vec::new();
         for l in &lines {
             let f: Vec<&str> = l.split(US).collect(); let (pj, lb, st) = (f.get(1).copied().unwrap_or(""), f.get(2).copied().unwrap_or(""), f.get(3).copied().unwrap_or(""));
             seen += 1; if st == "running" { run += 1; }
             let key = format!("{}|{}", pj, lb);
             if st == "ok" { okk.push(key.clone()); }
-            if st == "failed" && seen <= 10 { if okk.contains(&key) { fixed += 1; } else { bad += 1; } }
+            if st == "failed" && seen <= 10 { if okk.contains(&key) { fixed += 1; } else { if bad == 0 { badt = f.get(0).copied().unwrap_or("").to_string(); } bad += 1; } }
         }
         let (mut rc, mut rb) = (g("ORANGE"), format!("{}{}", g("BOLD"), g("ORANGE")));
         if run == 0 { rc = g("D"); rb = g("D"); }
+        if run > 0 { out.push_str("\u{1c}x\u{1c}"); }   // (something runs: the star dances, like a working agent's; the ground x is none)
         out.push_str(&format!("  {}✶{} {}{} running{} {}·{} ", rc, g("X"), rb, run, g("X"), g("D"), g("X")));
-        if bad > 0 { out.push_str(&format!("{}✗ {} failed{}", g("NN"), bad, g("X"))); } else { out.push_str(&format!("{}✗ 0 failed{}", g("D"), g("X"))); }
+        if bad > 0 {
+            let when = badt.parse::<u64>().ok().map(|t| when_short(t, c.now)).filter(|w| !w.is_empty()).map(|w| format!(" · {}", w)).unwrap_or_default();
+            out.push_str(&format!("\u{1b}[48;2;168;22;46m\u{1b}[1m\u{1b}[38;2;250;250;250m ✗ {} failed{} {}", bad, when, g("X")));   // failed: a dark strawberry red ground, light letters, a space on both sides
+        } else { out.push_str(&format!("{}✗ 0 failed{}", g("D"), g("X"))); }
         if fixed > 0 { out.push_str(&format!(" {}·{} {}✓ {} resolved{}", g("D"), g("X"), g("GREEN"), fixed, g("X"))); }
         out.push('\n');
         return out;
