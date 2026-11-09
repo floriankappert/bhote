@@ -226,6 +226,12 @@ export default class Bhote extends View {
     this.srvAt = 0;
     this.srvHover = null;
     if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
+    // the scheduled headless agents (timers that run Claude: slack monitors, depbot ...) of every machine, in the left panel
+    this.jobs = {};         // by machine: [{ timer, svc, name, active, next, last, running, failed }]
+    this.jobPending = {};   // `${machine}|${timer}`: "run" | "pause" | "resume" until the poll shows it
+    this.jobAt = 0;
+    this.jobLoading = false;
+    if (this.side === "left") { this.loadJobs(cx); cx.timer.every(15000, (cx) => this.loadJobs(cx)); }
     // Topics are plain files: reload when one changes.
     cx.spawn(async (cx) => {
       const dir = `${home()}/.local/share/bhote/topics`;
@@ -1018,12 +1024,89 @@ export default class Bhote extends View {
   }
 
   // The bar at the bottom of the agent pane: it stays there while the list scrolls.
+  // --- scheduled agents: systemd user timers whose service runs a headless Claude (slack monitors, depbot) ------------------------------
+  // One line per job at the bottom of the left panel: its state, when it runs next, run now, pause / resume. Read and driven with
+  // systemctl --user on the machine it lives on (this computer: none unless systemctl exists).
+  jobScript() {
+    return [
+      'command -v systemctl >/dev/null 2>&1 || exit 0',
+      'for t in $(systemctl --user list-units --all --type=timer --no-legend --plain 2>/dev/null | awk \'{print $1}\'); do',
+      '  s=$(systemctl --user show "$t" -p Unit --value)',
+      '  d=$(systemctl --user show "$s" -p Description --value)',
+      '  echo "$t $d" | grep -qiE \'slack-monitor|depbot|headless\' || continue',
+      '  a=$(systemctl --user show "$t" -p ActiveState --value)',
+      '  n=$(systemctl --user show "$t" -p NextElapseUSecRealtime --value)',
+      '  l=$(systemctl --user show "$t" -p LastTriggerUSec --value)',
+      '  sa=$(systemctl --user show "$s" -p ActiveState --value)',
+      '  r=$(systemctl --user show "$s" -p Result --value)',
+      '  ne=""; [ -n "$n" ] && ne=$(date -d "$n" +%s 2>/dev/null)',
+      '  le=""; [ -n "$l" ] && le=$(date -d "$l" +%s 2>/dev/null)',
+      '  printf \'%s|%s|%s|%s|%s|%s|%s\\n\' "$t" "$s" "$a" "$ne" "$le" "$sa" "$r"',
+      'done',
+    ].join('\n');
+  }
+
+  loadJobs(cx) {
+    if (this.jobLoading) return;
+    this.jobLoading = true;
+    cx.spawn(async (cx) => {
+      for (const m of this.srvMachines()) {
+        const key = this.srvKey(m.name);
+        try {
+          const r = await this.srvExec(m.name, "sh", ["-c", this.jobScript()], 20000);
+          this.jobs[key] = r.stdout.split("\n").filter(Boolean).map((line) => {
+            const [timer, svc, active, next, last, svcActive, result] = line.split("|");
+            const base = timer.replace(/\.timer$/, "");
+            const name = base.includes("@") ? base.split("@")[1] : base;
+            return { timer, svc, name, machine: m.name, label: m.label, on: active === "active", next: Number(next) || 0, last: Number(last) || 0,
+              running: svcActive === "active" || svcActive === "activating", failed: !!result && result !== "success" };
+          });
+        } catch (_e) { this.jobs[key] = this.jobs[key] ?? []; }
+      }
+      for (const k of Object.keys(this.jobPending)) if (this.jobPending[k].done) delete this.jobPending[k];
+      this.jobLoading = false;
+      cx.notify();
+    });
+  }
+
+  jobDo(cx, job, what) {
+    const pk = `${this.srvKey(job.machine)}|${job.timer}`;
+    this.jobPending[pk] = { what, at: Date.now() };
+    const cmd = what === "run" ? ["start", "--no-block", job.svc] : what === "pause" ? ["stop", job.timer] : ["start", job.timer];
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try { await this.srvExec(job.machine, "systemctl", ["--user", ...cmd], 20000); } catch (_e) { /* the poll shows what is there */ }
+      if (this.jobPending[pk]) this.jobPending[pk].done = true;
+      this.jobLoading = false;
+      this.loadJobs(cx);
+    });
+  }
+
+  jobsBar(t) {
+    const list = Object.values(this.jobs).flat();
+    if (!list.length) return [];
+    const clock = (e) => { const d = new Date(e * 1000); const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; return d.toDateString() === new Date().toDateString() ? hm : `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${hm}`; };
+    return [v_flex().flex_none().border_t(1).border_color(t.border).py(3)
+      .children(list.map((j) => {
+        const pk = `${this.srvKey(j.machine)}|${j.timer}`;
+        const pend = this.jobPending[pk];
+        const color = j.failed ? t.blocked : j.running || pend?.what === "run" ? t.working : j.on ? (t.ansi2 ?? t.done) : t.ansi3;
+        const note = pend ? "…" : j.running ? "running" : !j.on ? "paused" : j.next ? clock(j.next) : "";
+        return h_flex().id(`job-${pk}`).gap(9).items_center().px(15).h(24)
+          .child(j.running || pend ? div().ml(3).w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().ml(3).w(8).h(8).rounded(4).flex_none().bg(color))
+          .child(div().flex_1().min_w(0).truncate().pl(5).text_size(12).text_color(j.on ? t.foreground : t.muted).child(j.name))
+          .child(div().flex_none().text_size(11).text_color(j.failed ? t.blocked : t.dim).child(j.failed && !j.running ? "failed" : note))
+          .child(this.ibtn(t, `job-run-${pk}`, "zap", (cx) => this.jobDo(cx, j, "run"), { dim: j.running || !!pend, color: t.accent }))
+          .child(this.ibtn(t, `job-pause-${pk}`, j.on ? "pause" : "play", (cx) => this.jobDo(cx, j, j.on ? "pause" : "resume"), { dim: !!pend, color: j.on ? t.muted : (t.ansi2 ?? t.done) }));
+      }))];
+  }
+
   newSpaceBar(t) {
-    return h_flex().id("new-space").flex_none().px(12).py(9).gap(8).items_center().cursor_pointer().border_t(1).border_color(t.border)
+    return h_flex().id("new-space").flex_none().px(12).py(9).gap(11).items_center().cursor_pointer().border_t(1).border_color(t.border)
       .on_size_change((size) => { this.barH = size.height; })
       .text_size(12).text_color(t.muted).hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_click(() => this.chooseMachine())
-      .child(div().child("＋")).child(div().flex_1().child("New space"));
+      .child(div().ml(3).child("＋")).child(div().flex_1().child("New space"));
   }
 
   // Left: one list. The workspaces by machine; a workspace with an agent is its agent's cards (a card per topic of the agent, or
@@ -2066,6 +2149,7 @@ export default class Bhote extends View {
     if (this.side === "left") return v_flex().id("left-root").size_full().bg(t.chrome).text_size(13)
       .on_size_change((size) => { this.leftH = size.height; })
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(this.left()))
+      .children(this.jobsBar(t))
       .child(this.newSpaceBar(t));
     let body;
     if (this.tab === "servers") body = this.serversPage(t);
