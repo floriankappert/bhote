@@ -1183,12 +1183,14 @@ export default class Bhote extends View {
     const ease = (x) => x * x * (3 - 2 * x);   // (smoothstep: slow at both ends)
     const fade = fa == null ? 1 : fa < FLASH_MS ? 1 + 1.4 * ease(1 - fa / FLASH_MS) : fa > FINISH_MS - FADE_MS ? ease(Math.max(0, (FINISH_MS - fa) / FADE_MS)) : 1;
     const ground = o.flat ? t.chrome : tone ? tint(tone, hx((active ? 0x3a : 0x1c) * fade), t.surface) : active ? tint(t.accent, "40", t.selected) : t.surface;
-    const edge = o.flat ? t.chrome : tone ? (active ? (fade < 1 ? tint(tone, hx(255 * fade), t.border) : tone) : tint(tone, hx(0x70 * fade * (fade > 1 ? 1.7 : 1)), t.border)) : active ? t.accent : t.border;
+    // the active card has a real blue border, whatever the agent does (the colour of its state stays on the ground, the badge and the mark)
+    const BLUE = "#3b82ff";
+    const edge = o.flat ? (active ? BLUE : t.chrome) : active ? BLUE : tone ? tint(tone, hx(0x70 * fade * (fade > 1 ? 1.7 : 1)), t.border) : t.border;
     const indent = 22;   // the mark (14) and its gap (8): the rows under the name start where the name starts
-    return h_flex().id(id).bg(ground).border(1).border_color(edge)
+    return h_flex().id(id).bg(ground).border(active ? 2 : 1).border_color(edge)
       .hover((x) => x.bg(o.flat ? t.surface : tone ? tint(tone, active ? "4a" : "2a", t.surface) : active ? tint(t.accent, "52", t.selected) : t.raised)).mx(8).mb(6).rounded(8)
       .on_click(this.guard(() => { if (o.onClick) o.onClick(); else if (agent) run("agent.focus", { terminal: agent.address }); }))
-      .child(v_flex().flex_1().min_w(0).gap(2).px(11).py(8)
+      .child(v_flex().flex_1().min_w(0).gap(2).px(active ? 10 : 11).py(active ? 7 : 8)
         .child(h_flex().gap(8).items_center()
           .child(this.agentIcon(t, agent, active, tone, st.word))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
