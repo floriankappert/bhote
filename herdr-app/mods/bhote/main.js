@@ -136,11 +136,14 @@ const PR_FIELDS = "number,title,headRefName,baseRefName,url,isDraft,state,merged
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
 
 // This machine's name in bhote's topics: "Mac" on macOS (HOST), else the short hostname.
-// A checkbox. Off: an empty rounded square with a clear border. On: filled with the accent, with a drawn check mark.
-function checkbox(t, on) {
+// A checkbox. Off: an empty rounded square with a clear border. On: filled with the accent, with a drawn check mark. Mixed (some of
+// many are ticked): filled, with a dash.
+function checkbox(t, on, mixed, muted) {
+  const full = on || mixed;
+  const color = muted ? t.dim : t.accent;
   return div().w(18).h(18).flex_none().rounded(5).flex().items_center().justify_center()
-    .border(2).border_color(on ? t.accent : t.muted).bg(on ? t.accent : t.surface)
-    .when(on, (el) => el.child(svg("mods/bhote/check.svg").size(12).text_color(t.accent_foreground ?? "#ffffff")));
+    .border(2).border_color(full ? color : t.muted).bg(full ? color : t.surface)
+    .when(full, (el) => el.child(svg(on ? "mods/bhote/check.svg" : "mods/bhote/minus.svg").size(12).text_color(muted ? t.chrome : (t.accent_foreground ?? "#ffffff"))));
 }
 
 // An empty view: a glyph, a title and a hint, in the middle of the space in both directions. `busy` shows a spinner for the glyph.
@@ -163,7 +166,8 @@ export default class Bhote extends View {
   init(_props, cx) {
     if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
-    this.tab = "home";   // the overview of four tiles; a tile opens its tab
+    // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
+    try { this.tab = ["home", "topics", "prs", "deploys", "tests"].includes(shared("bhote.tab")) ? shared("bhote.tab") : "home"; } catch (_e) { this.tab = "home"; }
     // How bhote names this machine and the others (HOST_LABEL, MACHINE_LABELS in its config): a topic is started on an agent by those names.
     this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
     this.labels = "";
@@ -188,8 +192,6 @@ export default class Bhote extends View {
     // the show view: which topic it showed last, edit mode with its fields, the delete confirmation
     this.shownId = null;
     this.showArchived = false;
-    this.selecting = false;       // multi-select mode of the Tests tab
-    this.selected = new Set();    // the run keys that are ticked
     this.editing = false;
     this.confirmDelete = false;
     if (this.side === "right") {
@@ -489,6 +491,70 @@ export default class Bhote extends View {
     return v_flex().size_full().bg(t.chrome).text_size(13).child(bar).child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body));
   }
 
+  // --- the multi-select of topics and test runs: the ticked ones, kept in the shared state -------------------------------------------
+  sel() {
+    try { const v = shared("bhote.sel"); return { topics: new Set(v?.topics ?? []), tests: new Set(v?.tests ?? []) }; } catch (_e) { return { topics: new Set(), tests: new Set() }; }
+  }
+
+  setSel(topics, tests) {
+    setShared("bhote.sel", { topics: [...topics], tests: [...tests] });
+  }
+
+  toggleSel(kind, key) {
+    const s = this.sel();
+    const set = kind === "topics" ? s.topics : s.tests;
+    if (set.has(key)) set.delete(key); else set.add(key);
+    this.setSel(s.topics, s.tests);
+  }
+
+  // The checkbox at the front of a card: a click ticks it and never opens the card.
+  check(t, id, kind, key, on) {
+    return div().id(id).w(24).h(24).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click(this.guard((_e, cx) => { this.toggleSel(kind, key); cx.notify(); })).child(checkbox(t, on));
+  }
+
+  // The bar above a list, always there: its checkbox ticks everything, or clears the selection when something is ticked; it says how
+  // much is ticked, and its menu holds the batch actions (it works when something is ticked).
+  batchBar(t, kind, allKeys) {
+    if (!allKeys.length) return null;
+    const s = this.sel();
+    const set = kind === "topics" ? s.topics : s.tests;
+    const n = allKeys.filter((k) => set.has(k)).length;
+    const all = n === allKeys.length;
+    const toggleAll = () => {
+      const next = n > 0 ? new Set() : new Set(allKeys);
+      if (kind === "topics") this.setSel(next, s.tests); else this.setSel(s.topics, next);
+    };
+    return h_flex().id(`batch-${kind}`).flex_none().gap(8).pl(8).pr(12).py(7).items_center().bg(t.surface).border_b(1).border_color(t.border)
+      .child(div().id(`batch-all-${kind}`).w(24).h(24).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+        .on_click(this.guard((_e, cx) => { toggleAll(); cx.notify(); })).child(checkbox(t, n > 0 && all, n > 0 && !all)))
+      .child(div().flex_1().text_size(12).text_color(n > 0 ? t.foreground : t.muted).child(n > 0 ? `${n} selected` : "Select all"))
+      .child(div().id(`batch-menu-${kind}`).flex_none().flex().items_center().gap(5).px(10).py(4).rounded(6).text_size(12)
+        .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground).opacity(n > 0 ? 1 : 0.45).hover((e) => e.bg(n > 0 ? t.hover : t.raised))
+        .when(n > 0, (el) => el.cursor_pointer().on_click(this.guard(() => this.openMenu(this.batchItems(kind, allKeys)))))
+        .child(div().child("Actions")).child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim)));
+  }
+
+  // The actions on everything ticked, as menu items.
+  batchItems(kind, allKeys) {
+    const s = this.sel();
+    const common = [{ type: "bsel", kind, op: "all", keys: allKeys, label: "Select all" }, { type: "bsel", kind, op: "none", label: "Clear selection" }];
+    if (kind === "topics") {
+      const ids = [...s.topics];
+      return [{ type: "head", label: `${ids.length} topic${ids.length === 1 ? "" : "s"} selected` },
+        ...["now", "review", "next", "later", "done"].map((k) => ({ type: "bstatus", ids, status: k, label: `Move to ${k[0].toUpperCase()}${k.slice(1)}` })),
+        { type: "bask", label: "Delete…", danger: true, items: [{ type: "head", label: `Delete ${ids.length} topic${ids.length === 1 ? "" : "s"}?` }, { type: "bdelete", ids, label: "Yes, delete", danger: true }, { type: "noop", label: "Cancel" }] },
+        { type: "head", label: "Selection" }, ...common];
+    }
+    const keys = [...s.tests];
+    return [{ type: "head", label: `${keys.length} test run${keys.length === 1 ? "" : "s"} selected` },
+      { type: "bhide", mode: "archive", keys, label: "Archive" },
+      { type: "bhide", mode: "restore", keys, label: "Restore from archive" },
+      { type: "bhide", mode: "discard", keys, label: "Discard", danger: true },
+      { type: "head", label: "Selection" }, ...common];
+  }
+
   // --- test runs a person archived or discarded: kept in the shared state, so they stay away after a restart -------------------
   runKey(x) { return `${x.project}|${x.label}|${x.time}`; }
 
@@ -608,6 +674,29 @@ export default class Bhote extends View {
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
     else if (it.type === "newspace") run("space.new", { machine: it.machine });
     else if (it.type === "prfilter") setShared("bhote.prFilter", it.value || null);
+    else if (it.type === "bstatus") { for (const id of it.ids) exec("bhote", [it.status, id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
+    else if (it.type === "bdelete") { for (const id of it.ids) exec("bhote", ["rm", id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
+    else if (it.type === "bhide") {
+      const h = shared("bhote.hidden") ?? { archived: [], discarded: [] };
+      const a = new Set(h.archived ?? []), d = new Set(h.discarded ?? []);
+      for (const k of it.keys) {
+        if (it.mode === "archive") a.add(k);
+        else if (it.mode === "discard") { d.add(k); a.delete(k); }
+        else if (it.mode === "restore") a.delete(k);
+      }
+      setShared("bhote.hidden", { archived: [...a].slice(-500), discarded: [...d].slice(-1000) });
+      this.setSel(this.sel().topics, []);
+    }
+    else if (it.type === "bsel") {
+      const cur = this.sel();
+      const next = it.op === "all" ? new Set(it.keys) : new Set();
+      if (it.kind === "topics") this.setSel(next, cur.tests); else this.setSel(cur.topics, next);
+    }
+    else if (it.type === "bask") {   // a question first: the menu is replaced by its own items
+      const o = props()?.overlay; if (o) closeOverlay(o);
+      this.openMenu(it.items);
+      return;
+    }
     else if (it.type === "pickstart") exec("bhote", ["__act", "pickstart", it.id, it.machine, it.pane, it.name], { timeout: 60000 }).catch(() => {});
     else if (it.type === "hide") {
       const h = shared("bhote.hidden") ?? { archived: [], discarded: [] };
@@ -796,12 +885,14 @@ export default class Bhote extends View {
   line(t, x, cx, sub) {
     const st = this.plainState(t, x);
     const extra = x.group === "waiting" && x.waiting_for ? `waiting for ${x.waiting_for}` : "";
-    return h_flex().id(`t-${x.id}`).gap(9).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(5).pl(10).pr(6).py(6)
+    const picked = this.sel().topics.has(x.id);
+    return h_flex().id(`t-${x.id}`).gap(6).items_center().bg(t.surface).border(1).border_color(picked ? t.accent : t.border).rounded(8).mx(8).mb(5).pl(6).pr(6).py(5)
       .hover((s) => s.bg(t.raised)).on_click(this.guard(() => this.openPage(x.id)))
-      .child(this.icon(t, st.icon, st.color, 16))
+      .child(this.check(t, `ck-${x.id}`, "topics", x.id, picked))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(div().truncate().text_size(12.5).text_color(t.foreground).child(x.title))
         .when(!!(sub || extra), (el) => el.child(div().truncate().text_size(11).text_color(t.muted).child(sub || extra))))
+      .child(this.icon(t, st.icon, st.color, 16))
       .child(this.optionsBtn(t, `op-t-${x.id}`, () => this.topicItems(x)));
   }
 
@@ -960,6 +1051,27 @@ export default class Bhote extends View {
       .child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim));
   }
 
+  // A merged pull request as a slim row: the merge icon, number, title, when it was merged, the state of its deployments (when there are
+  // some), the ... menu. Everything else is on the card of an open one.
+  prRow(t, id, pr) {
+    const deps = this.deploysAfter(pr);
+    const dstate = deps.some((x) => x.state === "failed") ? "failed" : deps.some((x) => x.state === "running") ? "running"
+      : deps.some((x) => x.state === "approval") ? "approval" : deps.length ? "ok" : null;
+    const dcolor = dstate === "failed" ? t.blocked : dstate === "running" ? t.working : dstate === "approval" ? t.ansi3 : t.done;
+    const items = () => {
+      const topic = this.topicOf(pr);
+      return [{ type: "url", url: pr.url, label: "Open in GitHub" }, ...(topic ? this.topicItems(topic) : [])];
+    };
+    return h_flex().id(id).gap(8).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(4).pl(10).pr(6).py(5)
+      .hover((x) => x.bg(t.raised)).on_click(this.guard(() => this.open(pr.url)))
+      .child(this.icon(t, "merged", t.ansi5, 15))
+      .child(div().flex_none().text_size(12).text_color(t.dim).child(`#${pr.number}`))
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.muted).child(pr.title))
+      .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(pr.merged)))
+      .when(!!dstate, (el) => el.child(this.stateIcon(t, dstate, dcolor, 15)))
+      .child(this.optionsBtn(t, `op-${id}`, items));
+  }
+
   prsBody(t) {
     const rows = [];
     const f = this.prFilter();
@@ -967,11 +1079,11 @@ export default class Bhote extends View {
     const open = all.filter((x) => x.kind === "pr" && !x.merged);
     const branches = all.filter((x) => x.kind === "branch");
     const merged = all.filter((x) => x.merged).sort((a, b) => b.merged - a.merged);
-    const sections = [["Open pull requests", open], ["Branches without a pull request", branches], ["Merged, last 14 days", merged]];
-    for (const [label, list] of sections) {
+    const sections = [["Open pull requests", open, false], ["Branches without a pull request", branches, false], ["Merged, last 14 days", merged, true]];
+    for (const [label, list, slim] of sections) {
       if (!list.length) continue;
       rows.push(this.head(t, `${label} · ${list.length}`));
-      list.slice(0, 10).forEach((x, i) => rows.push(this.prCard(t, `pr-${label.length}-${i}`, x)));   // the ten newest
+      list.slice(0, slim ? 15 : 10).forEach((x, i) => rows.push(slim ? this.prRow(t, `pr-${label.length}-${i}`, x) : this.prCard(t, `pr-${label.length}-${i}`, x)));   // the newest
     }
     if (!rows.length) rows.push(this.prLoading || !this.prAt ? empty(t, "", "Loading pull requests", "Asking GitHub for your open pull requests", true) : empty(t, "⑂", f ? `Nothing for ${f}` : "No open pull requests", f ? "Pick All projects in the filter to see the others" : "Your pull requests and the branches you work on show up here with their checks"));
     return rows;
@@ -1024,7 +1136,7 @@ export default class Bhote extends View {
         .when(hidden > 0, (el) => el.child(div().text_color(t.dim).child(`+${hidden} passed`)))
         .when(running > 0, (el) => el.child(div().text_color(t.working).child(`${running} running`)))
         .when(failed > 0, (el) => el.child(div().px(5).rounded(8).bg("#a8162e").text_color("#ffffff").child(`✗ ${failed}`))), true));
-      list.slice(0, 10).forEach((x, i) => out.push(this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false, kind === "t" ? { on: this.selecting, set: this.selected } : null)));
+      list.slice(0, 10).forEach((x, i) => out.push(this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false)));
     }
     return out;
   }
@@ -1095,18 +1207,21 @@ export default class Bhote extends View {
         .child(this.tile(t, "tests", { title: "Tests", accent: tFailed.length ? t.blocked : tRunning ? t.working : t.done, badge: tFailed.length || null,
           big: tFailed.length || tPassed.length, bigColor: tFailed.length ? t.blocked : t.done, label: tFailed.length ? "failed" : "passed",
           sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", border: tFailed.length ? "#a8162e" : undefined })));
-    return v_flex().size_full().bg(t.chrome).child(tiles).child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(this.right()));
+    const list = this.right();
+    const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id));
+    return v_flex().size_full().bg(t.chrome).child(tiles).children(bar ? [bar] : []).child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list));
   }
 
   setTab(cx, id) {
     this.tab = id;
+    setShared("bhote.tab", id);
     cx.notify();
   }
 
   // A run of a monitor as a card: its state, project and workflow, the branch and title, the bar while it runs, the time.
   monitorCard(t, id, x, kind, archived, sel) {
     const key = this.runKey(x);
-    const picked = !!sel?.on && sel.set.has(key);
+    const picked = this.sel().tests.has(key);
     const color = x.state === "ok" ? t.done : x.state === "failed" ? t.blocked : x.state === "running" ? t.working : x.state === "approval" ? t.ansi3 : t.dim;
     const detail = [archived ? "archived" : "", x.branch ? `⎇ ${x.branch}` : "", x.title].filter(Boolean).join(" · ");
     const items = () => {
@@ -1119,22 +1234,19 @@ export default class Bhote extends View {
       ];
     };
     return h_flex().id(id).bg(t.surface).border(1).border_color(picked ? t.accent : x.state === "failed" ? "#a8162e" : t.border).rounded(8).mx(8).mb(6)
-      .hover((s) => s.bg(t.raised)).on_click(this.guard((_e, cx) => {
-        if (sel?.on) { if (this.selected.has(key)) this.selected.delete(key); else this.selected.add(key); cx.notify(); } else this.open(x.url);
-      }))
+      .hover((s) => s.bg(t.raised)).on_click(this.guard(() => this.open(x.url)))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(color))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
-          // in select mode the checkbox takes the place of the state icon
-          .child(sel?.on ? checkbox(t, picked)
-            : this.stateIcon(t, x.state, color, 15))
+          .when(kind === "t", (el) => el.child(this.check(t, `ck-${id}`, "tests", key, picked)))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(`${x.project} · ${x.label}`))
           .child(div().flex_none().text_size(11).text_color(t.dim).child(clock(x.time)))
-          .when(!sel?.on && items().length > 0, (el) => el.child(this.optionsBtn(t, `op-${id}`, items))))
-        .when(!!detail, (el) => el.child(div().truncate().pl(18).text_size(11).text_color(t.muted).child(detail)))
+          .child(this.stateIcon(t, x.state, color, 15))
+          .when(items().length > 0, (el) => el.child(this.optionsBtn(t, `op-${id}`, items))))
+        .when(!!detail, (el) => el.child(div().truncate().pl(kind === "t" ? 30 : 0).text_size(11).text_color(t.muted).child(detail)))
         .when(x.state === "running", (el) => {
           const e = this.runEstimate(x, kind);
-          return el.child(h_flex().gap(8).pl(18).items_center().text_size(11).text_color(t.working)
+          return el.child(h_flex().gap(8).pl(kind === "t" ? 30 : 0).items_center().text_size(11).text_color(t.working)
             .when(e.frac != null, (r) => r.child(progress(t, e.frac, t.working)).child(div().child(`${Math.round(e.frac * 100)}%`)))
             .when(e.remain != null, (r) => r.child(div().text_color(t.muted).child(left(e.remain))))
             .when(e.frac == null && e.remain == null, (r) => r.child(div().text_color(t.muted).child("running"))));
@@ -1160,10 +1272,13 @@ export default class Bhote extends View {
       rows.push(this.head(t, "Done"));
       for (const x of done) {
         // a done topic is a card like the others, quieter: a muted ground, a thin border, dimmed text; a click opens its page
-        rows.push(h_flex().id(`dn-${x.id}`).gap(9).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(5).pl(10).pr(6).py(6)
+        // the check in front is a muted, ticked box: a click unticks it and the topic is open again (next)
+        rows.push(h_flex().id(`dn-${x.id}`).gap(6).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(5).pl(6).pr(6).py(5)
           .hover((e) => e.bg(t.raised)).on_click(this.guard(() => this.openPage(x.id)))
-          .child(this.icon(t, "done", t.done, 16))
-          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.muted).child(x.title))
+          .child(div().id(`ck-dn-${x.id}`).w(24).h(24).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click(this.guard((_e, cx) => this.cli(cx, ["next", x.id]))).child(checkbox(t, true, false, true)))
+          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.dim).child(x.title))
           .child(this.optionsBtn(t, `op-dn-${x.id}`, () => this.topicItems(x))));
       }
     }
@@ -1186,27 +1301,15 @@ export default class Bhote extends View {
     else if (this.tab === "tests") {
       const { shown, archived } = this.testsShown();
       body = shown.length ? this.monitorBody(t, shown, "t", "ts") : (archived.length ? [] : [empty(t, "◎", "No test runs seen", "CI runs and  bhote test run -- <command>  show up here")]);
-      // the toolbar: select several runs and archive them, or archive every run that is shown
-      if (shown.length) {
-        const btn = (id, label, onClick, o = {}) => div().id(id).px(10).py(4).rounded(6).text_size(12).cursor_pointer()
-          .bg(o.primary ? t.solid : t.raised).border(1).border_color(o.primary ? t.solid : t.border).text_color(o.primary ? t.solid_foreground : t.foreground)
-          .opacity(o.dim ? 0.5 : 1).hover((e) => e.bg(o.primary ? t.solid : t.hover)).on_click(this.guard(onClick)).child(label);
-        const archive = (keys) => {
-          const h = this.hidden();
-          for (const k of keys) h.archived.add(k);
-          setShared("bhote.hidden", { archived: [...h.archived].slice(-500), discarded: [...h.discarded].slice(-1000) });
-        };
-        const keys = shown.map((x) => this.runKey(x));
-        const n = keys.filter((k) => this.selected.has(k)).length;
-        body.unshift(h_flex().justify_end().gap(6).px(10).pt(8).flex_wrap()
-          .when(!this.selecting, (el) => el.child(btn("sel-on", "Select", (_e, cx) => { this.selecting = true; cx.notify(); }))
-            .child(btn("arch-all", "Mark all as archived", () => archive(keys))))
-          .when(this.selecting, (el) => el.child(btn("sel-all", n === keys.length ? "Select none" : "Select all", (_e, cx) => { this.selected = n === keys.length ? new Set() : new Set(keys); cx.notify(); }))
-            .child(btn("sel-archive", `Archive selected${n ? ` (${n})` : ""}`, (_e, cx) => { if (n) { archive(keys.filter((k) => this.selected.has(k))); this.selected = new Set(); this.selecting = false; cx.notify(); } }, { primary: true, dim: !n }))
-            .child(btn("sel-off", "Cancel", (_e, cx) => { this.selecting = false; this.selected = new Set(); cx.notify(); }))));
-      }
+      // ticked runs: the batch bar on top (its menu archives, restores or discards them)
+      const bar = this.batchBar(t, "tests", [...shown, ...archived].map((x) => this.runKey(x)));
+      if (bar) body.unshift(bar);
     }
-    else body = this.right();
+    else {
+      body = this.right();
+      const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id));
+      if (bar) body.unshift(bar);
+    }
     return v_flex().size_full().bg(t.chrome).text_size(13)
       .child(this.tabBar(t))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body))
