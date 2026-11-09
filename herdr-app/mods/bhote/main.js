@@ -124,10 +124,50 @@ function parseProjects(text) {
     out.push({ id: v.id, title: v.title || v.id, ci: v.ci || "", repos: (v.repos ?? "").split(",").map((x) => x.trim()).filter(Boolean),
       deployBranches: (v.deploy_branches ?? "").split(",").map((e) => e.split("=")[0].trim()).filter(Boolean),
       deployJobs: (v.deploy_names ?? "").split(",").map((e) => e.split("=")[0].trim()).filter(Boolean),
+      runbook: (v.runbook ?? "").split(",").map((e) => e.trim()).filter(Boolean),   // the stages after the merge, when the default of the project is not right
       // the environments in the order of deploy_branches: develop=Staging,main=Production -> Staging, Production (a label like the branch is just "Deploy")
       stages: (v.deploy_branches ?? "").split(",").map((e) => e.trim()).filter(Boolean).map((e) => { const [b, l] = e.split("="); return !l || l.trim() === b.trim() ? "Deploy" : l.trim(); }) });
   }
   return out;
+}
+
+// The runbook of a project: the whole way a change goes, from the commit to the last stage. Before the merge it is the same everywhere (Commit, PR, Tests,
+// Merge into the target branch); after it, the stages of the project (the record's `runbook`, else these defaults; else the environments of its deploy
+// branches, else "Deploy"): IMS builds a Docker image and deploys it, Bilendo Marketing has Staging, an Approval in CircleCI and Production, Bilendo is
+// released by hand with Capistrano, Bhote CLI ends at the merge. Marketing always goes through develop: the pull request is merged into develop (Staging),
+// then develop is merged into main, CircleCI asks for an Approval, and Production follows.
+const POST_STAGES = { "IMS": ["Build (Docker)", "Deploy"], "Bilendo Marketing": ["Staging", "Merge (main)", "Approval", "Production"], "Bilendo": ["Release (Capistrano)"], "Bhote CLI": [] };
+
+function postStages(proj) {
+  if (proj?.runbook?.length) return proj.runbook;
+  if (proj && Object.prototype.hasOwnProperty.call(POST_STAGES, proj.title)) return POST_STAGES[proj.title];
+  if (proj && !proj.ci) return [];   // (no CI: the path ends at the merge)
+  return proj?.stages?.length ? proj.stages : ["Deploy"];
+}
+
+// o: hasPR, tests (ok | failed | running | none | waiting), merged, target (the branch it is merged into), off (deployments not watched),
+//    builds (the builds of the merged pull request: { state }), at / now (a run on a deploy branch: the post stage it is at, and its state)
+function runbookStages(proj, o) {
+  const stages = [{ name: "Commit", state: "ok" }, { name: "PR", state: o.hasPR ? "ok" : "ready" }, { name: "Tests", state: o.tests },
+    { name: "Merge", target: o.target || "", state: o.merged ? "ok" : o.hasPR && o.tests === "ok" ? "ready" : "waiting" }];
+  const bs = o.builds ?? [];
+  const post = postStages(proj);
+  const kind = (l) => l.split(" (")[0];
+  const pending = post.findIndex((l) => kind(l) === "Approval") >= 0 && bs.some((b) => b.state === "approval") ? post.findIndex((l) => kind(l) === "Approval") : -1;
+  const busy = bs.some((b) => b.state === "failed") ? "failed" : bs.some((b) => b.state === "running") ? "running" : "";
+  const first = post.findIndex((l) => !["Approval", "Release", "Merge"].includes(kind(l)));   // the stage a running or failed build is for
+  post.forEach((l, i) => {
+    let state = "waiting";
+    if (o.at != null && o.at >= 0) state = i < o.at ? "ok" : i === o.at ? o.now : "waiting";   // (a run on a deploy branch)
+    else if (o.merged) {
+      if (kind(l) === "Release" || o.off) state = kind(l) === "Release" || i === 0 ? "ready" : "waiting";   // (by hand, or not watched: the next step is yours)
+      else if (pending >= 0) state = i < pending ? "ok" : i === pending ? "approval" : "waiting";
+      else if (busy && i === first) state = busy;
+    }
+    const m = /^Merge \((.+)\)$/.exec(l);   // (a second merge, e.g. develop into main: Merge → main)
+    stages.push(m ? { name: "Merge", target: m[1], state } : { name: l, state });
+  });
+  return stages;
 }
 
 // A GitHub check of a pull request (a check run of Actions, or a commit status such as CircleCI's) as ok | failed | running | skipped.
@@ -1405,8 +1445,8 @@ export default class Bhote extends View {
         // an agent is a card of its own: topics are not mixed in, a topic meets an agent when it is started on one
         for (const a of mine) {
           const idle = a.status === "idle" && !this.isFinished(a);
-          // the state is the colour of the card: working blue, error (needs you) red, recently finished green, idle grey
-          const st = a.status === "working" ? { word: "working", color: t.ansi4, bar: t.ansi4 }
+          // the state is the colour of the card: working Claude orange, error (needs you) red, recently finished green, idle grey
+          const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
           rows.push(this.card(t, `a-${a.address}`, { agent: a, name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.paneCode(machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
@@ -1803,29 +1843,33 @@ export default class Bhote extends View {
     const proj = this.projects.find((q) => q.title === pr.project);
     const has = (st) => pr.checks.some((c) => c.state === st);
     const tests = has("failed") ? "failed" : has("running") ? "running" : has("ok") ? "ok" : "none";
-    const stages = [{ name: "Tests", state: tests }, { name: "Merge", state: pr.merged ? "ok" : tests === "ok" ? "ready" : "waiting" }];
-    if (!this.deployOff.has(pr.project)) {
-      const mine = this.builds.filter((b) => b.title.includes(`#${pr.number}`) && b.project === pr.project);
-      const dep = !pr.merged ? "waiting" : mine.some((b) => b.state === "failed") ? "failed" : mine.some((b) => b.state === "running") ? "running" : mine.length ? "waiting" : "none";
-      for (const l of (proj?.stages?.length ? proj.stages : ["Deploy"])) stages.push({ name: l, state: dep });
-    }
-    return stages;
+    const builds = this.builds.filter((b) => b.title.includes(`#${pr.number}`) && b.project === pr.project);
+    return runbookStages(proj, { hasPR: pr.kind === "pr", tests, merged: !!pr.merged, target: pr.base, off: this.deployOff.has(pr.project), builds });
   }
 
   // The path as a strip: an icon and a name for each stage, joined by short lines; the stage the work is at stands out. The strip has a border
   // and a ground a little different from the card, so that it reads as the way the work goes.
   pathRow(t, st) {
     const at = st.findIndex((x) => x.state !== "ok");
-    const past = { Tests: "Tested", Merge: "Merged", Deploy: "Deployed" };   // a stage that is over says so: a green tick and its name in the past
     const iconOf = (x) => x.state === "ok" ? ["ok", t.ansi2 ?? t.done] : x.state === "failed" ? ["failed", t.blocked] : x.state === "running" ? ["running", t.working]
       : x.state === "approval" ? ["approval", t.ansi3] : x.state === "ready" ? ["next", t.accent] : ["waiting", t.dim];
+    // a stage that is over says so in the past: a green tick and Tested, Merged ... ; the target of the merge and the note in brackets (Docker, Capistrano) belong to the name
+    const past = { Commit: "Committed", PR: "PR opened", Tests: "Tested", Merge: "Merged", Build: "Built", Approval: "Approved", Release: "Released", Deploy: "Deployed" };
+    const labelOf = (x) => {
+      const base = x.name.split(" (")[0], note = x.name.includes(" (") ? x.name.slice(x.name.indexOf(" (")) : "";
+      const w = x.state === "ok" ? past[base] ?? base : base;
+      return `${w}${base === "Merge" && x.target ? ` → ${x.target}` : ""}${x.state === "ok" ? "" : note}`;
+    };
+    // a long path (more than five stages) names the stage the work is at and the next one, and only shows the icon of the others
+    const many = st.length > 5;
+    const named = (i) => !many || i === at || i === at + 1 || (at < 0 && i === st.length - 1);
     return h_flex().w_full().gap(6).items_center().px(11).py(4).my(4).rounded(6).bg(t.chrome).border(1).border_color(t.border).text_size(11)
       .children(st.flatMap((x, i) => {
         const [name, color] = iconOf(x);
         const here = i === at;
         const chip = h_flex().gap(4).items_center().flex_none().text_color(here ? t.foreground : t.dim)
-          .child(name === "running" ? this.stateIcon(t, "running", color, 14) : this.icon(t, name, color, 14)).child(div().child(x.state === "ok" ? past[x.name] ?? x.name : x.name));
-        return i === 0 ? [chip] : [div().flex_1().min_w(8).h(1).bg(t.border), chip];
+          .child(name === "running" ? this.stateIcon(t, "running", color, 14) : this.icon(t, name, color, 14)).when(named(i), (c) => c.child(div().child(labelOf(x))));
+        return i === 0 ? [chip] : [div().flex_1().min_w(4).h(1).bg(t.border), chip];
       }));
   }
 
@@ -1838,16 +1882,17 @@ export default class Bhote extends View {
   runStages(x, kind) {
     const proj = this.projects.find((q) => q.title === this.projectOf(x.project));
     if (!proj) return null;
-    const off = this.deployOff.has(proj.title);
-    const labels = off ? [] : (proj.stages?.length ? proj.stages : ["Deploy"]);
     const now = x.state === "running" || x.state === "queued" ? "running" : x.state === "approval" ? "approval" : x.state === "failed" ? "failed" : x.state === "ok" ? "ok" : "waiting";
     const bi = kind === "d" ? proj.deployBranches.indexOf(x.branch) : -1;
-    if (bi >= 0) {
-      const at = Math.min(bi, Math.max(0, labels.length - 1));
-      return [{ name: "Tests", state: "ok" }, { name: "Merge", state: "ok" },
-        ...labels.map((l, i) => ({ name: l, state: i < at ? "ok" : i === at ? now : "waiting" }))];
+    const post = postStages(proj);
+    if (bi >= 0) {   // a run on a deploy branch: its environment (by name when the post stages carry it), else the first stage that is built or deployed
+      const byName = proj.stages?.[bi] ? post.findIndex((l) => l.split(" (")[0] === proj.stages[bi]) : -1;
+      let at = byName >= 0 ? byName : Math.min(bi, Math.max(0, post.length - 1));
+      const hold = now === "approval" ? post.findIndex((l) => l.split(" (")[0] === "Approval") : -1;   // (a pipeline that waits for approval is at the Approval stage)
+      if (hold >= 0) at = hold;
+      return runbookStages(proj, { hasPR: true, tests: "ok", merged: true, target: proj.deployBranches[bi], at: post.length ? at : -1, now });
     }
-    return [{ name: "Tests", state: now }, { name: "Merge", state: "waiting" }, ...labels.map((l) => ({ name: l, state: "waiting" }))];
+    return runbookStages(proj, { hasPR: true, tests: now, merged: false, target: proj.deployBranches[0] ?? "" });
   }
 
   prCard(t, id, pr, o = {}) {
