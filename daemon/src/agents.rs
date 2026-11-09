@@ -109,8 +109,13 @@ pub fn workspaces_text(ws: &Value) -> String {
 
 /// One collection of this machine: asks herdr, writes the files. false when herdr did not answer (the old files stay).
 pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
-    let Some(panes) = herdr(&["pane", "list"], 20) else { return false };
-    let ws = herdr(&["workspace", "list"], 20).unwrap_or(Value::Null);
+    let (panes, ws) = if crate::herdr_app::enabled() {
+        let Some(x) = crate::herdr_app::local() else { return false };
+        x
+    } else {
+        let Some(panes) = herdr(&["pane", "list"], 20) else { return false };
+        (panes, herdr(&["workspace", "list"], 20).unwrap_or(Value::Null))
+    };
     let o = build(host, &panes, &ws, tests_busy);
     let _ = put_tmp(&shared.join("agents.meta.local"), &o.meta);
     let a = put_list(&shared.join("agents.now.local"), &o.now);
@@ -118,6 +123,49 @@ pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
     let _ = put_tmp(&shared.join("agents.cwd"), &o.cwd);
     let _ = put_tmp(&shared.join("focus.pane"), &o.focus);
     let _ = put_tmp(&shared.join("workspaces.local"), &workspaces_text(&ws));
+    if a || b {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));
+    }
+    true
+}
+
+// ── the other machines through herdr-app: the same files as collect_remote_kharka, from what herdr-app shows ───────
+
+/// collect_remote_app: every machine herdr-app shows besides this one, in the files of the kharka collection (agents.remote,
+/// agents.meta.remote, agents.now.remote, workspaces.remote, agents.nodes, machines.offline). `labels` is MACHINE_LABELS,
+/// `off_list` MACHINES_OFF. false when herdr-app did not answer (the old files stay).
+pub fn collect_remote_app(shared: &Path, host: &str, labels: &str, off_list: &str, tests_busy: bool) -> bool {
+    let Some(machines) = crate::herdr_app::snapshot() else { return false };
+    let off = format!(",{},", off_list);
+    let us = US.to_string();
+    let (mut nodes, mut offline, mut meta, mut now, mut agents, mut wsout) = (String::new(), String::new(), String::new(), String::new(), String::new(), String::new());
+    for m in machines {
+        let Some(name) = m.name.clone() else { continue };
+        let lbl = crate::herdr_app::label(labels, &name);
+        if lbl == host || off.contains(&format!(",{},", lbl)) { continue; }
+        let o = build(&lbl, &m.panes, &m.workspaces, tests_busy);
+        nodes.push_str(&[lbl.clone(), name.clone(), (if m.down { "1" } else { "0" }).to_string(), String::new()].join(&us)); nodes.push('\n');
+        if m.down { offline.push_str(&lbl); offline.push('\n'); }
+        // a machine that is down: its agents stay, muted (off-<state>), as with kharka
+        for l in o.local.lines() {
+            let mut p: Vec<String> = l.split(US).map(|x| x.to_string()).collect();
+            if m.down && p.len() >= 3 && !p[2].starts_with("off-") { p[2] = format!("off-{}", p[2]); }
+            agents.push_str(&p.join(&us)); agents.push('\n');
+        }
+        meta.push_str(&o.meta); now.push_str(&o.now);
+        let empty = Vec::new();
+        for w in m.workspaces.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty) {
+            let st = if m.down { "off".to_string() } else { match tostr(&or_empty(w.get("agent_status"))).as_str() { s @ ("working" | "blocked" | "done") => s.to_string(), _ => "idle".to_string() } };
+            wsout.push_str(&[lbl.clone(), tostr(&or_empty(w.get("workspace_id"))), clean(&tostr(&or_empty(w.get("label")))), tostr(&or_empty(w.get("number"))), st].iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&us)); wsout.push('\n');
+        }
+    }
+    let _ = put_tmp(&shared.join("agents.nodes"), &nodes);
+    let _ = put_tmp(&shared.join("machines.offline"), &offline);
+    let _ = put_tmp(&shared.join("agents.meta.remote"), &meta);
+    let _ = put_tmp(&shared.join("workspaces.remote"), &wsout);
+    let a = put_list(&shared.join("agents.now.remote"), &now);
+    let b = put_list(&shared.join("agents.remote"), &agents);
     if a || b {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));

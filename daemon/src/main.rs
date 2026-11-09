@@ -2,6 +2,7 @@
 //!   bhoted index <topic dir> <out>      build once
 //!   bhoted run   <topic dir> <out>      keep it current: rebuild when a topic file is added, removed or changed
 mod agents;
+mod herdr_app;
 mod monitor;
 mod store;
 mod ui;
@@ -264,9 +265,11 @@ fn main() {
         "collect-remote" => { // bhoted collect-remote <shared dir> <host> --config <file>: one look at the other machines through kharka (the parity test)
             let cfg = opt("--config").map(|c| config_read(&c)).unwrap_or_default();
             let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
-            let ok = agents::collect_remote_kharka(Path::new(&a[2]), &a[3], &bin, cfg.get("MACHINES_OFF").map_or("", |s| s.as_str()), cfg.get("TESTS_BUSY").map_or(true, |v| v != "off"));
+            let ok = if herdr_app::enabled() { agents::collect_remote_app(Path::new(&a[2]), &a[3], cfg.get("MACHINE_LABELS").map_or("", |s| s.as_str()), cfg.get("MACHINES_OFF").map_or("", |s| s.as_str()), cfg.get("TESTS_BUSY").map_or(true, |v| v != "off")) }
+                else { agents::collect_remote_kharka(Path::new(&a[2]), &a[3], &bin, cfg.get("MACHINES_OFF").map_or("", |s| s.as_str()), cfg.get("TESTS_BUSY").map_or(true, |v| v != "off")) };
             std::process::exit(if ok { 0 } else { 1 })
         }
+        "herdr" => { std::process::exit(herdr_app::cli(&a[2..])); }   // bhoted herdr pane list ...: the script's herdr calls, answered from herdr-app
         "collect" => { // bhoted collect <shared dir> <host>: one collection of this machine (for the parity test)
             let tests_busy = opt("--config").map(|c| config_read(&c)).and_then(|c| c.get("TESTS_BUSY").cloned()).map_or(true, |v| v != "off");
             let ok = agents::collect_local(Path::new(&a[2]), &a[3], tests_busy);
@@ -278,7 +281,7 @@ fn main() {
             let host = opt("--host").unwrap_or_default();
             let config = opt("--config");
             // the agents duty needs inotify (the poke file wakes it): Linux only for now, bash keeps it on macOS
-            let duty = a.iter().any(|x| x == "--agents") && cfg!(target_os = "linux") && !host.is_empty();
+            let duty = a.iter().any(|x| x == "--agents") && (cfg!(target_os = "linux") || herdr_app::enabled()) && !host.is_empty();
             let monitors = a.iter().any(|x| x == "--monitors");
             let data = opt("--data").map(PathBuf::from).unwrap_or_else(|| dir.parent().unwrap_or(Path::new(".")).to_path_buf());
             let running = [Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false))];
@@ -286,7 +289,7 @@ fn main() {
             let sync_duty = a.iter().any(|x| x == "--sync") && !host.is_empty();
             let sync_running = Arc::new(AtomicBool::new(false));
             let mut next_sync = Instant::now();
-            let remote_duty = a.iter().any(|x| x == "--remote") && cfg!(target_os = "linux") && !host.is_empty();
+            let remote_duty = a.iter().any(|x| x == "--remote") && (cfg!(target_os = "linux") || herdr_app::enabled()) && !host.is_empty();
             let remote_running = Arc::new(AtomicBool::new(false));
             let mut next_remote = Instant::now();
             // one daemon per shared folder: another one that is alive keeps the work (two would do every follow-up twice)
@@ -313,7 +316,14 @@ fn main() {
                 }
                 if remote_duty && Instant::now() >= next_remote && !remote_running.load(Ordering::SeqCst) {
                     let cfg = config.as_deref().map(config_read).unwrap_or_default();
-                    if cfg.get("REMOTE_AGENTS").map_or(false, |v| v == "on") && cfg.get("AGENTS_VIA").map_or(false, |v| v == "kharka") {
+                    if cfg.get("REMOTE_AGENTS").map_or(false, |v| v == "on") && herdr_app::enabled() {
+                        let every: u64 = cfg.get("REMOTE_EVERY").and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(5);
+                        next_remote = Instant::now() + Duration::from_secs(every);
+                        let (sh, hs, flag) = (shared.clone(), host.clone(), remote_running.clone());
+                        let (labels, off, tb) = (cfg.get("MACHINE_LABELS").cloned().unwrap_or_default(), cfg.get("MACHINES_OFF").cloned().unwrap_or_default(), cfg.get("TESTS_BUSY").map_or(true, |v| v != "off"));
+                        flag.store(true, Ordering::SeqCst);
+                        std::thread::spawn(move || { let _g = proc::Flag(flag); let shd = sh.clone(); proc::guarded("remote agents", &shd, || agents::collect_remote_app(&sh, &hs, &labels, &off, tb)); });
+                    } else if cfg.get("REMOTE_AGENTS").map_or(false, |v| v == "on") && cfg.get("AGENTS_VIA").map_or(false, |v| v == "kharka") {
                         let every: u64 = cfg.get("REMOTE_EVERY").and_then(|v| v.parse().ok()).filter(|n| *n > 0).unwrap_or(5);
                         next_remote = Instant::now() + Duration::from_secs(every);
                         let bin = std::env::var("KHARKA").ok().filter(|v| !v.is_empty()).or_else(|| cfg.get("KHARKA").cloned().filter(|v| !v.is_empty())).unwrap_or_else(|| "kharka".into());
