@@ -7,7 +7,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay } from "herdr";
+import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay, machines, settings } from "herdr";
 
 const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "review", "later", "done"]);
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
@@ -135,11 +135,11 @@ const PR_FIELDS = "number,title,headRefName,baseRefName,url,isDraft,state,merged
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
 
 // This machine's name in bhote's topics: "Mac" on macOS (HOST), else the short hostname.
-// A checkbox: a rounded square with a border, filled with the accent and a drawn check mark when it is on.
+// A checkbox. Off: an empty rounded square with a clear border. On: filled with the accent, with a drawn check mark.
 function checkbox(t, on) {
-  return div().w(16).h(16).flex_none().rounded(4).flex().items_center().justify_center()
-    .border(1).border_color(on ? t.accent : t.input).bg(on ? t.accent : t.background)
-    .when(on, (el) => el.child(svg("mods/bhote/check.svg").size(11).text_color(t.accent_foreground ?? "#ffffff")));
+  return div().w(18).h(18).flex_none().rounded(5).flex().items_center().justify_center()
+    .border(2).border_color(on ? t.accent : t.muted).bg(on ? t.accent : t.surface)
+    .when(on, (el) => el.child(svg("mods/bhote/check.svg").size(12).text_color(t.accent_foreground ?? "#ffffff")));
 }
 
 // An empty view: a glyph, a title and a hint, in the middle of the space in both directions. `busy` shows a spinner for the glyph.
@@ -542,10 +542,13 @@ export default class Bhote extends View {
     if (this.menu) setShared("bhote.menuClosed", Date.now());
   }
 
-  openMenu(items) {
+  // `above`: where the bar that opened it is ({ x, top }): the popup goes up from there, not down.
+  openMenu(items, above) {
     if (!items.length) return;
     const rows = items.reduce((n, it) => n + (it.type === "head" ? 0.8 : 1), 0);
-    openOverlay({ mod: "bhote", props: { menu: items }, kind: "popup", width: 224, height: Math.round(rows * 30 + 14), at: "pointer" });
+    const height = Math.round(rows * 30 + 14);
+    const at = above ? { x: above.x, y: Math.max(8, Math.round(above.top - height + 11)) } : "pointer";   // (4 px over the bar, measured against the real frame)
+    openOverlay({ mod: "bhote", props: { menu: items }, kind: "popup", width: 224, height, at });
   }
 
   menuView() {
@@ -562,6 +565,7 @@ export default class Bhote extends View {
     else if (it.type === "status") exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {});
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
+    else if (it.type === "newspace") run("space.new", { machine: it.machine });
     else if (it.type === "hide") {
       const h = shared("bhote.hidden") ?? { archived: [], discarded: [] };
       const a = new Set(h.archived ?? []), d = new Set(h.discarded ?? []);
@@ -643,9 +647,10 @@ export default class Bhote extends View {
     // Every card has a ground: the active agent's is prominent (the selection colour, an accent border), every other one a
     // muted card surface with a thin border; an idle agent's text is dimmed, its ground stays.
     const active = !!o.selected;
-    const ground = active ? tint(t.accent, "40", t.selected) : t.surface;
-    return h_flex().id(id).bg(ground).border(1).border_color(active ? t.accent : t.border)
-      .hover((x) => x.bg(active ? tint(t.accent, "52", t.selected) : t.raised)).mx(8).mb(6).rounded(8)
+    // a workspace without an agent (o.flat) has neither a ground nor a border: the panel shows through (the border keeps its width so the cards line up)
+    const ground = active ? tint(t.accent, "40", t.selected) : o.flat ? t.chrome : t.surface;
+    return h_flex().id(id).bg(ground).border(1).border_color(active ? t.accent : o.flat ? t.chrome : t.border)
+      .hover((x) => x.bg(active ? tint(t.accent, "52", t.selected) : o.flat ? t.surface : t.raised)).mx(8).mb(6).rounded(8)
       .on_click(this.guard(() => { if (o.onClick) o.onClick(); else if (agent) run("agent.focus", { terminal: agent.address }); }))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(st.bar))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
@@ -667,6 +672,28 @@ export default class Bhote extends View {
         .when(!!o.selected && !!topic?.desc, (el) => el.child(div().pl(14).text_size(11).text_color(sub).child(topic.desc))));
   }
 
+  // A new space is a new shell on a machine (its default shell, in its home). The bar at the bottom asks which machine first (with
+  // one machine there is nothing to ask); the plus next to a machine's name makes one there at once.
+  chooseMachine() {
+    const ms = machines().filter((m) => m.layout !== "unavailable");
+    if (ms.length <= 1) { run("space.new", { machine: ms[0]?.name ?? "" }); return; }
+    // The bar sits at the bottom of the agent pane, under the brand row (46 px at zoom 1): its top is that row plus the pane's
+    // height minus its own. Both heights are measured by the pane itself; the layout's px sizes follow the zoom.
+    const zoom = Number(settings()?.zoom) || 1;
+    const top = 46 * zoom + (this.leftH ?? 0) - (this.barH ?? 38);
+    this.openMenu([{ type: "head", label: "New space on" }, ...ms.map((m) => ({ type: "newspace", machine: m.name ?? "", label: m.name ?? "This computer" }))],
+      this.leftH ? { x: 10 * zoom, top } : null);
+  }
+
+  // The bar at the bottom of the agent pane: it stays there while the list scrolls.
+  newSpaceBar(t) {
+    return h_flex().id("new-space").flex_none().px(12).py(9).gap(8).items_center().cursor_pointer().border_t(1).border_color(t.border)
+      .on_size_change((size) => { this.barH = size.height; })
+      .text_size(12).text_color(t.muted).hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_click(() => this.chooseMachine())
+      .child(div().child("＋")).child(div().flex_1().child("New space"));
+  }
+
   // Left: one list. The workspaces by machine; a workspace with an agent is its agent's cards (a card per topic of the agent, or
   // one for the idle agent), a workspace without one a compact row.
   left() {
@@ -684,13 +711,16 @@ export default class Bhote extends View {
       byMachine.get(m).push(s);
     }
     for (const [machine, spaceList] of byMachine) {
-      rows.push(this.head(t, machine));
+      const remote = spaceList[0]?.machine ?? null;
+      rows.push(this.head(t, machine, div().id(`ns-${machine}`).px(7).py(1).rounded(4).text_size(14).cursor_pointer().text_color(t.dim)
+        .hover((e) => e.bg(t.hover).text_color(t.foreground))
+        .on_click(() => run("space.new", { machine: remote ?? "" })).child("＋")));
       for (const s of spaceList) {
         const mine = list.filter((a) => a.space === s.id);
         if (!mine.length) {
           // a workspace without an agent: a card too, quieter, a click shows the workspace
           rows.push(this.card(t, `s-${s.id}`, { topic: null, agent: null, machine: s.machine, name: s.name, branch: s.branch,
-            st: { word: "no agent", color: t.dim, bar: t.idle }, selected: s.active, dim: true, onClick: () => run("space.select", { id: s.id }) }));
+            st: { word: "", color: t.dim, bar: t.idle }, selected: s.active, dim: true, flat: true, onClick: () => run("space.select", { id: s.id }) }));
           continue;
         }
         for (const a of mine) {
@@ -1002,7 +1032,10 @@ export default class Bhote extends View {
     if (this.menu) return this.menuView();
     if (this.side === "right" && this.showId()) return this.showView();
     const t = theme();
-    if (this.side === "left") return v_flex().size_full().bg(t.chrome).text_size(13).overflow_y_scrollbar().children(this.left());
+    if (this.side === "left") return v_flex().id("left-root").size_full().bg(t.chrome).text_size(13)
+      .on_size_change((size) => { this.leftH = size.height; })
+      .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(this.left()))
+      .child(this.newSpaceBar(t));
     let body;
     if (this.tab === "prs") body = this.prsBody(t);
     else if (this.tab === "deploys") body = this.deploys.length ? this.monitorBody(t, this.deploys, "d", "dp") : [empty(t, "⇪", "No deployments seen", "The monitor found none. If CircleCI rejects its token (401), set a new one:  bhote config set CIRCLECI_TOKEN <token>  . bhote monitor detect  finds a project's CI.")];
