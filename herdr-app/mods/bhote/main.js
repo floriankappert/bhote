@@ -1023,59 +1023,43 @@ export default class Bhote extends View {
   }
 
   // The icon of an agent on a card: the spinner of a working one, else a mark.
-  agentIcon(t, agent) {
+  agentIcon(t, agent, active, color) {
     if (!agent) return div().w(14).flex_none().text_color(t.dim).child("◌");
-    if (agent.status === "working") return div().w(14).flex_none().text_color(t.working).frames(SPIN, 90);
-    if (agent.status === "blocked") return div().w(14).flex_none().text_color(t.blocked).child("◉");
-    if (agent.status === "done") return div().w(14).flex_none().text_color(t.done).child("✓");
-    return div().w(14).flex_none().text_color(t.dim).child("○");
+    if (agent.status === "working") return div().w(14).flex_none().text_color(color ?? t.working).frames(SPIN, 90);
+    if (agent.status === "blocked") return div().w(14).flex_none().text_color(color ?? t.blocked).child("◉");
+    if (agent.status === "done") return div().w(14).flex_none().text_color(color ?? t.done).child("✓");
+    return div().w(14).flex_none().text_color(active ? t.muted : t.dim).child("○");
   }
 
-  // The small bars of the tests that run for the topic's branch (CI test jobs, two at most).
-  testBars(topic) {
-    if (!topic.branch) return [];
-    return this.tests.filter((x) => x.state === "running" && x.branch === topic.branch && x.total > 0).slice(0, 2);
-  }
-
-  // One card: a bar in the status colour, the agent (icon, machine, name, age and state), its task, the live text of
-  // a working agent and the branch with the small test bars on the right.
+  // The card of an agent (or of a space without one) in the left panel. The machines are headings, so a card does not repeat its machine.
+  // Three rows at most, always in this order, the text of the last two under the name:
+  //   status mark · name ······ badges (monitor) · what it says (working, needs you, finished; an idle agent says nothing)
+  //   what it works on (its task)
+  //   ⎇ branch
+  // The active card has the selection ground and an accent border, every other agent a quiet surface; a space without an agent has no ground.
   card(t, id, o) {
-    const { topic, agent, machine, st } = o;
-    const dim = o.dim;
-    const fg = dim ? t.dim : t.foreground;
-    const sub = dim ? t.dim : t.muted;
-    const bars = topic ? this.testBars(topic) : [];
-    const age = topic?.updated ? ago(topic.updated) : "";
-    const task = topic?.title || (agent?.title ?? "");
-    const live = agent?.status === "working" && topic ? (agent.title ?? "") : "";
-    // Every card has a ground: the active agent's is prominent (the selection colour, an accent border), every other one a
-    // muted card surface with a thin border; an idle agent's text is dimmed, its ground stays.
+    const { agent, st } = o;
     const active = !!o.selected;
-    // a workspace without an agent (o.flat) has neither a ground nor a border: the panel shows through (the border keeps its width so the cards line up)
-    const ground = active ? tint(t.accent, "40", t.selected) : o.flat ? t.chrome : t.surface;
-    return h_flex().id(id).bg(ground).border(1).border_color(active ? t.accent : o.flat ? t.chrome : t.border)
-      .hover((x) => x.bg(active ? tint(t.accent, "52", t.selected) : o.flat ? t.surface : t.raised)).mx(8).mb(6).rounded(8)
+    const dim = !!o.dim && !active;   // (an idle agent is dimmed, the active card never: its ground is light)
+    const task = agent?.title ?? "";
+    const word = agent && agent.status !== "idle" && agent.status !== undefined ? st.word : "";
+    // the card takes the colour of its state (blue, red, green; an idle agent stays grey); the active one a stronger ground and a solid border
+    const tone = agent && agent.status !== "idle" ? st.color : null;
+    const ground = o.flat ? t.chrome : tone ? tint(tone, active ? "3a" : "1c", t.surface) : active ? tint(t.accent, "40", t.selected) : t.surface;
+    const edge = o.flat ? t.chrome : tone ? (active ? tone : tint(tone, "70", t.border)) : active ? t.accent : t.border;
+    const indent = 22;   // the mark (14) and its gap (8): the rows under the name start where the name starts
+    return h_flex().id(id).bg(ground).border(1).border_color(edge)
+      .hover((x) => x.bg(o.flat ? t.surface : tone ? tint(tone, active ? "4a" : "2a", t.surface) : active ? tint(t.accent, "52", t.selected) : t.raised)).mx(8).mb(6).rounded(8)
       .on_click(this.guard(() => { if (o.onClick) o.onClick(); else if (agent) run("agent.focus", { terminal: agent.address }); }))
-      .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(st.bar))
-      .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
-        .child(h_flex().gap(6).items_center()
-          .child(this.agentIcon(t, agent))
-          .when(!!machine, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi4).child(machine)))
-          .child(div().flex_1().truncate().font_semibold().text_color(fg).child(o.name))
-          .child(div().flex_none().text_size(11).text_color(sub).child(age ? `${age} · ` : ""))
-          .child(div().flex_none().text_size(11).text_color(dim ? t.dim : st.color).child(st.word))
+      .child(v_flex().flex_1().min_w(0).gap(2).px(11).py(8)
+        .child(h_flex().gap(8).items_center()
+          .child(this.agentIcon(t, agent, active, tone))
+          .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).rounded(8).text_size(10).text_color(t.accent).bg(tint(t.accent, "26", t.raised)).border(1).border_color(tint(t.accent, "55", t.border))
             .child(o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h")}`)))
-          .when(!!topic, (el) => el.child(div().id(`o-${id}`).flex_none().px(4).text_color(t.dim).hover((x) => x.text_color(t.foreground))
-            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click(this.guard(() => this.openPage(topic.id))).child("›"))))
-        .when(!!task, (el) => el.child(h_flex().gap(6).items_center()
-          .child(div().flex_1().truncate().text_size(12).text_color(sub).child(`∟ ${task}`))
-          .when(bars.length > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.working)
-            .child(bars.map((x) => `${x.label.slice(0, 8)} ${bar(x.done, x.total)}`).join("  "))))))
-        .when(!!live && live !== task, (el) => el.child(div().truncate().pl(14).text_size(11).text_color(t.working).child(live)))
-        .when(!!(topic?.branch || o.branch), (el) => el.child(div().truncate().pl(14).text_size(11).text_color(sub).child(`⎇ ${topic?.branch || o.branch}`)))
-        .when(!!o.selected && !!topic?.desc, (el) => el.child(div().pl(14).text_size(11).text_color(sub).child(topic.desc))));
+          .when(!!word, (el) => el.child(div().flex_none().text_size(11).text_color(st.color).child(word))))
+        .when(!!task, (el) => el.child(div().truncate().pl(indent).text_size(12).text_color(active ? t.foreground : dim ? t.dim : t.muted).child(task)))
+        .when(!!o.branch, (el) => el.child(div().truncate().pl(indent).text_size(11).text_color(active ? t.muted : t.dim).child(`⎇ ${o.branch}`))));
   }
 
   // A new space is a new shell on a machine (its default shell, in its home). The bar at the bottom asks which machine first (with
@@ -1261,17 +1245,18 @@ export default class Bhote extends View {
         const mine = list.filter((a) => a.space === s.id);
         if (!mine.length) {
           // a workspace without an agent: a card too, quieter, a click shows the workspace
-          rows.push(this.card(t, `s-${s.id}`, { topic: null, agent: null, machine: titled(s) ? null : s.machine, name: titled(s) ?? s.name, branch: s.branch,
+          rows.push(this.card(t, `s-${s.id}`, { agent: null, name: titled(s) ?? s.name, branch: s.branch,
             st: { word: "", color: t.dim, bar: t.idle }, selected: s.active, dim: true, flat: true, onClick: () => run("space.select", { id: s.id }) }));
           continue;
         }
         // an agent is a card of its own: topics are not mixed in, a topic meets an agent when it is started on one
         for (const a of mine) {
           const idle = a.status === "idle";
-          const st = a.status === "working" ? { word: "working", color: t.working, bar: t.working }
+          // the state is the colour of the card: working blue, error (needs you) red, recently finished green, idle grey
+          const st = a.status === "working" ? { word: "working", color: t.ansi4, bar: t.ansi4 }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
-            : a.status === "done" ? { word: "finished", color: t.done, bar: t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.card(t, `a-${a.address}`, { topic: null, agent: a, machine: titled(s) ? null : machineOf(a), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, monitor: this.monitorOf(a, machineOf(a)) }));
+            : a.status === "done" ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
+          rows.push(this.card(t, `a-${a.address}`, { agent: a, name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, monitor: this.monitorOf(a, machineOf(a)) }));
         }
       }
     }
