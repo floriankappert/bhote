@@ -5,7 +5,7 @@
 // Data: agents() / spaces() of herdr-app (live), the topic files and the monitor lists bhoted writes (files are the
 // interface). Actions: the bhote CLI through exec(), herdr-app commands through run().
 
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay, machines, settings, readTextFile, window } from "herdr";
 
@@ -227,6 +227,17 @@ export default class Bhote extends View {
     if (this.side === "right") {
       this.adding = false;
       this.addIn = InputState.new({ placeholder: "New topic: Title; description", value: "" });
+      // (its own placeholder is drawn over the field, italic and muted: the state's cannot be styled)
+      this.stashIn = TextareaState.new({ placeholder: "", value: "", rows: 1 });
+      this.stashIn.set_auto_grow(1, 4);
+      this.stashIn.on("submit", (ev, cx) => { if (ev?.secondary) this.addStash(cx); });   // Return is a new line, the Send button (or Cmd+Return) posts
+      this.stashIn.on("change", (_ev, cx) => cx.notify());
+      this.drag = null;        // a stash being moved: { id, from, to }
+      this.dragMoved = false;  // (a press that moved a stash is not a click that edits it)
+      this.editingStash = null;
+      this.stashEdit = TextareaState.new({ placeholder: "", value: "", rows: 1 });
+      this.stashEdit.set_auto_grow(1, 5);
+      this.stashEdit.on("submit", (ev, cx) => { if (ev?.secondary) this.saveStash(cx); });
       this.addIn.on("submit", (_e, cx) => this.addTopic(cx));
       this.titleIn = InputState.new({ value: "" });
       this.titleIn.on("submit", (_e, cx) => this.saveEdit(cx));
@@ -248,6 +259,7 @@ export default class Bhote extends View {
     this.srvAt = 0;
     this.srvHover = null;
     if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
+    if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
     // the scheduled headless agents (timers that run Claude: slack monitors, depbot ...) of every machine, in the left panel
     this.jobs = {};         // by machine: [{ timer, svc, name, active, next, last, running, failed }]
     this.jobPending = {};   // `${machine}|${timer}`: "run" | "pause" | "resume" until the poll shows it
@@ -768,11 +780,13 @@ export default class Bhote extends View {
     const out = [];
     for (const pr of this.prs) {
       if (pr.kind !== "pr" || pr.merged) continue;
-      const run = pr.checks.filter((c) => c.state === "running");
+      // only the test checks of the pull request: its builds are deployments, all its checks are its own tile
+      const tests = pr.checks.filter((c) => /test|spec|lint|e2e/i.test(c.name));
+      const run = tests.filter((c) => c.state === "running");
       if (!run.length) continue;
-      const est = this.checkEstimate(pr.checks);
+      const est = this.checkEstimate(tests);
       out.push({ time: Math.min(...run.map((c) => c.started || Math.floor(Date.now() / 1000))), project: pr.project, label: `PR #${pr.number}`, state: "running",
-        done: est.finished, total: est.total, branch: pr.branch, title: pr.title, url: pr.url, est: { frac: est.frac, remain: est.remain } });
+        done: est.finished, total: tests.length, branch: pr.branch, title: pr.title, url: pr.url, est: { frac: est.frac, remain: est.remain } });
     }
     return out;
   }
@@ -974,6 +988,18 @@ export default class Bhote extends View {
     else if (it.type === "status") { this.markPending([it.id], { status: it.status }); exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {}); }
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
+    else if (it.type === "stash") {
+      const list = this.stashList(), x = list.find((q) => q.id === it.id);
+      if (x) {
+        this.setStash(list.filter((q) => q.id !== it.id));
+        if (it.op === "send") exec("hc", ["send", it.terminal, x.text], { timeout: 20000 }).catch(() => {});
+        else if (it.op === "topic") {
+          const cut = x.text.length > 80 ? x.text.lastIndexOf(" ", 80) : -1;
+          const title = (cut > 20 ? x.text.slice(0, cut) : x.text.slice(0, 80)).trim(), rest = x.text.slice(title.length).trim().slice(0, 140);
+          exec("bhote", ["add", title, ...(rest ? ["-d", rest] : []), "-s", it.status], { timeout: 30000 }).catch(() => {});
+        }
+      }
+    }
     else if (it.type === "newspace") run("space.new", { machine: it.machine, ...(it.name ? { name: it.name } : {}), ...(it.folder ? { folder: it.folder } : {}) });
     else if (it.type === "bstatus") { this.markPending(it.ids, { status: it.status }); for (const id of it.ids) exec("bhote", [it.status, id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
     else if (it.type === "bdelete") { this.markPending(it.ids, { deleted: true }); for (const id of it.ids) exec("bhote", ["rm", id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
@@ -1070,11 +1096,15 @@ export default class Bhote extends View {
   //   ⎇ branch
   // The active card has the selection ground and an accent border, every other agent a quiet surface; a space without an agent has no ground.
   card(t, id, o) {
-    const { agent, st } = o;
+    const { agent } = o;
+    // a card whose branch is being deployed is yellow (the colour of a run under way), whatever else it does, unless the agent needs you
+    const deploying = !!agent && !!o.deploy && agent.status !== "blocked";
+    const st = deploying ? { word: "deploying", color: t.working, bar: t.working } : o.st;
     const active = !!o.selected;
     const dim = !!o.dim && !active;   // (an idle agent is dimmed, the active card never: its ground is light)
     const task = agent?.title ?? "";
     const word = agent ? st.word : "";   // (the state is always a badge, an idle agent too)
+    const dep = deploying ? o.deploy : null;
     const ident = agent ? (o.code ?? "") : "";   // the pane code: w2:a1, an agent of another machine with its code in front (OMR/w3:a1), as bhote has always had it
     // the card takes the colour of its state (blue, red, green; an idle agent stays grey); the active one a stronger ground and a solid border
     const tone = agent && st.word !== "idle" ? st.color : null;
@@ -1101,7 +1131,11 @@ export default class Bhote extends View {
         .when(!!task || !!ident, (el) => el.child(h_flex().gap(8).items_center().pl(indent)
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(active ? t.foreground : dim ? t.dim : t.muted).child(task || " "))
           .when(!!ident, (e) => e.child(div().flex_none().text_size(10.5).text_color(active ? t.muted : t.dim).child(ident)))))
-        .when(!!o.branch, (el) => el.child(div().truncate().pl(indent).text_size(11).text_color(active ? t.muted : t.dim).child(`⎇ ${o.branch}`))));
+        .when(!!o.branch, (el) => el.child(div().truncate().pl(indent).text_size(11).text_color(active ? t.muted : t.dim).child(`⎇ ${o.branch}`)))
+        // the deployment under way: a bar across the card, the percentage and the time left at its end
+        .when(!!dep && dep.frac != null, (el) => el.child(h_flex().gap(8).items_center().pl(indent).pt(3)
+          .child(div().flex_1().h(4).rounded(2).bg(tint(t.working, "30", t.border)).overflow_hidden().child(div().h(4).w(`${Math.round(Math.max(0, Math.min(1, dep.frac)) * 100)}%`).rounded(2).bg(t.working)))
+          .child(div().flex_none().text_size(10.5).text_color(t.working).child(`${Math.round(Math.max(0, Math.min(1, dep.frac)) * 100)}%${dep.remain != null ? ` · ${left(dep.remain).replace(" left", "")}` : ""}`)))));
   }
 
   // A new space is a new shell on a machine (its default shell, in its home). The bar at the bottom asks which machine first (with
@@ -1375,7 +1409,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: t.ansi4, bar: t.ansi4 }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.card(t, `a-${a.address}`, { agent: a, name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, code: this.paneCode(machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
+          rows.push(this.card(t, `a-${a.address}`, { agent: a, name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.paneCode(machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
         }
       }
     }
@@ -1394,6 +1428,145 @@ export default class Bhote extends View {
   }
 
   // The last three done topics: a bar that stays at the bottom of the panel under the list.
+  // --- the stash: texts kept for later (written, or dictated into the field with superwhisper) --------------------------------------------------
+  // A stash is a text on a queue (the shared state, so that it survives a reload). From the queue it goes to a free agent as a prompt, or becomes
+  // a topic (Now, Next, Later), or is deleted. A dock at the bottom of the right panel: the head folds it, the field adds one (Enter), the list is the queue.
+  stashList() {
+    try { const v = shared("bhote.stash"); return Array.isArray(v) ? v : []; } catch (_e) { return []; }
+  }
+
+  setStash(list) { try { setShared("bhote.stash", list.slice(0, 200)); } catch (_e) { /* not remembered */ } }
+
+  addStash(cx) {
+    const text = this.stashIn.value().replace(/\r/g, "").trim();
+    if (!text) return;
+    this.setStash([...this.stashList(), { id: `${Date.now()}-${Math.floor(Math.random() * 1000)}`, text, at: Date.now() }]);
+    this.stashIn.set_value("");
+    cx.notify();
+  }
+
+  // What the menu of a stash offers: send it to a free agent, make a topic of it, delete it.
+  stashItems(x) {
+    const sp = spaces();
+    const free = agents().filter((a) => a.status !== "working" && a.status !== "blocked");
+    return [
+      ...(free.length ? [{ type: "head", label: "Send to agent" }] : []),
+      ...free.map((a) => { const s = sp.find((q) => q.id === a.space); return { type: "stash", op: "send", id: x.id, terminal: a.address, label: `${s?.name ?? a.address}${s?.machine ? ` · ${s.machine}` : ""}` }; }),
+      { type: "head", label: "Make a topic" },
+      { type: "stash", op: "topic", status: "now", id: x.id, label: "Now" },
+      { type: "stash", op: "topic", status: "next", id: x.id, label: "Next" },
+      { type: "stash", op: "topic", status: "later", id: x.id, label: "Later" },
+      { type: "head", label: "Stash" },
+      { type: "stash", op: "delete", id: x.id, label: "Delete", danger: true },
+    ];
+  }
+
+  // A stash dragged to another place: the press starts it, moving over the list picks the place (the rows are all as high as the pitch says),
+  // the release drops it there.
+  dropStash(cx) {
+    const d = this.drag;
+    this.drag = null;
+    this.dragMoved = !!d && d.from !== d.to;
+    if (d && d.from !== d.to) {
+      const list = this.stashList();
+      const at = list.findIndex((x) => x.id === d.id);
+      if (at >= 0) { const [x] = list.splice(at, 1); list.splice(Math.max(0, Math.min(list.length, d.to)), 0, x); this.setStash(list); }
+    }
+    cx.notify();
+  }
+
+  startEditStash(x, cx) {
+    if (this.dragMoved) { this.dragMoved = false; return; }
+    this.editingStash = x.id;
+    this.stashEdit.set_value(x.text);
+    this.stashEdit.focus();
+    cx.notify();
+  }
+
+  saveStash(cx) {
+    const text = this.stashEdit.value().replace(/\r/g, "").trim();
+    if (text && this.editingStash) this.setStash(this.stashList().map((q) => (q.id === this.editingStash ? { ...q, text } : q)));
+    this.editingStash = null;
+    cx.notify();
+  }
+
+  // A small blue button with a gradient (the kit paints a gradient only on a canvas: it is a few bands from light to dark inside a rounded box).
+  stashButton(t, ready) {
+    // Modern: a flat rounded rectangle with a real gradient, painted as a path (`window.paint_path`; the `window` of this file is herdr's, so the
+    // global one is reached through globalThis).
+    const W = 54, H = 24, R = 8;
+    const path = PathBuilder.fill().move_to(R, 0).line_to(W - R, 0).arc_to(R, R, 0, false, true, W, R).line_to(W, H - R).arc_to(R, R, 0, false, true, W - R, H)
+      .line_to(R, H).arc_to(R, R, 0, false, true, 0, H - R).line_to(0, R).arc_to(R, R, 0, false, true, R, 0).close().build();
+    return div().id("stash-send").relative().w(W).h(H).flex_none().cursor_pointer().opacity(ready ? 1 : 0.55)
+      .hover((e) => e.opacity(0.9))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click(this.guard((_e, cx) => this.addStash(cx)))
+      .child(globalThis.window.paint_path(path, Background.linear_gradient(180, "#ff6b6b", "#dc3545")).absolute().inset_0())
+      .child(div().absolute().inset_0().flex().items_center().justify_center().text_size(11.5).font_semibold().text_color("#ffffff").child("Stash"));
+  }
+
+  stashDock(t) {
+    const list = this.stashList();
+    let shut = false;
+    try { shut = shared("bhote.stashShut") === true; } catch (_e) { shut = false; }
+    const PITCH = 50;   // a row (46) and the gap under it (4)
+    const empty = this.stashIn.value().length === 0;
+    return v_flex().id("stash-dock").flex_none().border_t(1).border_color(t.border).bg(t.chrome)
+      .on_mouse_up("left", (_e, cx) => { if (this.drag) this.dropStash(cx); })
+      .child(h_flex().id("stash-head").px(10).pt(10).pb(shut ? 10 : 6).items_center().cursor_pointer().text_size(11).font_semibold().text_color(t.dim)
+        .on_click(this.guard((_e, cx) => { setShared("bhote.stashShut", !shut); if (shut) this.stashIn.focus(); cx.notify(); }))
+        .child(div().flex_1().child(`STASH · ${list.length}`))
+        .child(svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).text_color(t.muted)))
+      .when(!shut, (el) => el
+        // the field: flat, with its own placeholder (italic, muted) over it while it is empty
+        .child(div().px(10).pb(4)
+          .child(div().relative().rounded(7).border(1).border_color(t.border).bg(t.background).px(10).py(6)
+            .child(h_flex().gap(6).items_start()
+              .child(div().flex_1().min_w(0).child(Textarea.new(this.stashIn).px(0).py(0).bg(t.background).text_size(12.5).text_color(t.foreground)))
+              .child(this.stashButton(t, !empty))
+              // dictate: the field has the focus, then superwhisper starts recording and types what it hears into it
+              .child(this.ibtn(t, "stash-dictate", "mic", () => { this.stashIn.focus(); exec("open", ["superwhisper://record"]).catch(() => {}); }, { color: t.muted, hover: t.accent, w: 22 })))
+            .when(empty, (e) => e.child(div().absolute().left(10).top(6).italic().text_size(12.5).text_color(t.dim).opacity(0.6).child("Stash: write, or dictate with superwhisper")))))
+        .child(h_flex().px(12).pb(8).items_center().text_size(10.5).text_color(t.dim).child("Return for a new line  ·  ⌘Return stashes"))
+        .child(div().h(1).w_full().bg(t.border))
+        .when(list.length > 0, (e) => e.child(v_flex().id("stash-list").max_h(PITCH * 4).overflow_y_scrollbar().pt(6).pb(4)
+          .on_mouse_move((ev, cx) => {
+            if (!this.drag) return;
+            const to = Math.max(0, Math.min(list.length - 1, Math.floor(((ev.local_position?.y ?? 0) - 6) / PITCH)));
+            if (to !== this.drag.to) { this.drag.to = to; cx.notify(); }
+          })
+          .children(list.map((x, i) => {
+            const d = this.drag;
+            const moving = d && d.id === x.id;
+            const before = d && d.to === i && d.to < d.from, after = d && d.to === i && d.to > d.from;
+            if (this.editingStash === x.id) {
+              // the stash being edited: its text in a field, saved with Enter (Shift+Enter: a new line) or the button
+              return v_flex().id(`stw-${x.id}`).gap(6).bg(t.surface).border(1).border_color(t.accent).rounded(8).mx(8).mb(4).p(8)
+                .child(Textarea.new(this.stashEdit).px(2).py(2).bg(t.surface).text_size(12.5).text_color(t.foreground))
+                .child(h_flex().gap(8).items_center()
+                  .child(div().flex_1().text_size(10.5).text_color(t.dim).child("⌘Return saves"))
+                  .child(this.btn(t, `st-cancel-${x.id}`, "Cancel", (_e, cx) => { this.editingStash = null; cx.notify(); }))
+                  .child(this.btn(t, `st-save-${x.id}`, "Save", (_e, cx) => this.saveStash(cx), { primary: true })));
+            }
+            return v_flex().id(`stw-${x.id}`)
+              .when(before, (r) => r.child(div().h(2).mx(8).mb(2).rounded(1).bg(t.accent)))
+              .child(h_flex().id(`st-${x.id}`).gap(8).items_center().h(46).overflow_hidden().bg(t.surface).border(1).border_color(moving ? t.accent : t.border).rounded(8).mx(8).mb(4).pl(10).pr(4).opacity(moving ? 0.6 : 1)
+                .hover((r) => r.bg(t.raised))
+                .on_mouse_down("left", (e, cx) => { if (!this.editingStash) { this.dragMoved = false; this.drag = { id: x.id, from: i, to: i }; cx.notify(); } })
+                .on_click(this.guard((_e, cx) => this.startEditStash(x, cx)))
+                .child(div().w(14).flex_none().text_size(11).text_color(t.dim).cursor_pointer().child(String(i + 1)))
+                .child(div().flex_1().min_w(0).max_h(32).overflow_hidden().text_size(12).text_color(t.foreground).child(x.text.replace(/\n+/g, " ↵ ")))
+                .child(this.optionsBtn(t, `op-st-${x.id}`, () => this.stashItems(x))))
+              .when(after, (r) => r.child(div().h(2).mx(8).mb(2).rounded(1).bg(t.accent)));
+          })))));
+  }
+
+  // The docks at the bottom of the topics: the stash, then the done topics.
+  docks(t) {
+    const done = this.doneDock(t);
+    return [this.stashDock(t), ...(done ? [done] : [])];
+  }
+
   doneDock(t) {
     const all = this.topics.filter((x) => x.group === "done");
     if (!all.length) return null;
@@ -1506,7 +1679,7 @@ export default class Bhote extends View {
                 this.observeChecks(p.title, cks);
                 const finished = cks.length - live.length;
                 for (const c of live) {
-                  builds.push({ time: c.started || Math.floor(Date.now() / 1000), project: p.title, label: c.name.replace(/^ci\/circleci:\s*/i, ""), state: "running", done: finished, total: cks.length,
+                  builds.push({ time: c.started || Math.floor(Date.now() / 1000), project: p.title, label: c.name.replace(/^ci\/circleci:\s*/i, ""), state: "running", done: 0, total: 0,   // (its own progress by its usual duration: the share of finished checks is the pull request's, it has it in its tile)
                     branch: q.headRefName, title: `${q.author?.login ?? ""} · #${q.number} ${q.title}`.replace(/^ · /, ""), url: c.url || q.url, histKey: c.key });
                 }
               }
@@ -2167,6 +2340,31 @@ export default class Bhote extends View {
         .when(!(o.rows ?? []).length, (e) => e.child(div().text_size(11.5).text_color(t.dim).child(o.empty ?? "nothing yet"))));
   }
 
+  // The deployments that run, for the left panel (which does not ask CI itself): the branch they are for, what they are, how far they are.
+  publishDeploys() {
+    const rows = this.deploysAll().filter((x) => x.state === "running" || x.state === "queued").map((x) => {
+      const e = this.runEstimate(x, "d");
+      return { branch: x.branch ?? "", project: x.project, label: this.whatOf(x).text || x.label, frac: e.frac ?? null, remain: e.remain ?? null };
+    }).filter((x) => x.branch);
+    let old = null;
+    try { old = shared("bhote.depRun"); } catch (_e) { old = null; }
+    if (JSON.stringify(old ?? []) !== JSON.stringify(rows)) { try { setShared("bhote.depRun", rows); } catch (_e) { /* not shared */ } }
+  }
+
+  // The deployment that runs for a branch (an agent's), or null.
+  deployOf(branch) {
+    if (!branch) return null;
+    try { return (shared("bhote.depRun") ?? []).find((x) => x.branch === branch) ?? null; } catch (_e) { return null; }
+  }
+
+  // A ring that fills, the percentage in it.
+  ring(t, frac, color, size) {
+    const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
+    return div().relative().w(size).h(size).flex_none()
+      .child(svg(`mods/bhote/ring-${Math.round(pct / 5) * 5}.svg`).size(size).text_color(color))
+      .child(div().absolute().inset_0().flex().items_center().justify_center().text_size(size >= 34 ? 10.5 : 8.5).font_semibold().text_color(color).child(`${pct}%`));
+  }
+
   // The progress of the runs that go now (a test run, a deployment): the mean of those with a figure and the longest time left; null when none.
   runsBar(rows, kind) {
     const est = rows.filter((x) => x.state === "running" || x.state === "queued").map((x) => this.runEstimate(x, kind));
@@ -2246,7 +2444,7 @@ export default class Bhote extends View {
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
       .child(tiles).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
-      .children(this.doneDock(t) ? [this.doneDock(t)] : []);
+      .children(this.docks(t));
   }
 
   setTab(cx, id) {
@@ -2329,16 +2527,9 @@ export default class Bhote extends View {
         .child(div().truncate().text_size(11).text_color(t.muted).child(meta))
         .child(div().h(4).w_full().rounded(2).bg(t.border).overflow_hidden().flex()
           .child(div().h(4).w(`${live ? Math.round((est.frac ?? 0) * 100) : okPct}%`).bg(live ? t.working : (t.ansi2 ?? t.done)))
-          .when(badPct > 0, (el) => el.child(div().h(4).w(`${badPct}%`).bg(t.blocked))))
+          .when(badPct > 0, (e) => e.child(div().h(4).w(`${badPct}%`).bg(t.blocked))))
         .when(!!this.runStages(x, "t"), (el) => el.child(this.pathRow(t, this.runStages(x, "t")))))
-      .child(live && est.frac != null
-        // a running test: a ring that fills, the percentage in it, the time left under it
-        ? v_flex().flex_none().items_center().gap(1)
-          .child(div().relative().w(38).h(38).flex_none()
-            .child(svg(`mods/bhote/ring-${Math.max(0, Math.min(100, Math.round(est.frac * 20) * 5))}.svg`).size(38).text_color(color))
-            .child(div().absolute().inset_0().flex().items_center().justify_center().text_size(10.5).font_semibold().text_color(color).child(`${Math.round(est.frac * 100)}%`)))
-          .when(!!label, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(label)))
-        : v_flex().flex_none().items_end().gap(0)
+      .child(v_flex().flex_none().items_end().gap(0)
         .child(div().text_size(11.5).font_semibold().text_color(color).child(big))
         .when(!!label, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(label))))
       .child(this.optionsBtn(t, `op-${id}`, items));
@@ -2458,6 +2649,6 @@ export default class Bhote extends View {
     return v_flex().size_full().bg(t.chrome).text_size(13)
       .child(this.tabBar(t))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body))
-      .children(this.tab === "tests" ? this.archiveDock(t) : this.tab === "topics" && this.doneDock(t) ? [this.doneDock(t)] : []);
+      .children(this.tab === "tests" ? this.archiveDock(t) : this.tab === "topics" ? this.docks(t) : []);
   }
 }
