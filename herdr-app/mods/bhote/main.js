@@ -607,6 +607,7 @@ export default class Bhote extends View {
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
     else if (it.type === "newspace") run("space.new", { machine: it.machine });
+    else if (it.type === "prfilter") setShared("bhote.prFilter", it.value || null);
     else if (it.type === "pickstart") exec("bhote", ["__act", "pickstart", it.id, it.machine, it.pane, it.name], { timeout: 60000 }).catch(() => {});
     else if (it.type === "hide") {
       const h = shared("bhote.hidden") ?? { archived: [], discarded: [] };
@@ -934,18 +935,45 @@ export default class Bhote extends View {
             .child(div().flex_none().text_size(11).text_color(dcolor(x)).child(x.state === "ok" ? "deployed" : x.state)))))));
   }
 
+  // The project the PRs tab is filtered to (null: all), kept in the shared state so that the menu popup can set it.
+  prFilter() {
+    try { return shared("bhote.prFilter") ?? null; } catch (_e) { return null; }
+  }
+
+  prProjects() {
+    return [...new Set(this.prs.map((x) => x.project))].sort((a, b) => a.localeCompare(b));
+  }
+
+  // The filter button at the right of the tab bar: the project, a chevron; it opens the list of projects.
+  prFilterButton(t) {
+    const f = this.prFilter();
+    return div().id("pr-filter").flex_none().flex().items_center().gap(5).px(9).py(4).rounded(6).text_size(12).cursor_pointer()
+      .bg(f ? t.selected : t.raised).border(1).border_color(f ? t.accent : t.border).text_color(f ? t.foreground : t.muted)
+      .hover((e) => e.bg(t.hover))
+      .on_click(this.guard(() => {
+        const cur = this.prFilter();
+        this.openMenu([{ type: "head", label: "Filter by project" },
+          { type: "prfilter", value: "", label: `All projects${cur ? "" : "   ✓"}` },
+          ...this.prProjects().map((p) => ({ type: "prfilter", value: p, label: `${p}${cur === p ? "   ✓" : ""}` }))]);
+      }))
+      .child(div().child(f ?? "All projects"))
+      .child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim));
+  }
+
   prsBody(t) {
     const rows = [];
-    const open = this.prs.filter((x) => x.kind === "pr" && !x.merged);
-    const branches = this.prs.filter((x) => x.kind === "branch");
-    const merged = this.prs.filter((x) => x.merged).sort((a, b) => b.merged - a.merged);
+    const f = this.prFilter();
+    const all = f ? this.prs.filter((x) => x.project === f) : this.prs;
+    const open = all.filter((x) => x.kind === "pr" && !x.merged);
+    const branches = all.filter((x) => x.kind === "branch");
+    const merged = all.filter((x) => x.merged).sort((a, b) => b.merged - a.merged);
     const sections = [["Open pull requests", open], ["Branches without a pull request", branches], ["Merged, last 14 days", merged]];
     for (const [label, list] of sections) {
       if (!list.length) continue;
       rows.push(this.head(t, `${label} · ${list.length}`));
       list.slice(0, 10).forEach((x, i) => rows.push(this.prCard(t, `pr-${label.length}-${i}`, x)));   // the ten newest
     }
-    if (!rows.length) rows.push(this.prLoading || !this.prAt ? empty(t, "", "Loading pull requests", "Asking GitHub for your open pull requests", true) : empty(t, "⑂", "No open pull requests", "Your pull requests and the branches you work on show up here with their checks"));
+    if (!rows.length) rows.push(this.prLoading || !this.prAt ? empty(t, "", "Loading pull requests", "Asking GitHub for your open pull requests", true) : empty(t, "⑂", f ? `Nothing for ${f}` : "No open pull requests", f ? "Pick All projects in the filter to see the others" : "Your pull requests and the branches you work on show up here with their checks"));
     return rows;
   }
 
@@ -967,7 +995,8 @@ export default class Bhote extends View {
           .child(label)
           .when(running > 0, (el) => el.child(div().text_size(11).text_color(t.working).child(String(running))))
           .when(failed > 0, (el) => el.child(div().px(4).rounded(8).text_size(10).bg("#a8162e").text_color("#ffffff").child(String(failed))));
-      }));
+      }))
+      .when(this.tab === "prs", (el) => el.child(div().flex_1()).child(this.prFilterButton(t)));
   }
 
   // The runs of a monitor grouped by project: the project with the newest run first; each group says what runs and what failed
