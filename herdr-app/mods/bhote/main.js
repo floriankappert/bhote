@@ -1723,7 +1723,7 @@ export default class Bhote extends View {
         .child(div().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
         .children(machines.map(({ m, d }) => dots(m, d)))
         .child(div().flex_1())
-        .when(!!tun, (el) => el.child(svg("mods/bhote/link.svg").size(14).text_color(tun.open ? (t.ansi2 ?? t.done) : t.dim)))
+        .when(!!tun, (el) => el.child(svg(tun.open ? "mods/bhote/plug.svg" : "mods/bhote/unplug.svg").size(14).text_color(tun.open ? (t.ansi2 ?? t.done) : t.dim)))
         .child(svg("mods/bhote/chevron-down.svg").size(14).text_color(t.muted));
     }
     return v_flex().id("tile-servers").flex_none().gap(8).p(small ? 10 : 12).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border)
@@ -1731,7 +1731,7 @@ export default class Bhote extends View {
       .child(h_flex().gap(8).items_center()
         .child(div().w(8).h(8).rounded(4).flex_none().bg(machines.some((x) => x.d.systems.some((y) => y.running)) ? (t.ansi2 ?? t.done) : t.dim))
         .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
-        .when(!!tun, (el) => el.child(this.ibtn(t, "srv-tunnel", "link", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { dim: tunPending, color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground }))))
+        .when(!!tun, (el) => el.child(this.ibtn(t, "srv-tunnel", tun.open ? "plug" : "unplug", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { dim: tunPending, color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground }))))
       .children(machines.map(({ m, d }) => v_flex().gap(6)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(m.label))
@@ -1754,7 +1754,7 @@ export default class Bhote extends View {
     if (tun) {
       rows.push(this.head(t, "Tunnel"));
       rows.push(h_flex().gap(10).items_center().mx(10).mb(6).px(12).py(9).rounded(8).bg(t.surface).border(1).border_color(t.border)
-        .child(this.icon(t, "link", tun.open ? (t.ansi2 ?? t.done) : t.dim, 16))
+        .child(this.icon(t, tun.open ? "plug" : "unplug", tun.open ? (t.ansi2 ?? t.done) : t.dim, 16))
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_color(t.foreground).child(tun.open ? `Open to ${tun.host.split("@").pop()}` : "Closed"))
           .child(div().text_size(11).text_color(t.muted).child(`${tun.host} · port block ${tun.block}: the other machine's systems appear as localhost`)))
