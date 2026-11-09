@@ -224,6 +224,7 @@ export default class Bhote extends View {
     this.srvPending = {};   // `${machine}|${slot}` (or "tunnel"): what was asked for, until the poll shows it
     this.srvLoading = false;
     this.srvAt = 0;
+    this.srvHover = null;
     if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
     // Topics are plain files: reload when one changes.
     cx.spawn(async (cx) => {
@@ -1614,6 +1615,14 @@ export default class Bhote extends View {
     return p.want === "up" ? "starting" : "stopping";
   }
 
+  // Is the tunnel being opened or closed? (until the poll shows it, 60 s at most)
+  tunBusy(tun) {
+    const p = this.srvPending.tunnel;
+    if (!p) return false;
+    if (!tun || (p.want === "up") === !!tun.open || Date.now() - p.at > 60000) { delete this.srvPending.tunnel; return false; }
+    return true;
+  }
+
   // The tunnel of this computer to a machine: { open, host } or null.
   tunnelTo(name) {
     const tun = this.srv.local?.tunnels ?? [];
@@ -1629,8 +1638,8 @@ export default class Bhote extends View {
     else if (what === "stop") { cmd = `ims-${slot}-stop`; this.srvPending[`${key}|${slot}`] = { want: "down", at }; }
     else if (what === "startAll") { cmd = "ims-start -q"; for (const x of systems) this.srvPending[`${key}|${x.slot}`] = { want: "up", at }; }
     else if (what === "stopAll") { cmd = "ims-stop"; for (const x of systems) this.srvPending[`${key}|${x.slot}`] = { want: "down", at }; }
-    else if (what === "tunnelOpen") cmd = "ims-tunnels-start";
-    else if (what === "tunnelClose") cmd = "ims-tunnels-stop";
+    else if (what === "tunnelOpen") { cmd = "ims-tunnels-start"; this.srvPending.tunnel = { want: "up", at }; }
+    else if (what === "tunnelClose") { cmd = "ims-tunnels-stop"; this.srvPending.tunnel = { want: "down", at }; }
     else return;
     cx.notify();
     cx.spawn(async (cx) => {
@@ -1663,11 +1672,11 @@ export default class Bhote extends View {
 
   // A small icon button; it remembers where it is (for a menu) and never counts as a click on what is behind it.
   ibtn(t, id, icon, onClick, o = {}) {
-    return div().id(id).w(o.w ?? 24).h(22).flex_none().flex().items_center().justify_center().rounded(5).text_color(o.color ?? t.muted).opacity(o.dim ? 0.3 : 1)
-      .when(!o.dim, (el) => el.cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.hover ?? t.foreground))
+    return div().id(id).w(o.w ?? 20).h(22).flex_none().flex().items_center().justify_center().rounded(5).text_color(o.color ?? t.muted).opacity(o.hidden ? 0 : o.dim && !o.spin ? 0.3 : 1)
+      .when(!o.dim && !o.hidden, (el) => el.cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.hover ?? t.foreground))
         .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
         .on_click(this.guard((_e, cx) => onClick(cx))))
-      .child(svg(`mods/bhote/${icon}.svg`).size(o.size ?? 13));
+      .child(o.spin ? div().text_size(12).text_color(t.working).frames(SPIN, 90) : svg(`mods/bhote/${icon}.svg`).size(o.size ?? 13));
   }
 
   // The colour of a system's state.
@@ -1683,9 +1692,14 @@ export default class Bhote extends View {
     const busy = st === "starting" || st === "stopping";
     const up = st === "running" || st === "partial" || st === "stopping";
     const id = `srv-${key}-${sys.slot}`;
-    return h_flex().gap(3).items_center().pl(8).pr(3).py(3).rounded(8).bg(t.chrome).border(1).border_color(up && !busy ? tint(color, "55", t.border) : t.border)
+    const hovered = this.srvHover === id;
+    return h_flex().id(id).gap(0).items_center().pl(8).pr(3).py(3).rounded(8).bg(t.chrome)
+      .on_hover((h, cx) => { if (h) this.srvHover = id; else if (this.srvHover === id) this.srvHover = null; cx.notify(); }).border(1).border_color(up && !busy ? tint(color, "55", t.border) : t.border)
       .child(busy ? div().w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().w(8).h(8).rounded(4).flex_none().bg(color))
-      .child(div().pl(2).pr(2).text_size(12).font_semibold().text_color(up ? t.foreground : t.muted).child(sys.slot))
+      .child(div().id(`${id}-label`).pl(2).pr(6).text_size(12).font_semibold().text_color(up ? t.foreground : t.muted).child(sys.slot)
+        .when(this.canLaunch(name, sys), (el) => el.cursor_pointer().hover((e) => e.text_color(t.accent))
+          .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
+          .on_click(this.guard(() => this.openLaunch(name, sys)))))
       .child(this.ibtn(t, `${id}-go`, up ? "restart" : "play", (cx) => this.srvDo(cx, name, up ? "restart" : "start", sys.slot), { dim: busy, color: up ? t.muted : (t.ansi2 ?? t.done) }))
       .when(up, (el) => el.child(this.ibtn(t, `${id}-stop`, "stop", (cx) => this.srvDo(cx, name, "stop", sys.slot), { dim: busy, hover: t.blocked })))
       .when(this.canLaunch(name, sys), (el) => el.child(this.ibtn(t, `${id}-launch`, "launch", () => this.openLaunch(name, sys), { color: t.accent })));
@@ -1709,7 +1723,7 @@ export default class Bhote extends View {
     if (!machines.length && !waiting) return null;   // no IMS on any machine
     const small = this.compactTiles();
     const tun = (this.srv.local?.tunnels ?? [])[0];
-    const tunPending = !!this.srvPending.tunnel;
+    const tunPending = this.tunBusy((this.srv.local?.tunnels ?? [])[0]);
     let shut = false;
     try { shut = shared("bhote.srvShut") !== false; } catch (_e) { shut = true; }
     const toggle = (_e, cx) => { setShared("bhote.srvShut", !shut); cx.notify(); };
@@ -1723,15 +1737,15 @@ export default class Bhote extends View {
         .child(div().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
         .children(machines.map(({ m, d }) => dots(m, d)))
         .child(div().flex_1())
-        .when(!!tun, (el) => el.child(svg(tun.open ? "mods/bhote/plug.svg" : "mods/bhote/unplug.svg").size(14).text_color(tun.open ? (t.ansi2 ?? t.done) : t.dim)))
+        .when(!!tun, (el) => el.child(tunPending ? div().text_size(12).text_color(t.working).frames(SPIN, 90) : svg(tun.open ? "mods/bhote/plug.svg" : "mods/bhote/unplug.svg").size(14).text_color(tun.open ? (t.ansi2 ?? t.done) : t.dim)))
         .child(svg("mods/bhote/chevron-down.svg").size(14).text_color(t.muted));
     }
-    return v_flex().id("tile-servers").flex_none().gap(8).p(small ? 10 : 12).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border)
-      .hover((e) => e.bg(t.raised)).on_click(this.guard(toggle))
-      .child(h_flex().gap(8).items_center()
+    return v_flex().id("tile-servers").flex_none().gap(8).p(small ? 10 : 12).rounded(12).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().id("srv-head").gap(8).items_center().cursor_pointer().on_click(this.guard(toggle))
         .child(div().w(8).h(8).rounded(4).flex_none().bg(machines.some((x) => x.d.systems.some((y) => y.running)) ? (t.ansi2 ?? t.done) : t.dim))
         .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
-        .when(!!tun, (el) => el.child(this.ibtn(t, "srv-tunnel", tun.open ? "plug" : "unplug", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { dim: tunPending, color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground }))))
+        .child(svg("mods/bhote/chevron-up.svg").size(14).text_color(t.muted))
+        .when(!!tun, (el) => el.child(this.ibtn(t, "srv-tunnel", tun.open ? "plug" : "unplug", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { dim: tunPending, spin: tunPending, color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground }))))
       .children(machines.map(({ m, d }) => v_flex().gap(6)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(m.label))
@@ -1755,7 +1769,7 @@ export default class Bhote extends View {
         .child(v_flex().flex_1().min_w(0).gap(1)
           .child(div().text_color(t.foreground).child(tun.open ? `Open to ${tun.host.split("@").pop()}` : "Closed"))
           .child(div().text_size(11).text_color(t.muted).child(`${tun.host} · port block ${tun.block}: the other machine's systems appear as localhost`)))
-        .child(this.btn(t, "srv-tunnel-page", tun.open ? "Close" : "Open", (_e, cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { primary: !tun.open })));
+        .child(this.btn(t, "srv-tunnel-page", this.tunBusy(tun) ? (tun.open ? "Closing…" : "Opening…") : tun.open ? "Close" : "Open", (_e, cx) => this.tunBusy(tun) ? null : this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { primary: !tun.open })));
     }
     for (const { m, d } of machines) {
       const key = this.srvKey(m.name);
