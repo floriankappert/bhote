@@ -106,7 +106,8 @@ function parseProjects(text) {
       if (i > 0 && !(line.slice(0, i) in v)) v[line.slice(0, i)] = line.slice(i + 1);
     }
     if (v.kind !== "project" || v.deleted === "1" || !v.id) continue;
-    out.push({ id: v.id, title: v.title || v.id, repos: (v.repos ?? "").split(",").map((x) => x.trim()).filter(Boolean) });
+    out.push({ id: v.id, title: v.title || v.id, repos: (v.repos ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+      deployBranches: (v.deploy_branches ?? "").split(",").map((e) => e.split("=")[0].trim()).filter(Boolean) });
   }
   return out;
 }
@@ -757,7 +758,10 @@ export default class Bhote extends View {
   // The place of the button that was pressed (window coordinates): the menu opens right under it.
   anchorOf(e) {
     const b = e?.bounds;
-    return b ? { right: b.x + b.width, bottom: b.y + b.height } : null;
+    if (!b) return null;
+    // the bounds come in design pixels, the popup is placed in window pixels: the zoom lies between them
+    const z = Number(settings()?.zoom) || 1;
+    return { right: (b.x + b.width) / z, bottom: (b.y + b.height) / z };
   }
 
   // `above`: where the bar that opened it is ({ x, top }): the popup goes up from there, not down. `anchor`: the button it belongs to:
@@ -777,18 +781,28 @@ export default class Bhote extends View {
     const t = theme();
     return v_flex().id("menu-list").size_full().p(4).bg(t.popover).text_size(12.5).overflow_y_scrollbar().children(this.menu.map((it, i) => it.type === "head"
       ? div().px(10).pt(6).pb(2).text_size(11).text_color(t.dim).child(it.label.toUpperCase())
-      : div().id(`mi-${i}`).px(10).py(6).rounded(5).cursor_pointer().text_color(it.danger ? t.blocked : t.foreground)
-        .hover((e) => e.bg(t.hover)).on_click(() => this.runItem(it)).child(it.label)));
+      : h_flex().id(`mi-${i}`).gap(9).items_center().px(10).py(6).rounded(5).cursor_pointer().text_color(it.danger ? t.blocked : t.foreground)
+        .hover((e) => e.bg(t.hover)).on_click((_e, cx) => this.runItem(it, cx))
+        .when(it.check !== undefined, (el) => el.child(checkbox(t, !!it.check)))
+        .child(div().flex_1().min_w(0).truncate().child(it.label))));
   }
 
   // What an item does; the popup closes after it (a started exec keeps running).
-  runItem(it) {
+  runItem(it, cx) {
+    // a multi-choice item: it ticks or unticks and the menu stays open
+    if (it.type === "prtoggle") {
+      const cur = this.prFilter();
+      if (!it.value) cur.clear(); else if (cur.has(it.value)) cur.delete(it.value); else cur.add(it.value);
+      setShared("bhote.prFilter", [...cur]);
+      this.menu = this.menu.map((m) => (m.type === "prtoggle" ? { ...m, check: m.value ? cur.has(m.value) : cur.size === 0 } : m));
+      if (cx) cx.notify();
+      return;
+    }
     if (it.type === "url") exec("open", [it.url]).catch(() => {});
     else if (it.type === "status") { this.markPending([it.id], { status: it.status }); exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {}); }
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
     else if (it.type === "newspace") run("space.new", { machine: it.machine });
-    else if (it.type === "prfilter") setShared("bhote.prFilter", it.value || null);
     else if (it.type === "bstatus") { this.markPending(it.ids, { status: it.status }); for (const id of it.ids) exec("bhote", [it.status, id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
     else if (it.type === "bdelete") { this.markPending(it.ids, { deleted: true }); for (const id of it.ids) exec("bhote", ["rm", id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
     else if (it.type === "bhide") {
@@ -1102,6 +1116,30 @@ export default class Bhote extends View {
                 }
               }
             } catch (_e) { /* no builds known */ }
+            // the pipelines on the deploy branches (main): what a deployment hangs on. GitHub has their state: the statuses (CircleCI) and the check
+            // runs (Actions) of the newest commit. What runs is shown, and what failed in the last three hours.
+            for (const b of (p.deployBranches.length ? p.deployBranches : ["main"])) {
+              try {
+                const sh = async (path, jq) => JSON.parse((await exec("gh", ["api", path, "--jq", jq], { timeout: 40000 })).stdout);
+                const [cm, sts, runs] = await Promise.all([
+                  sh(`repos/${slug}/commits/${b}`, '{sha: .sha, msg: (.commit.message | split("\n") | .[0]), author: .author.login, date: .commit.committer.date, url: .html_url}'),
+                  sh(`repos/${slug}/commits/${b}/status`, '[.statuses[] | {context, state, target_url, created_at}]').catch(() => []),
+                  sh(`repos/${slug}/commits/${b}/check-runs`, '[.check_runs[] | {name, status, conclusion, started_at, html_url}]').catch(() => []),
+                ]);
+                const cks = [
+                  ...sts.map((x) => checkOf({ __typename: "StatusContext", context: x.context, state: String(x.state).toUpperCase(), targetUrl: x.target_url, startedAt: x.created_at })),
+                  ...runs.map((x) => checkOf({ __typename: "CheckRun", name: x.name, status: String(x.status).toUpperCase(), conclusion: x.conclusion, detailsUrl: x.html_url, startedAt: x.started_at })),
+                ];
+                this.observeChecks(p.title, cks);
+                const age = Date.now() / 1000 - secOf(cm.date);
+                const shown = cks.filter((c) => c.state === "running" || (c.state === "failed" && age < 3 * 3600));
+                const finished = cks.filter((c) => c.state !== "running").length;
+                for (const c of shown) {
+                  builds.push({ time: c.started || secOf(cm.date), project: p.title, label: c.name.replace(/^ci\/circleci:\s*/i, ""), state: c.state, done: finished, total: cks.length,
+                    branch: b, title: `${cm.author ?? ""} · ${cm.msg ?? ""}`.replace(/^ · /, ""), url: c.url || cm.url, histKey: c.key });
+                }
+              } catch (_e) { /* no pipelines known on this branch */ }
+            }
             // branches of topics that work on this project and have no pull request yet
             const branches = [...new Set(this.topics.filter((x) => cardStates.has(x.group) && x.branch && !x.dismissed && (x.project === p.id)).map((x) => x.branch))].filter((b) => !heads.has(b) && b !== "main" && b !== "develop");
             for (const b of branches.slice(0, 6)) {
@@ -1212,7 +1250,7 @@ export default class Bhote extends View {
 
   // The project the PRs tab is filtered to (null: all), kept in the shared state so that the menu popup can set it.
   prFilter() {
-    try { return shared("bhote.prFilter") ?? null; } catch (_e) { return null; }
+    try { const v = shared("bhote.prFilter"); return new Set(Array.isArray(v) ? v : v ? [v] : []); } catch (_e) { return new Set(); }
   }
 
   prProjects() {
@@ -1222,17 +1260,18 @@ export default class Bhote extends View {
   // The filter button at the right of the tab bar: the project, a chevron; it opens the list of projects.
   prFilterButton(t) {
     const f = this.prFilter();
+    const label = f.size === 0 ? "All projects" : f.size === 1 ? [...f][0] : `${f.size} projects`;
     return div().id("pr-filter").flex_none().flex().items_center().gap(5).px(9).py(4).rounded(6).text_size(12).cursor_pointer()
-      .bg(f ? t.selected : t.raised).border(1).border_color(f ? t.accent : t.border).text_color(f ? t.foreground : t.muted)
+      .bg(f.size ? t.selected : t.raised).border(1).border_color(f.size ? t.accent : t.border).text_color(f.size ? t.foreground : t.muted)
       .hover((e) => e.bg(t.hover))
       .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
       .on_click(this.guard(() => {
         const cur = this.prFilter();
         this.openMenu([{ type: "head", label: "Filter by project" },
-          { type: "prfilter", value: "", label: `All projects${cur ? "" : "   ✓"}` },
-          ...this.prProjects().map((p) => ({ type: "prfilter", value: p, label: `${p}${cur === p ? "   ✓" : ""}` }))], null, this.anchor);
+          { type: "prtoggle", value: "", check: cur.size === 0, label: "All projects" },
+          ...this.prProjects().map((p) => ({ type: "prtoggle", value: p, check: cur.has(p), label: p }))], null, this.anchor);
       }))
-      .child(div().child(f ?? "All projects"))
+      .child(div().child(label))
       .child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim));
   }
 
@@ -1260,7 +1299,7 @@ export default class Bhote extends View {
   prsBody(t) {
     const rows = [];
     const f = this.prFilter();
-    const all = f ? this.prs.filter((x) => x.project === f) : this.prs;
+    const all = f.size ? this.prs.filter((x) => f.has(x.project)) : this.prs;
     const open = all.filter((x) => x.kind === "pr" && !x.merged);
     const branches = all.filter((x) => x.kind === "branch");
     const merged = all.filter((x) => x.merged).sort((a, b) => b.merged - a.merged);
@@ -1288,7 +1327,7 @@ export default class Bhote extends View {
         }
       }
     }
-    if (!rows.length) rows.push(this.prLoading || !this.prAt ? empty(t, "", "Loading pull requests", "Asking GitHub for your open pull requests", true) : empty(t, "⑂", f ? `Nothing for ${f}` : "No open pull requests", f ? "Pick All projects in the filter to see the others" : "Your pull requests and the branches you work on show up here with their checks"));
+    if (!rows.length) rows.push(this.prLoading || !this.prAt ? empty(t, "", "Loading pull requests", "Asking GitHub for your open pull requests", true) : empty(t, "⑂", f.size ? `Nothing for ${[...f].join(", ")}` : "No open pull requests", f.size ? "Pick All projects in the filter to see the others" : "Your pull requests and the branches you work on show up here with their checks"));
     return rows;
   }
 
@@ -1424,10 +1463,60 @@ export default class Bhote extends View {
   }
 
   // A run of a monitor as a card: its state, project and workflow, the branch and title, the bar while it runs, the time.
+  // A test run as a result card, not a to-do: a round badge in front with the state (it is also how a run is ticked for the batch actions),
+  // the suite and what it belongs to, the figure that counts on the right (how many passed, how many failed, the percentage while it runs),
+  // and under it a bar that shows the result: green for what passed, red for what failed; while it runs, its progress.
+  testCard(t, id, x, archived) {
+    const key = this.runKey(x);
+    const picked = this.sel().tests.has(key);
+    const color = x.state === "ok" ? t.done : x.state === "failed" ? t.blocked : x.state === "running" ? t.working : x.state === "approval" ? t.ansi3 : t.dim;
+    const word = { ok: "passed", failed: "failed", running: "running", approval: "approval", canceled: "canceled", queued: "queued" }[x.state] ?? x.state;
+    const count = (re) => { const m = re.exec(x.title ?? ""); return m ? Number(m[1].replace(/[.,]/g, "")) : null; };
+    const passed = count(/(\d[\d.,]*)\s*passed/i), failedN = count(/(\d[\d.,]*)\s*failed/i);
+    const sum = (passed ?? 0) + (failedN ?? 0);
+    const live = x.state === "running" || x.state === "queued";
+    const est = live ? this.runEstimate(x, "t") : null;
+    let big, label;
+    if (live) { big = est.frac != null ? `${Math.round(est.frac * 100)}%` : "…"; label = est.remain != null ? left(est.remain) : "running"; }
+    else if (x.state === "failed") { big = failedN != null ? String(failedN) : "failed"; label = failedN != null ? "failed" : ""; }
+    else if (passed != null) { big = String(passed); label = "passed"; }
+    else { big = word; label = ""; }
+    const okPct = live ? 0 : sum > 0 ? (passed ?? 0) / sum * 100 : x.state === "ok" ? 100 : 0;
+    const badPct = live ? 0 : sum > 0 ? (failedN ?? 0) / sum * 100 : x.state === "failed" ? 100 : 0;
+    const items = () => {
+      const k = this.runKey(x);
+      return [
+        ...(x.url ? [{ type: "url", url: x.url, label: "Open in CI" }] : []),
+        ...(archived ? [{ type: "hide", mode: "restore", key: k, label: "Restore" }] : [{ type: "hide", mode: "archive", key: k, label: "Archive" }]),
+        { type: "hide", mode: "discard", key: k, label: "Discard", danger: true },
+      ];
+    };
+    const meta = [x.project, x.branch ? `⎇ ${x.branch}` : "", clock(x.time), archived ? "archived" : ""].filter(Boolean).join(" · ");
+    return h_flex().id(id).gap(10).items_center().bg(t.surface).border(1).border_color(picked ? t.accent : x.state === "failed" ? "#a8162e" : t.border).rounded(10).mx(8).mb(6).pl(10).pr(6).py(10)
+      .hover((e) => e.bg(t.raised)).on_click(this.guard(() => this.open(x.url)))
+      // the badge: the state; a tick when the run is selected
+      .child(div().id(`ck-${id}`).w(32).h(32).flex_none().flex().items_center().justify_center().rounded(16).cursor_pointer()
+        .bg(picked ? t.accent : tint(color, "26", t.raised)).border(1).border_color(picked ? t.accent : tint(color, "55", t.border))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click(this.guard((_e, cx) => { this.toggleSel("tests", key); cx.notify(); }))
+        .child(picked ? svg("mods/bhote/check.svg").size(15).text_color(t.accent_foreground ?? "#ffffff") : this.stateIcon(t, x.state, color, 17)))
+      .child(v_flex().flex_1().min_w(0).gap(4)
+        .child(div().truncate().font_semibold().text_color(t.foreground).child(x.label))
+        .child(div().truncate().text_size(11).text_color(t.muted).child(meta))
+        .child(div().h(4).w_full().rounded(2).bg(t.border).overflow_hidden().flex()
+          .child(div().h(4).w(`${live ? Math.round((est.frac ?? 0) * 100) : okPct}%`).bg(live ? t.working : t.done))
+          .when(badPct > 0, (el) => el.child(div().h(4).w(`${badPct}%`).bg(t.blocked)))))
+      .child(v_flex().flex_none().items_end().gap(0)
+        .child(div().text_size(big.length > 6 ? 13 : 20).font_semibold().text_color(color).child(big))
+        .when(!!label, (el) => el.child(div().text_size(10.5).text_color(t.dim).child(label))))
+      .child(this.optionsBtn(t, `op-${id}`, items));
+  }
+
   // A run of a test or a build as a card, laid out like a pull request: the title row (the checkbox of a test or the state icon of a
   // build, the title, the ... menu), under it what it belongs to and when, then the result: the state icon with the outcome, or the
   // progress bar and the time left while it runs.
   monitorCard(t, id, x, kind, archived) {
+    if (kind === "t") return this.testCard(t, id, x, archived);
     const key = this.runKey(x);
     const isTest = kind === "t";
     const picked = isTest && this.sel().tests.has(key);
