@@ -1634,7 +1634,7 @@ export default class Bhote extends View {
     else return;
     cx.notify();
     cx.spawn(async (cx) => {
-      try { await this.srvExec(name, "zsh", ["-ic", cmd], 180000); } catch (_e) { /* the next poll shows what is there */ }
+      try { await this.srvExec(name, "zsh", ["-ic", `_ims_node24 >/dev/null 2>&1; ${cmd}`], 180000); } catch (_e) { /* the next poll shows what is there */ }
       this.srvAt = 0;
       this.loadServers(cx);
     });
