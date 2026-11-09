@@ -378,7 +378,9 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
 }
 topic_new() {  # topic_new <title> [waiting for] [description]
     mkdir -p "$TOPIC_DIR"
-    local now id title status=now since=""; now=$(date +%s); id="$now-$RANDOM"
+    local now id title status=now since="" k=0; now=$(date +%s); id="$now-$RANDOM"
+    # (bash 3.2 gives every command substitution the same RANDOM: two topics made in the same second would be one file)
+    while [ -e "$TOPIC_DIR/$id.topic" ]; do k=$((k + 1)); id="$now-$RANDOM.$k"; done
     title=${1//[[:cntrl:]]/}; title=$(printf '%s' "$title" | sed 's/^ *//; s/ *$//'); set -- "$title" "${2//[[:cntrl:]]/}" "${3//[[:cntrl:]]/}"
     set -- "${1:0:500}" "$2" "${3:0:$DESC_MAX}"
     [ -n "$title" ] || return 1
@@ -1206,6 +1208,9 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
     if [ $# -eq 0 ]; then                                      # this machine: where its agents work (their branch, see branch_sync)
         printf '%s' "$panes" | jq -r '.result.panes[] | select(.agent) | [.pane_id, ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0000-\u001f]"; ""))] | join("\u001f")' > "$AGENT_CWD.tmp.$$" 2>/dev/null \
             && mv "$AGENT_CWD.tmp.$$" "$AGENT_CWD" 2>/dev/null
+        # the workspaces of this machine for the left panel: number, id, label, 1 for the focused one, the state of its agents (what daemon/src/agents.rs writes on Linux)
+        printf '%s' "$ws" | jq -r '.result.workspaces[]? | [(.number // ""), (.workspace_id // ""), (.label // ""), (if .focused == true then "1" else "0" end), (.agent_status // "")] | map(tostring | gsub("[\u0000-\u001f]"; "")) | join("\u001f")' > "$SHARED_DIR/workspaces.local.tmp.$$" 2>/dev/null \
+            && mv -f "$SHARED_DIR/workspaces.local.tmp.$$" "$SHARED_DIR/workspaces.local" 2>/dev/null
         # which pane has the focus, and its tab (the list says so): the panels read this file once a second instead of each asking herdr (a process pipeline and an API call per panel per second)
         printf '%s\n' "$(printf '%s' "$panes" | jq -r '[.result.panes[]? | select(.focused == true)][0] | if . == null then "" else "\(.pane_id) \(.tab_id // "")" end' 2>/dev/null)" > "$SHARED_DIR/focus.pane.tmp.$$" 2>/dev/null \
             && mv -f "$SHARED_DIR/focus.pane.tmp.$$" "$SHARED_DIR/focus.pane" 2>/dev/null

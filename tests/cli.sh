@@ -338,7 +338,8 @@ case "$1 $2" in
 esac
 EOF2
 chmod +x "$pt/bin/herdr"; printf 'PANEL_LAYOUT=split\nBHOTED_PANEL=on\nPANEL_LEFT_WIDTH=42\n' > "$pt/cfg"
-out=$(BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
+printf '#!/bin/sh\n' > "$pt/bin/bhote"; chmod +x "$pt/bin/bhote"   # (the plugin does nothing without a bhote to run: CI has none installed)
+out=$(PATH="$pt/bin:$PATH" BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
 echo "$out" | grep -q 'rename <new> bhote-right' && echo "$out" | grep -q 'rename <new> bhote-left' && echo "$out" | grep -q 'resize <new> to 42' && ok "plugin split: right and left panel, left 42 wide" || bad "plugin split: $out"
 printf 'PANEL_LAYOUT=single\n' > "$pt/cfg"
 out=$(BHOTE_CONFIG="$pt/cfg" HERDR_BIN_PATH="$pt/bin/herdr" BHOTE_DRY=1 sh "herdr-plugin/open_panel.sh" startup 2>&1)
