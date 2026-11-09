@@ -5,7 +5,7 @@
 // Data: agents() / spaces() of herdr-app (live), the topic files and the monitor lists bhoted writes (files are the
 // interface). Actions: the bhote CLI through exec(), herdr-app commands through run().
 
-import { View, div } from "gpui-kit";
+import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay } from "herdr";
 
@@ -135,6 +135,13 @@ const PR_FIELDS = "number,title,headRefName,baseRefName,url,isDraft,state,merged
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
 
 // This machine's name in bhote's topics: "Mac" on macOS (HOST), else the short hostname.
+// A checkbox: a rounded square with a border, filled with the accent and a drawn check mark when it is on.
+function checkbox(t, on) {
+  return div().w(16).h(16).flex_none().rounded(4).flex().items_center().justify_center()
+    .border(1).border_color(on ? t.accent : t.input).bg(on ? t.accent : t.background)
+    .when(on, (el) => el.child(svg("mods/bhote/check.svg").size(11).text_color(t.accent_foreground ?? "#ffffff")));
+}
+
 // An empty view: a glyph, a title and a hint, in the middle of the space in both directions. `busy` shows a spinner for the glyph.
 function empty(t, glyph, title, hint, busy) {
   return v_flex().flex_1().size_full().items_center().justify_center().gap(6).px(24).py(32)
@@ -168,6 +175,9 @@ export default class Bhote extends View {
     this.prAt = 0;
     // the show view: which topic it showed last, edit mode with its fields, the delete confirmation
     this.shownId = null;
+    this.showArchived = false;
+    this.selecting = false;       // multi-select mode of the Tests tab
+    this.selected = new Set();    // the run keys that are ticked
     this.editing = false;
     this.confirmDelete = false;
     if (this.side === "right") {
@@ -462,6 +472,37 @@ export default class Bhote extends View {
     return v_flex().size_full().bg(t.chrome).text_size(13).child(bar).child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body));
   }
 
+  // --- test runs a person archived or discarded: kept in the shared state, so they stay away after a restart -------------------
+  runKey(x) { return `${x.project}|${x.label}|${x.time}`; }
+
+  hidden() {
+    try { const h = shared("bhote.hidden"); return { archived: new Set(h?.archived ?? []), discarded: new Set(h?.discarded ?? []) }; } catch (_e) { return { archived: new Set(), discarded: new Set() }; }
+  }
+
+  // The test runs the Tests tab shows (not archived, not discarded) and the archived ones.
+  testsShown() {
+    const h = this.hidden();
+    return { shown: this.tests.filter((x) => !h.archived.has(this.runKey(x)) && !h.discarded.has(this.runKey(x))),
+      archived: this.tests.filter((x) => h.archived.has(this.runKey(x)) && !h.discarded.has(this.runKey(x))) };
+  }
+
+  // The archive of the Tests tab: a bar that stays at the bottom of the panel, and above it, when open, the archived runs in a
+  // drawer of their own (at most 45% of the panel, it scrolls).
+  archiveDock(t) {
+    const { archived } = this.testsShown();
+    if (!archived.length) return [];
+    const open = this.showArchived;
+    const out = [];
+    if (open) out.push(v_flex().flex_none().max_h("45%").overflow_y_scrollbar().pt(6).border_t(1).border_color(t.border).bg(t.chrome)
+      .children(archived.slice(0, 30).map((x, i) => this.monitorCard(t, `ar-${i}`, x, "t", true))));
+    out.push(h_flex().id("arch-toggle").flex_none().px(12).py(9).gap(8).items_center().cursor_pointer().border_t(1).border_color(t.border).bg(t.surface)
+      .text_size(12).text_color(t.muted).hover((e) => e.bg(t.raised))
+      .on_click((_e, cx) => { this.showArchived = !this.showArchived; cx.notify(); })
+      .child(div().w(10).child(open ? "▾" : "▸"))
+      .child(div().flex_1().child(`Archived · ${archived.length}`)));
+    return out;
+  }
+
   // --- the Options menu of a card: a button at the bottom right, a popup with what can be done with it -------------------------
   statusItems(x) {
     return [{ type: "head", label: "Move topic to" },
@@ -473,12 +514,18 @@ export default class Bhote extends View {
   }
 
   // The button: it never counts as a click on the card behind it.
-  optionsButton(t, id, getItems) {
-    return h_flex().justify_end().pt(2)
-      .child(div().id(id).px(8).py(2).rounded(5).text_size(11).cursor_pointer().text_color(t.muted).border(1).border_color(t.border)
-        .hover((e) => e.bg(t.hover).text_color(t.foreground))
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click(this.guard(() => this.openMenu(getItems()))).child("Options ▾"));
+  optionsBtn(t, id, getItems) {
+    return div().id(id).flex_none().px(8).py(2).rounded(5).text_size(11).cursor_pointer().text_color(t.muted).border(1).border_color(t.border)
+      .hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click(this.guard(() => this.openMenu(getItems()))).child("Options ▾");
+  }
+
+  // The foot of a card: its status caption at the bottom left, the Options button at the bottom right.
+  footer(t, id, caption, color, getItems) {
+    return h_flex().gap(8).pt(3).items_center()
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(color ?? t.muted).child(caption ?? ""))
+      .when(!!getItems, (el) => el.child(this.optionsBtn(t, id, getItems)));
   }
 
   // A click that closes the Options popup (a click beside it) must not also be taken by the card under it: the popup instance
@@ -515,6 +562,14 @@ export default class Bhote extends View {
     else if (it.type === "status") exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {});
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
+    else if (it.type === "hide") {
+      const h = shared("bhote.hidden") ?? { archived: [], discarded: [] };
+      const a = new Set(h.archived ?? []), d = new Set(h.discarded ?? []);
+      if (it.mode === "archive") a.add(it.key);
+      else if (it.mode === "discard") { d.add(it.key); a.delete(it.key); }
+      else if (it.mode === "restore") a.delete(it.key);
+      setShared("bhote.hidden", { archived: [...a].slice(-500), discarded: [...d].slice(-1000) });
+    }
     else if (it.type === "show") {
       setShared("bhote.show", it.id);
       run("layout.show", { id: "panel" });
@@ -591,7 +646,7 @@ export default class Bhote extends View {
     const ground = active ? tint(t.accent, "40", t.selected) : t.surface;
     return h_flex().id(id).bg(ground).border(1).border_color(active ? t.accent : t.border)
       .hover((x) => x.bg(active ? tint(t.accent, "52", t.selected) : t.raised)).mx(8).mb(6).rounded(8)
-      .on_click(this.guard(() => { if (agent) run("agent.focus", { terminal: agent.address }); }))
+      .on_click(this.guard(() => { if (o.onClick) o.onClick(); else if (agent) run("agent.focus", { terminal: agent.address }); }))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(st.bar))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
@@ -608,54 +663,50 @@ export default class Bhote extends View {
           .when(bars.length > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.working)
             .child(bars.map((x) => `${x.label.slice(0, 8)} ${bar(x.done, x.total)}`).join("  "))))))
         .when(!!live && live !== task, (el) => el.child(div().truncate().pl(14).text_size(11).text_color(t.working).child(live)))
-        .when(!!topic?.branch, (el) => el.child(div().truncate().pl(14).text_size(11).text_color(sub).child(`⎇ ${topic.branch}`)))
+        .when(!!(topic?.branch || o.branch), (el) => el.child(div().truncate().pl(14).text_size(11).text_color(sub).child(`⎇ ${topic?.branch || o.branch}`)))
         .when(!!o.selected && !!topic?.desc, (el) => el.child(div().pl(14).text_size(11).text_color(sub).child(topic.desc))));
   }
 
-  // Left: the workspaces by machine, then the cards in the order of the agents; an agent without a card has one.
+  // Left: one list. The workspaces by machine; a workspace with an agent is its agent's cards (a card per topic of the agent, or
+  // one for the idle agent), a workspace without one a compact row.
   left() {
     const t = theme();
     const rows = [];
     const sp = spaces();
+    const list = agents();
+    if (!sp.length && !list.length) return [empty(t, "◌", "No agents running", "Start an agent in a space and its card shows up here")];
+    const machineOf = (a) => sp.find((s) => s.id === a.space)?.machine ?? null;
+    const cards = this.topics.filter((x) => CARD_ORDER.includes(x.group) && !x.dismissed);
     const byMachine = new Map();
     for (const s of sp) {
       const m = s.machine ?? "This computer";
       if (!byMachine.has(m)) byMachine.set(m, []);
       byMachine.get(m).push(s);
     }
-    for (const [machine, list] of byMachine) {
+    for (const [machine, spaceList] of byMachine) {
       rows.push(this.head(t, machine));
-      for (const s of list) {
-        const color = s.status === "blocked" ? t.blocked : s.status === "working" ? t.working : s.status === "done" ? t.done : t.idle;
-        rows.push(
-          h_flex().id(`s-${s.id}`).gap(8).px(10).py(4).items_center()
-            .bg(s.active ? t.selected : t.chrome).hover((x) => x.bg(t.hover))
-            .on_click(() => run("space.select", { id: s.id }))
-            .child(div().w(8).h(8).rounded(4).flex_none().bg(color))
-            .child(div().flex_1().truncate().text_color(s.active ? t.foreground : t.muted).child(s.name))
-            .child(div().text_size(11).text_color(t.dim).child(s.branch ?? "")));
-      }
-    }
-
-    const list = agents();
-    if (!sp.length && !list.length) return [empty(t, "◌", "No agents running", "Start an agent in a space and its card shows up here")];
-    const machineOf = (a) => sp.find((s) => s.id === a.space)?.machine ?? null;
-    const cards = this.topics.filter((x) => CARD_ORDER.includes(x.group) && !x.dismissed);
-    rows.push(this.head(t, "Agents"));
-    // The other machines' agents above this one's, as bhote lists them.
-    const ordered = [...list.filter((a) => machineOf(a)), ...list.filter((a) => !machineOf(a))];
-    for (const a of ordered) {
-      const mine = cards.filter((x) => this.agentOf(x, [a], machineOf));
-      const machine = machineOf(a);
-      for (const x of mine.sort((p, q) => CARD_ORDER.indexOf(p.group) - CARD_ORDER.indexOf(q.group))) {
-        rows.push(this.card(t, `c-${x.id}`, { topic: x, agent: a, machine, name: a.space_name, st: this.cardState(t, x, a), selected: a.focused }));
-      }
-      if (!mine.length) {
-        const idle = a.status === "idle";
-        const st = a.status === "working" ? { word: "working", color: t.working, bar: t.working }
-          : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
-          : a.status === "done" ? { word: "finished", color: t.done, bar: t.done } : { word: "idle", color: t.dim, bar: t.idle };
-        rows.push(this.card(t, `a-${a.address}`, { topic: null, agent: a, machine, name: a.space_name, st, selected: a.focused, dim: idle }));
+      for (const s of spaceList) {
+        const mine = list.filter((a) => a.space === s.id);
+        if (!mine.length) {
+          // a workspace without an agent: a card too, quieter, a click shows the workspace
+          rows.push(this.card(t, `s-${s.id}`, { topic: null, agent: null, machine: s.machine, name: s.name, branch: s.branch,
+            st: { word: "no agent", color: t.dim, bar: t.idle }, selected: s.active, dim: true, onClick: () => run("space.select", { id: s.id }) }));
+          continue;
+        }
+        for (const a of mine) {
+          const topics = cards.filter((x) => this.agentOf(x, [a], machineOf)).sort((p, q) => CARD_ORDER.indexOf(p.group) - CARD_ORDER.indexOf(q.group));
+          const machineName = machineOf(a);
+          for (const x of topics) {
+            rows.push(this.card(t, `c-${x.id}`, { topic: x, agent: a, machine: machineName, name: s.name, branch: s.branch, st: this.cardState(t, x, a), selected: a.focused }));
+          }
+          if (!topics.length) {
+            const idle = a.status === "idle";
+            const st = a.status === "working" ? { word: "working", color: t.working, bar: t.working }
+              : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
+              : a.status === "done" ? { word: "finished", color: t.done, bar: t.done } : { word: "idle", color: t.dim, bar: t.idle };
+            rows.push(this.card(t, `a-${a.address}`, { topic: null, agent: a, machine: machineName, name: s.name, branch: s.branch, st, selected: a.focused, dim: idle }));
+          }
+        }
       }
     }
     return rows;
@@ -669,10 +720,7 @@ export default class Bhote extends View {
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().text_color(t.foreground).child(x.title))
         .when(!!sub, (el) => el.child(div().text_size(11).text_color(t.muted).child(sub)))
-        .child(this.optionsButton(t, `op-t-${x.id}`, () => this.topicItems(x))))
-      .child(div().id(`d-${x.id}`).px(6).text_color(t.dim).hover((s) => s.text_color(t.done))
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click(this.guard((_e, cx) => this.cli(cx, ["done", x.id]))).child("✓"));
+        .child(this.footer(t, `op-t-${x.id}`, this.cardState(t, x, null).word, this.cardState(t, x, null).color, () => this.topicItems(x))));
   }
 
   // Open and recently merged pull requests of the projects' repositories (gh), and the runs of branches that have no pull
@@ -770,8 +818,7 @@ export default class Bhote extends View {
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
           .when(pr.number > 0, (el) => el.child(div().flex_none().text_color(t.dim).child(`#${pr.number}`)))
-          .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(pr.title))
-          .when(!!chip, (el) => el.child(div().flex_none().text_size(11).text_color(chip[1]).child(chip[0]))))
+          .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(pr.title)))
         .child(div().truncate().text_size(11).text_color(t.muted).child(`⎇ ${pr.branch} · ${pr.project}`))
         .when(pr.checks.length > 0 && running.length > 0, (el) => {
           const e = this.checkEstimate(pr.checks);
@@ -787,18 +834,13 @@ export default class Bhote extends View {
         .when(pr.checks.length === 0, (el) => el.child(div().text_size(11).text_color(t.dim).child("no checks seen")))
         .children(failed.slice(0, 3).map((c) => div().truncate().pl(4).text_size(11).text_color(t.blocked).child(`✗ ${c.name}`)))
         .children(running.slice(0, 2).map((c) => div().truncate().pl(4).text_size(11).text_color(t.working).child(`◔ ${c.name}`)))
-        .when(!o.noTopic && failed.length > 0 && !pr.merged && pr.number > 0 && !!this.topicOf(pr), (el) => el.child(h_flex().gap(6).pt(2).items_center()
-          .child(div().id(`ft-${id}`).px(8).py(3).rounded(5).text_size(11).cursor_pointer().bg(t.raised).border(1).border_color(t.border).text_color(t.done)
-            .hover((x) => x.bg(t.hover))
-            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click(this.guard(() => this.openPage(this.topicOf(pr).id))).child(`✓ topic · ${this.topicOf(pr).group}`))))
         .when(pr.merged > 0, (el) => el.child(v_flex().gap(2).pt(2)
           .child(div().text_size(11).text_color(t.dim).child(deploys.length ? `deployments after the merge · ${ago(pr.merged)}` : `merged ${ago(pr.merged)} · no deployment seen`))
           .children(deploys.map((x) => h_flex().gap(6).text_size(12)
             .child(div().w(12).flex_none().text_color(dcolor(x)).child(mark(x)))
             .child(div().flex_1().truncate().text_color(t.foreground).child(x.label))
             .child(div().flex_none().text_size(11).text_color(dcolor(x)).child(x.state === "ok" ? "deployed" : x.state))))))
-        .child(this.optionsButton(t, `op-${id}`, () => {
+        .child(this.footer(t, `op-${id}`, chip ? chip[0] : "", chip ? chip[1] : t.muted, () => {
           const topic = this.topicOf(pr);
           const failedNames = failed.map((c) => c.name);
           return [
@@ -827,7 +869,7 @@ export default class Bhote extends View {
   // The tab bar of the right panel: Topics, Deployments, Tests; a monitor's tab shows what runs (orange) and what failed (red).
   tabBar(t, cx) {
     const prList = this.prs.filter((x) => !x.merged).map((x) => ({ state: x.checks.some((c) => c.state === "failed") ? "failed" : x.checks.some((c) => c.state === "running") ? "running" : "ok" }));
-    const tabs = [["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deployments", this.deploys], ["tests", "Tests", this.tests]];
+    const tabs = [["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deployments", this.deploys], ["tests", "Tests", this.testsShown().shown]];
     return h_flex().flex_none().gap(4).px(8).pt(8).pb(6).items_center().border_b(1).border_color(t.border)
       .children(tabs.map(([id, label, list]) => {
         const on = this.tab === id;
@@ -867,7 +909,7 @@ export default class Bhote extends View {
         .when(hidden > 0, (el) => el.child(div().text_color(t.dim).child(`+${hidden} passed`)))
         .when(running > 0, (el) => el.child(div().text_color(t.working).child(`${running} running`)))
         .when(failed > 0, (el) => el.child(div().px(5).rounded(8).bg("#a8162e").text_color("#ffffff").child(`✗ ${failed}`))), true));
-      list.slice(0, 10).forEach((x, i) => out.push(this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind)));
+      list.slice(0, 10).forEach((x, i) => out.push(this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false, kind === "t" ? { on: this.selecting, set: this.selected } : null)));
     }
     return out;
   }
@@ -879,20 +921,25 @@ export default class Bhote extends View {
   }
 
   // A run of a monitor as a card: its state, project and workflow, the branch and title, the bar while it runs, the time.
-  monitorCard(t, id, x, kind) {
+  monitorCard(t, id, x, kind, archived, sel) {
+    const key = this.runKey(x);
+    const picked = !!sel?.on && sel.set.has(key);
     const color = x.state === "ok" ? t.done : x.state === "failed" ? t.blocked : x.state === "running" ? t.working : x.state === "approval" ? t.ansi3 : t.dim;
     const mark = x.state === "ok" ? "✓" : x.state === "failed" ? "✗" : x.state === "approval" ? "◐" : "○";
     const word = x.state === "ok" ? "passed" : x.state === "failed" ? "failed" : x.state === "canceled" ? "canceled" : x.state;
     const detail = [x.branch ? `⎇ ${x.branch}` : "", x.title].filter(Boolean).join(" · ");
-    return h_flex().id(id).bg(t.surface).border(1).border_color(x.state === "failed" ? "#a8162e" : t.border).rounded(8).mx(8).mb(6)
-      .hover((s) => s.bg(t.raised)).on_click(this.guard(() => this.open(x.url)))
+    return h_flex().id(id).bg(t.surface).border(1).border_color(picked ? t.accent : x.state === "failed" ? "#a8162e" : t.border).rounded(8).mx(8).mb(6)
+      .hover((s) => s.bg(t.raised)).on_click(this.guard((_e, cx) => {
+        if (sel?.on) { if (this.selected.has(key)) this.selected.delete(key); else this.selected.add(key); cx.notify(); } else this.open(x.url);
+      }))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(color))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
-          .child(x.state === "running" ? div().w(12).flex_none().text_color(color).frames(SPIN, 90) : div().w(12).flex_none().text_color(color).child(mark))
+          // in select mode the checkbox takes the place of the state icon
+          .child(sel?.on ? checkbox(t, picked)
+            : x.state === "running" ? div().w(14).flex_none().text_color(color).frames(SPIN, 90) : div().w(14).flex_none().text_color(color).child(mark))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(`${x.project} · ${x.label}`))
-          .child(div().flex_none().text_size(11).text_color(t.dim).child(`${clock(x.time)} · `))
-          .child(div().flex_none().text_size(11).text_color(color).child(word)))
+          .child(div().flex_none().text_size(11).text_color(t.dim).child(clock(x.time))))
         .when(!!detail, (el) => el.child(div().truncate().pl(18).text_size(11).text_color(t.muted).child(detail)))
         .when(x.state === "running", (el) => {
           const e = this.runEstimate(x, kind);
@@ -901,7 +948,15 @@ export default class Bhote extends View {
             .when(e.remain != null, (r) => r.child(div().text_color(t.muted).child(left(e.remain))))
             .when(e.frac == null && e.remain == null, (r) => r.child(div().text_color(t.muted).child("running"))));
         })
-        .when(!!x.url, (el) => el.child(this.optionsButton(t, `op-${id}`, () => [{ type: "url", url: x.url, label: "Open in CI" }]))));
+        .child(this.footer(t, `op-${id}`, archived ? `${word} · archived` : word, color, sel?.on ? null : () => {
+          const key = this.runKey(x);
+          return [
+            ...(x.url ? [{ type: "url", url: x.url, label: "Open in CI" }] : []),
+            ...(kind === "t" && archived ? [{ type: "hide", mode: "restore", key, label: "Restore" }] : []),
+            ...(kind === "t" && !archived ? [{ type: "hide", mode: "archive", key, label: "Archive" }] : []),
+            ...(kind === "t" ? [{ type: "hide", mode: "discard", key, label: "Discard", danger: true }] : []),
+          ];
+        })));
   }
 
   // Right: next, waiting and parked topics as lines, the last done ones, then the deployments and tests.
@@ -924,22 +979,19 @@ export default class Bhote extends View {
     for (const [key, label, list] of sections) {
       if (!list.length) continue;
       rows.push(this.head(t, `${label} · ${list.length}`));
-      for (const x of list) rows.push(this.line(t, x, null, key === "waiting" && x.waiting_for ? `waiting for ${x.waiting_for}` : key === "active" ? `${this.cardState(t, x, null).word}${x.agent ? ` · ${x.agent}` : ""}` : x.agent ?? ""));
+      for (const x of list) rows.push(this.line(t, x, null, x.agent ?? ""));
     }
     const done = this.topics.filter((x) => x.group === "done").slice(0, 5);
     if (done.length) {
       rows.push(this.head(t, "Done"));
       for (const x of done) {
         // a done topic is a card like the others, quieter: a muted ground, a thin border, dimmed text; a click opens its page
-        rows.push(h_flex().id(`dn-${x.id}`).gap(8).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(6).px(10).py(7)
+        rows.push(v_flex().id(`dn-${x.id}`).gap(3).bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(6).px(10).py(8)
           .hover((e) => e.bg(t.raised)).on_click(this.guard(() => this.openPage(x.id)))
-          .child(div().flex_none().text_size(12).text_color(t.done).child("✓"))
-          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(x.title))
-          .child(div().flex_none().text_size(11).text_color(t.dim).child(x.agent ?? ""))
-          .child(div().id(`op-dn-${x.id}`).flex_none().px(8).py(2).rounded(5).text_size(11).cursor_pointer().text_color(t.muted).border(1).border_color(t.border)
-            .hover((e) => e.bg(t.hover).text_color(t.foreground))
-            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click(this.guard(() => this.openMenu(this.topicItems(x)))).child("Options ▾")));
+          .child(h_flex().gap(8).items_center()
+            .child(div().flex_none().text_size(12).text_color(t.done).child("✓"))
+            .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(x.title)))
+          .child(this.footer(t, `op-dn-${x.id}`, `done${x.agent ? ` · ${x.agent}` : ""}`, t.dim, () => this.topicItems(x))));
       }
     }
     if (!rows.length) rows.push(empty(t, "☰", "No topics yet", 'Add one with  bhote add "Fix the login redirect"'));
@@ -954,10 +1006,33 @@ export default class Bhote extends View {
     let body;
     if (this.tab === "prs") body = this.prsBody(t);
     else if (this.tab === "deploys") body = this.deploys.length ? this.monitorBody(t, this.deploys, "d", "dp") : [empty(t, "⇪", "No deployments seen", "The monitor found none. If CircleCI rejects its token (401), set a new one:  bhote config set CIRCLECI_TOKEN <token>  . bhote monitor detect  finds a project's CI.")];
-    else if (this.tab === "tests") body = this.tests.length ? this.monitorBody(t, this.tests, "t", "ts") : [empty(t, "◎", "No test runs seen", "CI runs and  bhote test run -- <command>  show up here")];
+    else if (this.tab === "tests") {
+      const { shown, archived } = this.testsShown();
+      body = shown.length ? this.monitorBody(t, shown, "t", "ts") : (archived.length ? [] : [empty(t, "◎", "No test runs seen", "CI runs and  bhote test run -- <command>  show up here")]);
+      // the toolbar: select several runs and archive them, or archive every run that is shown
+      if (shown.length) {
+        const btn = (id, label, onClick, o = {}) => div().id(id).px(10).py(4).rounded(6).text_size(12).cursor_pointer()
+          .bg(o.primary ? t.solid : t.raised).border(1).border_color(o.primary ? t.solid : t.border).text_color(o.primary ? t.solid_foreground : t.foreground)
+          .opacity(o.dim ? 0.5 : 1).hover((e) => e.bg(o.primary ? t.solid : t.hover)).on_click(this.guard(onClick)).child(label);
+        const archive = (keys) => {
+          const h = this.hidden();
+          for (const k of keys) h.archived.add(k);
+          setShared("bhote.hidden", { archived: [...h.archived].slice(-500), discarded: [...h.discarded].slice(-1000) });
+        };
+        const keys = shown.map((x) => this.runKey(x));
+        const n = keys.filter((k) => this.selected.has(k)).length;
+        body.unshift(h_flex().justify_end().gap(6).px(10).pt(8).flex_wrap()
+          .when(!this.selecting, (el) => el.child(btn("sel-on", "Select", (_e, cx) => { this.selecting = true; cx.notify(); }))
+            .child(btn("arch-all", "Mark all as archived", () => archive(keys))))
+          .when(this.selecting, (el) => el.child(btn("sel-all", n === keys.length ? "Select none" : "Select all", (_e, cx) => { this.selected = n === keys.length ? new Set() : new Set(keys); cx.notify(); }))
+            .child(btn("sel-archive", `Archive selected${n ? ` (${n})` : ""}`, (_e, cx) => { if (n) { archive(keys.filter((k) => this.selected.has(k))); this.selected = new Set(); this.selecting = false; cx.notify(); } }, { primary: true, dim: !n }))
+            .child(btn("sel-off", "Cancel", (_e, cx) => { this.selecting = false; this.selected = new Set(); cx.notify(); }))));
+      }
+    }
     else body = this.right();
     return v_flex().size_full().bg(t.chrome).text_size(13)
       .child(this.tabBar(t))
-      .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body));
+      .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body))
+      .children(this.tab === "tests" ? this.archiveDock(t) : []);
   }
 }
