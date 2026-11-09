@@ -37,6 +37,7 @@ NEWS_URL="https://github.com/floriankappert/bhote/blob/main/docs/steal-and-trans
 #   REMOTE_AGENTS=on|off   list the agents of the other machines too, in the background (default off)
 #   AGENTS_VIA=herdr|kharka   where they come from: herdr's saved machines (ssh) or kharka (herdr-kharka on every machine)
 #   MACHINES_OFF=a,b       machines that stay out even when REMOTE_AGENTS is on
+#   MACHINE_LABELS=n=L,n2=L2   herdr-app: the name bhote gives a machine (omarchy-flo=Omarchy), else its own name
 #   REMOTE_EVERY=10        seconds between two remote queries      LOCAL_EVERY=3   seconds between two local ones
 #   TESTS_BUSY=on|off      an agent whose workspace is running tests counts as busy, not free (default on)
 #   HOST_LABEL=Name        how this machine is called in the agent lists (default: Mac on macOS, else the host name)
@@ -88,6 +89,7 @@ PUSH_STATES|on|bool|When an agent here changes its state, tell the other machine
 REMOTE_AGENTS|off|bool|Also list the agents of the other machines (AGENTS_VIA=herdr opens ssh connections)
 AGENTS_VIA|herdr|enum:herdr:kharka|Where the agents of the other machines come from: herdr (its saved machines, over ssh) or kharka (herdr/<node>, written by herdr-kharka on every machine; actions through herdr.commands)
 MACHINES_OFF||list|Machines that stay out even with REMOTE_AGENTS=on
+MACHINE_LABELS||list|herdr-app: the name bhote gives a machine, name=Label,name=Label (omarchy-flo=Omarchy): what the topics say as the machine of an agent; without an entry the machine keeps its own name
 PANEL_MIN_WIDTH|46|int:30:200|The narrowest the panel pane may get in herdr (columns); a narrower one is widened again (the agent keeps 40). The panels of all tabs follow the width of the one in front
 PANEL_MAX_WIDTH|64|int:30:300|The widest the panel pane may get in herdr (columns); a wider one is narrowed again
 PANEL_LAYOUT|single|enum:single:split|One panel per tab (single), or two (split): the cards of the agents on the left, the topics, deployments and tests on the right (the Rust panel, BHOTED_PANEL=on)
@@ -412,6 +414,25 @@ bhoted_bin_set() {  # bhoted_bin_set <var>: the daemon binary (the environment B
     local _b=${BHOTED_BIN:-} _d; _d=$(dirname "$(readlink -f "${BASH_SOURCE[0]:-$0}" 2>/dev/null || printf '%s' "$0")")
     [ -n "$_b" ] || for _b in "$_d/daemon/target/release/bhoted" "$_d/bhoted" "$(command -v bhoted 2>/dev/null)"; do [ -x "$_b" ] && break; _b=""; done
     printf -v "$1" '%s' "$_b"
+}
+# herdr-app is the source of the agents; BHOTE_HERDR_BACKEND=classic keeps the old herdr CLI. Every `herdr ...` call of this script
+# goes through here: with herdr-app the daemon binary answers (`bhoted herdr pane list`, daemon/src/herdr_app.rs), what it does
+# not have (plugins, ssh machines, pane layout) is an error, as when herdr does not answer.
+herdr_app_backend() { [ "${BHOTE_HERDR_BACKEND:-app}" != classic ]; }
+herdr() {
+    if ! herdr_app_backend; then command herdr "$@"; return; fi
+    local bin=${BHOTED_BIN_CACHE:-}
+    { [ -n "$bin" ] && [ "$bin" != none ]; } || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
+    local ml; ml=$(cfg_get MACHINE_LABELS ""); MACHINE_LABELS=${ml:-${MACHINE_LABELS:-}} "$bin" herdr "$@"   # (the label of a machine, "Omarchy", is herdr-app's "omarchy-flo")
+}
+bhoted_collect() {  # bhoted_collect collect|collect-remote: one collection from herdr-app, written to the shared files
+    local bin=${BHOTED_BIN_CACHE:-}
+    { [ -n "$bin" ] && [ "$bin" != none ]; } || { bhoted_bin_set bin; [ -n "$bin" ] || return 1; BHOTED_BIN_CACHE=$bin; }
+    "$bin" "$1" "$SHARED_DIR" "$HOST" --config "$CONFIG_FILE" || return
+    # a CLI call keeps its own lists in its scratch dir (cli_agents_load): the collection went to the shared folder, copy it
+    if [ "$1" = collect ]; then [ "$AGENT_LOCAL" = "$SHARED_DIR/agents.local" ] || cp "$SHARED_DIR/agents.local" "$AGENT_LOCAL" 2>/dev/null
+    else [ "$AGENT_REMOTE" = "$SHARED_DIR/agents.remote" ] || cp "$SHARED_DIR/agents.remote" "$AGENT_REMOTE" 2>/dev/null; fi
+    return 0
 }
 bhoted_alive() {  # 0 when the daemon runs for THIS topic folder (its pid file says which; a builtin check, no process)
     local pid dir off; cfg_var off BHOTED auto; [ "$off" = off ] && return 1
@@ -1225,6 +1246,7 @@ agents_put() {  # agents_put <tmp> <list file>: only a changed list replaces the
     mv "$1" "$2"; printf '%s %s\n' "$(date +%s)" "$$$RANDOM" > "$SHARED_DIR/agents.rev" 2>/dev/null
 }
 collect_local() {
+    if herdr_app_backend; then bhoted_collect collect; return; fi
     : > "$AGENT_META_L.tmp.$$"; : > "$AGENT_NOW_L.tmp.$$"; COLLECT_META="$AGENT_META_L.tmp.$$" COLLECT_NOW="$AGENT_NOW_L.tmp.$$" collect_one "$HOST" > "$AGENT_LOCAL.tmp.$$"
     mv "$AGENT_META_L.tmp.$$" "$AGENT_META_L" 2>/dev/null; agents_put "$AGENT_NOW_L.tmp.$$" "$AGENT_NOW_L"; agents_put "$AGENT_LOCAL.tmp.$$" "$AGENT_LOCAL"
 }
@@ -1287,6 +1309,7 @@ branch_sync() {  # the topics of this machine's agents carry their branch (agent
 }
 collect_remote() {  # only the saved machines that are switched on; with the setting off the file is emptied. A machine that does not
     # answer (herdr reconnecting) keeps the agents seen last, marked "off-<state>": the panel shows them muted, nobody gets work
+    herdr_app_backend && { bhoted_collect collect-remote; return; }
     agents_kharka && { collect_remote_kharka; return; }
     local id label host prof enabled out rc line m aid st name task offl="$SHARED_DIR/machines.offline"
     : > "$offl.tmp.$$"; : > "$AGENT_META_R.tmp.$$"; : > "$AGENT_NOW_R.tmp.$$"
