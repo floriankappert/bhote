@@ -1080,11 +1080,17 @@ export default class Bhote extends View {
 
   // The last three done topics: a bar that stays at the bottom of the panel under the list.
   doneDock(t) {
-    const done = this.topics.filter((x) => x.group === "done").slice(0, 3);
-    if (!done.length) return null;
-    return v_flex().flex_none().pb(4).border_t(1).border_color(t.border).bg(t.chrome)
-      .child(this.head(t, "Done"))
-      .children(done.map((x) => this.doneCard(t, x)));
+    const all = this.topics.filter((x) => x.group === "done");
+    if (!all.length) return null;
+    let shut = true;   // folded by default
+    try { shut = shared("bhote.doneShut") !== false; } catch (_e) { shut = true; }
+    const done = all.slice(0, 3);
+    return v_flex().flex_none().pb(shut ? 0 : 4).border_t(1).border_color(t.border).bg(t.chrome)
+      .child(h_flex().id("done-head").px(10).pt(10).pb(shut ? 10 : 4).items_center().cursor_pointer().text_size(11).font_semibold().text_color(t.dim)
+        .on_click(this.guard((_e, cx) => { setShared("bhote.doneShut", !shut); cx.notify(); }))
+        .child(div().flex_1().child(`DONE · ${all.length}`))
+        .child(svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).text_color(t.muted)))
+      .children(shut ? [] : done.map((x) => this.doneCard(t, x)));
   }
 
   // The state of a topic by itself (no agent): its word and colour.
