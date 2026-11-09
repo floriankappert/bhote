@@ -2296,6 +2296,70 @@ export default class Bhote extends View {
       .when(!machines.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("Looking for the servers...")));
   }
 
+  // --- the runbooks tile: for each project the stages of the way a change goes, as circles ---------------------------------------------------------
+  // Empty: not done (or not reached yet), green: done, orange: under way (a build, tests, an approval that waits), red: failed. Which change a project
+  // shows: a deployment that runs, else a pull request that failed, one whose checks run, the newest open one, the newest merged one.
+  runbookItems() {
+    const out = [];
+    for (const proj of this.projects) {
+      if (!proj.ci) continue;
+      const prs = this.prs.filter((x) => x.project === proj.title && x.kind === "pr");
+      const open = prs.filter((x) => !x.merged).sort((a, b) => (b.updated || 0) - (a.updated || 0));
+      const run = this.deploysAll().filter((x) => this.projectOf(x.project) === proj.title && ["running", "queued", "approval"].includes(x.state))[0];
+      const failed = open.find((x) => x.checks.some((c) => c.state === "failed"));
+      const live = open.find((x) => x.checks.some((c) => c.state === "running"));
+      const merged = prs.filter((x) => x.merged).sort((a, b) => b.merged - a.merged)[0];
+      const pr = failed ?? live ?? open[0] ?? merged ?? null;
+      let stages, ref, rank;
+      if (run) { stages = this.runStages(run, "d"); ref = this.whatOf(run).text || run.label; rank = 0; }
+      else if (pr) { stages = this.stagesOf(pr); ref = `#${pr.number} ${pr.title}`; rank = failed ? 1 : live ? 2 : open[0] ? 3 : 5; }
+      else { stages = runbookStages(proj, { hasPR: false, tests: "none", merged: false, target: "" }); ref = ""; rank = 9; }
+      if (!stages) continue;
+      out.push({ project: proj.title, ref, stages, rank });
+    }
+    return out.sort((a, b) => a.rank - b.rank);
+  }
+
+  // One circle for a stage.
+  stageCircle(t, state, size) {
+    const orange = "#f08a24";
+    const color = state === "ok" ? (t.ansi2 ?? t.done) : state === "failed" ? t.blocked : state === "running" || state === "approval" ? orange : null;
+    return color ? div().w(size).h(size).flex_none().rounded(size / 2).bg(color) : div().w(size).h(size).flex_none().rounded(size / 2).border(1.5).border_color(t.dim);
+  }
+
+  runbookTile(t) {
+    const items = this.runbookItems();
+    if (!items.length) return null;
+    let shut = true;
+    try { shut = shared("bhote.rbShut") !== false; } catch (_e) { shut = true; }
+    const toggle = (_e, cx) => { setShared("bhote.rbShut", !shut); cx.notify(); };
+    const busy = items.some((x) => x.stages.some((y) => y.state === "running" || y.state === "approval")), bad = items.some((x) => x.stages.some((y) => y.state === "failed"));
+    const mark = bad ? t.blocked : busy ? "#f08a24" : (t.ansi2 ?? t.done);
+    const chev = svg(shut ? "mods/bhote/chevron-down.svg" : "mods/bhote/chevron-up.svg").size(14).text_color(t.muted);
+    if (shut) {
+      // one line: per project its name and the circles of its stages (the ones that need a look first; what does not fit is cut off)
+      return h_flex().id("tile-runbooks").flex_none().gap(14).items_center().px(12).py(8).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border).overflow_hidden()
+        .hover((e) => e.bg(t.raised)).on_click(this.guard(toggle))
+        .child(div().flex_none().text_size(11).font_semibold().text_color(t.dim).child("RUNBOOKS"))
+        .child(h_flex().flex_1().min_w(0).gap(14).items_center().overflow_hidden()
+          .children(items.map((x) => h_flex().gap(5).items_center().flex_none()
+            .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(x.project.length > 10 ? `${x.project.slice(0, 9)}…` : x.project))
+            .child(h_flex().gap(3).items_center().children(x.stages.map((y) => this.stageCircle(t, y.state, 9)))))))
+        .child(chev);
+    }
+    return v_flex().id("tile-runbooks").flex_none().gap(10).p(12).rounded(12).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().id("rb-head").gap(8).items_center().cursor_pointer().on_click(this.guard(toggle))
+        .child(div().w(8).h(8).rounded(4).flex_none().bg(mark))
+        .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("RUNBOOKS"))
+        .child(chev))
+      .children(items.map((x) => v_flex().gap(5)
+        .child(h_flex().gap(8).items_baseline().child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(x.project))
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(x.ref)))
+        .child(h_flex().gap(12).flex_wrap().children(x.stages.map((y) => h_flex().gap(5).items_center()
+          .child(this.stageCircle(t, y.state, 11))
+          .child(div().text_size(11).text_color(y.state === "waiting" || y.state === "ready" || y.state === "none" ? t.dim : t.muted).child(`${y.name}${y.target ? ` → ${y.target}` : ""}`)))))));
+  }
+
   // The status page (the Servers tab): the machines with their load, the systems with their apps, the tunnel.
   serversPage(t) {
     const rows = [];
@@ -2464,6 +2528,7 @@ export default class Bhote extends View {
     const srvTile = this.serverTile(t);
     const tiles = v_flex().flex_none().p(10).gap(10).border_b(1).border_color(t.border)
       .children(srvTile ? [srvTile] : [])
+      .children(this.runbookTile(t) ? [this.runbookTile(t)] : [])
       .child(h_flex().flex_none().gap(10)
         .child(this.tile(t, "topics", { title: "Topics", accent: n.review ? t.ansi4 : t.ansi3, big: open, label: open === 1 ? "open topic" : "open topics",
           sub: `${n.review + n.now + n.testing + n.deploying + n.finished} active · ${n.next} next · ${n.waiting} waiting`, rows: topicRows, empty: "no topics yet" }))
