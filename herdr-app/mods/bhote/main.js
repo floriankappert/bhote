@@ -170,6 +170,32 @@ function runbookStages(proj, o) {
   return stages;
 }
 
+// The stages grouped into phases for the runbooks tile: what belongs closely together is one circle. Commit and PR are the Code phase; the Tests and the
+// first Merge stand alone; after the merge the stages up to and including an environment (Staging, Production, Deploy, Release) are one phase named by it:
+// Build (Docker) + Deploy = Deploy; Merge into main + Approval + Production = Production. The state of a phase: failed if a stage failed, under way
+// (running) if one runs or waits for approval, done when all are done, else open.
+function runbookPhases(stages) {
+  const ENV = new Set(["Deploy", "Staging", "Production", "Release"]);
+  const groups = [];
+  const add = (name, note, parts) => groups.push({ name, note, parts });
+  const kind = (x) => x.name.split(" (")[0];
+  const pre = stages.slice(0, 4), post = stages.slice(4);
+  add("Code", "", [pre[0], pre[1]].filter(Boolean));
+  if (pre[2]) add("Tests", "", [pre[2]]);
+  if (pre[3]) add("Merge", pre[3].target ? `→ ${pre[3].target}` : "", [pre[3]]);
+  let cur = [];
+  for (const x of post) {
+    cur.push(x);
+    if (ENV.has(kind(x))) { const note = x.name.includes(" (") ? x.name.slice(x.name.indexOf("(") + 1, -1) : ""; add(kind(x), note, cur); cur = []; }
+  }
+  if (cur.length) add(kind(cur[cur.length - 1]), "", cur);
+  return groups.map((g) => {
+    const st = g.parts.map((x) => x.state);
+    const state = st.some((x) => x === "failed") ? "failed" : st.some((x) => x === "running" || x === "approval") ? "running" : st.every((x) => x === "ok") ? "ok" : "waiting";
+    return { name: g.name, note: g.note, state, parts: g.parts };
+  });
+}
+
 // A GitHub check of a pull request (a check run of Actions, or a commit status such as CircleCI's) as ok | failed | running | skipped.
 function checkOf(c) {
   const name = c.name || c.context || c.workflowName || "check";
@@ -300,6 +326,8 @@ export default class Bhote extends View {
     this.srvHover = null;
     if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
     if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
+    this.pulsing = false;
+    if (this.side === "right") cx.timer.every(100, (cx) => { if (this.pulsing) { this.pulsing = false; cx.notify(); } });   // (a render that draws a pulsing circle sets it again)
     // the scheduled headless agents (timers that run Claude: slack monitors, depbot ...) of every machine, in the left panel
     this.jobs = {};         // by machine: [{ timer, svc, name, active, next, last, running, failed }]
     this.jobPending = {};   // `${machine}|${timer}`: "run" | "pause" | "resume" until the poll shows it
@@ -2316,7 +2344,7 @@ export default class Bhote extends View {
       else { stages = runbookStages(proj, { hasPR: false, tests: "none", merged: false, target: "" }); ref = ""; rank = 9; }
       if (!stages) continue;
       const at = run ? run.time : pr ? (pr.merged || pr.updated || 0) : 0;   // (when the change last moved: the collapsed tile shows the latest)
-      out.push({ project: proj.title, ref, stages, rank, at });
+      out.push({ project: proj.title, ref, stages: runbookPhases(stages), rank, at });
     }
     return out.sort((a, b) => a.rank - b.rank);
   }
@@ -2325,7 +2353,18 @@ export default class Bhote extends View {
   stageCircle(t, state, size) {
     const orange = "#f08a24";
     const color = state === "ok" ? (t.ansi2 ?? t.done) : state === "failed" ? t.blocked : state === "running" || state === "approval" ? orange : null;
-    return color ? div().w(size).h(size).flex_none().rounded(size / 2).bg(color) : div().w(size).h(size).flex_none().rounded(size / 2).border(1.5).border_color(t.dim);
+    if (!color) return div().w(size).h(size).flex_none().rounded(size / 2).border(1.5).border_color(t.dim);
+    if (color !== orange) return div().w(size).h(size).flex_none().rounded(size / 2).bg(color);
+    // under way: the orange circle pulses (a slow sine of the clock; the panel is drawn again every 100 ms while one is on screen)
+    this.pulsing = true;
+    const now = Date.now();
+    const k = 0.5 + 0.5 * Math.sin((now / 1100) * 2 * Math.PI);
+    // and a ring that goes out from it and fades, as the ping of a notification dot: it grows to 2.6 times the circle in 1.6 s
+    const ph = (now % 1600) / 1600;
+    const rs = size * (1 + 1.6 * ph), off = (size - rs) / 2;
+    return div().relative().w(size).h(size).flex_none()
+      .child(div().absolute().left(off).top(off).w(rs).h(rs).rounded(rs / 2).border(1.5).border_color(color).opacity(0.75 * (1 - ph)))
+      .child(div().absolute().left(0).top(0).w(size).h(size).rounded(size / 2).bg(color).opacity(0.35 + 0.65 * k));
   }
 
   runbookTile(t) {
@@ -2357,20 +2396,23 @@ export default class Bhote extends View {
       .children(items.map((x, k) => v_flex().gap(8).pt(k ? 10 : 0).when(k > 0, (el) => el.border_t(1).border_color(t.border))
         .child(h_flex().gap(8).items_baseline().child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(x.project))
           .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(x.ref)))
-        // a stepper: the stages are columns of equal width on a line (the same place for the same stage in every project), the name under the circle
+        // a stepper from edge to edge: the first circle at the left end, the last at the right end, the others evenly between (the columns at the ends are
+        // narrower by half a step: their circle sits at the edge); the name is under its circle, the first one flush left, the last one flush right
         .child(h_flex().w_full().items_start().children(x.stages.map((y, i) => {
+          const n = x.stages.length, first = i === 0, last = i === n - 1;
           const done = (z) => z && z.state === "ok";
           const line = (on) => div().flex_1().h(2).rounded(1).bg(on ? (t.ansi2 ?? t.done) : t.border);
-          const base = y.name.split(" (")[0];
-          const sub = y.target ? `→ ${y.target}` : y.name.includes(" (") ? y.name.slice(y.name.indexOf("(") + 1, -1) : "";
+          const base = y.name, sub = y.note;
           const active = y.state === "running" || y.state === "approval" || y.state === "failed";
-          return v_flex().flex_1().min_w(0).items_center().gap(4)
+          const weight = first || last ? 0.5 + (6 * Math.max(1, n - 1)) / 370 : 1;
+          const place = (el) => (first ? el.justify_start() : last ? el.justify_end() : el.justify_center());
+          return v_flex().flex_grow(weight).flex_basis(0).min_w(0).gap(4).when(first, (c) => c.items_start()).when(last, (c) => c.items_end()).when(!first && !last, (c) => c.items_center())
             .child(h_flex().w_full().items_center()
-              .child(i > 0 ? line(done(x.stages[i - 1])) : div().flex_1())
+              .children(first ? [] : [line(done(x.stages[i - 1]))])
               .child(this.stageCircle(t, y.state, 12))
-              .child(i < x.stages.length - 1 ? line(done(y)) : div().flex_1()))
-            .child(div().w_full().flex().justify_center().child(div().truncate().text_size(10).font_semibold().text_color(active || y.state === "ok" ? t.foreground : t.dim).child(base)))
-            .when(!!sub, (e) => e.child(div().w_full().flex().justify_center().child(div().truncate().text_size(9).text_color(t.dim).child(sub))));
+              .children(last ? [] : [line(done(y))]))
+            .child(place(div().w_full().flex()).child(div().truncate().text_size(10).font_semibold().text_color(active || y.state === "ok" ? t.foreground : t.dim).child(base)))
+            .when(!!sub, (e) => e.child(place(div().w_full().flex()).child(div().truncate().text_size(9).text_color(t.dim).child(sub))));
         })))));
   }
 
