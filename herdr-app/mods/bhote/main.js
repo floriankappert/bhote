@@ -6,8 +6,8 @@
 // interface). Actions: the bhote CLI through exec(), herdr-app commands through run().
 
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
-import { agents, spaces, run, theme, props, exec, home, watchFolder, openOverlay, closeOverlay } from "herdr";
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
+import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay } from "herdr";
 
 const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "review", "later", "done"]);
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
@@ -35,6 +35,7 @@ function parseTopics(text) {
       waiting_for: v.waiting_for || null,
       updated: Number(v.updated) || 0,
       created: Number(v.created) || 0,
+      since: Number(v.waiting_since) || 0,
       dismissed: v.dismissed === "1",
       agent: v.agent || null,
       machine: v.agent_machine || "",
@@ -152,10 +153,10 @@ const isLocalName = (m) => !m || m.toLowerCase() === "mac";
 
 export default class Bhote extends View {
   init(_props, cx) {
+    if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
-    this.page = props()?.page ?? null;
     try { this.tab = localStorage.getItem("tab") ?? "topics"; } catch (_e) { this.tab = "topics"; }
-    if (!["topics", "prs", "deploys", "tests"].includes(this.tab)) this.tab = "topics";   // the topic page (a dialog): the id of its topic
+    if (!["topics", "prs", "deploys", "tests"].includes(this.tab)) this.tab = "topics";
     this.topics = [];
     this.tests = [];
     this.deploys = [];
@@ -165,13 +166,23 @@ export default class Bhote extends View {
     this.prs = [];
     this.prLoading = false;
     this.prAt = 0;
+    // the show view: which topic it showed last, edit mode with its fields, the delete confirmation
+    this.shownId = null;
+    this.editing = false;
+    this.confirmDelete = false;
+    if (this.side === "right") {
+      this.titleIn = InputState.new({ value: "" });
+      this.titleIn.on("submit", (_e, cx) => this.saveEdit(cx));
+      this.descIn = TextareaState.new({ value: "", rows: 4 });
+      this.descIn.on("change", (_e, cx) => cx.notify());
+    }
     // How long runs took (seconds, the last five of each project and workflow), kept for the time left of the next one.
     try { this.hist = JSON.parse(localStorage.getItem("hist") ?? "{}"); } catch (_e) { this.hist = {}; }
     this.track = {};      // runs seen running: id -> true (a finish seen later teaches its duration)
     this.learned = new Set();
     cx.timer.every(5000, (cx) => this.load(cx));
     this.load(cx);
-    if (this.side === "right" && !this.page) { cx.timer.every(90000, (cx) => this.loadPRs(cx)); }
+    if (this.side === "right") { cx.timer.every(90000, (cx) => this.loadPRs(cx)); }
     // Topics are plain files: reload when one changes.
     cx.spawn(async (cx) => {
       const dir = `${home()}/.local/share/bhote/topics`;
@@ -198,7 +209,7 @@ export default class Bhote extends View {
         this.projects = parseProjects(topics);
         this.observeRows(this.tests, "t");
         this.observeRows(this.deploys, "d");
-        if (this.side === "right" && !this.page && !this.prAt) this.loadPRs(cx);
+        if (this.side === "right" && !this.prAt) this.loadPRs(cx);
         this.error = null;
       } catch (e) {
         this.error = String(e?.message ?? e);
@@ -274,63 +285,243 @@ export default class Bhote extends View {
     if (url) exec("open", [url]).catch(() => {});
   }
 
-  // The topic's page: one dialog with everything about it and every action.
+  // --- the show view: one topic in the right panel -----------------------------------------------------------------------
+  showId() {
+    try { return shared("bhote.show") ?? null; } catch (_e) { return null; }
+  }
+
+  // Opens a topic in the right panel (from a card, a line or a done topic) and makes sure that panel is there.
   openPage(id) {
-    openOverlay({ mod: "bhote", props: { page: id }, kind: "dialog", width: 480, height: 440 });
+    setShared("bhote.show", id);
+    run("layout.show", { id: "panel" });
+    run("layout.select", { stack: "panel-body", child: "bhote-right" });
   }
 
   closePage() {
-    const o = props()?.overlay;
-    if (o) closeOverlay(o);
+    setShared("bhote.show", null);
   }
 
-  // An action of the page: the bhote CLI, then the dialog closes (the panels follow the topic files).
-  act(cx, args) {
-    this.cli(cx, args);
-    this.closePage();
+  statusColor(t, status) {
+    return { now: t.working, testing: t.ansi6, review: t.ansi4, finished: t.done, done: t.done, next: t.ansi3, waiting: t.ansi3, deploying: t.ansi3, later: t.dim }[status] ?? t.dim;
   }
 
-  button(t, id, label, onClick, danger) {
-    return div().id(id).px(10).py(5).rounded(6).bg(t.raised).border(1).border_color(t.border).text_size(12)
-      .text_color(danger ? t.blocked : t.foreground).hover((x) => x.bg(t.hover)).on_click(onClick).child(label);
+  // A button of the show view.
+  btn(t, id, label, onClick, o = {}) {
+    return div().id(id).px(10).py(5).rounded(6).text_size(12).cursor_pointer()
+      .bg(o.primary ? t.solid : t.raised).border(1).border_color(o.primary ? t.solid : o.danger ? "#a8162e" : t.border)
+      .text_color(o.primary ? t.solid_foreground : o.danger ? t.blocked : t.foreground)
+      .hover((x) => x.opacity(0.88)).on_click(onClick).child(label);
   }
 
-  fact(t, label, value) {
+  // A block of the show view: a small heading over a card.
+  block(t, title, ...children) {
+    return v_flex().mx(10).mb(10).gap(6)
+      .child(div().px(2).text_size(11).font_semibold().text_color(t.dim).child(title.toUpperCase()))
+      .children(children);
+  }
+
+  fact(t, label, value, color) {
     return h_flex().gap(10).text_size(12)
-      .child(div().w(90).flex_none().text_color(t.dim).child(label))
-      .child(div().flex_1().text_color(t.foreground).child(value));
+      .child(div().w(84).flex_none().text_color(t.dim).child(label))
+      .child(div().flex_1().min_w(0).text_color(color ?? t.foreground).child(value));
   }
 
-  pageView() {
+  startEdit(x, field) {
+    this.titleIn.set_value(x.title);
+    this.descIn.set_value(x.desc);
+    this.editing = true;
+    (field === "desc" ? this.descIn : this.titleIn).focus();
+  }
+
+  // Title and description through the CLI (rename, desc), then the lists reload.
+  saveEdit(cx) {
+    const x = this.topics.find((y) => y.id === this.showId());
+    if (!x) return;
+    const title = this.titleIn.value().trim();
+    const desc = this.descIn.value().trim().slice(0, 140);
+    this.editing = false;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        if (title && title !== x.title) await exec("bhote", ["rename", x.id, title], { timeout: 30000 });
+        if (desc !== x.desc) await exec("bhote", desc ? ["desc", x.id, desc] : ["desc", x.id], { timeout: 30000 });
+      } catch (_e) { /* the next load shows what is there */ }
+      this.load(cx);
+    });
+  }
+
+  // The show view: a bar to go back, then the topic as blocks: what it is and how it moves, who works on it, its branch
+  // and pull request, the tests and deployments that belong to it, its timeline.
+  showView() {
     const t = theme();
-    const x = this.topics.find((y) => y.id === this.page);
-    if (!x) return v_flex().size_full().bg(t.popover).child(this.loading ? empty(t, "", "Loading", "", true) : empty(t, "∅", "This topic is gone", "It was deleted or merged into another."));
+    const id = this.showId();
+    if (id !== this.shownId) { this.shownId = id; this.editing = false; this.confirmDelete = false; }
+    const x = this.topics.find((y) => y.id === id);
+    const bar = h_flex().flex_none().px(8).pt(8).pb(6).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(div().id("show-back").w(30).h(28).flex_none().flex().items_center().justify_center().rounded(6).text_size(15).cursor_pointer()
+        .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground)
+        .hover((e) => e.bg(t.hover)).on_click(() => this.closePage()).child("‹"))
+      .child(div().flex_1().truncate().text_size(11).text_color(t.dim).child(x ? x.id : ""))
+      .when(!!x && !this.editing, (el) => el.child(this.btn(t, "show-edit", "Edit", (_e, cx) => { this.startEdit(x); cx.notify(); })));
+    if (!x) return v_flex().size_full().bg(t.chrome).child(bar).child(this.loading ? empty(t, "", "Loading", "", true) : empty(t, "∅", "This topic is gone", "It was deleted or merged into another one."));
+
     const sp = spaces();
     const machineOf = (a) => sp.find((q) => q.id === a.space)?.machine ?? null;
     const agent = this.agentOf(x, agents(), machineOf);
     const st = this.cardState(t, x, agent);
     const when = (sec) => (sec ? `${clock(sec)} · ${ago(sec)}` : "");
-    const moves = [["now", "Now"], ["review", "Review"], ["next", "Next"], ["later", "Later"], ["done", "Done"]].filter(([k]) => k !== x.status);
-    return v_flex().size_full().bg(t.popover).p(16).gap(12).overflow_y_scrollbar()
-      .child(h_flex().gap(8).items_start()
-        .child(div().flex_1().min_w(0).text_size(16).font_semibold().text_color(t.foreground).child(x.title || "(untitled)"))
-        .child(div().flex_none().px(8).py(2).rounded(10).text_size(11).text_color(st.color).border(1).border_color(st.bar).child(st.word)))
-      .when(!!x.desc, (el) => el.child(div().text_size(13).text_color(t.muted).child(x.desc)))
-      .child(v_flex().gap(5).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
-        .when(!!x.agent, (el) => el.child(this.fact(t, "Agent", `${x.agent}${agent ? ` · ${agent.status}` : " · not here"}`)))
-        .when(!isLocalName(x.machine), (el) => el.child(this.fact(t, "Machine", x.machine)))
-        .when(!!x.branch, (el) => el.child(this.fact(t, "Branch", x.branch)))
-        .when(!!x.waiting_for, (el) => el.child(this.fact(t, "Waiting for", x.waiting_for)))
-        .when(!!x.project, (el) => el.child(this.fact(t, "Project", x.project)))
-        .child(this.fact(t, "Status", x.status))
+    const project = this.projects.find((p) => p.id === x.project);
+    const body = [];
+
+    // 1. the topic: title, state, description (or the fields while editing)
+    if (this.editing) {
+      body.push(this.block(t, "Edit",
+        v_flex().gap(8).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+          .child(div().text_size(11).text_color(t.dim).child("Title"))
+          .child(Input.new(this.titleIn).h(34).px(10).rounded(7).border_1().border_color(t.accent).bg(t.background).text_size(13).text_color(t.foreground))
+          .child(h_flex().child(div().flex_1().text_size(11).text_color(t.dim).child("Description"))
+            .child(div().text_size(11).text_color(this.descIn.value().length > 140 ? t.blocked : t.dim).child(`${this.descIn.value().length}/140`)))
+          .child(Textarea.new(this.descIn).h(86).px(10).py(6).rounded(7).border_1().border_color(t.input).bg(t.background).text_size(12.5).text_color(t.foreground))
+          .child(h_flex().gap(8).justify_end()
+            .child(this.btn(t, "edit-cancel", "Cancel", (_e, cx) => { this.editing = false; cx.notify(); }))
+            .child(this.btn(t, "edit-save", "Save", (_e, cx) => this.saveEdit(cx), { primary: true })))));
+    } else {
+      body.push(h_flex().mx(10).mt(10).mb(10).bg(t.surface).border(1).border_color(t.border).rounded(8)
+        .child(div().w(3).flex_none().rounded(2).my(8).ml(8).bg(st.bar))
+        .child(v_flex().flex_1().min_w(0).gap(8).p(12)
+          .child(div().text_size(17).font_semibold().text_color(t.foreground).child(x.title || "(untitled)"))
+          .child(h_flex().gap(8).items_center().flex_wrap().text_size(11)
+            .child(div().px(8).py(2).rounded(10).border(1).border_color(st.bar).text_color(st.color).child(st.word))
+            .when(!!x.waiting_for, (el) => el.child(div().text_color(t.ansi3).child(`waiting for ${x.waiting_for}`)))
+            .when(x.updated > 0, (el) => el.child(div().text_color(t.dim).child(`updated ${ago(x.updated)}`))))
+          .child(h_flex().gap(8).items_start()
+            .child(x.desc ? div().flex_1().min_w(0).text_size(13).text_color(t.muted).child(x.desc) : div().flex_1().text_size(12).text_color(t.dim).child("No description yet"))
+            .child(div().id("edit-desc").flex_none().px(7).py(3).rounded(5).text_size(12).cursor_pointer().text_color(t.dim)
+              .hover((e) => e.bg(t.hover).text_color(t.foreground))
+              .on_click((_e, cx) => { this.startEdit(x, "desc"); cx.notify(); }).child(x.desc ? "✎ Edit" : "＋ Add description")))));
+    }
+
+    // 2. move it: the statuses as a row of pills, the current one in its colour
+    body.push(this.block(t, "Move to", h_flex().gap(6).flex_wrap().children(
+      [["now", "Now"], ["review", "Review"], ["next", "Next"], ["later", "Later"], ["done", "Done"]].map(([k, label]) => {
+        const on = x.status === k;
+        const c = this.statusColor(t, k);
+        return div().id(`mv-${k}`).px(11).py(5).rounded(14).text_size(12).cursor_pointer()
+          .bg(on ? tint(c, "33", t.selected) : t.surface).border(1).border_color(on ? c : t.border).text_color(on ? c : t.muted)
+          .hover((e) => e.bg(on ? tint(c, "40", t.selected) : t.raised))
+          .on_click((_e, cx) => { if (!on) this.cli(cx, [k, x.id]); }).child(label);
+      }))));
+
+    // 3. who works on it
+    if (x.agent) {
+      body.push(this.block(t, "Agent",
+        v_flex().gap(6).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+          .child(h_flex().gap(8).items_center()
+            .child(this.agentIcon(t, agent))
+            .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(x.agent))
+            .when(!isLocalName(x.machine), (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi4).child(x.machine)))
+            .child(div().flex_none().text_size(11).text_color(agent ? this.cardState(t, { ...x, group: "now" }, agent).color : t.dim).child(agent ? agent.status : "not here")))
+          .when(!!agent && agent.status === "working" && !!agent.title, (el) => el.child(div().pl(22).text_size(11).text_color(t.working).child(agent.title)))
+          .when(!!agent, (el) => el.child(h_flex().pl(22).child(this.btn(t, "show-agent", "Show agent", () => run("agent.focus", { terminal: agent.address })))))));
+    }
+
+    // 4. its branch and pull request
+    const prNum = /\bPR #(\d+)\b/.exec(x.title)?.[1];
+    if (x.branch || prNum) {
+      const inProject = (q) => !project || q.project === project.title;
+      const pr = (x.branch && (this.prs.find((q) => q.branch === x.branch && !q.merged) ?? this.prs.find((q) => q.branch === x.branch)))
+        || (prNum && this.prs.find((q) => String(q.number) === prNum && inProject(q))) || null;
+      body.push(this.block(t, "Branch and pull request",
+        pr ? this.prCard(t, "show-pr", pr, { noTopic: true }).mx(0)
+          : v_flex().gap(4).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+            .when(!!x.branch, (el) => el.child(div().text_size(12).text_color(t.foreground).child(`⎇ ${x.branch}`)))
+            .child(div().text_size(11).text_color(t.dim).child(this.prLoading || !this.prAt ? "Asking GitHub..." : "No pull request found for it"))));
+    }
+
+    // 5. the tests of its branch and the deployments of its project
+    const tests = this.tests.filter((r) => x.branch && r.branch === x.branch).slice(0, 3);
+    if (tests.length) body.push(this.block(t, "Tests on this branch", ...tests.map((r, i) => this.monitorCard(t, `show-t-${i}`, r, "t").mx(0))));
+    const deploys = project ? this.deploys.filter((r) => r.project === project.title).slice(0, 3) : [];
+    if (deploys.length) body.push(this.block(t, `Deployments · ${project.title}`, ...deploys.map((r, i) => this.monitorCard(t, `show-d-${i}`, r, "d").mx(0))));
+
+    // 6. the timeline
+    body.push(this.block(t, "Timeline",
+      v_flex().gap(5).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
         .when(x.created > 0, (el) => el.child(this.fact(t, "Created", when(x.created))))
-        .when(x.updated > 0, (el) => el.child(this.fact(t, "Updated", when(x.updated)))))
-      .child(h_flex().gap(6).flex_wrap()
-        .children(moves.map(([k, label]) => this.button(t, `m-${k}`, label, (_e, cx) => this.act(cx, [k, x.id]))))
-        .when(!!agent, (el) => el.child(this.button(t, "focus", "Show agent", () => { run("agent.focus", { terminal: agent.address }); this.closePage(); })))
-        .child(this.button(t, "rm", "Delete", (_e, cx) => this.act(cx, ["rm", x.id]), true))
-        .child(div().flex_1())
-        .child(this.button(t, "close", "Close", () => this.closePage())));
+        .when(x.updated > 0, (el) => el.child(this.fact(t, "Updated", when(x.updated))))
+        .when(x.since > 0, (el) => el.child(this.fact(t, "Waiting since", when(x.since))))
+        .when(!!project, (el) => el.child(this.fact(t, "Project", project.title)))));
+
+    // 7. delete, in two steps
+    body.push(h_flex().mx(10).mb(14).gap(8).items_center()
+      .when(!this.confirmDelete, (el) => el.child(this.btn(t, "show-delete", "Delete topic", (_e, cx) => { this.confirmDelete = true; cx.notify(); }, { danger: true })))
+      .when(this.confirmDelete, (el) => el.child(div().text_size(12).text_color(t.blocked).child("Delete for good?"))
+        .child(this.btn(t, "show-delete-yes", "Yes, delete", (_e, cx) => { this.cli(cx, ["rm", x.id]); this.closePage(); }, { danger: true }))
+        .child(this.btn(t, "show-delete-no", "Cancel", (_e, cx) => { this.confirmDelete = false; cx.notify(); }))));
+
+    return v_flex().size_full().bg(t.chrome).text_size(13).child(bar).child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body));
+  }
+
+  // --- the Options menu of a card: a button at the bottom right, a popup with what can be done with it -------------------------
+  statusItems(x) {
+    return [{ type: "head", label: "Move topic to" },
+      ...["now", "review", "next", "later", "done"].map((k) => ({ type: "status", status: k, id: x.id, label: `${k[0].toUpperCase()}${k.slice(1)}${x.status === k ? "   ✓" : ""}` }))];
+  }
+
+  topicItems(x) {
+    return [{ type: "show", id: x.id, label: "Show topic" }, ...this.statusItems(x)];
+  }
+
+  // The button: it never counts as a click on the card behind it.
+  optionsButton(t, id, getItems) {
+    return h_flex().justify_end().pt(2)
+      .child(div().id(id).px(8).py(2).rounded(5).text_size(11).cursor_pointer().text_color(t.muted).border(1).border_color(t.border)
+        .hover((e) => e.bg(t.hover).text_color(t.foreground))
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+        .on_click(this.guard(() => this.openMenu(getItems()))).child("Options ▾"));
+  }
+
+  // A click that closes the Options popup (a click beside it) must not also be taken by the card under it: the popup instance
+  // notes when it ends, and for a moment after that the cards ignore clicks.
+  menuRecent() {
+    try { return Date.now() - (shared("bhote.menuClosed") ?? 0) < 400; } catch (_e) { return false; }
+  }
+
+  guard(fn) {
+    return (e, cx) => { if (!this.menuRecent()) return fn(e, cx); };
+  }
+
+  async close() {
+    if (this.menu) setShared("bhote.menuClosed", Date.now());
+  }
+
+  openMenu(items) {
+    if (!items.length) return;
+    const rows = items.reduce((n, it) => n + (it.type === "head" ? 0.8 : 1), 0);
+    openOverlay({ mod: "bhote", props: { menu: items }, kind: "popup", width: 224, height: Math.round(rows * 30 + 14), at: "pointer" });
+  }
+
+  menuView() {
+    const t = theme();
+    return v_flex().w_full().p(4).bg(t.popover).text_size(12.5).children(this.menu.map((it, i) => it.type === "head"
+      ? div().px(10).pt(6).pb(2).text_size(11).text_color(t.dim).child(it.label.toUpperCase())
+      : div().id(`mi-${i}`).px(10).py(6).rounded(5).cursor_pointer().text_color(it.danger ? t.blocked : t.foreground)
+        .hover((e) => e.bg(t.hover)).on_click(() => this.runItem(it)).child(it.label)));
+  }
+
+  // What an item does; the popup closes after it (a started exec keeps running).
+  runItem(it) {
+    if (it.type === "url") exec("open", [it.url]).catch(() => {});
+    else if (it.type === "status") exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {});
+    else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
+    else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
+    else if (it.type === "show") {
+      setShared("bhote.show", it.id);
+      run("layout.show", { id: "panel" });
+      run("layout.select", { stack: "panel-body", child: "bhote-right" });
+    }
+    const o = props()?.overlay;
+    if (o) closeOverlay(o);
   }
 
   head(t, text, right, keepCase) {
@@ -357,6 +548,10 @@ export default class Bhote extends View {
     if (g === "testing") return { word: "tests running", color: c.cyan, bar: c.cyan };
     if (g === "deploying") return { word: "waiting for deployment", color: c.yellow, bar: c.yellow };
     if (g === "finished") return { word: "finished", color: c.green, bar: c.green };
+    if (g === "next") return { word: "next", color: c.yellow, bar: c.yellow };
+    if (g === "waiting") return { word: topic.waiting_for ? `waiting for ${topic.waiting_for}` : "waiting", color: c.yellow, bar: c.yellow };
+    if (g === "later") return { word: "parked", color: c.dim, bar: c.dim };
+    if (g === "done") return { word: "done", color: c.green, bar: c.green };
     if (!agent) return { word: topic.agent ? "agent not here" : "at work", color: c.dim, bar: c.orange };
     if (agent.status === "working") return { word: "working", color: c.orange, bar: c.orange };
     if (agent.status === "blocked") return { word: "needs you", color: c.red, bar: c.red };
@@ -396,7 +591,7 @@ export default class Bhote extends View {
     const ground = active ? tint(t.accent, "40", t.selected) : t.surface;
     return h_flex().id(id).bg(ground).border(1).border_color(active ? t.accent : t.border)
       .hover((x) => x.bg(active ? tint(t.accent, "52", t.selected) : t.raised)).mx(8).mb(6).rounded(8)
-      .on_click(() => { if (agent) run("agent.focus", { terminal: agent.address }); })
+      .on_click(this.guard(() => { if (agent) run("agent.focus", { terminal: agent.address }); }))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(st.bar))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
@@ -407,7 +602,7 @@ export default class Bhote extends View {
           .child(div().flex_none().text_size(11).text_color(dim ? t.dim : st.color).child(st.word))
           .when(!!topic, (el) => el.child(div().id(`o-${id}`).flex_none().px(4).text_color(t.dim).hover((x) => x.text_color(t.foreground))
             .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click(() => this.openPage(topic.id)).child("›"))))
+            .on_click(this.guard(() => this.openPage(topic.id))).child("›"))))
         .when(!!task, (el) => el.child(h_flex().gap(6).items_center()
           .child(div().flex_1().truncate().text_size(12).text_color(sub).child(`∟ ${task}`))
           .when(bars.length > 0, (e) => e.child(div().flex_none().text_size(11).text_color(t.working)
@@ -446,7 +641,6 @@ export default class Bhote extends View {
     if (!sp.length && !list.length) return [empty(t, "◌", "No agents running", "Start an agent in a space and its card shows up here")];
     const machineOf = (a) => sp.find((s) => s.id === a.space)?.machine ?? null;
     const cards = this.topics.filter((x) => CARD_ORDER.includes(x.group) && !x.dismissed);
-    const used = new Set();
     rows.push(this.head(t, "Agents"));
     // The other machines' agents above this one's, as bhote lists them.
     const ordered = [...list.filter((a) => machineOf(a)), ...list.filter((a) => !machineOf(a))];
@@ -454,7 +648,6 @@ export default class Bhote extends View {
       const mine = cards.filter((x) => this.agentOf(x, [a], machineOf));
       const machine = machineOf(a);
       for (const x of mine.sort((p, q) => CARD_ORDER.indexOf(p.group) - CARD_ORDER.indexOf(q.group))) {
-        used.add(x.id);
         rows.push(this.card(t, `c-${x.id}`, { topic: x, agent: a, machine, name: a.space_name, st: this.cardState(t, x, a), selected: a.focused }));
       }
       if (!mine.length) {
@@ -465,12 +658,6 @@ export default class Bhote extends View {
         rows.push(this.card(t, `a-${a.address}`, { topic: null, agent: a, machine, name: a.space_name, st, selected: a.focused, dim: idle }));
       }
     }
-    // Cards whose agent is not here (another machine offline, a gone agent).
-    const rest = cards.filter((x) => !used.has(x.id));
-    if (rest.length) rows.push(this.head(t, "Without agent"));
-    for (const x of rest) {
-      rows.push(this.card(t, `c-${x.id}`, { topic: x, agent: null, machine: isLocalName(x.machine) ? "" : x.machine, name: x.agent ?? x.title, st: this.cardState(t, x, null) }));
-    }
     return rows;
   }
 
@@ -478,13 +665,14 @@ export default class Bhote extends View {
     // A topic is a card like the agents' cards: a muted ground, a thin border, rounded.
     return h_flex().id(`t-${x.id}`).gap(8).items_start().bg(t.surface).border(1).border_color(t.border).rounded(8)
       .mx(8).mb(6).px(10).py(8).hover((s) => s.bg(t.raised))
-      .on_click(() => this.openPage(x.id))
+      .on_click(this.guard(() => this.openPage(x.id)))
       .child(v_flex().flex_1().min_w(0).gap(2)
         .child(div().text_color(t.foreground).child(x.title))
-        .when(!!sub, (el) => el.child(div().text_size(11).text_color(t.muted).child(sub))))
+        .when(!!sub, (el) => el.child(div().text_size(11).text_color(t.muted).child(sub)))
+        .child(this.optionsButton(t, `op-t-${x.id}`, () => this.topicItems(x))))
       .child(div().id(`d-${x.id}`).px(6).text_color(t.dim).hover((s) => s.text_color(t.done))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click((_e, cx) => this.cli(cx, ["done", x.id])).child("✓"));
+        .on_click(this.guard((_e, cx) => this.cli(cx, ["done", x.id]))).child("✓"));
   }
 
   // Open and recently merged pull requests of the projects' repositories (gh), and the runs of branches that have no pull
@@ -566,7 +754,7 @@ export default class Bhote extends View {
 
   // One pull request (or branch) as a card: its title, review state, the counts of its checks, what fails or runs, and
   // for a merged one the deployments after the merge.
-  prCard(t, id, pr) {
+  prCard(t, id, pr, o = {}) {
     const by = (st) => pr.checks.filter((c) => c.state === st);
     const failed = by("failed"), running = by("running"), ok = by("ok");
     const color = pr.merged ? t.ansi5 : failed.length ? t.blocked : running.length ? t.working : ok.length ? t.done : t.dim;
@@ -577,7 +765,7 @@ export default class Bhote extends View {
     const mark = (x) => (x.state === "ok" ? "✓" : x.state === "failed" ? "✗" : x.state === "running" ? "◔" : x.state === "approval" ? "◐" : "○");
     const dcolor = (x) => (x.state === "ok" ? t.done : x.state === "failed" ? t.blocked : x.state === "approval" ? t.ansi3 : x.state === "running" ? t.working : t.dim);
     return h_flex().id(id).bg(t.surface).border(1).border_color(failed.length && !pr.merged ? "#a8162e" : t.border).rounded(8).mx(8).mb(6)
-      .hover((x) => x.bg(t.raised)).on_click(() => this.open(pr.url))
+      .hover((x) => x.bg(t.raised)).on_click(this.guard(() => this.open(pr.url)))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(color))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
@@ -599,24 +787,26 @@ export default class Bhote extends View {
         .when(pr.checks.length === 0, (el) => el.child(div().text_size(11).text_color(t.dim).child("no checks seen")))
         .children(failed.slice(0, 3).map((c) => div().truncate().pl(4).text_size(11).text_color(t.blocked).child(`✗ ${c.name}`)))
         .children(running.slice(0, 2).map((c) => div().truncate().pl(4).text_size(11).text_color(t.working).child(`◔ ${c.name}`)))
-        .when(failed.length > 0 && !pr.merged && pr.number > 0, (el) => {
-          const topic = this.topicOf(pr);
-          return el.child(h_flex().gap(6).pt(2).items_center()
-            .when(!topic, (r) => r.child(div().id(`fx-${id}`).px(8).py(3).rounded(5).text_size(11).bg(t.raised).border(1).border_color(t.border).text_color(t.foreground)
-              .hover((x) => x.bg(t.hover))
-              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-              .on_click((_e, cx) => this.createFix(cx, pr)).child("＋ Create topic")))
-            .when(!!topic, (r) => r.child(div().id(`ft-${id}`).px(8).py(3).rounded(5).text_size(11).bg(t.raised).border(1).border_color(t.border).text_color(t.done)
-              .hover((x) => x.bg(t.hover))
-              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-              .on_click(() => this.openPage(topic.id)).child(`✓ topic · ${topic.group}`))));
-        })
+        .when(!o.noTopic && failed.length > 0 && !pr.merged && pr.number > 0 && !!this.topicOf(pr), (el) => el.child(h_flex().gap(6).pt(2).items_center()
+          .child(div().id(`ft-${id}`).px(8).py(3).rounded(5).text_size(11).cursor_pointer().bg(t.raised).border(1).border_color(t.border).text_color(t.done)
+            .hover((x) => x.bg(t.hover))
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click(this.guard(() => this.openPage(this.topicOf(pr).id))).child(`✓ topic · ${this.topicOf(pr).group}`))))
         .when(pr.merged > 0, (el) => el.child(v_flex().gap(2).pt(2)
           .child(div().text_size(11).text_color(t.dim).child(deploys.length ? `deployments after the merge · ${ago(pr.merged)}` : `merged ${ago(pr.merged)} · no deployment seen`))
           .children(deploys.map((x) => h_flex().gap(6).text_size(12)
             .child(div().w(12).flex_none().text_color(dcolor(x)).child(mark(x)))
             .child(div().flex_1().truncate().text_color(t.foreground).child(x.label))
-            .child(div().flex_none().text_size(11).text_color(dcolor(x)).child(x.state === "ok" ? "deployed" : x.state)))))));
+            .child(div().flex_none().text_size(11).text_color(dcolor(x)).child(x.state === "ok" ? "deployed" : x.state))))))
+        .child(this.optionsButton(t, `op-${id}`, () => {
+          const topic = this.topicOf(pr);
+          const failedNames = failed.map((c) => c.name);
+          return [
+            { type: "url", url: pr.url, label: pr.kind === "branch" ? "Open branch in GitHub" : "Open in GitHub" },
+            ...(topic ? this.topicItems(topic) : []),
+            ...(!topic && pr.number > 0 && failedNames.length ? [{ type: "create", title: `PR #${pr.number}: fix the failing checks`, desc: `${failedNames.join(", ")} fail on ${pr.branch}`.slice(0, 140), label: "Create topic for the failing checks" }] : []),
+          ];
+        })));
   }
 
   prsBody(t) {
@@ -695,7 +885,7 @@ export default class Bhote extends View {
     const word = x.state === "ok" ? "passed" : x.state === "failed" ? "failed" : x.state === "canceled" ? "canceled" : x.state;
     const detail = [x.branch ? `⎇ ${x.branch}` : "", x.title].filter(Boolean).join(" · ");
     return h_flex().id(id).bg(t.surface).border(1).border_color(x.state === "failed" ? "#a8162e" : t.border).rounded(8).mx(8).mb(6)
-      .hover((s) => s.bg(t.raised)).on_click(() => this.open(x.url))
+      .hover((s) => s.bg(t.raised)).on_click(this.guard(() => this.open(x.url)))
       .child(div().w(3).flex_none().rounded(2).my(6).ml(6).bg(color))
       .child(v_flex().flex_1().min_w(0).gap(3).px(10).py(8)
         .child(h_flex().gap(6).items_center()
@@ -710,7 +900,8 @@ export default class Bhote extends View {
             .when(e.frac != null, (r) => r.child(progress(t, e.frac, t.working)).child(div().child(`${Math.round(e.frac * 100)}%`)))
             .when(e.remain != null, (r) => r.child(div().text_color(t.muted).child(left(e.remain))))
             .when(e.frac == null && e.remain == null, (r) => r.child(div().text_color(t.muted).child("running"))));
-        }));
+        })
+        .when(!!x.url, (el) => el.child(this.optionsButton(t, `op-${id}`, () => [{ type: "url", url: x.url, label: "Open in CI" }]))));
   }
 
   // Right: next, waiting and parked topics as lines, the last done ones, then the deployments and tests.
@@ -718,7 +909,14 @@ export default class Bhote extends View {
     const t = theme();
     const rows = [];
     if (this.error) rows.push(div().p(10).text_color(t.blocked).child(`bhote: ${this.error}`));
+    // review, now, testing, deploying and finished topics whose agent is not here (another machine offline, a gone agent): the agent
+    // pane only shows cards with an agent, so they are listed here
+    const sp = spaces();
+    const machineOf = (a) => sp.find((q) => q.id === a.space)?.machine ?? null;
+    const live = agents();
+    const orphan = this.topics.filter((x) => CARD_ORDER.includes(x.group) && !x.dismissed && !this.agentOf(x, live, machineOf));
     const sections = [
+      ["active", "Without agent", orphan],
       ["next", "Next", this.topics.filter((x) => x.group === "next")],
       ["waiting", "Waiting", this.topics.filter((x) => x.group === "waiting")],
       ["later", "Later", this.topics.filter((x) => x.group === "later" && !x.dismissed)],
@@ -726,15 +924,22 @@ export default class Bhote extends View {
     for (const [key, label, list] of sections) {
       if (!list.length) continue;
       rows.push(this.head(t, `${label} · ${list.length}`));
-      for (const x of list) rows.push(this.line(t, x, null, key === "waiting" && x.waiting_for ? `waiting for ${x.waiting_for}` : x.agent ?? ""));
+      for (const x of list) rows.push(this.line(t, x, null, key === "waiting" && x.waiting_for ? `waiting for ${x.waiting_for}` : key === "active" ? `${this.cardState(t, x, null).word}${x.agent ? ` · ${x.agent}` : ""}` : x.agent ?? ""));
     }
     const done = this.topics.filter((x) => x.group === "done").slice(0, 5);
     if (done.length) {
       rows.push(this.head(t, "Done"));
       for (const x of done) {
-        rows.push(h_flex().id(`dn-${x.id}`).gap(8).px(10).py(3).items_center()
-          .child(div().flex_1().truncate().text_size(12).text_color(t.dim).child(x.title))
-          .child(div().flex_none().text_size(11).text_color(t.dim).child(x.agent ?? "")));
+        // a done topic is a card like the others, quieter: a muted ground, a thin border, dimmed text; a click opens its page
+        rows.push(h_flex().id(`dn-${x.id}`).gap(8).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(6).px(10).py(7)
+          .hover((e) => e.bg(t.raised)).on_click(this.guard(() => this.openPage(x.id)))
+          .child(div().flex_none().text_size(12).text_color(t.done).child("✓"))
+          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.muted).child(x.title))
+          .child(div().flex_none().text_size(11).text_color(t.dim).child(x.agent ?? ""))
+          .child(div().id(`op-dn-${x.id}`).flex_none().px(8).py(2).rounded(5).text_size(11).cursor_pointer().text_color(t.muted).border(1).border_color(t.border)
+            .hover((e) => e.bg(t.hover).text_color(t.foreground))
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click(this.guard(() => this.openMenu(this.topicItems(x)))).child("Options ▾")));
       }
     }
     if (!rows.length) rows.push(empty(t, "☰", "No topics yet", 'Add one with  bhote add "Fix the login redirect"'));
@@ -742,12 +947,13 @@ export default class Bhote extends View {
   }
 
   render(_cx) {
-    if (this.page) return this.pageView();
+    if (this.menu) return this.menuView();
+    if (this.side === "right" && this.showId()) return this.showView();
     const t = theme();
     if (this.side === "left") return v_flex().size_full().bg(t.chrome).text_size(13).overflow_y_scrollbar().children(this.left());
     let body;
     if (this.tab === "prs") body = this.prsBody(t);
-    else if (this.tab === "deploys") body = this.deploys.length ? this.monitorBody(t, this.deploys, "d", "dp") : [empty(t, "⇪", "No deployments seen", "bhote monitor detect  finds the CI of a project")];
+    else if (this.tab === "deploys") body = this.deploys.length ? this.monitorBody(t, this.deploys, "d", "dp") : [empty(t, "⇪", "No deployments seen", "The monitor found none. If CircleCI rejects its token (401), set a new one:  bhote config set CIRCLECI_TOKEN <token>  . bhote monitor detect  finds a project's CI.")];
     else if (this.tab === "tests") body = this.tests.length ? this.monitorBody(t, this.tests, "t", "ts") : [empty(t, "◎", "No test runs seen", "CI runs and  bhote test run -- <command>  show up here")];
     else body = this.right();
     return v_flex().size_full().bg(t.chrome).text_size(13)
