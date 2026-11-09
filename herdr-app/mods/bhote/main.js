@@ -2315,7 +2315,8 @@ export default class Bhote extends View {
       else if (pr) { stages = this.stagesOf(pr); ref = `#${pr.number} ${pr.title}`; rank = failed ? 1 : live ? 2 : open[0] ? 3 : 5; }
       else { stages = runbookStages(proj, { hasPR: false, tests: "none", merged: false, target: "" }); ref = ""; rank = 9; }
       if (!stages) continue;
-      out.push({ project: proj.title, ref, stages, rank });
+      const at = run ? run.time : pr ? (pr.merged || pr.updated || 0) : 0;   // (when the change last moved: the collapsed tile shows the latest)
+      out.push({ project: proj.title, ref, stages, rank, at });
     }
     return out.sort((a, b) => a.rank - b.rank);
   }
@@ -2337,14 +2338,15 @@ export default class Bhote extends View {
     const mark = bad ? t.blocked : busy ? "#f08a24" : (t.ansi2 ?? t.done);
     const chev = svg(shut ? "mods/bhote/chevron-down.svg" : "mods/bhote/chevron-up.svg").size(14).text_color(t.muted);
     if (shut) {
-      // one line: per project its name and the circles of its stages (the ones that need a look first; what does not fit is cut off)
-      return h_flex().id("tile-runbooks").flex_none().gap(14).items_center().px(12).py(8).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border).overflow_hidden()
+      // one line: only the latest run, its project, what it is and the circles of its stages
+      const latest = [...items].sort((a, b) => b.at - a.at)[0];
+      const ref = latest.ref.length > 34 ? `${latest.ref.slice(0, 33)}…` : latest.ref;
+      return h_flex().id("tile-runbooks").flex_none().gap(12).items_center().px(12).py(8).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border).overflow_hidden()
         .hover((e) => e.bg(t.raised)).on_click(this.guard(toggle))
         .child(div().flex_none().text_size(11).font_semibold().text_color(t.dim).child("RUNBOOKS"))
-        .child(h_flex().flex_1().min_w(0).gap(14).items_center().overflow_hidden()
-          .children(items.map((x) => h_flex().gap(5).items_center().flex_none()
-            .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(x.project.length > 10 ? `${x.project.slice(0, 9)}…` : x.project))
-            .child(h_flex().gap(3).items_center().children(x.stages.map((y) => this.stageCircle(t, y.state, 9)))))))
+        .child(div().flex_none().text_size(11.5).font_semibold().text_color(t.foreground).child(latest.project))
+        .child(h_flex().gap(3).items_center().flex_none().children(latest.stages.map((y) => this.stageCircle(t, y.state, 9))))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(ref))
         .child(chev);
     }
     return v_flex().id("tile-runbooks").flex_none().gap(10).p(12).rounded(12).bg(t.surface).border(1).border_color(t.border)
@@ -2352,12 +2354,24 @@ export default class Bhote extends View {
         .child(div().w(8).h(8).rounded(4).flex_none().bg(mark))
         .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("RUNBOOKS"))
         .child(chev))
-      .children(items.map((x) => v_flex().gap(5)
+      .children(items.map((x, k) => v_flex().gap(8).pt(k ? 10 : 0).when(k > 0, (el) => el.border_t(1).border_color(t.border))
         .child(h_flex().gap(8).items_baseline().child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(x.project))
           .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(x.ref)))
-        .child(h_flex().gap(12).flex_wrap().children(x.stages.map((y) => h_flex().gap(5).items_center()
-          .child(this.stageCircle(t, y.state, 11))
-          .child(div().text_size(11).text_color(y.state === "waiting" || y.state === "ready" || y.state === "none" ? t.dim : t.muted).child(`${y.name}${y.target ? ` → ${y.target}` : ""}`)))))));
+        // a stepper: the stages are columns of equal width on a line (the same place for the same stage in every project), the name under the circle
+        .child(h_flex().w_full().items_start().children(x.stages.map((y, i) => {
+          const done = (z) => z && z.state === "ok";
+          const line = (on) => div().flex_1().h(2).rounded(1).bg(on ? (t.ansi2 ?? t.done) : t.border);
+          const base = y.name.split(" (")[0];
+          const sub = y.target ? `→ ${y.target}` : y.name.includes(" (") ? y.name.slice(y.name.indexOf("(") + 1, -1) : "";
+          const active = y.state === "running" || y.state === "approval" || y.state === "failed";
+          return v_flex().flex_1().min_w(0).items_center().gap(4)
+            .child(h_flex().w_full().items_center()
+              .child(i > 0 ? line(done(x.stages[i - 1])) : div().flex_1())
+              .child(this.stageCircle(t, y.state, 12))
+              .child(i < x.stages.length - 1 ? line(done(y)) : div().flex_1()))
+            .child(div().w_full().flex().justify_center().child(div().truncate().text_size(10).font_semibold().text_color(active || y.state === "ok" ? t.foreground : t.dim).child(base)))
+            .when(!!sub, (e) => e.child(div().w_full().flex().justify_center().child(div().truncate().text_size(9).text_color(t.dim).child(sub))));
+        })))));
   }
 
   // The status page (the Servers tab): the machines with their load, the systems with their apps, the tunnel.
