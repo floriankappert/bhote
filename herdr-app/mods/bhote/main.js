@@ -1697,7 +1697,7 @@ export default class Bhote extends View {
     const ram = m.ramTotal ? m.ramUsed / m.ramTotal : 0;
     const bar = (frac, color) => div().h(4).w(30).flex_none().rounded(2).bg(t.border).overflow_hidden().child(div().h(4).w(`${Math.round(Math.min(1, frac) * 100)}%`).bg(color));
     const hot = (f) => (f > 0.85 ? t.blocked : f > 0.65 ? t.ansi3 : (t.ansi2 ?? t.done));
-    return h_flex().gap(8).items_center().flex_shrink().min_w(0).text_size(11).text_color(t.muted)
+    return h_flex().gap(8).items_center().flex_shrink(1).min_w(0).text_size(11).text_color(t.muted)
       .child(h_flex().gap(4).items_center().child(div().child("RAM")).child(bar(ram, hot(ram))).child(div().text_color(t.dim).child(`${gb(m.ramUsed)}/${gb(m.ramTotal)}G`)))
       .child(h_flex().gap(4).items_center().child(div().child("CPU")).child(bar(m.cpu / 100, hot(m.cpu / 100))).child(div().text_color(t.dim).child(`${Math.round(m.cpu)}%`)));
   }
