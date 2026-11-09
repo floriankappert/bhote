@@ -82,7 +82,7 @@
           },
           "window_drag": true,
           "content": {
-            "mod": "tabs"
+            "mod": "tabs-bhote"
           }
         },
         {
@@ -125,7 +125,7 @@
               "type": "column",
               "hidden": true,
               "size": {
-                "px": 368
+                "px": 442
               },
               "min": 280,
               "max": 900,
