@@ -1735,10 +1735,7 @@ export default class Bhote extends View {
       .children(machines.map(({ m, d }) => v_flex().gap(6)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(m.label))
-          .child(this.machineMeter(t, d.machine))
-          .child(div().flex_1())
-          .child(this.ibtn(t, `srv-${this.srvKey(m.name)}-all`, "play", (cx) => this.srvDo(cx, m.name, "startAll"), { color: t.ansi2 ?? t.done }))
-          .child(this.ibtn(t, `srv-${this.srvKey(m.name)}-none`, "stop", (cx) => this.srvDo(cx, m.name, "stopAll"), { hover: t.blocked })))
+          .child(this.machineMeter(t, d.machine)))
         .child(h_flex().gap(6).flex_wrap().children(d.systems.map((sys) => this.slotChip(t, m.name, sys))))))
       .when(!machines.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("Looking for the servers...")));
   }
@@ -1762,9 +1759,7 @@ export default class Bhote extends View {
     }
     for (const { m, d } of machines) {
       const key = this.srvKey(m.name);
-      rows.push(this.head(t, m.label, h_flex().gap(4).items_center()
-        .child(this.btn(t, `srv-${key}-p-all`, "Start all", (_e, cx) => this.srvDo(cx, m.name, "startAll")))
-        .child(this.btn(t, `srv-${key}-p-none`, "Stop all", (_e, cx) => this.srvDo(cx, m.name, "stopAll"), { danger: true })), true));
+      rows.push(this.head(t, m.label, null, true));
       if (d.error && !d.machine) { rows.push(div().mx(10).mb(6).text_size(11).text_color(t.blocked).child(d.error.slice(0, 160))); continue; }
       rows.push(v_flex().gap(5).mx(10).mb(8).px(12).py(9).rounded(8).bg(t.surface).border(1).border_color(t.border)
         .child(this.machineMeter(t, d.machine))
