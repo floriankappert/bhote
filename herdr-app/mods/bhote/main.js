@@ -666,10 +666,15 @@ export default class Bhote extends View {
     }
     const out = [];
     const ordered = [...groups.entries()].sort((a, b) => Math.max(...b[1].map((x) => x.time)) - Math.max(...a[1].map((x) => x.time)));
-    for (const [project, list] of ordered) {
+    for (const [project, all] of ordered) {
+      // at most two passed runs per project (the newest ones); every running and failed run stays
+      let passed = 0;
+      const list = all.filter((x) => x.state !== "ok" || ++passed <= 2);
+      const hidden = all.length - list.length;
       const running = list.filter((x) => x.state === "running" || x.state === "queued" || x.state === "approval").length;
       const failed = list.filter((x) => x.state === "failed").length;
       out.push(this.head(t, `${project} · ${list.length}`, h_flex().gap(6).items_center()
+        .when(hidden > 0, (el) => el.child(div().text_color(t.dim).child(`+${hidden} passed`)))
         .when(running > 0, (el) => el.child(div().text_color(t.working).child(`${running} running`)))
         .when(failed > 0, (el) => el.child(div().px(5).rounded(8).bg("#a8162e").text_color("#ffffff").child(`✗ ${failed}`))), true));
       list.slice(0, 10).forEach((x, i) => out.push(this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind)));
