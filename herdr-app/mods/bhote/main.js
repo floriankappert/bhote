@@ -63,6 +63,21 @@ function left(sec) {
 const median = (a) => { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : null; };
 
 // A monitor list: time US project US label US state US done US total US note ("branch|~|title") US url.
+const FLASH_MS = 1200, FADE_MS = 1800;   // the light of a finished card dies down over the first 1.2 s; it fades to idle over the last 1.8 s
+const FINISH_MS = 15000;   // a recently finished agent: lit up for a moment, "finished" until here, then idle
+
+// While a menu is open, what lies behind it must not light up under the pointer (the popup does not catch the pointer for the panes): every
+// hover style is skipped then. The menu itself (its own instance) keeps its hover.
+{
+  const open = () => {
+    try { if (props()?.menu) return false; const at = shared("bhote.menuOpenAt") ?? 0; return at > 0 && Date.now() - at < 120000; } catch (_e) { return false; }
+  };
+  for (const proto of new Set([div(), h_flex(), v_flex()].map((x) => Object.getPrototypeOf(x)))) {
+    const hover = proto.hover;
+    if (typeof hover === "function" && !hover.__bhote) { const w = function (fn) { return hover.call(this, (e) => (open() ? e : fn(e))); }; w.__bhote = true; proto.hover = w; }
+  }
+}
+
 function parseMonitor(text) {
   return text.split("\n").filter(Boolean).map((l) => {
     const f = l.split("\x1f");
@@ -185,8 +200,11 @@ export default class Bhote extends View {
         else if (l.startsWith("HOST_LABEL=")) this.hostLabel = l.slice(11).trim() || this.hostLabel;
         else if (l.startsWith("DEPLOY_PROJECTS_OFF=")) this.deployOff = list(l.slice(20));
         else if (l.startsWith("TEST_PROJECTS_OFF=")) this.testsOff = list(l.slice(18));
+        else if (l.startsWith("FINISHED_MINUTES=")) { const n = Number(l.slice(17).trim()); if (Number.isFinite(n)) this.finMin = n; }
       }
     }).catch(() => { /* the defaults stay */ });
+    this.finMin = 30;             // FINISHED_MINUTES: how long an agent counts as recently finished (0: until it works again)
+    this.prevSt = {};             // an agent's address: its status at the last look
     this.topics = [];
     this.tests = [];
     this.localTests = [];
@@ -239,6 +257,7 @@ export default class Bhote extends View {
     this.agentCwd = {};     // an agent's address: the folder it runs in
     this.monReady = {};     // machines where monitors.py is in place
     this.monLoading = false;
+    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating) cx.notify(); }); cx.timer.every(2000, () => this.trackSpaces()); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
     // Topics are plain files: reload when one changes.
     cx.spawn(async (cx) => {
@@ -685,7 +704,7 @@ export default class Bhote extends View {
       .child(div().id(`batch-menu-${kind}`).flex_none().flex().items_center().gap(5).px(10).py(4).rounded(6).text_size(12)
         .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground).opacity(n > 0 ? 1 : 0.45).hover((e) => e.bg(n > 0 ? t.hover : t.raised))
         .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
-        .when(n > 0, (el) => el.cursor_pointer().on_click(this.guard(() => this.openMenu(this.batchItems(kind, allKeys), null, this.anchor))))
+        .when(n > 0, (el) => el.cursor_pointer().on_click(this.guard(() => this.openMenu(this.batchItems(kind, allKeys), this.anchor))))
         .child(div().child("Actions")).child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim)));
   }
 
@@ -867,7 +886,7 @@ export default class Bhote extends View {
     return div().id(id).w(26).h(22).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer().text_color(t.muted)
       .hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
-      .on_click(this.guard(() => this.openMenu(getItems(), null, this.anchor))).child(svg("mods/bhote/dots.svg").size(16));
+      .on_click(this.guard(() => this.openMenu(getItems(), this.anchor))).child(svg("mods/bhote/dots.svg").size(16));
   }
 
   // A status as an icon (a drawn one from the mod's folder), tinted with its colour.
@@ -893,28 +912,40 @@ export default class Bhote extends View {
   }
 
   async close() {
-    if (this.menu) setShared("bhote.menuClosed", Date.now());
+    if (this.menu) { setShared("bhote.menuClosed", Date.now()); setShared("bhote.menuOpenAt", 0); }
   }
 
   // The place of the button that was pressed (window coordinates): the menu opens right under it.
+  // Where a trigger is, in window pixels, as a box { left, top, right, bottom }. The mouse event says where the press was in the window (position)
+  // and in the element (local_position), so the element's own corner follows from the two, whatever pane it is in (the left pane lies under the
+  // brand row, the right one beside the middle); its size comes in design pixels, and the zoom lies between design and window pixels.
   anchorOf(e) {
-    const b = e?.bounds;
-    if (!b) return null;
-    // the bounds come in design pixels, the popup is placed in window pixels: the zoom lies between them
+    const b = e?.bounds, p = e?.position, l = e?.local_position;
+    if (!b || !p || !l) return null;
+    // (the press position is in window pixels already: only the size of the element comes in design pixels)
     const z = Number(settings()?.zoom) || 1;
-    return { right: (b.x + b.width) / z, bottom: (b.y + b.height) / z };
+    const left = p.x - l.x, top = p.y - l.y;
+    return { left, top, right: left + b.width / z, bottom: top + b.height / z };
   }
 
-  // `above`: where the bar that opened it is ({ x, top }): the popup goes up from there, not down. `anchor`: the button it belongs to:
-  // the popup goes right under it, right edges together. The height follows the items (a head is lower than an item); a long menu scrolls.
-  openMenu(items, above, anchor) {
+  // THE dropdown: every menu opens through here, under (or over) the trigger it belongs to, never by a position worked out on its own.
+  //   anchor    the box of the trigger (anchorOf of its mouse press); none: where the pointer is
+  //   placement "below-right" (the default: right edges together), "below-left", "above-right", "above-left"
+  // The height follows the items (a head is lower than an item); a long menu scrolls.
+  openMenu(items, anchor, o = {}) {
     if (!items.length) return;
     const heads = items.filter((it) => it.type === "head").length;
-    const width = 224;
+    const width = o.width ?? 224;
     const height = Math.min(380, Math.round(heads * 28 + (items.length - heads) * 31 + 14));
     let at = "pointer";
-    if (above) at = { x: above.x, y: Math.max(8, Math.round(above.top - height + 11)) };
-    else if (anchor) at = { x: Math.max(8, Math.round(anchor.right - width)), y: Math.round(anchor.bottom + 4) };
+    if (anchor) {
+      const place = o.placement ?? "below-right";
+      const z = Number(settings()?.zoom) || 1;   // (the popup's size is in design pixels too: it is drawn zoom times that on the screen)
+      const x = place.endsWith("left") ? anchor.left : anchor.right - width * z;
+      const y = place.startsWith("above") ? anchor.top - height * z - 4 : anchor.bottom + 4;
+      at = { x: Math.max(8, Math.round(x)), y: Math.max(8, Math.round(y)) };
+    }
+    try { setShared("bhote.menuOpenAt", Date.now()); } catch (_e) { /* the panels keep their hover */ }
     openOverlay({ mod: "bhote", props: { menu: items }, kind: "popup", width, height, at });
   }
 
@@ -943,7 +974,7 @@ export default class Bhote extends View {
     else if (it.type === "status") { this.markPending([it.id], { status: it.status }); exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {}); }
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
-    else if (it.type === "newspace") run("space.new", { machine: it.machine });
+    else if (it.type === "newspace") run("space.new", { machine: it.machine, ...(it.name ? { name: it.name } : {}), ...(it.folder ? { folder: it.folder } : {}) });
     else if (it.type === "bstatus") { this.markPending(it.ids, { status: it.status }); for (const id of it.ids) exec("bhote", [it.status, id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
     else if (it.type === "bdelete") { this.markPending(it.ids, { deleted: true }); for (const id of it.ids) exec("bhote", ["rm", id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
     else if (it.type === "bhide") {
@@ -964,7 +995,7 @@ export default class Bhote extends View {
     }
     else if (it.type === "bask") {   // a question first: the menu is replaced by its own items
       const o = props()?.overlay; if (o) closeOverlay(o);
-      this.openMenu(it.items, null, it.anchor ?? null);
+      this.openMenu(it.items, it.anchor ?? null);
       return;
     }
     else if (it.type === "pickstart") this.startTopic(it.id, it.machine, it.pane, it.name);
@@ -1023,11 +1054,12 @@ export default class Bhote extends View {
   }
 
   // The icon of an agent on a card: the spinner of a working one, else a mark.
-  agentIcon(t, agent, active, color) {
+  agentIcon(t, agent, active, color, word) {
     if (!agent) return div().w(14).flex_none().text_color(t.dim).child("◌");
-    if (agent.status === "working") return div().w(14).flex_none().text_color(color ?? t.working).frames(SPIN, 90);
-    if (agent.status === "blocked") return div().w(14).flex_none().text_color(color ?? t.blocked).child("◉");
-    if (agent.status === "done") return div().w(14).flex_none().text_color(color ?? t.done).child("✓");
+    const state = word ?? (agent.status === "working" ? "working" : agent.status === "blocked" ? "needs you" : agent.status === "done" ? "finished" : "idle");
+    if (state === "working") return div().w(14).flex_none().text_color("#d97757").frames(SPIN, 90);   // (the card is blue, the spinner Claude orange)
+    if (state === "needs you") return div().w(14).flex_none().text_color(color ?? t.blocked).child("◉");
+    if (state === "finished") return div().w(14).flex_none().text_color(color ?? t.done).child("✓");
     return div().w(14).flex_none().text_color(active ? t.muted : t.dim).child("○");
   }
 
@@ -1042,23 +1074,33 @@ export default class Bhote extends View {
     const active = !!o.selected;
     const dim = !!o.dim && !active;   // (an idle agent is dimmed, the active card never: its ground is light)
     const task = agent?.title ?? "";
-    const word = agent && agent.status !== "idle" && agent.status !== undefined ? st.word : "";
+    const word = agent ? st.word : "";   // (the state is always a badge, an idle agent too)
+    const ident = agent ? (o.code ?? "") : "";   // the pane code: w2:a1, an agent of another machine with its code in front (OMR/w3:a1), as bhote has always had it
     // the card takes the colour of its state (blue, red, green; an idle agent stays grey); the active one a stronger ground and a solid border
-    const tone = agent && agent.status !== "idle" ? st.color : null;
-    const ground = o.flat ? t.chrome : tone ? tint(tone, active ? "3a" : "1c", t.surface) : active ? tint(t.accent, "40", t.selected) : t.surface;
-    const edge = o.flat ? t.chrome : tone ? (active ? tone : tint(tone, "70", t.border)) : active ? t.accent : t.border;
+    const tone = agent && st.word !== "idle" ? st.color : null;
+    // a card that has just finished lights up (the first 1.5 s), stays green, and fades to idle over its last 4 s
+    const badgeColor = tone ?? (active ? t.muted : t.dim);
+    const fa = o.finAge;
+    const hx = (n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+    const ease = (x) => x * x * (3 - 2 * x);   // (smoothstep: slow at both ends)
+    const fade = fa == null ? 1 : fa < FLASH_MS ? 1 + 1.4 * ease(1 - fa / FLASH_MS) : fa > FINISH_MS - FADE_MS ? ease(Math.max(0, (FINISH_MS - fa) / FADE_MS)) : 1;
+    const ground = o.flat ? t.chrome : tone ? tint(tone, hx((active ? 0x3a : 0x1c) * fade), t.surface) : active ? tint(t.accent, "40", t.selected) : t.surface;
+    const edge = o.flat ? t.chrome : tone ? (active ? (fade < 1 ? tint(tone, hx(255 * fade), t.border) : tone) : tint(tone, hx(0x70 * fade * (fade > 1 ? 1.7 : 1)), t.border)) : active ? t.accent : t.border;
     const indent = 22;   // the mark (14) and its gap (8): the rows under the name start where the name starts
     return h_flex().id(id).bg(ground).border(1).border_color(edge)
       .hover((x) => x.bg(o.flat ? t.surface : tone ? tint(tone, active ? "4a" : "2a", t.surface) : active ? tint(t.accent, "52", t.selected) : t.raised)).mx(8).mb(6).rounded(8)
       .on_click(this.guard(() => { if (o.onClick) o.onClick(); else if (agent) run("agent.focus", { terminal: agent.address }); }))
       .child(v_flex().flex_1().min_w(0).gap(2).px(11).py(8)
         .child(h_flex().gap(8).items_center()
-          .child(this.agentIcon(t, agent, active, tone))
+          .child(this.agentIcon(t, agent, active, tone, st.word))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).rounded(8).text_size(10).text_color(t.accent).bg(tint(t.accent, "26", t.raised)).border(1).border_color(tint(t.accent, "55", t.border))
             .child(o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h")}`)))
-          .when(!!word, (el) => el.child(div().flex_none().text_size(11).text_color(st.color).child(word))))
-        .when(!!task, (el) => el.child(div().truncate().pl(indent).text_size(12).text_color(active ? t.foreground : dim ? t.dim : t.muted).child(task)))
+          .when(!!word, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(badgeColor)
+            .bg(tint(badgeColor, "22", t.surface)).border(1).border_color(tint(badgeColor, "55", t.border)).child(word.toUpperCase()))))
+        .when(!!task || !!ident, (el) => el.child(h_flex().gap(8).items_center().pl(indent)
+          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(active ? t.foreground : dim ? t.dim : t.muted).child(task || " "))
+          .when(!!ident, (e) => e.child(div().flex_none().text_size(10.5).text_color(active ? t.muted : t.dim).child(ident)))))
         .when(!!o.branch, (el) => el.child(div().truncate().pl(indent).text_size(11).text_color(active ? t.muted : t.dim).child(`⎇ ${o.branch}`))));
   }
 
@@ -1067,12 +1109,8 @@ export default class Bhote extends View {
   chooseMachine() {
     const ms = machines().filter((m) => m.layout !== "unavailable");
     if (ms.length <= 1) { run("space.new", { machine: ms[0]?.name ?? "" }); return; }
-    // The bar sits at the bottom of the agent pane, under the brand row (46 px at zoom 1): its top is that row plus the pane's
-    // height minus its own. Both heights are measured by the pane itself; the layout's px sizes follow the zoom.
-    const zoom = Number(settings()?.zoom) || 1;
-    const top = 46 * zoom + (this.leftH ?? 0) - (this.barH ?? 38);
     this.openMenu([{ type: "head", label: "New space on" }, ...ms.map((m) => ({ type: "newspace", machine: m.name ?? "", label: m.name ?? "This computer" }))],
-      this.leftH ? { x: 10 * zoom, top } : null);
+      this.anchor, { placement: "above-left" });
   }
 
   // The bar at the bottom of the agent pane: it stays there while the list scrolls.
@@ -1120,6 +1158,85 @@ export default class Bhote extends View {
       cx.notify();
     });
   }
+
+  // The spaces that were there: every space seen is remembered per machine (its name and folder, when it was last seen), so that the menu of the
+  // + next to a machine can offer the last five that are gone and open one again (a new space of that name in that folder).
+  trackSpaces() {
+    let hist = {};
+    try { hist = shared("bhote.spaceHist") ?? {}; } catch (_e) { hist = {}; }
+    const now = Date.now();
+    let changed = false;
+    const cwdOf = (s) => s.folder || (agents().filter((a) => a.space === s.id).map((a) => this.agentCwd[a.address]).find(Boolean) ?? "");
+    for (const s of spaces()) {
+      const key = s.machine ?? "local";
+      const folder = cwdOf(s);
+      const list = hist[key] ?? (hist[key] = []);
+      const e = list.find((x) => x.name === s.name && x.folder === folder);
+      if (!e) { list.push({ name: s.name, folder, at: now }); changed = true; }
+      else if (now - e.at > 300000) { e.at = now; changed = true; }
+      if (list.length > 30) { list.sort((a, b) => b.at - a.at); list.length = 30; }
+    }
+    if (changed) { try { setShared("bhote.spaceHist", hist); } catch (_e) { /* not remembered */ } }
+  }
+
+  // The pane code of an agent as bhote shows it: w<space number>:a<number of the agent in it>, with the code of its machine in front when it is not
+  // this one (OMR/w3:a1). The space number is its place among the spaces of its machine, the machine code the first letter and the next two consonants
+  // of its name (Omarchy: OMR), a name of three letters or less as it is (Mac: MAC).
+  paneCode(machine, remote, spaceNo, agentNo) {
+    const code = (name) => {
+      const n = String(name).replace(/[^A-Za-z]/g, "").toUpperCase();
+      if (n.length <= 3) return n;
+      const c = n.slice(1).replace(/[AEIOU]/g, "").slice(0, 2);
+      return n[0] + (c.length === 2 ? c : (c + n.slice(1)).slice(0, 2));
+    };
+    return `${remote ? `${code(this.labelOf?.(machine) ?? machine)}/` : ""}w${spaceNo}:a${agentNo}`;
+  }
+
+  // The menu of the + next to a machine: a new space, and the last five spaces of that machine that are gone.
+  openSpaceMenu(remote, anchor) {
+    let hist = {};
+    try { hist = shared("bhote.spaceHist") ?? {}; } catch (_e) { hist = {}; }
+    const open = new Set(spaces().filter((s) => (s.machine ?? null) === (remote ?? null)).map((s) => s.name));
+    const homeName = home().split("/").pop();
+    const gone = (hist[remote ?? "local"] ?? []).filter((x) => !open.has(x.name) && x.name !== "~" && x.name !== homeName).sort((a, b) => b.at - a.at).slice(0, 5);
+    const items = [{ type: "newspace", label: "New", machine: remote ?? "" },
+      ...(gone.length ? [{ type: "head", label: "Recent" }] : []),
+      ...gone.map((x) => ({ type: "newspace", label: x.name, machine: remote ?? "", name: x.name, folder: x.folder }))];
+    this.openMenu(items, anchor);
+  }
+
+  // Recently finished: an agent that stopped working (herdr-app says "done" only for a moment, then idle). The moment is kept per agent in the
+  // shared state, so that it survives a reload and holds for FINISHED_MINUTES; the agent working again ends it. True when something changed.
+  trackFinished() {
+    let fin = {};
+    try { fin = shared("bhote.finished") ?? {}; } catch (_e) { fin = {}; }
+    const now = Date.now();
+    let changed = false;
+    const live = new Set();
+    for (const a of agents()) {
+      live.add(a.address);
+      const prev = this.prevSt[a.address];
+      if (a.status === "working" || a.status === "blocked") { if (fin[a.address]) { delete fin[a.address]; changed = true; } }
+      else if ((prev === "working" || (a.status === "done" && prev !== "done")) && !fin[a.address]) { fin[a.address] = now; changed = true; }
+      this.prevSt[a.address] = a.status;
+    }
+    for (const k of Object.keys(fin)) if (!live.has(k) || now - fin[k] > FINISH_MS + 1000) { delete fin[k]; changed = true; }
+    if (changed) { try { setShared("bhote.finished", fin); } catch (_e) { /* not remembered */ } }
+    // while a card lights up or fades to idle the panel is drawn at the rate of the timer (smooth), otherwise twice a second while one is finished
+    this.animating = Object.values(fin).some((t0) => { const age = now - t0; return age < FLASH_MS || age > FINISH_MS - FADE_MS; });
+    return changed || Object.keys(fin).length > 0;
+  }
+
+  // How long ago an agent finished (ms), or null when it did not, just now: a card says "finished" for FINISH_MS and then becomes idle.
+  finAge(a) {
+    if (a.status === "working" || a.status === "blocked") return null;
+    let fin = {};
+    try { fin = shared("bhote.finished") ?? {}; } catch (_e) { fin = {}; }
+    const age = fin[a.address] ? Date.now() - fin[a.address] : null;
+    return age != null && age < FINISH_MS ? age : null;
+  }
+
+  isFinished(a) { return this.finAge(a) != null; }
 
   // The monitors of the sessions on every machine (monitors.py, copied to the other machines once) and where each agent runs, so that an agent's
   // card can say it has a monitor.
@@ -1214,6 +1331,7 @@ export default class Bhote extends View {
     return h_flex().id("new-space").flex_none().px(12).py(9).gap(11).items_center().cursor_pointer().border_t(1).border_color(t.border)
       .on_size_change((size) => { this.barH = size.height; })
       .text_size(12).text_color(t.muted).hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
       .on_click(() => this.chooseMachine())
       .child(div().ml(3).child("＋")).child(div().flex_1().child("New space"));
   }
@@ -1240,7 +1358,8 @@ export default class Bhote extends View {
       const remote = spaceList[0]?.machine ?? null;
       rows.push(this.head(t, machine, div().id(`ns-${machine}`).px(7).py(1).rounded(4).text_size(14).cursor_pointer().text_color(t.dim)
         .hover((e) => e.bg(t.hover).text_color(t.foreground))
-        .on_click(() => run("space.new", { machine: remote ?? "" })).child("＋")));
+        .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
+        .on_click(this.guard(() => this.openSpaceMenu(remote, this.anchor))).child("＋")));
       for (const s of spaceList) {
         const mine = list.filter((a) => a.space === s.id);
         if (!mine.length) {
@@ -1251,12 +1370,12 @@ export default class Bhote extends View {
         }
         // an agent is a card of its own: topics are not mixed in, a topic meets an agent when it is started on one
         for (const a of mine) {
-          const idle = a.status === "idle";
+          const idle = a.status === "idle" && !this.isFinished(a);
           // the state is the colour of the card: working blue, error (needs you) red, recently finished green, idle grey
           const st = a.status === "working" ? { word: "working", color: t.ansi4, bar: t.ansi4 }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
-            : a.status === "done" ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.card(t, `a-${a.address}`, { agent: a, name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, monitor: this.monitorOf(a, machineOf(a)) }));
+            : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
+          rows.push(this.card(t, `a-${a.address}`, { agent: a, name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, code: this.paneCode(machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
         }
       }
     }
@@ -1632,7 +1751,7 @@ export default class Bhote extends View {
         const cur = this.prFilter();
         this.openMenu([{ type: "head", label: "Filter by project" },
           { type: "prtoggle", value: "", check: cur.size === 0, label: "All projects" },
-          ...this.prProjects().map((p) => ({ type: "prtoggle", value: p, check: cur.has(p), label: p }))], null, this.anchor);
+          ...this.prProjects().map((p) => ({ type: "prtoggle", value: p, check: cur.has(p), label: p }))], this.anchor);
       }))
       .child(div().child(label))
       .child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim));
@@ -1872,7 +1991,7 @@ export default class Bhote extends View {
   openLaunch(name, sys) {
     const items = this.launchItems(name, sys);
     if (items.length === 1) exec("open", [items[0].url]).catch(() => {});
-    else this.openMenu(items, null, this.anchor);
+    else this.openMenu(items, this.anchor);
   }
 
   // A small icon button; it remembers where it is (for a menu) and never counts as a click on what is behind it.
