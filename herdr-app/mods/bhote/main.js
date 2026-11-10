@@ -88,6 +88,26 @@ function parseMonitor(text) {
   });
 }
 
+// The log of a headless run as a conversation: "== <time> start" and "== <time> exit <code>" are the run's own marks, "RESULT: ..." is its outcome, the rest is what the
+// agent said (lines in a row are one message); a line that sounds like an error is marked. Entries: { kind: start | exit | result | say | error, text, ms, code, lines }.
+function parseJobLog(lines) {
+  const out = [];
+  let startMs = null;
+  for (const l of lines) {
+    let m = /^==\s+(\S+)\s+start\b/.exec(l);
+    if (m) { startMs = Date.parse(m[1]) || null; out.push({ kind: "start", ms: startMs }); continue; }
+    m = /^==\s+(\S+)\s+exit\s+(\S+)/.exec(l);
+    if (m) { const ms = Date.parse(m[1]) || null; out.push({ kind: "exit", ms, code: m[2], took: startMs && ms ? Math.max(0, Math.round((ms - startMs) / 1000)) : null }); continue; }
+    m = /^RESULT:\s*(.*)$/.exec(l);
+    if (m) { out.push({ kind: "result", text: m[1] }); continue; }
+    const err = /\b(error|failed|exception|denied|not found|fatal)\b/i.test(l);
+    const last = out[out.length - 1];
+    if (last && last.kind === (err ? "error" : "say")) last.lines.push(l);
+    else out.push({ kind: err ? "error" : "say", lines: [l] });
+  }
+  return out;
+}
+
 function ago(sec) {
   const d = Math.max(0, Date.now() / 1000 - sec);
   if (d < 60) return "just now";
@@ -246,7 +266,7 @@ function runOf(r) {
   return { name: r.workflowName || r.name || "run", url: r.url || "", started: secOf(r.createdAt), ended: 0, state };
 }
 
-const PR_FIELDS = "number,title,headRefName,baseRefName,url,isDraft,state,mergedAt,reviewDecision,statusCheckRollup,updatedAt";
+const PR_FIELDS = "number,title,headRefName,headRefOid,baseRefName,url,isDraft,state,mergedAt,reviewDecision,statusCheckRollup,updatedAt";
 
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
 
@@ -451,6 +471,10 @@ export default class Bhote extends View {
     this.startedAt = Date.now();  // (what is there in the first seconds is not "new")
     this.entered = {};            // by list: { seen, at } what has been seen and when something new came in (enterBegin, enterWrap)
     this.animUntil = 0;           // a card or row is coming in until then: the view looks again every 70 ms
+    this.agentHead = {};          // by agent address: the commit its work stands on (to find the pull request of a branch pushed under another name)
+    this.agentDir = {};           // by agent address: { dir, at } where its program works
+    this.jobLogSel = null;        // the headless agent whose log is open above the bar: { pk, job }
+    this.jobLogText = {};         // by pk: { lines, at } the tail of its log
     this.agDrag = null;           // an agent card being moved: { id (its space), mk (its machine), over (the space under the pointer) }
     this.agMoved = false;         // (a press that moved a card is not a click that shows the agent)
     this.msgDone = new Set();     // messages (msg/… in kharka) that are handed over or not for us
@@ -538,8 +562,9 @@ export default class Bhote extends View {
     this.agentCwd = {};     // an agent's address: the folder it runs in
     this.monReady = {};     // machines where monitors.py is in place
     this.monLoading = false;
-    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < Math.max(this.commitAnimUntil ?? 0, this.animUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
+    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < Math.max(this.commitAnimUntil ?? 0, this.animUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); { const sel = this.jobLogSel; if (sel) { const j = Object.values(this.jobs).flat().find((q) => `${this.srvKey(q.machine)}|${q.timer}` === sel.pk); if (j?.running && Date.now() - (this.jobLogText[sel.pk]?.at ?? 0) > 3000) this.loadJobLogText(cx, j); } } try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
+    if (this.side === "left") { this.loadHeads(cx); cx.timer.every(8000, (cx) => this.loadHeads(cx)); }
     if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); cx.timer.every(4000, (cx) => this.loadMessages(cx)); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
     // Topics are plain files: reload when one changes.
@@ -692,8 +717,8 @@ export default class Bhote extends View {
     if (x.est) return x.est;
     const elapsed = Date.now() / 1000 - x.time;
     const med = this.typical(x.histKey ?? `${kind}|${x.project}|${x.label}`);
-    if (x.prTotal > 0) {   // a check of an open pull request: the checks that are through, plus its own share (its usual duration; without one it counts as not begun)
-      const part = med ? Math.min(0.95, elapsed / med) : 0;
+    if (x.prTotal > 0) {   // a check of an open pull request: the checks that are through, plus its own share (its usual duration; without one a soft curve)
+      const part = med ? Math.min(0.95, elapsed / med) : Math.min(0.9, 1 - Math.exp(-elapsed / 360));
       return { frac: Math.min(0.99, (x.prDone + part) / x.prTotal), remain: med ? Math.max(0, med - elapsed) : null };
     }
     const byStep = x.total > 0 ? x.done / x.total : null;
@@ -1093,11 +1118,12 @@ export default class Bhote extends View {
     for (const pr of this.prs) {
       if (pr.kind !== "pr" || pr.merged) continue;
       // only the test checks of the pull request: its builds are deployments, all its checks are its own tile
-      const tests = pr.checks.filter((c) => /test|spec|lint|e2e/i.test(c.name));
+      let tests = pr.checks.filter((c) => /test|spec|lint|e2e/i.test(c.name));
+      if (!tests.some((c) => c.state === "running")) tests = pr.checks;   // (a CI that calls its check "workflow": its checks are the tests)
       const run = tests.filter((c) => c.state === "running");
       if (!run.length) continue;
       const est = this.checkEstimate(tests);
-      out.push({ time: Math.min(...run.map((c) => c.started || Math.floor(Date.now() / 1000))), project: pr.project, label: `PR #${pr.number}`, state: "running",
+      out.push({ time: Math.min(...run.map((c) => c.started || Math.floor(Date.now() / 1000))), project: pr.project, label: `PR #${pr.number}`, pr: true, state: "running",
         done: est.finished, total: tests.length, branch: pr.branch, title: pr.title, url: pr.url, est: { frac: est.frac, remain: est.remain } });
     }
     return out;
@@ -1440,12 +1466,13 @@ export default class Bhote extends View {
     const { agent } = o;
     // a card whose branch is being deployed is yellow (the colour of a run under way), whatever else it does, unless the agent needs you
     const deploying = !!agent && !!o.deploy && agent.status !== "blocked";
-    const st = deploying ? { word: o.deploy.pr ? "ci checks" : "deploying", color: t.working, bar: t.working } : o.st;   // (checks of a pull request are not a deployment)
+    const testing = !deploying && !!agent && !!o.testing && agent.status !== "blocked";   // (tests run in its worktree: yellow, as a deployment is, not the orange of work)
+    const st = deploying ? { word: o.deploy.pr ? "ci checks" : "deploying", color: t.working, bar: t.working } : testing ? { word: "testing", color: t.working, bar: t.working } : o.st;   // (checks of a pull request are not a deployment)
     const active = !!o.selected;
     const dim = !!o.dim && !active;   // (an idle agent is dimmed, the active card never: its ground is light)
     const task = agent?.title ?? "";
     const word = agent ? st.word : "";   // (the state is always a badge, an idle agent too)
-    const dep = deploying ? o.deploy : null;
+    const dep = deploying ? o.deploy : testing ? o.testing : null;
     const ident = agent ? (o.code ?? "") : "";   // the pane code: w2:a1, an agent of another machine with its code in front (OMR/w3:a1), as bhote has always had it
     // the card takes the colour of its state (blue, red, green; an idle agent stays grey); the active one a stronger ground and a solid border
     const tone = agent && st.word !== "idle" ? st.color : null;
@@ -1738,7 +1765,7 @@ export default class Bhote extends View {
           .child(div().flex_none().px(6).h(16).flex().items_center().rounded(8).text_size(10).text_color(t.dim).border(1).border_color(t.border).child(this.machineLabel(j.machine)))   // (where it runs: right behind the name)
           .child(div().flex_1().min_w(0))
           .child(div().flex_none().text_size(11).text_color(j.failed ? t.blocked : t.dim).child(j.failed && !j.running ? "failed" : note))
-          .child(this.ibtn(t, `job-log-${pk}`, "log", (cx) => this.jobLog(cx, j), { color: t.muted }))
+          .child(this.ibtn(t, `job-log-${pk}`, "log", (cx) => this.openJobLog(cx, j), { color: this.jobLogSel?.pk === pk ? t.accent : t.muted }))
           .child(j.running
             ? this.ibtn(t, `job-kill-${pk}`, "stop", (cx) => this.jobDo(cx, j, "kill"), { dim: !!pend, color: t.muted, hover: t.blocked })   // (end the run that is going on)
             : j.adhoc ? div().w(20).flex_none() : this.ibtn(t, `job-run-${pk}`, "zap", (cx) => this.jobDo(cx, j, "run"), { dim: !!pend, color: t.accent }))
@@ -2371,7 +2398,7 @@ export default class Bhote extends View {
   }
 
   // --- another headless agent: where, in which folder, what it is asked --------------------------------------------------------
-  openHeadless() { openOverlay({ mod: "bhote", props: { headless: true }, kind: "dialog", modal: true, width: 600, height: 470 }); }
+  openHeadless() { openOverlay({ mod: "bhote", props: { headless: true }, kind: "dialog", modal: true, width: 660, height: 640 }); }
 
   initHeadless(cx) {
     this.labels = ""; this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
@@ -2379,7 +2406,7 @@ export default class Bhote extends View {
     this.hdBusy = false; this.hdError = "";
     this.hdDir = InputState.new({ placeholder: "folder, e.g. ~/Development/IMS", value: "~" });
     this.hdCmd = InputState.new({ placeholder: "claude -p", value: "claude -p" });
-    this.hdPrompt = TextareaState.new({ placeholder: "What should it do?", value: "", rows: 6 });
+    this.hdPrompt = TextareaState.new({ placeholder: "What should it do?", value: "", rows: 5 });
     this.hdPrompt.on("change", (_e, cx) => cx.notify());
     this.cfgValues().then((v) => { this.labels = v.MACHINE_LABELS ?? ""; this.hostLabel = (v.HOST_LABEL ?? "").trim() || this.hostLabel; cx.notify(); });
   }
@@ -2403,24 +2430,33 @@ export default class Bhote extends View {
     const t = theme();
     const ms = this.srvMachines();
     const ok = !!this.hdPrompt.value().trim() && !!this.hdDir.value().trim() && !!this.hdCmd.value().trim();
-    const row = (label, ...kids) => h_flex().gap(14).items_start().child(div().flex_none().w(80).pt(6).text_size(13).text_color(t.muted).child(label)).child(v_flex().flex_1().min_w(0).gap(6).children(kids));
-    const field = (st) => Input.new(st).h(32).px(10).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground);
-    return v_flex().id("headless-root").size_full().bg(t.popover).p(24).gap(16)
-      .child(div().text_size(18).font_semibold().text_color(t.foreground).child("Start a headless agent"))
-      .child(div().text_size(13).text_color(t.muted).child("A run in the background with no terminal: it does what the prompt says and stops. It shows in the Headless agents bar, with its log and a stop button."))
-      .child(row("Runs on", h_flex().gap(6).flex_wrap().children(ms.map((m) => { const on = this.hdPick === m.name;
-        return div().id(`hd-m-${m.name ?? "local"}`).px(12).h(28).flex().items_center().rounded(14).cursor_pointer().text_size(13).border(1).border_color(on ? t.accent : t.border)
-          .bg(on ? tint(t.accent, "33", t.selected) : t.chrome).text_color(on ? t.foreground : t.muted).hover((e) => e.bg(on ? tint(t.accent, "40", t.selected) : t.hover))
-          .on_click((_e, cx) => { this.hdPick = m.name; cx.notify(); }).child(m.label); }))))
-      .child(row("Folder", field(this.hdDir)))
-      .child(row("Command", field(this.hdCmd), div().text_size(12).text_color(t.dim).child("the prompt is added as its last argument")))
-      .child(row("Prompt", Textarea.new(this.hdPrompt).px(10).py(8).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground)))
-      .child(h_flex().gap(10).items_center()
-        .child(div().id("hd-start").px(16).h(34).flex().items_center().rounded(8).cursor_pointer().text_size(13).bg(ok && !this.hdBusy ? t.accent : t.raised).opacity(ok ? 1 : 0.6)
-          .text_color(ok && !this.hdBusy ? (t.accent_foreground ?? "#ffffff") : t.dim).on_click((_e, cx) => this.startHeadless(cx)).child(this.hdBusy ? "Starting…" : "Start"))
-        .child(div().id("hd-cancel").px(14).h(34).flex().items_center().rounded(8).cursor_pointer().text_size(13).border(1).border_color(t.border).bg(t.chrome).text_color(t.foreground)
+    const row = (label, ...kids) => h_flex().gap(14).items_start().child(div().flex_none().w(84).pt(7).text_size(13).text_color(t.muted).child(label)).child(v_flex().flex_1().min_w(0).gap(8).children(kids));
+    const field = (st) => Input.new(st).h(34).px(11).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground);
+    // the folders this machine's spaces were in lately (spaceHist, kept by the panel): a click puts one into the field
+    let folders = [];
+    try {
+      const h = (shared("bhote.spaceHist") ?? {})[this.hdPick ?? "local"] ?? [];
+      folders = [...new Map([...h].sort((a, b) => b.at - a.at).filter((x) => x.folder && x.folder !== "~").map((x) => [x.folder, x])).values()].slice(0, 6);
+    } catch (_e) { folders = []; }
+    const cur = this.hdDir.value().trim();
+    const chip = (id, text, on, onClick) => div().id(id).px(11).h(26).flex().items_center().rounded(13).cursor_pointer().text_size(12).border(1).border_color(on ? t.accent : t.border)
+      .bg(on ? tint(t.accent, "33", t.selected) : t.chrome).text_color(on ? t.foreground : t.muted).hover((e) => e.bg(on ? tint(t.accent, "40", t.selected) : t.hover)).on_click(onClick).child(text);
+    // the form scrolls if the window is small; the buttons stay at the bottom
+    return v_flex().id("headless-root").size_full().bg(t.popover)
+      .child(v_flex().id("headless-body").flex_1().min_h(0).overflow_y_scrollbar().gap(18).px(26).pt(24).pb(8)
+        .child(div().text_size(19).font_semibold().text_color(t.foreground).child("Start a headless agent"))
+        .child(div().text_size(13).text_color(t.muted).child("A run in the background with no terminal: it does what the prompt says and stops. It shows in the Headless agents bar, with its log and a stop button."))
+        .child(row("Runs on", h_flex().gap(6).flex_wrap().children(ms.map((m) => chip(`hd-m-${m.name ?? "local"}`, m.label, this.hdPick === m.name, (_e, cx) => { this.hdPick = m.name; cx.notify(); })))))
+        .child(row("Folder", field(this.hdDir),
+          ...(folders.length ? [h_flex().gap(6).flex_wrap().children(folders.map((x, k) => chip(`hd-f-${k}`, x.folder.split("/").pop() || x.folder, cur === x.folder, (_e, cx) => { this.hdDir.set_value(x.folder); cx.notify(); })))] : [])))
+        .child(row("Command", field(this.hdCmd), div().text_size(12).text_color(t.dim).child("the prompt is added as its last argument")))
+        .child(row("Prompt", Textarea.new(this.hdPrompt).px(11).py(9).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground))))
+      .child(h_flex().flex_none().gap(10).items_center().px(26).py(16).border_t(1).border_color(t.border)
+        .child(div().flex_1().text_size(12).text_color(t.blocked).child(this.hdError))
+        .child(div().id("hd-cancel").px(16).h(36).flex().items_center().rounded(8).cursor_pointer().text_size(13).border(1).border_color(t.border).bg(t.chrome).text_color(t.foreground)
           .hover((e) => e.bg(t.hover)).on_click(() => { const o = props()?.overlay; if (o) closeOverlay(o); }).child("Cancel"))
-        .child(div().text_size(12).text_color(t.blocked).child(this.hdError)));
+        .child(div().id("hd-start").px(20).h(36).flex().items_center().rounded(8).cursor_pointer().text_size(13).bg(ok && !this.hdBusy ? t.accent : t.raised).opacity(ok ? 1 : 0.6)
+          .text_color(ok && !this.hdBusy ? (t.accent_foreground ?? "#ffffff") : t.dim).on_click((_e, cx) => this.startHeadless(cx)).child(this.hdBusy ? "Starting…" : "Start")));
   }
 
   // The ear is not only a note for the senders: with it on, the agent takes the messages that wait for it. A message is the record msg/<node>/<name>/<id> in
@@ -2469,6 +2505,93 @@ export default class Bhote extends View {
         if (JSON.stringify(waiting) !== JSON.stringify(this.msgWaiting)) { this.msgWaiting = waiting; changed = true; }
       } catch (_e) { /* no kharka here: nothing to hand over */ }
       this.msgLoading = false;
+      if (changed) cx.notify();
+    });
+  }
+
+  // The log of a headless agent in a small box above the Headless agents bar, as the message of a commit is above the inspector: a click on the log icon opens it (the
+  // last lines; while the job runs it follows), a second click or the ✕ closes it; the whole file is one click away (in the editor).
+  openJobLog(cx, job) {
+    const pk = `${this.srvKey(job.machine)}|${job.timer}`;
+    if (this.jobLogSel?.pk === pk) { this.jobLogSel = null; cx.notify(); return; }
+    this.jobLogSel = { pk, job };
+    cx.notify();
+    this.loadJobLogText(cx, job);
+  }
+
+  loadJobLogText(cx, job) {
+    const pk = `${this.srvKey(job.machine)}|${job.timer}`;
+    this.jobLogText[pk] = { ...(this.jobLogText[pk] ?? { lines: null }), at: Date.now() };   // (asked: not again before 3 s)
+    const base = job.timer.replace(/\.timer$/, "");
+    const dir = base.startsWith("slack-monitor@") ? `slack-monitor/${job.name}` : base;
+    const script = job.adhoc ? 'f="${HOME:?}/.cache/bhote/headless/$1.log"; [ -f "$f" ] && tail -n 60 "$f"; true'
+      : 'f=$(ls -t "${HOME:?}"/.local/state/$1/*.log 2>/dev/null | head -1); [ -n "$f" ] && tail -n 60 "$f"; true';
+    cx.spawn(async (cx) => {
+      let lines = [];
+      try {
+        const r = await this.srvExec(job.machine, "sh", ["-c", script, "_", job.adhoc ? job.id : dir], 15000);
+        lines = r.stdout.split("\n").map((l) => l.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\r/g, "").trimEnd()).filter((l) => l && !/can't change option: zle/.test(l));
+      } catch (_e) { lines = []; }
+      this.jobLogText[pk] = { lines, at: Date.now() };
+      cx.notify();
+    });
+  }
+
+  jobLogBox(t) {
+    const sel = this.jobLogSel;
+    if (!sel) return [];
+    const j = Object.values(this.jobs).flat().find((q) => `${this.srvKey(q.machine)}|${q.timer}` === sel.pk) ?? sel.job;
+    const d = this.jobLogText[sel.pk];
+    const lines = d?.lines ?? null;
+    const ents = lines ? parseJobLog(lines).slice(-7) : [];   // (the last entries of the conversation)
+    const hm = (ms) => (ms ? new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
+    const green = t.ansi2 ?? t.done;
+    const entry = (e, i) => {
+      if (e.kind === "start") return h_flex().id(`jl-${i}`).gap(6).items_center().text_size(10.5).text_color(t.dim).child(div().w(5).h(5).rounded(3).flex_none().bg(t.dim)).child(`started${e.ms ? ` ${hm(e.ms)}` : ""}`);
+      if (e.kind === "exit") { const ok = e.code === "0"; return h_flex().id(`jl-${i}`).gap(6).items_center().text_size(10.5).text_color(ok ? green : t.blocked).child(div().w(5).h(5).rounded(3).flex_none().bg(ok ? green : t.blocked)).child(`${ok ? "finished" : `exit ${e.code}`}${e.ms ? ` ${hm(e.ms)}` : ""}${e.took != null ? ` · ${e.took < 90 ? `${e.took} s` : `${Math.round(e.took / 60)} min`}` : ""}`); }
+      if (e.kind === "result") return h_flex().id(`jl-${i}`).gap(6).items_start().px(8).py(4).rounded(8).bg(tint(green, "1c", t.surface)).border(1).border_color(tint(green, "55", t.border))
+        .child(div().flex_none().pt(1).text_size(9.5).font_semibold().text_color(green).child("RESULT")).child(div().flex_1().min_w(0).text_size(11).text_color(t.foreground).child(e.text));
+      const bad = e.kind === "error";   // what the agent says: a small bubble; an error in red
+      return v_flex().id(`jl-${i}`).gap(2).px(8).py(5).rounded(8).bg(bad ? tint(t.blocked, "1a", t.surface) : t.chrome).border(1).border_color(bad ? tint(t.blocked, "55", t.border) : t.border)
+        .children(e.lines.map((l) => div().text_size(11).text_color(bad ? t.blocked : t.muted).child(l)));
+    };
+    const color = j.failed ? t.blocked : j.running ? t.working : (t.ansi2 ?? t.done);
+    return [v_flex().id("job-log-box").flex_none().gap(6).px(15).py(10).border_t(1).border_color(t.border).bg(t.surface)
+      .child(h_flex().gap(8).items_center()
+        .child(j.running ? div().w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().w(8).h(8).rounded(4).flex_none().bg(color))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).font_semibold().text_color(t.foreground).child(j.name))
+        .child(div().flex_none().text_size(11).text_color(t.dim).child(this.machineLabel(j.machine)))
+        .child(div().id("job-log-edit").px(8).h(20).flex().items_center().rounded(5).text_size(11).text_color(t.dim).cursor_pointer()
+          .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.jobLog(cx, j)).child("Open in editor"))
+        .child(div().id("job-log-x").w(20).h(20).flex_none().flex().items_center().justify_center().rounded(5).text_size(11).text_color(t.dim).cursor_pointer()
+          .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => { this.jobLogSel = null; cx.notify(); }).child("✕")))
+      .child(lines === null
+        ? h_flex().gap(8).items_center().text_size(12).text_color(t.dim).child(div().text_color(t.working).frames(SPIN, 90)).child("loading the log…")
+        : ents.length ? v_flex().gap(4).children(ents.map(entry))
+        : div().text_size(12).text_color(t.dim).child("no log yet"))
+      .when(!!j.running && lines !== null, (el) => el.child(div().text_size(10.5).text_color(t.dim).child("follows while it runs")))];
+  }
+
+  // The commit every agent's work stands on (git rev-parse HEAD in the folder its program works in, looked up again every 30 s): a pull request is found by it when the
+  // agent pushed its local branch under another name (m1074 -> pricing/remove-support-extended).
+  loadHeads(cx) {
+    if (this.headsLoading) return;
+    this.headsLoading = true;
+    cx.spawn(async (cx) => {
+      let changed = false;
+      const sp = spaces();
+      await Promise.all(agents().map(async (a) => {
+        try {
+          const machine = sp.find((q) => q.id === a.space)?.machine ?? null;
+          let d = this.agentDir[a.address];
+          if (!d || Date.now() - d.at > 30000) { d = { dir: await this.fgCwd(a).catch(() => null), at: Date.now() }; this.agentDir[a.address] = d; }
+          if (!d.dir) return;
+          const r = await this.srvExec(machine, "git", ["-C", d.dir, "rev-parse", "HEAD"], 10000);
+          const sha = r.stdout.trim();
+          if (sha && this.agentHead[a.address] !== sha) { this.agentHead[a.address] = sha; changed = true; }
+        } catch (_e) { /* not a repository: no commit */ }
+      }));
+      this.headsLoading = false;
       if (changed) cx.notify();
     });
   }
@@ -2729,7 +2852,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }), 84));
+          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }), 84));
         }
       }
       if (ins === ids.length) rows.push(dropLine());   // (to the end of the section)
@@ -3012,7 +3135,7 @@ export default class Bhote extends View {
                   if (broke && wf.some((r) => r.ok && r.t > broke.t)) { c.state = "solved"; c.solvedOn = q.baseRefName; }
                 }
               }
-              out.push({ kind: "pr", project: p.title, slug, number: q.number, title: q.title, branch: q.headRefName, base: q.baseRefName, url: q.url, draft: !!q.isDraft, merged, updated: Math.floor(Date.parse(q.updatedAt) / 1000) || 0, review: q.reviewDecision || "", checks });
+              out.push({ kind: "pr", project: p.title, slug, number: q.number, title: q.title, branch: q.headRefName, sha: q.headRefOid ?? "", base: q.baseRefName, url: q.url, draft: !!q.isDraft, merged, updated: Math.floor(Date.parse(q.updatedAt) / 1000) || 0, review: q.reviewDecision || "", checks });
             }
             const deploys = !this.deployOff.has(p.title);   // a project that is not deployed through CI has no builds and pipelines to show here
             // the builds that run now on any open pull request (also those of other people): they are what a deployment hangs on
@@ -3956,6 +4079,7 @@ export default class Bhote extends View {
 
   // The deployments that run, for the left panel (which does not ask CI itself): the branch they are for, what they are, how far they are.
   publishDeploys() {
+    const clean = (n) => n.replace(/^ci\/circleci:\s*/i, "").replace(/\s+-\s+[0-9a-f]{6,}$/i, "");   // ("bilendo-marketing-workflow - f4babdfc": the workflow)
     // per branch: the mean progress of what runs for it, the longest time left, the names of the running checks (pr: they are the checks of an open pull request, not a deployment)
     const by = new Map();
     for (const x of this.deploysAll().filter((r) => (r.state === "running" || r.state === "queued") && r.branch)) {
@@ -3963,20 +4087,53 @@ export default class Bhote extends View {
       const g = by.get(x.branch) ?? { branch: x.branch, project: x.project, label: this.whatOf(x).text || x.label, fr: [], rem: [], names: [], pr: true, done: x.prDone ?? null, total: x.prTotal ?? null };
       if (e.frac != null) g.fr.push(e.frac);
       if (e.remain != null) g.rem.push(e.remain);
-      g.names.push(x.label); g.pr = g.pr && !!x.pr;
+      g.names.push(clean(x.label)); g.pr = g.pr && !!x.pr;
       by.set(x.branch, g);
     }
     const rows = [...by.values()].map((g) => ({ branch: g.branch, project: g.project, label: g.label, names: g.names.slice(0, 4), more: Math.max(0, g.names.length - 4), pr: g.pr,
       frac: g.fr.length ? g.fr.reduce((a, b) => a + b, 0) / g.fr.length : null, remain: g.rem.length ? Math.max(...g.rem) : null, done: g.done, total: g.total }));
+    // the open pull requests that have checks running and are not in the list yet (a project that is not deployed through CI has no builds, but its pull requests have checks):
+    // found by their branch or by the head commit, which is how an agent that pushed a local branch under another name is found
+    const now = Date.now() / 1000;
+    for (const p of this.prs) {
+      if (p.kind !== "pr" || p.merged || rows.some((r) => r.branch === p.branch)) continue;
+      const live = (p.checks ?? []).filter((c) => c.state === "running");
+      if (!live.length) continue;
+      const total = p.checks.length, done = total - live.length;
+      let part = 0, remain = null;
+      for (const c of live) { const med = this.typical(c.key); const el = c.started ? now - c.started : 0; part += med ? Math.min(0.95, el / med) : Math.min(0.9, 1 - Math.exp(-el / 360)); if (med && c.started) remain = Math.max(remain ?? 0, Math.max(0, med - el)); }
+      rows.push({ branch: p.branch, sha: p.sha ?? "", project: p.project, label: `#${p.number} ${p.title}`, names: live.slice(0, 4).map((c) => clean(c.name)), more: Math.max(0, live.length - 4), pr: true,
+        frac: Math.min(0.99, (done + part) / total), remain, done, total });
+    }
     let old = null;
     try { old = shared("bhote.depRun"); } catch (_e) { old = null; }
     if (JSON.stringify(old ?? []) !== JSON.stringify(rows)) { try { setShared("bhote.depRun", rows); } catch (_e) { /* not shared */ } }
+    // the tests that run now (a local run, a status file, a process found): by the worktree or repository they run in, so that the agent working there shows it
+    const tr = new Map();
+    for (const x of this.testsShown().shown.filter((r) => r.state === "running" && !r.pr)) {
+      const k = norm(x.project); if (!k) continue;
+      const e = this.runEstimate(x, "t");
+      const g = tr.get(k) ?? { key: k, names: [], fr: [], rem: [] };
+      g.names.push(x.label); if (e.frac != null) g.fr.push(e.frac); if (e.remain != null) g.rem.push(e.remain);
+      tr.set(k, g);
+    }
+    const trows = [...tr.values()].map((g) => ({ key: g.key, names: g.names.slice(0, 4), more: Math.max(0, g.names.length - 4), pr: false, test: true,
+      frac: g.fr.length ? g.fr.reduce((a, b) => a + b, 0) / g.fr.length : null, remain: g.rem.length ? Math.max(...g.rem) : null }));
+    let oldT = null;
+    try { oldT = shared("bhote.testRun"); } catch (_e) { oldT = null; }
+    if (JSON.stringify(oldT ?? []) !== JSON.stringify(trows)) { try { setShared("bhote.testRun", trows); } catch (_e) { /* not shared */ } }
   }
 
   // The deployment that runs for a branch (an agent's), or null.
-  deployOf(branch) {
-    if (!branch) return null;
-    try { return (shared("bhote.depRun") ?? []).find((x) => x.branch === branch) ?? null; } catch (_e) { return null; }
+  deployOf(branch, sha) {
+    try { return (shared("bhote.depRun") ?? []).find((x) => (branch && x.branch === branch) || (sha && x.sha && x.sha === sha)) ?? null; } catch (_e) { return null; }
+  }
+
+  // The tests that run in the worktree an agent works in (by the name of its space), or null.
+  testOf(name) {
+    const k = norm(name);
+    if (!k) return null;
+    try { return (shared("bhote.testRun") ?? []).find((x) => x.key === k) ?? null; } catch (_e) { return null; }
   }
 
   // A ring that fills, the percentage in it.
@@ -4259,6 +4416,7 @@ export default class Bhote extends View {
       .on_size_change((size) => { this.leftH = size.height; })
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(this.left()))
       .children(this.commitBar(t))
+      .children(this.jobLogBox(t))
       .children(this.jobsBar(t))
       .child(this.newSpaceBar(t));
     let body;
