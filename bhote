@@ -5227,6 +5227,21 @@ node_of_label() {  # node_of_label <var> <machine label>: the kharka node of a m
     fi
     printf -v "$1" '%s' "$_node"
 }
+cli_app() {  # bhote app install | check: the add-on for the herdr Mac app (the mod herdr-app/mods/bhote and the layout herdr-app/layouts/bhote.json)
+    local sub=${1:-} home=${HERDR_APP_HOME:-$HOME/.config/herdr-app} src
+    src=$(w_share herdr-app) || { echo "bhote: the add-on files (herdr-app) are not here: use a checkout or the package" >&2; return 1; }; src=$src/herdr-app
+    case "$sub" in
+        install)
+            mkdir -p "$home/mods/bhote" "$home/layouts" || return 1
+            cp -R "$src/mods/bhote/." "$home/mods/bhote/" && cp "$src/layouts/bhote.json" "$home/layouts/bhote.json" || { echo "bhote: could not copy into $home" >&2; return 1; }
+            echo "installed in $home: the mod bhote and the layout bhote"
+            if command -v herdr-app >/dev/null 2>&1; then herdr-app check "$home/mods/bhote" || return 1
+            else echo "herdr-app is not on the PATH: the add-on needs the herdr Mac app (it checks the mod when it starts)"; fi
+            echo "show it: herdr-app do layout.show --id bhote (or pick the layout bhote in the app)" ;;
+        check) command -v herdr-app >/dev/null 2>&1 || { echo "bhote: herdr-app is not on the PATH" >&2; return 1; }; herdr-app check "$home/mods/bhote" ;;
+        *) echo "bhote: app install | check" >&2; return 1 ;;
+    esac
+}
 cli_send() {  # bhote send <agent> <text...> [--title <t>] [--from <name>]: a message for another agent
     # It is kept in kharka (msg/<node>/<name>/<id>, state queued). The herdr-app takes it to the agent (a one-line prompt that says where to read it) as soon as
     # the ear on the agent's card is on and the agent is free; with the ear off it waits. <agent> is any agent ref: its name (Frodo), a number, machine/pane;
@@ -7215,6 +7230,7 @@ bhote — topics and agents next to herdr.
   bhote mod [install|remove|status]  the Claude Code mod bhote-topic (your topic above the prompt, /topic) in every Claude profile
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
+  bhote app install|check            the add-on for the herdr Mac app: copy it into ~/.config/herdr-app, or check it
   bhote send <agent> <text>          a message for another agent: the herdr-app hands it over when its ear is on and it is free
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
   bhote event                        an agent status event from herdr (the plugin calls it)
@@ -7251,6 +7267,7 @@ bhote_cli() {
         update) cli_update ;;
         reload) cli_reload ;;
         send) bhote_info; cli_send "$@" ;;
+        app) cli_app "$@" ;;
         skills) cli_skills "$@" ;;
         mod) cli_mod "$@" ;;
         jump) bhote_info; cli_jump "$@" ;;

@@ -1,5 +1,7 @@
 # The panel
 
+> **Deprecated since 0.9.3.** This page describes the terminal UI. bhote is a native add-on for the herdr Mac app now ([the add-on](herdr-app.md)); the terminal UI stays for machines without the app and gets no new features.
+
 `bhote` without arguments is a panel for a herdr pane of about 56 columns (it works from 30 to any width; the list uses up to
 100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.

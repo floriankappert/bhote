@@ -1,8 +1,8 @@
 # Maintainer: Florian Kappert
 pkgname=bhote
-pkgver=0.9.2
+pkgver=0.9.3
 pkgrel=1
-pkgdesc='Topics and agents side panel for the herdr terminal workspace manager'
+pkgdesc='Topics, agents, servers and headless agents: a native add-on for the herdr Mac app (with the CLI and a deprecated terminal UI)'
 arch=('any')
 url='https://github.com/floriankappert/bhote'
 license=('MIT')
@@ -23,11 +23,13 @@ package() {
   install -Dm644 integrations/claude/skills/bhote-install/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote-install/SKILL.md"
   install -d "$pkgdir/usr/share/bhote/integrations/claude"
   cp -r integrations/claude/.claude-plugin integrations/claude/mods "$pkgdir/usr/share/bhote/integrations/claude/"
+  cp -r herdr-app "$pkgdir/usr/share/bhote/herdr-app"
   install -d "$pkgdir/usr/share/bhote/omarchy-plugin"
   install -m644 omarchy-plugin/manifest.json omarchy-plugin/BarWidget.qml "$pkgdir/usr/share/bhote/omarchy-plugin/"
   install -m755 omarchy-plugin/focus.sh "$pkgdir/usr/share/bhote/omarchy-plugin/"
   install -d "$pkgdir/usr/share/doc/$pkgname"
   cp -r docs/. "$pkgdir/usr/share/doc/$pkgname/"
-  echo "link the herdr plugin with: herdr plugin link /usr/share/bhote/herdr-plugin" >&2
+  echo "herdr Mac app add-on: bhote app install" >&2
+  echo "terminal UI (deprecated): link the herdr plugin with: herdr plugin link /usr/share/bhote/herdr-plugin" >&2
   echo "Omarchy bar widget: ln -s /usr/share/bhote/omarchy-plugin ~/.config/omarchy/plugins/bhote.bar && omarchy plugin enable bhote.bar" >&2
 }

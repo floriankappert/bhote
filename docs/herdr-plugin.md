@@ -1,5 +1,7 @@
 # herdr plugin
 
+> **Deprecated since 0.9.3.** This page describes the plugin of the terminal UI. bhote is a native add-on for the herdr Mac app now ([the add-on](herdr-app.md)); the terminal UI stays for machines without the app and gets no new features.
+
 `herdr-plugin/` is a herdr plugin (`bhote.panel`) that puts the panel next to your agents. `./install.sh` links it
 (`herdr plugin link <repo>/herdr-plugin`).
 

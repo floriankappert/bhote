@@ -324,6 +324,11 @@ a profile failed.
 Asks GitHub whether a newer version is out and prints the command that updates this installation (brew, `git pull`,
 pacman). The panel also says so, checked every 6 hours (`UPDATE_CHECK`).
 
+### `bhote app install` · `bhote app check`
+
+The add-on for the herdr Mac app ([the add-on](herdr-app.md)). `install` copies the mod (`herdr-app/mods/bhote`) and the layout (`herdr-app/layouts/bhote.json`) from this checkout or from the package
+into `~/.config/herdr-app` (`HERDR_APP_HOME` picks another folder), then loads the mod once (`herdr-app check`) and says how to show the layout. `check` only loads it. Exit `1` when the files are not here or the check fails.
+
 ### `bhote send <agent> <text...> [--title <t>] [--from <name>]`
 
 A message for another agent. `<agent>` is any agent ref (its name `Frodo`, a number, `machine/pane`). The message is kept in kharka (`msg/<kharka node>/<name of its space, letters and digits in lower case>/<id>`, state `queued`), and the herdr-app hands it to the agent, as a one-line prompt that says where to read it (`kharka get <key>`, the field `text`), as soon as the **ear** on the agent's card is on and the agent is free (`idle` or `done`: not working, not asking). With the ear off, or while the agent works, it waits; the card shows how many wait next to the ear. Afterwards the record says `delivered`. The sender is the agent the command is called from (its terminal, `HC_TERMINAL_ID`) or the agent `--from` names (or `$BHOTE_FROM`); the receiver sees its name and answers with `bhote send <that name>`. A message from the person (no agent behind it) says `the user` and is answered in the receiver's own session. The target and the sender are found by their records, so it works on a machine that has no list of agents (`bhote agents` is empty without herdr-app); a space called `~` is `home` in the key.

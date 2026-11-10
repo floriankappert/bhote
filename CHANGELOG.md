@@ -5,7 +5,18 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-10
+
+**bhote is a native add-on for the herdr Mac app now.** The panels, the servers, the headless agents, the commit inspector and the settings live in the herdr app (the mod `herdr-app/mods/bhote`,
+installed with `bhote app install`); the terminal UI of earlier versions (the bash and Rust panel in a herdr pane) is deprecated and stays for machines without the app, such as Omarchy.
+The CLI, the topic files and the collector are the same underneath.
+
+### Deprecated
+- The **terminal UI** (the panel in a herdr pane, bash and Rust, with its herdr plugin and the settings screen): deprecated, no new features. It stays for machines without the herdr Mac app. See [docs/panel.md](docs/panel.md).
+
 ### Added
+- `bhote app install` and `bhote app check`: the add-on into the herdr Mac app (`~/.config/herdr-app`), checked on the spot; the Homebrew formula and the Arch package ship the add-on files. [The add-on](docs/herdr-app.md) has its own page.
+
 - herdr-app: the **log of a headless agent** opens in a small box above the Headless agents bar (a click on its log icon): the run as a conversation (start and end marks with the time and how long it took, what the agent said as small bubbles, `RESULT` highlighted, errors red); it follows while the job runs, "Open in editor" shows the whole file. The form for another headless agent is taller, keeps its buttons at the bottom and offers the folders of the machine's recent spaces.
 - herdr-app: an agent whose **pull request has checks running** shows them on its card (name of the check, a progress bar that moves even without a history of earlier runs): the pull request is found by the branch or by the **head commit** of the agent's work, so a local branch pushed under another name (`m1074` -> `pricing/remove-support-extended`) works too, also for a project switched off for deployments. A pull request whose check is not called test (CircleCI's workflow) shows in the Tests tab.
 - herdr-app: an agent that works while **tests run in its worktree** is yellow, as a deployment is (word "testing", the names of the tests, the bar), not the orange of work.
@@ -358,7 +369,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [0.1.0] - 2026-10-07
 - First release: topics and agents next to herdr.
 
-[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/floriankappert/bhote/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/floriankappert/bhote/compare/v0.9.2...v0.9.3
 [0.8.0]: https://github.com/floriankappert/bhote/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/floriankappert/bhote/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/floriankappert/bhote/compare/v0.5.8...v0.6.0
