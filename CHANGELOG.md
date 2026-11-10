@@ -6,6 +6,9 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- herdr-app: **test runs nobody reported** show up: a `rails test`, rspec, vitest, jest, pytest or `npm test` an agent starts in the background is found as a process (every 5 s, on every machine) and listed as running with its repository, branch and command, also for a project switched off in `TEST_PROJECTS_OFF`.
+- herdr-app: the **ear on an agent's card** switches whether other agents may message it (`listen/<kharka node>/<name>` in kharka, `{"listening": false}`; no record: the new setting `AGENT_LISTEN`, `on` by default). Agents read the record before they send.
+- herdr-app: **services** next to the IMS systems (Servers tab, overview, Settings › Servers): dev servers that a shell command starts (Bilendo `bilendo-start`, Marketing `marketing-start` / `marketing-stop`), kept in `~/.config/bhote/servers.json` (name, machine, port, URL, start and stop command). They start detached through `zsh -ic`, run while their port answers, and stop by their stop command, their process group or the port's listener. The IMS tunnel (`IMS_TUNNELS`) is edited in the same place.
 - `bhote project set <ref> <field> <value>` writes one field of a project: `repos`, `workspaces`, `ci`, `deploy_branches`, `deploy_names`, `test_names` and `runbook` (`none` ends the path at the merge). The stages after the merge are the project's own `runbook` now, no project name is in the code any more.
 - herdr-app: a **settings dialog** (the row at the foot of the panel) with the settings that concern the Mac client, in groups with one wording, units and dependencies, and a **Runbooks** group: per project the path of a change as stages, its repositories, deploy branches and CI.
 - herdr-app: the **commit inspector** in the left panel: the commits of the focused agent on a rail, new ones come in with a transition, a click shows the full message above it.

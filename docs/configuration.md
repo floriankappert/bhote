@@ -27,6 +27,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTO_ASSIGN_MACHINE` | `any` | Prefer agents on | Whose free agents come first: `any` (this machine first) or a machine label; when none is free there, the others. |
 | `AGENT_CAN_CLOSE` | `on` | Agents may close topics | An agent may set its topic to done itself; `off`: only to review, you close it. |
 | `AGENT_TOPICS` | `on` | Agents may create topics | An agent may create topics with `bhote add` (the bhote skill tells it to when it hands work back or waits); `off`: `bhote add` run by an agent creates nothing (a note on stderr, `null` with `--json`, exit `0`), and the agent goes on without a topic. Topics you create, take or transfer are not affected; the “Question from” topics are `AUTO_REVIEW`. |
+| `AGENT_LISTEN` | `on` | Agents listen by default | Whether agents accept messages from other agents (text in kharka under `handoff/`, a one-line prompt through `herdr.commands`). The ear on an agent's card in the herdr-app switches one agent: the record `listen/<kharka node>/<name>` (the name of its space, letters and digits in lower case) holds `{"listening": false}`; without a record this setting counts. An agent that wants to message another reads the record first. |
 | `CLICK_FOCUS_AGENT` | `on` | A click on a topic focuses its agent | A click on a topic card shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in herdr's agent list; `off`: the focus goes back to the bhote panel of that tab (what ⏎ always does). |
 | `FINISHED_MINUTES` | `30` | Recently finished: dismiss after (min) | A recently finished card (an agent that stopped without a question) is dismissed by itself after this many minutes; it comes back when the agent works again. `0`: never. |
 | `AGENTS_COMPACT` | `off` | Agent overview: counts only | Shows only how many agents are active and how many are inactive instead of the list of agents. The `↕` button at the right end of the divider above the agents switches it. |
@@ -73,3 +74,11 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 
 Numbers that are not plain digits fall back to their default. Values never contain control characters (they are removed when
 written).
+
+## Services (herdr-app)
+
+Dev servers that are not IMS are listed in `~/.config/bhote/servers.json` (Settings › Servers writes it; it is made with two entries the first time):
+`[{"id": "marketing", "name": "Bilendo Marketing", "machine": null, "port": 3002, "url": "http://localhost:3002", "start": "marketing-start", "stop": "marketing-stop"}]`.
+`machine` is `null` for this computer, else the name of a herdr machine. The start command runs in the dev shell (`zsh -ic`), detached, with its output in
+`~/.cache/bhote/svc/<id>.log` and its process group in `<id>.pid`; the service counts as running while its port answers. Stopping runs the stop command (if any),
+then ends the process group and whatever still listens on the port.

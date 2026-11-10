@@ -101,6 +101,7 @@ AUTO_ASSIGN|off|bool|A running (now) topic with a project and without an agent g
 AUTO_ASSIGN_MACHINE|any|text|Whose free agents auto-assign tries first: any (this machine first) or a machine label
 AGENT_CAN_CLOSE|on|bool|An agent may close its topic itself (bhote done); off: it can only hand it over for review
 AGENT_TOPICS|on|bool|An agent may create topics (bhote add, as the bhote skill tells it to); off: bhote add run by an agent creates nothing (the "Question from" topics are AUTO_REVIEW)
+AGENT_LISTEN|on|bool|Agents accept messages from other agents unless their card (the ear) says otherwise; the switch of an agent is the record listen/<node>/<name> in kharka
 CLICK_FOCUS_AGENT|on|bool|A click on a topic shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in the herdr agent list; off: the focus goes back to the bhote panel of that tab
 FINISHED_MINUTES|30|int:0:1440|A recently finished card (an agent that stopped without a question: nothing to check) is dismissed by itself after this many minutes; it comes back when the agent works again (0 = never)
 DONE_COMPACT|off|bool|Done section: only the number of done topics (the ↕ button on its caption switches it)
