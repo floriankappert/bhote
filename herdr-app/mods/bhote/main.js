@@ -285,12 +285,18 @@ const SVC_SEED = [
   { id: "bilendo", name: "Bilendo", machine: null, port: 3000, url: "http://localhost:3000", start: "bilendo-start", stop: "" },
   { id: "marketing", name: "Bilendo Marketing", machine: null, port: 3002, url: "http://localhost:3002", start: "marketing-start", stop: "marketing-stop" },
 ];
-const SVC_PROBE = 'nc -z -w1 127.0.0.1 "$1" >/dev/null 2>&1 && echo up || echo down';
-const SVC_START = 'd="$HOME/.cache/bhote/svc"; mkdir -p "$d"; nc -z -w1 127.0.0.1 "$2" >/dev/null 2>&1 && exit 0; '
-  + 'nohup perl -MPOSIX -e \'POSIX::setsid(); exec @ARGV\' sh -c \'echo $$ > "$1"; exec zsh -ic "$2"\' _ "$d/$1.pid" "$3" > "$d/$1.log" 2>&1 < /dev/null & exit 0';
-const SVC_STOP = 'd="$HOME/.cache/bhote/svc"; [ -n "$3" ] && zsh -ic "$3" >/dev/null 2>&1; '
-  + 'if [ -f "$d/$1.pid" ]; then p=$(cat "$d/$1.pid"); case "$(ps -p "$p" -o comm= 2>/dev/null)" in *zsh*) kill -TERM -- "-$p" 2>/dev/null; sleep 2; kill -KILL -- "-$p" 2>/dev/null ;; esac; rm -f "$d/$1.pid"; fi; '
-  + 'l=$(lsof -t -nP -iTCP:"$2" -sTCP:LISTEN 2>/dev/null); [ -n "$l" ] && kill $l 2>/dev/null; exit 0';
+const SVC_PROBE = '(exec 3<>/dev/tcp/127.0.0.1/"$1") 2>/dev/null && { echo up; exit 0; }; d="${HOME:?}/.cache/bhote/svc"; '   // up | booting (its process lives, the port is not open yet) | down
+  + 'if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet "bhote-svc-$2" 2>/dev/null; then echo booting; exit 0; fi; '
+  + 'if [ -f "$d/$2.pid" ] && ps -p "$(cat "$d/$2.pid")" >/dev/null 2>&1; then echo booting; exit 0; fi; echo down';
+const SVC_START = 'd="$HOME/.cache/bhote/svc"; mkdir -p "$d"; (exec 3<>/dev/tcp/127.0.0.1/"$2") 2>/dev/null && exit 0; rm -f "$d/$1.pid"; '
+  // Linux: a systemd user unit (what a program started through hc exec would not survive); elsewhere a detached process group
+  + 'if command -v systemd-run >/dev/null 2>&1; then systemctl --user reset-failed "bhote-svc-$1" 2>/dev/null; '
+  + 'systemd-run --user --quiet --collect --unit="bhote-svc-$1" -p StandardOutput=append:"$d/$1.log" -p StandardError=append:"$d/$1.log" zsh -ic "${3//\\$/\\$\\$}"; exit 0; fi; '
+  + 'nohup perl -MPOSIX -e \'POSIX::setsid(); exec @ARGV\' sh -c \'echo $$ > "$1"; exec zsh -ic "$2"\' _ "$d/$1.pid" "$3" > "$d/$1.log" 2>&1 < /dev/null & '
+  + 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -s "$d/$1.pid" ] && break; sleep 0.1; done; exit 0';
+const SVC_STOP = 'd="$HOME/.cache/bhote/svc"; [ -n "$3" ] && zsh -ic "$3" >/dev/null 2>&1; systemctl --user stop "bhote-svc-$1" 2>/dev/null; '
+  + 'if [ -f "$d/$1.pid" ]; then p=$(cat "$d/$1.pid"); [ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] && { kill -TERM -- "-$p" 2>/dev/null; sleep 2; kill -KILL -- "-$p" 2>/dev/null; }; rm -f "$d/$1.pid"; fi; '
+  + 'l=$(lsof -t -nP -iTCP:"$2" -sTCP:LISTEN 2>/dev/null); [ -n "$l" ] || l=$(ss -ltnpH "sport = :$2" 2>/dev/null | sed -n "s/.*pid=\\([0-9]*\\).*/\\1/p" | sort -u); [ -n "$l" ] && kill $l 2>/dev/null; exit 0';
 
 // Test runs that nobody reported: an agent that starts `bin/rails test`, rspec, vitest, jest, pytest or `npm test` in the background does not use
 // `bhote test run` and writes no status file, yet it runs for ten minutes. They are found as processes (the top one of each run, its workers do not count),
@@ -302,6 +308,25 @@ const LIVE_TESTS_SH = 'ps -Ao pid=,ppid=,etime=,command= | awk -v re="(rails|rak
   + '| while IFS="$(printf \'\\t\')" read -r p s c; do cwd=$(readlink "/proc/$p/cwd" 2>/dev/null || lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p"); '
   + '[ -n "$cwd" ] || continue; top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || printf %s "$cwd"); br=$(git -C "$top" branch --show-current 2>/dev/null); '
   + 'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$p" "$s" "$top" "$br" "$c"; done';
+
+// What the commit inspector asks the repository: the commits of this branch since it left the base branch (origin/HEAD, else main or master), newest first, the
+// base commit it left from, and the uncommitted files. On the base branch itself (nothing of its own) the last 10 commits. Never more than the last 10 of a branch; the base line then says how many come before. Plain sh: it runs on every machine.
+const COMMITS_SH = 'd="$1"; f="%h%x1f%s%x1f%ct%x1f%an"; b=$(git -C "$d" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); '
+  + '[ -n "$b" ] || for c in origin/main origin/master main master; do git -C "$d" rev-parse -q --verify "$c" >/dev/null 2>&1 && { b=$c; break; }; done; '
+  + 'mb=""; [ -n "$b" ] && mb=$(git -C "$d" merge-base HEAD "$b" 2>/dev/null); h=$(git -C "$d" rev-parse HEAD 2>/dev/null); '
+  + 'if [ -n "$mb" ] && [ "$mb" != "$h" ]; then git -C "$d" log -10 --format="$f" "$mb..HEAD"; echo "@@@base"; git -C "$d" log -1 --format="$f" "$mb"; echo "$b"; git -C "$d" rev-list --count "$mb..HEAD"; '
+  + 'else git -C "$d" log -10 --format="$f"; echo "@@@base"; fi; echo "@@@status"; git -C "$d" status --porcelain';
+
+// A headless run started by hand: a unit on Linux (a program started through hc exec does not outlive it), a detached process group elsewhere. Arguments: id,
+// folder, command (e.g. `claude -p`), prompt, description, the zsh line that runs them. The prompt travels in the environment, never inside a command line.
+const HEADLESS_START = 'd="$HOME/.cache/bhote/headless"; mkdir -p "$d"; id="$1"; dir="${2/#\\~/$HOME}"; [ -d "$dir" ] || { echo "no folder $dir" >&2; exit 3; }; printf %s "$5" > "$d/$id.desc"; '
+  + 'if command -v systemd-run >/dev/null 2>&1; then systemd-run --user --quiet --collect --unit="bhote-headless-$id" --description="$5" --working-directory="$dir" '
+  + '--setenv=BHOTE_CMD="$3" --setenv=BHOTE_PROMPT="$4" -p StandardOutput=append:"$d/$id.log" -p StandardError=append:"$d/$id.log" zsh -ic "${6//\\$/\\$\\$}"; exit $?; fi; '   // (systemd expands $ in a command line itself: $$)
+  + 'BHOTE_CMD="$3" BHOTE_PROMPT="$4" nohup perl -MPOSIX -e \'POSIX::setsid(); exec @ARGV\' sh -c \'cd "$3" && echo $$ > "$1" && exec zsh -ic "$2"\' _ "$d/$id.pid" "$6" "$dir" > "$d/$id.log" 2>&1 < /dev/null & '
+  + 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -s "$d/$id.pid" ] && break; sleep 0.1; done; exit 0';
+const HEADLESS_ZSH = 'c=(${(z)BHOTE_CMD}); "${c[@]}" "$BHOTE_PROMPT"';   // (the command split like a shell does, the prompt as one argument)
+const HEADLESS_STOP = 'd="${HOME:?}/.cache/bhote/headless"; systemctl --user stop "bhote-headless-$1" 2>/dev/null; systemctl --user reset-failed "bhote-headless-$1" 2>/dev/null; '
+  + 'if [ -f "$d/$1.pid" ]; then p=$(cat "$d/$1.pid"); [ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] && { kill -TERM -- "-$p" 2>/dev/null; sleep 2; kill -KILL -- "-$p" 2>/dev/null; }; fi; exit 0';
 
 // The shared folder of the collector, as a sh prefix that sets $s. The daemon of a machine may have been started without XDG_RUNTIME_DIR
 // (it then writes to /tmp/bhote-<uid>) while this call runs with it: take the folder whose tests.list is the newest, not the first guess.
@@ -355,7 +380,7 @@ const SETTINGS = [
   ["KHARKA_WATCH_STALE", "Integrations", "kharka", "Restart watch after", "Restart herdr-kharka when its entry has not been written for this long.", "s"],
 
   ["HOST_LABEL", "Machines & sync", "This machine", "Name of this machine", "How this machine appears in agent lists."],
-  ["MACHINE_LABELS", "Machines & sync", "This machine", "Names of other machines", "name=Label pairs, e.g. omarchy-flo=Omarchy."],
+  ["MACHINE_LABELS", "Machines & sync", "This machine", "Machine aliases", "name=Alias pairs, e.g. omarchy-flo=Omarchy: what the panels call a machine (Servers, agents, topics)."],
   ["MACHINES_OFF", "Machines & sync", "This machine", "Hidden machines", "Comma-separated machines left out of the agent list."],
   ["STORE", "Machines & sync", "Storage", "Topic storage", "Where topics live: local, a replica on the store machine, or kharka."],
   ["STORE_MACHINE", "Machines & sync", "Storage", "Store machine", "The saved herdr machine that holds the replica."],
@@ -394,6 +419,7 @@ function settingLabel(key) { const w = key.toLowerCase().replace(/_/g, " "); ret
 export default class Bhote extends View {
   init(_props, cx) {
     if (props()?.settings) { this.initSettings(cx); return; }   // the settings dialog
+    if (props()?.headless) { this.initHeadless(cx); return; }   // the form for another headless agent
     if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
     // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
@@ -416,7 +442,8 @@ export default class Bhote extends View {
       }
     }).catch(() => { /* the defaults stay */ });
     this.svcList = [];            // the services (servers.json)
-    this.svcState = {};           // service id: "up" | "down", from the last probe
+    this.svcState = {};           // service id: "up" | "booting" | "down", from the last probe
+    this.svcFail = {};            // service id: { at, reason, lines }: a start that did not work
     this.kharkaBin = "";          // KHARKA: the kharka binary (empty: from the PATH)
     this.listenDefault = true;    // AGENT_LISTEN: do agents accept messages from other agents unless their card says otherwise
     this.listenMap = {};          // `${node}/${name}`: the records of listen/ in kharka ({ listening, name, at })
@@ -502,7 +529,7 @@ export default class Bhote extends View {
     this.agentCwd = {};     // an agent's address: the folder it runs in
     this.monReady = {};     // machines where monitors.py is in place
     this.monLoading = false;
-    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < (this.commitAnimUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, () => this.trackSpaces()); }
+    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < (this.commitAnimUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
     if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
@@ -1426,7 +1453,15 @@ export default class Bhote extends View {
   // systemctl --user on the machine it lives on (this computer: none unless systemctl exists).
   jobScript() {
     return [
+      // runs started here by hand (one line each: the unit name, adhoc, running, the description): a Linux unit, or on a Mac a process group in a pid file
+      'hd="$HOME/.cache/bhote/headless"',
+      'for f in "$hd"/*.pid; do [ -f "$f" ] || continue; id=$(basename "$f" .pid); p=$(cat "$f"); ps -p "$p" >/dev/null 2>&1 || continue',
+      '  printf \'%s|%s|adhoc|||active|success|%s\\n\' "bhote-headless-$id" "bhote-headless-$id" "$(cat "$hd/$id.desc" 2>/dev/null)"; done',
       'command -v systemctl >/dev/null 2>&1 || exit 0',
+      'for u in $(systemctl --user list-units --all --type=service --no-legend --plain "bhote-headless-*" 2>/dev/null | awk \'{print $1}\'); do',
+      '  sa=$(systemctl --user show "$u" -p ActiveState --value); r=$(systemctl --user show "$u" -p Result --value); d=$(systemctl --user show "$u" -p Description --value)',
+      '  printf \'%s|%s|adhoc|||%s|%s|%s\\n\' "${u%.service}" "$u" "$sa" "$r" "$d"',
+      'done',
       'for t in $(systemctl --user list-units --all --type=timer --no-legend --plain 2>/dev/null | awk \'{print $1}\'); do',
       '  s=$(systemctl --user show "$t" -p Unit --value)',
       '  d=$(systemctl --user show "$s" -p Description --value)',
@@ -1452,7 +1487,11 @@ export default class Bhote extends View {
         try {
           const r = await this.srvExec(m.name, "sh", ["-c", this.jobScript()], 20000);
           this.jobs[key] = r.stdout.split("\n").filter(Boolean).map((line) => {
-            const [timer, svc, active, next, last, svcActive, result] = line.split("|");
+            const [timer, svc, active, next, last, svcActive, result, desc] = line.split("|");
+            if (active === "adhoc") {   // a headless run started from here: its description is what it was asked
+              return { timer, svc, adhoc: true, id: timer.replace(/^bhote-headless-/, ""), name: desc || timer, machine: m.name, label: m.label, on: true, next: 0, last: 0,
+                running: svcActive === "active" || svcActive === "activating", failed: !!result && result !== "success" };
+            }
             const base = timer.replace(/\.timer$/, "");
             const name = base.includes("@") ? base.split("@")[1] : base;
             return { timer, svc, name, machine: m.name, label: m.label, on: active === "active", next: Number(next) || 0, last: Number(last) || 0,
@@ -1592,10 +1631,13 @@ export default class Bhote extends View {
   jobDo(cx, job, what) {
     const pk = `${this.srvKey(job.machine)}|${job.timer}`;
     this.jobPending[pk] = { what, at: Date.now() };
-    const cmd = what === "run" ? ["start", "--no-block", job.svc] : what === "pause" ? ["stop", job.timer] : ["start", job.timer];
+    const cmd = what === "run" ? ["start", "--no-block", job.svc] : what === "kill" ? ["stop", job.svc] : what === "pause" ? ["stop", job.timer] : ["start", job.timer];
     cx.notify();
     cx.spawn(async (cx) => {
-      try { await this.srvExec(job.machine, "systemctl", ["--user", ...cmd], 20000); } catch (_e) { /* the poll shows what is there */ }
+      try {
+        if (job.adhoc && what === "kill") await this.srvExec(job.machine, "bash", ["-c", HEADLESS_STOP, "_", job.id], 30000);   // (a run of your own: its unit or process group)
+        else await this.srvExec(job.machine, "systemctl", ["--user", ...cmd], 20000);
+      } catch (_e) { /* the poll shows what is there */ }
       if (this.jobPending[pk]) this.jobPending[pk].done = true;
       this.jobLoading = false;
       this.loadJobs(cx);
@@ -1609,7 +1651,8 @@ export default class Bhote extends View {
     const dir = base.startsWith("slack-monitor@") ? `slack-monitor/${job.name}` : base;
     cx.spawn(async () => {
       try {
-        const r = await this.srvExec(job.machine, "sh", ["-c", `ls -t "$HOME"/.local/state/${dir}/*.log 2>/dev/null | head -1`], 15000);
+        const r = job.adhoc ? await this.srvExec(job.machine, "sh", ["-c", 'printf %s "$HOME/.cache/bhote/headless/$1.log"', "_", job.id], 15000)   // (a run of your own has its log beside its description)
+          : await this.srvExec(job.machine, "sh", ["-c", `ls -t "$HOME"/.local/state/${dir}/*.log 2>/dev/null | head -1`], 15000);
         const path = r.stdout.trim();
         if (!path) return;
         let file = path;
@@ -1624,9 +1667,11 @@ export default class Bhote extends View {
 
   jobsBar(t) {
     const list = Object.values(this.jobs).flat();
-    if (!list.length) return [];
     const clock = (e) => { const d = new Date(e * 1000); const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; return d.toDateString() === new Date().toDateString() ? hm : `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${hm}`; };
-    return [v_flex().flex_none().border_t(1).border_color(t.border).py(3)
+    const add = div().id("headless-add").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).text_color(t.dim).cursor_pointer()
+      .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(() => this.openHeadless())).child("＋");
+    return [v_flex().flex_none().pt(4).pb(3)
+      .child(this.dividerCaption(t, "Headless agents", [...(list.length ? [div().flex_none().text_size(10.5).text_color(t.dim).child(String(list.length))] : []), add]))
       .children(list.map((j) => {
         const pk = `${this.srvKey(j.machine)}|${j.timer}`;
         const pend = this.jobPending[pk];
@@ -1635,10 +1680,13 @@ export default class Bhote extends View {
         return h_flex().id(`job-${pk}`).gap(9).items_center().px(15).h(24)
           .child(j.running || pend ? div().ml(3).w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().ml(3).w(8).h(8).rounded(4).flex_none().bg(color))
           .child(div().flex_1().min_w(0).truncate().pl(5).text_size(12).text_color(j.on ? t.foreground : t.muted).child(j.name))
+          .child(div().flex_none().px(6).h(16).flex().items_center().rounded(8).text_size(10).text_color(t.dim).border(1).border_color(t.border).child(this.machineLabel(j.machine)))   // (where it runs)
           .child(div().flex_none().text_size(11).text_color(j.failed ? t.blocked : t.dim).child(j.failed && !j.running ? "failed" : note))
           .child(this.ibtn(t, `job-log-${pk}`, "log", (cx) => this.jobLog(cx, j), { color: t.muted }))
-          .child(this.ibtn(t, `job-run-${pk}`, "zap", (cx) => this.jobDo(cx, j, "run"), { dim: j.running || !!pend, color: t.accent }))
-          .child(this.ibtn(t, `job-pause-${pk}`, j.on ? "pause" : "play", (cx) => this.jobDo(cx, j, j.on ? "pause" : "resume"), { dim: !!pend, color: j.on ? t.muted : (t.ansi2 ?? t.done) }));
+          .child(j.running
+            ? this.ibtn(t, `job-kill-${pk}`, "stop", (cx) => this.jobDo(cx, j, "kill"), { dim: !!pend, color: t.muted, hover: t.blocked })   // (end the run that is going on)
+            : j.adhoc ? div().w(20).flex_none() : this.ibtn(t, `job-run-${pk}`, "zap", (cx) => this.jobDo(cx, j, "run"), { dim: !!pend, color: t.accent }))
+          .child(j.adhoc ? div().w(20).flex_none() : this.ibtn(t, `job-pause-${pk}`, j.on ? "pause" : "play", (cx) => this.jobDo(cx, j, j.on ? "pause" : "resume"), { dim: !!pend, color: j.on ? t.muted : (t.ansi2 ?? t.done) }));
       }))];
   }
 
@@ -1678,6 +1726,9 @@ export default class Bhote extends View {
   }
 
   initSettings(cx) {
+    // this view is a window of its own: what the panel keeps for the machines (their aliases, the services) is read here again
+    this.labels = ""; this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
+    this.svcList = []; this.svcState = {}; this.srv = {}; this.srvInfo = {}; this.srvPending = {};
     this.setItems = null;     // null: loading
     this.setCat = "All";
     this.setBusy = {};        // key: true while a `bhote` call for it runs
@@ -1685,7 +1736,6 @@ export default class Bhote extends View {
     this.setIns = {};         // key: the InputState of a text setting
     this.setProjects = [];
     this.setTun = null;       // the tunnel entries of IMS_TUNNELS: { main, entries } (null: not read yet)
-    this.setMach = {};        // service id: the machine picked on its card, not saved yet
     this.setAdd = {};         // project id: the panel to add a stage is open
     this.setPick = {};        // project id: the stage type picked in it
     this.setRename = {};      // project id: its name is being edited
@@ -1731,6 +1781,7 @@ export default class Bhote extends View {
   }
 
   applySettings(vals) {
+    this.labels = vals.MACHINE_LABELS ?? ""; this.hostLabel = (vals.HOST_LABEL ?? "").trim() || this.hostLabel;   // (the aliases of the machines, as the panel has them)
     const items = this.setMeta.list.filter((m) => SETTING_INFO.has(m.key)).map((m) => {   // (only what concerns the Mac client; the terminal panel is deprecated)
       const kind = m.type.split(":")[0];
       const info = SETTING_INFO.get(m.key);
@@ -1771,7 +1822,7 @@ export default class Bhote extends View {
     for (const x of this.svcList) {
       for (const [f, v] of [["name", x.name], ["port", String(x.port)], ["url", x.url ?? ""], ["start", x.start ?? ""], ["stop", x.stop ?? ""]]) this.ensureInput(`svc:${x.id}:${f}`, "text", v, f === "stop" ? "none" : f === "url" ? `http://localhost:${x.port}` : "");
     }
-    this.ensureInput("svc:__new:name", "text", "", "Name of the service");
+    for (const g of this.serverGroups()) this.ensureInput(`svc:__new:${g.m.name ?? "local"}:name`, "text", "", "Name of the service");
     for (const [f, ph] of [["host", "user@host"], ["block", "port block, e.g. linux"]]) this.ensureInput(`tun:${f}`, "text", "", ph);
     items.push({ key: "__servers", type: "action", default: null, group: "Servers", sec: "", name: "Servers", desc: "services start stop pause tunnel ssh bilendo marketing command port", unit: "", dep: [], needs: [], order: 1500, value: "", set: false, changed: false });
     items.sort((a, b) => a.order - b.order);
@@ -1821,7 +1872,7 @@ export default class Bhote extends View {
 
   // Enter in one of the small fields of a runbook card adds what it holds; any other field saves its setting.
   submitInput(cx, key, st) {
-    if (key.startsWith("svc:")) { const id = key.split(":")[1]; if (id === "__new") this.addSvc(cx); else this.saveSvc(cx, id); return; }
+    if (key.startsWith("svc:")) { const id = key.split(":")[1]; if (id === "__new") this.addSvc(cx, key.split(":")[2]); else this.saveSvc(cx, id); return; }
     if (key.startsWith("tun:")) { this.addTunnel(cx); return; }
     const [id, f] = key.split(":");
     const pr = this.setProjects.find((x) => x.id === id);
@@ -1999,12 +2050,20 @@ export default class Bhote extends View {
     return id;
   }
 
-  addSvc(cx) {
-    const st = this.setIns["svc:__new:name"]; const name = st.value().trim();
+  // A new service on one machine (mk: its name, "local" for this computer). The id carries the machine's alias, so that Bilendo here and Bilendo there are two services.
+  addSvc(cx, mk) {
+    const st = this.setIns[`svc:__new:${mk}:name`]; const name = st?.value().trim();
     if (!name) return;
     st.set_value("");
-    const id = this.svcSlug(name);
-    this.writeSvcConfig([...this.svcList, { id, name, machine: null, port: 8080, url: "", start: "", stop: "" }]).then(() => this.reloadSettings()).then(() => cx.notify());
+    const machine = mk === "local" ? null : mk;
+    const id = this.svcSlug(machine ? `${name}-${this.machineLabel(machine)}` : name);
+    this.writeSvcConfig([...this.svcList, { id, name, machine, port: 8080, url: "", start: "", stop: "" }]).then(() => this.reloadSettings()).then(() => cx.notify());
+  }
+
+  // The same service on another machine: the same name, port and commands, to be changed there (the paths differ, the function names usually do not).
+  copySvc(cx, x, machine) {
+    const id = this.svcSlug(machine ? `${x.name}-${this.machineLabel(machine)}` : x.name);
+    this.writeSvcConfig([...this.svcList, { ...x, id, machine }]).then(() => this.reloadSettings()).then(() => cx.notify());
   }
 
   saveSvc(cx, id) {
@@ -2013,9 +2072,7 @@ export default class Bhote extends View {
     const v = (f) => this.setIns[`svc:${id}:${f}`].value().trim();
     const port = Number(v("port"));
     if (!(port > 0 && port < 65536) || !v("name")) { this.setFlash[`svc:${id}`] = "failed"; cx.notify(); return; }
-    const machine = this.setMach[id] !== undefined ? this.setMach[id] : x.machine ?? null;
-    const next = this.svcList.map((y) => (y.id === id ? { ...y, name: v("name"), port, url: v("url"), start: v("start"), stop: v("stop"), machine } : y));
-    delete this.setMach[id];
+    const next = this.svcList.map((y) => (y.id === id ? { ...y, name: v("name"), port, url: v("url"), start: v("start"), stop: v("stop") } : y));
     this.setFlash[`svc:${id}`] = "saved";
     this.writeSvcConfig(next).then(() => this.reloadSettings()).then(() => cx.notify());
     cx.timer.after(2500, (cx) => { delete this.setFlash[`svc:${id}`]; cx.notify(); });
@@ -2031,11 +2088,10 @@ export default class Bhote extends View {
     const btn = (id, txt, onClick, o = {}) => div().id(id).px(12).h(30).flex_none().flex().items_center().rounded(8).cursor_pointer().text_size(13)
       .border(1).border_color(o.primary ? t.accent : t.border).bg(o.primary ? t.accent : t.chrome).text_color(o.primary ? (t.accent_foreground ?? "#ffffff") : o.danger ? t.blocked : t.foreground)
       .hover((e) => e.bg(o.primary ? t.accent : t.hover)).on_click(onClick).child(txt);
-    const machines = [{ name: null, label: "This computer" }, ...this.srvMachines().filter((m) => m.name != null).map((m) => ({ name: m.name, label: m.label }))];
-    const cards = this.svcList.map((x) => {
+    const groups = this.serverGroups();
+    const cardOf = (x) => {
       const val = (f) => this.setIns[`svc:${x.id}:${f}`]?.value().trim() ?? "";
-      const mach = this.setMach[x.id] !== undefined ? this.setMach[x.id] : x.machine ?? null;
-      const dirty = val("name") !== x.name || val("port") !== String(x.port) || val("url") !== (x.url ?? "") || val("start") !== (x.start ?? "") || val("stop") !== (x.stop ?? "") || mach !== (x.machine ?? null);
+      const dirty = val("name") !== x.name || val("port") !== String(x.port) || val("url") !== (x.url ?? "") || val("start") !== (x.start ?? "") || val("stop") !== (x.stop ?? "");
       const flash = this.setFlash[`svc:${x.id}`];
       const delKey = `svc:${x.id}:__delete`, ask = !!this.setConfirm?.[delKey];
       const row = (name, ...kids) => h_flex().gap(12).items_center().child(label(name)).children(kids);
@@ -2048,21 +2104,20 @@ export default class Bhote extends View {
             .on_click((_e, cx) => { if (ask) this.deleteSvc(cx, x.id); else { (this.setConfirm ??= {})[delKey] = true; cx.notify(); cx.timer.after(4000, (cx) => { delete this.setConfirm[delKey]; cx.notify(); }); } })
             .child(ask ? "Really remove?" : "Remove")))
         .child(row("Name", field(`svc:${x.id}:name`, 260)))
-        .child(row("Runs on", h_flex().gap(6).flex_wrap().children(machines.map((m) => { const on = mach === m.name;
-          return div().id(`svcm-${x.id}-${m.name ?? "local"}`).px(12).h(28).flex().items_center().rounded(14).cursor_pointer().text_size(13).border(1).border_color(on ? t.accent : t.border)
-            .bg(on ? tint(t.accent, "33", t.selected) : t.chrome).text_color(on ? t.foreground : t.muted).hover((e) => e.bg(on ? tint(t.accent, "40", t.selected) : t.hover))
-            .on_click((_e, cx) => { this.setMach[x.id] = m.name; cx.notify(); }).child(m.label); }))))
         .child(row("Port", field(`svc:${x.id}:port`, 110), div().text_size(12).text_color(t.dim).child("it runs when this port answers")))
         .child(row("Open URL", field(`svc:${x.id}:url`, 360), div().text_size(12).text_color(t.dim).child("empty: http://localhost:<port>")))
         .child(row("Start command", field(`svc:${x.id}:start`, 360), div().text_size(12).text_color(t.dim).child("run in your dev shell (zsh -ic), detached")))
         .child(row("Stop command", field(`svc:${x.id}:stop`, 360), div().text_size(12).text_color(t.dim).child("empty: its process group and the port's listener")))
         .child(h_flex().gap(10).items_center()
           .child(btn(`svcsave-${x.id}`, "Save", (_e, cx) => this.saveSvc(cx, x.id), { primary: dirty }))
+          .children(groups.filter((g) => (g.m.name ?? null) !== (x.machine ?? null) && !this.svcList.some((y) => y.name === x.name && (y.machine ?? null) === (g.m.name ?? null)))
+            .map((g) => btn(`svccopy-${x.id}-${g.m.name ?? "local"}`, `Copy to ${g.m.label}`, (_e, cx) => this.copySvc(cx, x, g.m.name ?? null))))
           .child(div().text_size(12).text_color(t.dim).child("Start, stop and open it from the Servers tab. Output: ~/.cache/bhote/svc/" + x.id + ".log")));
-    });
-    const add = h_flex().gap(10).items_center().mx(24).my(6)
-      .child(label("New service", 120)).child(field("svc:__new:name", 260)).child(btn("svc-add", "Add", (_e, cx) => this.addSvc(cx), { primary: true }))
-      .child(div().text_size(12).text_color(t.dim).child("then give it a port and its start command"));
+    };
+    const addOf = (g) => { const mk = g.m.name ?? "local";
+      return h_flex().gap(10).items_center().mx(24).my(6)
+        .child(label("New service", 120)).child(field(`svc:__new:${mk}:name`, 260)).child(btn(`svc-add-${mk}`, "Add", (_e, cx) => this.addSvc(cx, mk), { primary: true }))
+        .child(div().text_size(12).text_color(t.dim).child(`on ${g.m.label}; then give it a port and its start command`)); };
     // the tunnel: ssh -L forwards to another machine's IMS systems (IMS_TUNNELS in the main checkout's server/.env: user@host:block)
     const tun = this.setTun;
     const ent = tun?.entries ?? [];
@@ -2084,7 +2139,9 @@ export default class Bhote extends View {
           .child(h_flex().gap(8).items_center().child(label("Add", 50)).child(field("tun:host", 230)).child(field("tun:block", 200)).child(btn("tun-add", "Add", (_e, cx) => this.addTunnel(cx), { primary: true })))
           .child(h_flex().gap(8).items_center().child(btn("tun-open", "Open tunnel", runTun("start"))).child(btn("tun-close", "Close tunnel", runTun("stop")))
             .child(div().text_size(12).text_color(t.dim).child("the state shows in the Servers tab"))));
-    return [...(this.svcList.length ? cards : [div().mx(24).my(8).text_size(13).text_color(t.dim).child("No service yet.")]), add, tunnel];
+    // one block per machine (its alias as the caption), each with its services and a way to add one; the tunnel last
+    return [...groups.map((g) => ({ cap: g.m.label, nodes: [...(g.svcs.length ? g.svcs.map(cardOf) : [div().mx(24).my(8).text_size(13).text_color(t.dim).child("No service on this machine yet.")]), addOf(g)] })),
+      { cap: "Tunnel", nodes: [tunnel] }];
   }
 
   // The control of a setting: always the same slot on the right, so the rows line up.
@@ -2186,11 +2243,11 @@ export default class Bhote extends View {
       let last = null;
       const carded = new Set();
       for (const x of shown) {
-        if (x.key === "__servers") {   // the services and the tunnel: cards, not rows
-          const capS = this.setCat === "All" || q ? "Servers · Services" : "Services";
-          if (last !== capS) { body.push(caption(capS)); last = capS; }
-          const parts = this.serversSettings(t), tunnel = parts.pop(), add = parts.pop();
-          body.push(...parts, add, caption(this.setCat === "All" || q ? "Servers · Tunnel" : "Tunnel"), tunnel);
+        if (x.key === "__servers") {   // per machine its services (and the tunnel last): cards, not rows
+          for (const g of this.serversSettings(t)) {
+            const capS = this.setCat === "All" || q ? `Servers · ${g.cap}` : g.cap;
+            body.push(caption(capS), ...g.nodes);
+          }
           last = null;
           continue;
         }
@@ -2227,6 +2284,67 @@ export default class Bhote extends View {
           .child(div().id("set-close").w(30).h(30).flex_none().flex().items_center().justify_center().rounded(7).cursor_pointer().text_size(16).text_color(t.muted)
             .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(close).child("✕")))
         .child(v_flex().id("set-list").flex_1().min_h(0).overflow_y_scrollbar().children(body)));
+  }
+
+  // A divider line with its caption on it (like the legend of a frame): CAPTION ───────── what belongs to it at the right.
+  dividerCaption(t, text, right = []) {
+    return h_flex().flex_none().gap(8).px(10).h(22).items_center()
+      .child(div().text_size(10.5).font_semibold().text_color(t.dim).child(text.toUpperCase()))
+      .child(div().flex_1().h(1).bg(t.border))
+      .children(right);
+  }
+
+  // --- another headless agent: where, in which folder, what it is asked --------------------------------------------------------
+  openHeadless() { openOverlay({ mod: "bhote", props: { headless: true }, kind: "dialog", modal: true, width: 600, height: 470 }); }
+
+  initHeadless(cx) {
+    this.labels = ""; this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
+    this.hdPick = null;       // the machine (its name; null: this computer)
+    this.hdBusy = false; this.hdError = "";
+    this.hdDir = InputState.new({ placeholder: "folder, e.g. ~/Development/IMS", value: "~" });
+    this.hdCmd = InputState.new({ placeholder: "claude -p", value: "claude -p" });
+    this.hdPrompt = TextareaState.new({ placeholder: "What should it do?", value: "", rows: 6 });
+    this.hdPrompt.on("change", (_e, cx) => cx.notify());
+    this.cfgValues().then((v) => { this.labels = v.MACHINE_LABELS ?? ""; this.hostLabel = (v.HOST_LABEL ?? "").trim() || this.hostLabel; cx.notify(); });
+  }
+
+  startHeadless(cx) {
+    const prompt = this.hdPrompt.value().trim(), dir = this.hdDir.value().trim(), cmd = this.hdCmd.value().trim();
+    if (!prompt || !dir || !cmd || this.hdBusy) return;
+    this.hdBusy = true; this.hdError = ""; cx.notify();
+    const id = `h${Date.now().toString(36)}`;
+    const desc = prompt.replace(/\s+/g, " ").slice(0, 70);
+    cx.spawn(async (cx) => {
+      try {
+        await this.srvExec(this.hdPick, "bash", ["-c", HEADLESS_START, "_", id, dir, cmd, prompt, desc, HEADLESS_ZSH], 30000);
+        try { setShared("bhote.jobsRefresh", Date.now()); } catch (_e) { /* the list looks again within 15 s */ }
+        const o = props()?.overlay; if (o) closeOverlay(o);
+      } catch (e) { this.hdError = /no folder/.test(String(e?.message ?? e)) ? `no folder ${dir} on that machine` : "could not start it"; this.hdBusy = false; cx.notify(); }
+    });
+  }
+
+  headlessView() {
+    const t = theme();
+    const ms = this.srvMachines();
+    const ok = !!this.hdPrompt.value().trim() && !!this.hdDir.value().trim() && !!this.hdCmd.value().trim();
+    const row = (label, ...kids) => h_flex().gap(14).items_start().child(div().flex_none().w(80).pt(6).text_size(13).text_color(t.muted).child(label)).child(v_flex().flex_1().min_w(0).gap(6).children(kids));
+    const field = (st) => Input.new(st).h(32).px(10).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground);
+    return v_flex().id("headless-root").size_full().bg(t.popover).p(24).gap(16)
+      .child(div().text_size(18).font_semibold().text_color(t.foreground).child("Start a headless agent"))
+      .child(div().text_size(13).text_color(t.muted).child("A run in the background with no terminal: it does what the prompt says and stops. It shows in the Headless agents bar, with its log and a stop button."))
+      .child(row("Runs on", h_flex().gap(6).flex_wrap().children(ms.map((m) => { const on = this.hdPick === m.name;
+        return div().id(`hd-m-${m.name ?? "local"}`).px(12).h(28).flex().items_center().rounded(14).cursor_pointer().text_size(13).border(1).border_color(on ? t.accent : t.border)
+          .bg(on ? tint(t.accent, "33", t.selected) : t.chrome).text_color(on ? t.foreground : t.muted).hover((e) => e.bg(on ? tint(t.accent, "40", t.selected) : t.hover))
+          .on_click((_e, cx) => { this.hdPick = m.name; cx.notify(); }).child(m.label); }))))
+      .child(row("Folder", field(this.hdDir)))
+      .child(row("Command", field(this.hdCmd), div().text_size(12).text_color(t.dim).child("the prompt is added as its last argument")))
+      .child(row("Prompt", Textarea.new(this.hdPrompt).px(10).py(8).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground)))
+      .child(h_flex().gap(10).items_center()
+        .child(div().id("hd-start").px(16).h(34).flex().items_center().rounded(8).cursor_pointer().text_size(13).bg(ok && !this.hdBusy ? t.accent : t.raised).opacity(ok ? 1 : 0.6)
+          .text_color(ok && !this.hdBusy ? (t.accent_foreground ?? "#ffffff") : t.dim).on_click((_e, cx) => this.startHeadless(cx)).child(this.hdBusy ? "Starting…" : "Start"))
+        .child(div().id("hd-cancel").px(14).h(34).flex().items_center().rounded(8).cursor_pointer().text_size(13).border(1).border_color(t.border).bg(t.chrome).text_color(t.foreground)
+          .hover((e) => e.bg(t.hover)).on_click(() => { const o = props()?.overlay; if (o) closeOverlay(o); }).child("Cancel"))
+        .child(div().text_size(12).text_color(t.blocked).child(this.hdError)));
   }
 
   // --- listening: may other agents message this agent? ---------------------------------------------------------------------------
@@ -2291,6 +2409,12 @@ export default class Bhote extends View {
     return { a, cands, machine, branch, rkey, dir: dir?.dir ?? null, failed: !!dir && !dir.dir, key: dir?.dir ? `${this.srvKey(machine)}|${dir.dir}` : null };
   }
 
+  // The folder the program in an agent's terminal works in (hc get: foreground.cwd); the agent of IMS-wt1 sits in a shell that started in the home folder.
+  async fgCwd(a) {
+    const r = await exec("hc", ["get", a.address], { timeout: 8000 });
+    return JSON.parse(r.stdout).foreground?.cwd ?? null;
+  }
+
   async resolveDir(f) {
     let first = null;
     for (const c of f.cands) {
@@ -2317,16 +2441,21 @@ export default class Bhote extends View {
       let next, key = f.key;
       try {
         let dir = f.dir;
-        if (!dir) {
-          dir = await this.resolveDir(f);
-          (this.commitDir ??= {})[f.rkey] = { dir };
+        const rec = this.commitDir?.[f.rkey];
+        if (!dir || Date.now() - (rec?.at ?? 0) > 30000) {   // (looked at again every 30 s: the agent may change into another folder)
+          const fg = await this.fgCwd(f.a).catch(() => null);   // where the running program works: `hc ls` only knows the folder the shell was started in
+          dir = await this.resolveDir({ ...f, cands: [...new Set([fg, ...f.cands].filter(Boolean))] });
+          (this.commitDir ??= {})[f.rkey] = { dir, at: Date.now() };
           if (!dir) throw new Error("no repository");
           key = `${this.srvKey(f.machine)}|${dir}`;
         }
-        const r = await this.srvExec(f.machine, "sh", ["-c", 'git -C "$1" log -8 --format="%h%x1f%s%x1f%ct%x1f%an"; echo @@@; git -C "$1" status --porcelain', "_", dir], 10000);
-        const [log, st = ""] = r.stdout.split("@@@\n");
-        const list = log.split("\n").filter(Boolean).map((l) => { const [hash, subject, time, author] = l.split("\x1f"); return { hash, subject, time: Number(time), author }; });
-        next = { at: Date.now(), seq: f.a.seq, list, dirty: st.split("\n").filter(Boolean).length, enter: {} };
+        const r = await this.srvExec(f.machine, "sh", ["-c", COMMITS_SH, "_", dir], 10000);
+        const [log, rest = ""] = r.stdout.split("@@@base\n");
+        const [baseText = "", st = ""] = rest.split("@@@status\n");
+        const one = (l) => { const [hash, subject, time, author] = l.split("\x1f"); return { hash, subject, time: Number(time), author }; };
+        const list = log.split("\n").filter(Boolean).map(one);
+        const [bl, bref, bcount] = baseText.split("\n");
+        next = { at: Date.now(), seq: f.a.seq, list, base: bl ? { ...one(bl), ref: (bref ?? "").replace(/^origin\//, ""), base: true, more: Math.max(0, (Number(bcount) || 0) - list.length) } : null, dirty: st.split("\n").filter(Boolean).length, enter: {} };
       } catch (_e) {
         next = { at: Date.now(), seq: f.a.seq, list: [], dirty: 0, error: true, enter: {} };   // not a git folder (or the machine does not answer)
       }
@@ -2337,7 +2466,7 @@ export default class Bhote extends View {
         const had = new Set(old.list.map((x) => x.hash));
         for (const x of next.list) if (!had.has(x.hash)) { next.enter[x.hash] = Date.now(); fresh = true; }
       }
-      const same = old && JSON.stringify(old.list) === JSON.stringify(next.list) && old.dirty === next.dirty && old.error === next.error;
+      const same = old && JSON.stringify(old.list) === JSON.stringify(next.list) && old.base?.hash === next.base?.hash && old.base?.more === next.base?.more && old.dirty === next.dirty && old.error === next.error;
       if (key) this.commits[key] = next;
       this.commitLoading = false;
       if (fresh) this.commitAnimUntil = Date.now() + 2300;
@@ -2387,11 +2516,10 @@ export default class Bhote extends View {
     const f = this.focusAgent();
     if (!f || f.failed) return [];
     const c = f.key ? this.commits[f.key] : null;
-    if (c?.error) return [];
-    const head = h_flex().gap(8).items_center().px(15).h(22)
-      .child(div().text_size(11).text_color(t.dim).child("COMMIT-INSPECTOR"))
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(f.branch ?? ""))
-      .when(c && c.dirty > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi3).child(`${c.dirty} uncommitted`)));
+    if (c?.error || (c && !c.list.length && !c.base)) return [];   // (nothing to show: no box)
+    const head = this.dividerCaption(t, "Commit inspector", [
+      ...(f.branch ? [div().flex_none().max_w(150).truncate().text_size(11).text_color(t.muted).child(f.branch)] : []),
+      ...(c && c.dirty > 0 ? [div().flex_none().text_size(11).text_color(t.ansi3).child(`${c.dirty} uncommitted`)] : [])]);
     // the rail: a line through a dot per commit, the dots at the x of the dots of the job rows below (px 15, ml 3, 8 wide)
     const line = (on) => div().w(2).flex_1().bg(on ? t.border : "#00000000");
     const now = Date.now();
@@ -2399,8 +2527,8 @@ export default class Bhote extends View {
       ? [h_flex().gap(9).items_center().px(15).h(24)
           .child(div().ml(3).w(8).flex_none().text_color(t.working).text_size(10).frames(SPIN, 90))
           .child(div().pl(5).text_size(12).text_color(t.dim).child("loading commits…"))]
-      : c.list.length ? [...c.list].reverse().map((x, i, disp) => {   // (the oldest on top, the newest at the bottom, where the work goes on)
-          const isHead = i === disp.length - 1;
+      : c.list.length ? [...(c.base ? [c.base] : []), ...[...c.list].reverse()].map((x, i, disp) => {   // (the base it left from on top, then the oldest, the newest at the bottom, where the work goes on)
+          const isHead = i === disp.length - 1, isBase = !!x.base;
           // a new commit grows in from nothing (0.45 s, slowing down) and lights up in the accent colour, which then fades (2.2 s)
           const age = c.enter[x.hash] ? now - c.enter[x.hash] : 1e9;
           const p = Math.min(1, age / 450), ease = 1 - (1 - p) * (1 - p) * (1 - p);
@@ -2410,13 +2538,13 @@ export default class Bhote extends View {
             .cursor_pointer().hover((e) => e.bg(sel ? t.selected : t.hover)).on_click((_e, cx) => this.openCommit(cx, f, x))
             .bg(sel ? t.selected : glow ? tint(t.accent, glow, t.chrome) : "#00000000")
             .child(v_flex().ml(3).w(8).h_full().flex_none().items_center()
-              .child(line(i > 0)).child(div().w(8).h(8).rounded(4).flex_none().bg(isHead || sel ? t.accent : t.dim).border(sel ? 2 : 0).border_color(t.foreground)).child(line(i < disp.length - 1)))
-            .child(div().pl(5).w(66).flex_none().truncate().text_size(11).text_color(t.accent).child(x.hash))
-            .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(isHead ? t.foreground : t.muted).child(x.subject))
+              .child(line(i > 0)).child(div().w(8).h(8).rounded(4).flex_none().bg(isBase ? t.chrome : isHead || sel ? t.accent : t.dim).border(sel ? 2 : isBase ? 1 : 0).border_color(isBase ? t.dim : t.foreground)).child(line(i < disp.length - 1)))
+            .child(div().pl(5).w(66).flex_none().truncate().text_size(11).text_color(isBase ? t.dim : t.accent).child(x.hash))
+            .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(isBase ? t.dim : isHead ? t.foreground : t.muted).child(isBase ? (x.more ? `${x.more} earlier · from ${x.ref || "base"}` : `from ${x.ref || "base"} · ${x.subject}`) : x.subject))
             .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(x.time)));
         })
         : [div().px(15).h(24).text_size(12).text_color(t.dim).child("no commits yet")];
-    return [...this.commitDetail(t, f), v_flex().id("commit-inspector").flex_none().border_t(1).border_color(t.border).py(5).child(head).children(rows)];
+    return [...this.commitDetail(t, f), v_flex().id("commit-inspector").flex_none().pt(4).pb(5).child(head).children(rows)];
   }
 
   newSpaceBar(t) {
@@ -3116,7 +3244,7 @@ export default class Bhote extends View {
 
   srvMachines() {
     const out = [{ name: null, label: this.hostLabel }];
-    try { for (const m of machines()) if (m.name && m.layout !== "unavailable") out.push({ name: m.name, label: m.name }); } catch (_e) { /* this computer only */ }
+    try { for (const m of machines()) if (m.name && m.layout !== "unavailable") out.push({ name: m.name, label: this.machineLabel(m.name) }); } catch (_e) { /* this computer only */ }
     return out;
   }
 
@@ -3143,7 +3271,7 @@ export default class Bhote extends View {
     this.srvLoading = true;
     this.srvAt = Date.now();
     cx.spawn(async (cx) => {
-      try { await this.loadSvcState(); cx.notify(); } catch (_e) { /* the last state stays (the services do not wait for the slow IMS look) */ }
+      try { await this.loadSvcState(); await this.checkSvcFailures(); cx.notify(); } catch (_e) { /* the last state stays (the services do not wait for the slow IMS look) */ }
       for (const m of this.srvMachines()) {
         const key = this.srvKey(m.name);
         try {
@@ -3187,7 +3315,7 @@ export default class Bhote extends View {
   async loadSvcState() {
     await this.loadSvcConfig();
     await Promise.all(this.svcList.map(async (x) => {
-      try { this.svcState[x.id] = (await this.srvExec(x.machine ?? null, "sh", ["-c", SVC_PROBE, "_", String(x.port)], 15000)).stdout.trim() === "up" ? "up" : "down"; }
+      try { this.svcState[x.id] = (await this.srvExec(x.machine ?? null, "bash", ["-c", SVC_PROBE, "_", String(x.port), x.id], 15000)).stdout.trim() || "down"; }
       catch (_e) { this.svcState[x.id] = "down"; }
     }));
   }
@@ -3195,18 +3323,62 @@ export default class Bhote extends View {
   // running | starting | stopping | stopped: the port says, a pending action makes it starting or stopping until the port agrees (2 min at most)
   svcStatus(x) {
     const up = this.svcState[x.id] === "up";
+    if (up && this.svcFail[x.id]) delete this.svcFail[x.id];   // (it came up after all, or somebody started it by hand)
     const p = this.srvPending[`svc|${x.id}`];
-    if (!p) return up ? "running" : "stopped";
-    if ((p.want === "up" && up) || (p.want === "down" && !up) || Date.now() - p.at > 120000) { delete this.srvPending[`svc|${x.id}`]; return up ? "running" : "stopped"; }
+    if (!p) return up ? "running" : this.svcFail[x.id] ? "failed" : "stopped";
+    if ((p.want === "up" && up) || (p.want === "down" && !up) || Date.now() - p.at > 300000) { delete this.srvPending[`svc|${x.id}`]; return up ? "running" : "stopped"; }
     return p.want === "up" ? "starting" : "stopping";
   }
+
+  svcColor(t, st) { return st === "running" ? (t.ansi2 ?? t.done) : st === "failed" ? t.blocked : st === "stopped" ? t.dim : t.working; }
+
+  // A start that did not work: its process is gone and the port does not answer (after 6 s: the process needs a moment to show), or the port did not
+  // answer within 2 minutes. The log says why; the card shows it in red, and a topic in review carries the short version, once per start.
+  async checkSvcFailures() {
+    for (const x of this.svcList) {
+      const p = this.srvPending[`svc|${x.id}`];
+      if (!p || p.want !== "up") continue;
+      const tok = this.svcState[x.id], age = Date.now() - p.at;
+      if (tok === "up" || !((tok === "down" && age > 6000) || age > 120000)) continue;
+      delete this.srvPending[`svc|${x.id}`];
+      const lines = await this.svcLogLines(x);
+      const reason = tok === "down" ? "the start command ended and the server did not come up" : `the server did not answer on port ${x.port} within 2 minutes`;
+      this.svcFail[x.id] = { at: Date.now(), reason, lines };
+      this.svcFailTopic(x, reason, lines);
+    }
+  }
+
+  // The last meaningful lines of a service's log (the shell's own noise left out).
+  async svcLogLines(x) {
+    try {
+      const r = await this.srvExec(x.machine ?? null, "sh", ["-c", 'tail -n 80 "${HOME:?}/.cache/bhote/svc/$1.log" 2>/dev/null', "_", x.id], 15000);
+      return r.stdout.split("\n").map((l) => l.replace(/\x1b\[[0-9;]*m/g, "").trim())
+        .filter((l) => l && !/can't change option: zle|Ctrl-C stops all|^\(eval\)/.test(l)).slice(-6);
+    } catch (_e) { return []; }
+  }
+
+  // The failure as a topic of the project (bhote add), the log's key line as its description (140 characters at most).
+  svcFailTopic(x, reason, lines) {
+    const key = `${x.id}|${this.svcFail[x.id]?.at}`;
+    if (this.svcTopicDone?.has(key)) return;
+    (this.svcTopicDone ??= new Set()).add(key);
+    const hit = lines.findIndex((l) => /error|not found|failed|cannot|can't|refused|ENOENT|fatal|exception|denied/i.test(l));
+    const parts = hit >= 0 ? lines.slice(hit, hit + 2) : lines.slice(-2);
+    let desc = (parts.join(" – ") || reason).replace(/\s+/g, " ");
+    if (desc.length > 138) desc = `${desc.slice(0, 137)}…`;
+    const proj = this.projects.find((q) => norm(q.title) === norm(x.name))?.title;
+    exec("bhote", ["add", `${x.name} did not start on ${this.machineLabel(x.machine ?? null)}`, "-d", desc, "-s", "review", ...(proj ? ["-p", proj] : [])], { timeout: 30000 }).catch(() => {});
+  }
+
+  svcDismiss(cx, x) { delete this.svcFail[x.id]; cx.notify(); }
 
   svcDo(cx, x, what) {
     const at = Date.now();
     const m = x.machine ?? null;
     const args = [x.id, String(x.port)];
-    const stop = () => this.srvExec(m, "sh", ["-c", SVC_STOP, "_", ...args, x.stop ?? ""], 60000);
-    const start = () => this.srvExec(m, "sh", ["-c", SVC_START, "_", ...args, x.start], 30000);
+    const stop = () => this.srvExec(m, "bash", ["-c", SVC_STOP, "_", ...args, x.stop ?? ""], 60000);
+    const start = () => this.srvExec(m, "bash", ["-c", SVC_START, "_", ...args, x.start], 30000);
+    delete this.svcFail[x.id];
     this.srvPending[`svc|${x.id}`] = { want: what === "stop" ? "down" : "up", at };
     cx.notify();
     cx.spawn(async (cx) => {
@@ -3220,20 +3392,53 @@ export default class Bhote extends View {
 
   svcLog(x) { exec("open", ["-t", `${home()}/.cache/bhote/svc/${x.id}.log`]).catch(() => {}); }
 
+  // The machines as the Servers tab and the tile show them: this computer first, then the others (by their alias), each with what the IMS look found and the
+  // services that run on it (a service belongs to one machine: Bilendo on the Mac is not Bilendo on Omarchy).
+  serverGroups() {
+    const out = this.srvMachines().map((m) => ({ m, d: this.srv[this.srvKey(m.name)] ?? null, svcs: this.svcList.filter((x) => (x.machine ?? null) === (m.name ?? null)) }));
+    for (const x of this.svcList) {   // (a machine that is not connected right now still has its services)
+      if (!out.some((g) => (g.m.name ?? null) === (x.machine ?? null))) out.push({ m: { name: x.machine, label: this.machineLabel(x.machine) }, d: null, svcs: this.svcList.filter((y) => y.machine === x.machine) });
+    }
+    return out;
+  }
+
+  // A service as a card of the Servers tab: its state, buttons, and what it is started with.
+  svcCard(t, x) {
+    const st = this.svcStatus(x), color = this.svcColor(t, st);
+    const busy = st === "starting" || st === "stopping", up = st === "running" || st === "stopping";
+    return v_flex().id(`svcard-${x.id}`).gap(6).mx(10).mb(8).px(12).py(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
+      .child(h_flex().gap(8).items_center()
+        .child(busy ? div().w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().w(8).h(8).rounded(4).flex_none().bg(color))
+        .child(div().font_semibold().text_color(t.foreground).child(x.name))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(`:${x.port}`))
+        .child(div().flex_none().text_size(11).text_color(color).child(st))
+        .child(this.ibtn(t, `svcard-${x.id}-go`, up ? "restart" : "play", (cx) => this.svcDo(cx, x, up ? "restart" : "start"), { dim: busy, color: up ? t.muted : (t.ansi2 ?? t.done) }))
+        .when(up, (el) => el.child(this.ibtn(t, `svcard-${x.id}-stop`, "stop", (cx) => this.svcDo(cx, x, "stop"), { dim: busy, hover: t.blocked })))
+        .when(!x.machine, (el) => el.child(this.ibtn(t, `svcard-${x.id}-log`, "log", () => this.svcLog(x), { color: t.muted })))
+        .when(st === "running" && !x.machine, (el) => el.child(this.ibtn(t, `svcard-${x.id}-launch`, "launch", () => this.svcOpen(x), { color: t.accent }))))
+      .child(div().pl(16).text_size(11.5).text_color(t.dim).child(`start: ${x.start || "–"}${x.stop ? `  ·  stop: ${x.stop}` : ""}`))
+      .when(st === "failed" && !!this.svcFail[x.id], (el) => el.child(v_flex().gap(3).ml(16).p(8).rounded(6).bg(tint(t.blocked, "1f", t.surface)).border(1).border_color(tint(t.blocked, "55", t.border))
+        .child(h_flex().gap(8).items_center().child(div().flex_1().text_size(12).font_semibold().text_color(t.blocked).child(`Could not start: ${this.svcFail[x.id].reason}`))
+          .child(div().id(`svcfail-x-${x.id}`).w(20).h(20).flex_none().flex().items_center().justify_center().rounded(5).text_size(11).text_color(t.dim).cursor_pointer()
+            .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.svcDismiss(cx, x)).child("✕")))
+        .children(this.svcFail[x.id].lines.slice(-3).map((l) => div().truncate().text_size(11.5).text_color(t.muted).child(l)))
+        .child(div().text_size(11).text_color(t.dim).child("A topic in review has the short version."))));
+  }
+
   // A service as a chip (the overview) or the same with more room (the Servers tab).
   svcChip(t, x) {
     const st = this.svcStatus(x);
-    const color = st === "running" ? (t.ansi2 ?? t.done) : st === "stopped" ? t.dim : t.working;
+    const color = this.svcColor(t, st);
     const busy = st === "starting" || st === "stopping";
     const up = st === "running" || st === "stopping";
     const id = `svc-${x.id}`;
     return h_flex().id(id).gap(0).items_center().pl(8).pr(3).py(3).rounded(8).bg(t.chrome).border(1).border_color(up && !busy ? tint(color, "55", t.border) : t.border)
       .child(busy ? div().w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().w(8).h(8).rounded(4).flex_none().bg(color))
       .child(div().id(`${id}-label`).pl(2).pr(6).text_size(12).font_semibold().text_color(up ? t.foreground : t.muted).child(x.name)
-        .when(st === "running", (el) => el.cursor_pointer().hover((e) => e.text_color(t.accent)).on_click(this.guard(() => this.svcOpen(x)))))
+        .when(st === "running" && !x.machine, (el) => el.cursor_pointer().hover((e) => e.text_color(t.accent)).on_click(this.guard(() => this.svcOpen(x)))))
       .child(this.ibtn(t, `${id}-go`, up ? "restart" : "play", (cx) => this.svcDo(cx, x, up ? "restart" : "start"), { dim: busy, color: up ? t.muted : (t.ansi2 ?? t.done) }))
       .when(up, (el) => el.child(this.ibtn(t, `${id}-stop`, "stop", (cx) => this.svcDo(cx, x, "stop"), { dim: busy, hover: t.blocked })))
-      .when(st === "running", (el) => el.child(this.ibtn(t, `${id}-launch`, "launch", () => this.svcOpen(x), { color: t.accent })));
+      .when(st === "running" && !x.machine, (el) => el.child(this.ibtn(t, `${id}-launch`, "launch", () => this.svcOpen(x), { color: t.accent })));
   }
 
   // The state of a system: running (server, client and portal online), partial, stopped; starting or stopping while an action is under way.
@@ -3349,9 +3554,10 @@ export default class Bhote extends View {
 
   // The tile on top of the overview, across both columns: for each machine its load and the controls of its systems, and the tunnel.
   serverTile(t) {
-    const machines = this.srvMachines().map((m) => ({ m, d: this.srv[this.srvKey(m.name)] })).filter((x) => x.d?.systems);
+    const machines = this.serverGroups().filter((g) => g.d?.systems?.length || g.svcs.length);   // (per machine: its IMS systems and its services)
     const waiting = this.srvMachines().some((m) => !this.srvInfo[this.srvKey(m.name)]);
-    if (!machines.length && !waiting && !this.svcList.length) return null;   // no IMS on any machine, no service
+    if (!machines.length && !waiting) return null;   // no IMS on any machine, no service
+    const svcColor = (x) => this.svcColor(t, this.svcStatus(x));
     const small = this.compactTiles();
     const tun = (this.srv.local?.tunnels ?? [])[0];
     const tunPending = this.tunBusy((this.srv.local?.tunnels ?? [])[0]);
@@ -3360,34 +3566,31 @@ export default class Bhote extends View {
     const toggle = (_e, cx) => { setShared("bhote.srvShut", !shut); cx.notify(); };
     if (shut) {
       // one line: a dot per system (green: runs, amber: partly, grey: stopped), per machine
-      const dots = (m, d) => h_flex().gap(4).items_center()
+      const dots = ({ m, d, svcs }) => h_flex().gap(4).items_center()
         .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(m.label))
-        .children(d.systems.map((sys) => div().w(8).h(8).rounded(4).flex_none().bg(this.slotColor(t, this.slotState(this.srvKey(m.name), sys)))));
+        .children((d?.systems ?? []).map((sys) => div().w(8).h(8).rounded(4).flex_none().bg(this.slotColor(t, this.slotState(this.srvKey(m.name), sys)))))
+        .children(svcs.length && d?.systems?.length ? [div().w(1).h(10).mx(2).flex_none().bg(t.border)] : [])   // (the services after the IMS systems of the machine)
+        .children(svcs.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(svcColor(x))));
       return h_flex().id("tile-servers").flex_none().gap(10).items_center().px(12).py(7).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border)
         .hover((e) => e.bg(t.raised)).on_click(this.guard(toggle))
         .child(div().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
-        .children(machines.map(({ m, d }) => dots(m, d)))
-        .children(this.svcList.length ? [h_flex().gap(4).items_center().child(div().text_size(11.5).font_semibold().text_color(t.foreground).child("Services"))
-          .children(this.svcList.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(this.svcStatus(x) === "running" ? (t.ansi2 ?? t.done) : this.svcStatus(x) === "stopped" ? t.dim : t.working)))] : [])
+        .children(machines.map((g) => dots(g)))
         .child(div().flex_1())
         .when(!!tun, (el) => el.child(tunPending ? div().text_size(12).text_color(t.working).frames(SPIN, 90) : svg(tun.open ? "mods/bhote/plug.svg" : "mods/bhote/unplug.svg").size(14).text_color(tun.open ? (t.ansi2 ?? t.done) : t.dim)))
         .child(svg("mods/bhote/chevron-down.svg").size(14).text_color(t.muted));
     }
     return v_flex().id("tile-servers").flex_none().gap(8).p(small ? 10 : 12).rounded(12).bg(t.surface).border(1).border_color(t.border)
       .child(h_flex().id("srv-head").gap(8).items_center().cursor_pointer().on_click(this.guard(toggle))
-        .child(div().w(8).h(8).rounded(4).flex_none().bg(machines.some((x) => x.d.systems.some((y) => y.running)) ? (t.ansi2 ?? t.done) : t.dim))
+        .child(div().w(8).h(8).rounded(4).flex_none().bg(machines.some((x) => (x.d?.systems ?? []).some((y) => y.running) || x.svcs.some((y) => this.svcStatus(y) === "running")) ? (t.ansi2 ?? t.done) : t.dim))
         .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
         .child(svg("mods/bhote/chevron-up.svg").size(14).text_color(t.muted))
         .when(!!tun, (el) => el.child(this.ibtn(t, "srv-tunnel", tun.open ? "plug" : "unplug", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { dim: tunPending, spin: tunPending, color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground }))))
-      .children(machines.map(({ m, d }) => v_flex().gap(6)
+      .children(machines.map(({ m, d, svcs }) => v_flex().gap(6)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(m.label))
-          .child(this.machineMeter(t, d.machine)))
-        .child(h_flex().gap(6).flex_wrap().children(d.systems.map((sys) => this.slotChip(t, m.name, sys))))))
-      .when(this.svcList.length > 0, (el) => el.child(v_flex().gap(6)
-        .child(div().font_semibold().text_size(12.5).text_color(t.foreground).child("Services"))
-        .child(h_flex().gap(6).flex_wrap().children(this.svcList.map((x) => this.svcChip(t, x))))))
-      .when(!machines.length && !this.svcList.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("Looking for the servers...")));
+          .when(!!d?.machine, (el) => el.child(this.machineMeter(t, d.machine))))
+        .child(h_flex().gap(6).flex_wrap().children([...(d?.systems ?? []).map((sys) => this.slotChip(t, m.name, sys)), ...svcs.map((x) => this.svcChip(t, x))]))))
+      .when(!machines.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("Looking for the servers...")));
   }
 
   // --- the runbooks tile: for each project the stages of the way a change goes, as circles ---------------------------------------------------------
@@ -3487,26 +3690,8 @@ export default class Bhote extends View {
     const rows = [];
     const fmtDur = (ms) => { const m = Math.floor(ms / 60000); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 1440)}d ${Math.floor((m % 1440) / 60)}h`; };
     const mb = (b) => (b >= 2 ** 30 ? `${(b / 2 ** 30).toFixed(1)} GB` : `${Math.round(b / 2 ** 20)} MB`);
-    const machines = this.srvMachines().map((m) => ({ m, d: this.srv[this.srvKey(m.name)] })).filter((x) => x.d);
-    if (!machines.length && !this.svcList.length) return [empty(t, "", "Looking for the servers", "Asking this computer and the other machines for their IMS systems", true)];
-    if (this.svcList.length) {   // the services: one card each, with what it is started with
-      rows.push(this.head(t, "Services", null, true));
-      for (const x of this.svcList) {
-        const st = this.svcStatus(x), color = st === "running" ? (t.ansi2 ?? t.done) : st === "stopped" ? t.dim : t.working;
-        const busy = st === "starting" || st === "stopping", up = st === "running" || st === "stopping";
-        rows.push(v_flex().id(`svcard-${x.id}`).gap(6).mx(10).mb(8).px(12).py(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
-          .child(h_flex().gap(8).items_center()
-            .child(busy ? div().w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().w(8).h(8).rounded(4).flex_none().bg(color))
-            .child(div().font_semibold().text_color(t.foreground).child(x.name))
-            .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(`:${x.port}${x.machine ? ` · ${x.machine}` : ""}`))
-            .child(div().flex_none().text_size(11).text_color(color).child(st))
-            .child(this.ibtn(t, `svcard-${x.id}-go`, up ? "restart" : "play", (cx) => this.svcDo(cx, x, up ? "restart" : "start"), { dim: busy, color: up ? t.muted : (t.ansi2 ?? t.done) }))
-            .when(up, (el) => el.child(this.ibtn(t, `svcard-${x.id}-stop`, "stop", (cx) => this.svcDo(cx, x, "stop"), { dim: busy, hover: t.blocked })))
-            .when(!x.machine, (el) => el.child(this.ibtn(t, `svcard-${x.id}-log`, "log", () => this.svcLog(x), { color: t.muted })))
-            .when(st === "running", (el) => el.child(this.ibtn(t, `svcard-${x.id}-launch`, "launch", () => this.svcOpen(x), { color: t.accent }))))
-          .child(div().pl(16).text_size(11.5).text_color(t.dim).child(`start: ${x.start || "–"}${x.stop ? `  ·  stop: ${x.stop}` : ""}`)));
-      }
-    }
+    const machines = this.serverGroups().filter((g) => g.d || g.svcs.length);
+    if (!machines.length) return [empty(t, "", "Looking for the servers", "Asking this computer and the other machines for their IMS systems and services", true)];
     const tun = (this.srv.local?.tunnels ?? [])[0];
     if (tun) {
       rows.push(this.head(t, "Tunnel"));
@@ -3517,10 +3702,11 @@ export default class Bhote extends View {
           .child(div().text_size(11).text_color(t.muted).child(`${tun.host} · port block ${tun.block}: the other machine's systems appear as localhost`)))
         .child(this.btn(t, "srv-tunnel-page", this.tunBusy(tun) ? (tun.open ? "Closing…" : "Opening…") : tun.open ? "Close" : "Open", (_e, cx) => this.tunBusy(tun) ? null : this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { primary: !tun.open })));
     }
-    for (const { m, d } of machines) {
+    for (const { m, d, svcs } of machines) {
       const key = this.srvKey(m.name);
       rows.push(this.head(t, m.label, null, true));
-      if (d.error && !d.machine) { rows.push(div().mx(10).mb(6).text_size(11).text_color(t.blocked).child(d.error.slice(0, 160))); continue; }
+      if (!d) { for (const x of svcs) rows.push(this.svcCard(t, x)); continue; }   // (no IMS here, or it does not answer yet: the services still show)
+      if (d.error && !d.machine) { rows.push(div().mx(10).mb(6).text_size(11).text_color(t.blocked).child(d.error.slice(0, 160))); for (const x of svcs) rows.push(this.svcCard(t, x)); continue; }
       rows.push(v_flex().gap(5).mx(10).mb(8).px(12).py(9).rounded(8).bg(t.surface).border(1).border_color(t.border)
         .child(this.machineMeter(t, d.machine))
         .child(div().text_size(11).text_color(t.dim).child(`${d.machine.platform === "darwin" ? "macOS" : d.machine.platform} · ${d.machine.cores} cores · load ${d.machine.load.toFixed(2)} · up ${fmtDur(d.machine.up)}`)));
@@ -3543,6 +3729,7 @@ export default class Bhote extends View {
             .child(div().w(44).flex_none().text_color(t.dim).child(a.role === "server" ? String(sys.port) : a.role === "client" ? String(sys.client) : a.role === "portal" ? String(sys.portal) : ""))
             .child(div().flex_1().min_w(0).text_color(t.muted).child(a.status === "online" ? `${a.cpu.toFixed(0)}% · ${mb(a.rss)} · up ${fmtDur(a.up)}${a.restarts ? ` · ↻${a.restarts}` : ""}` : a.status)))));
       }
+      for (const x of svcs) rows.push(this.svcCard(t, x));   // the dev servers of this machine, beside its IMS systems
     }
     return rows;
   }
@@ -3887,6 +4074,7 @@ export default class Bhote extends View {
 
   render(_cx) {
     if (this.setItems !== undefined) return this.settingsView();
+    if (this.hdPick !== undefined) return this.headlessView();
     if (this.menu) return this.menuView();
     if (this.side === "right" && this.showId()) return this.showView();
     if (this.side === "right" && this.tab === "home") return this.homeView(theme());
