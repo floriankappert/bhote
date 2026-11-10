@@ -160,7 +160,7 @@ the watch on.
 Run by an agent (in herdr): it takes the topic over, it becomes the topic's agent (its session, pane, machine and name),
 status `now`. `bhote now <ref>` run by an agent does the same. Exit `1` outside an agent.
 
-### `bhote project [list]` · `add <name>` · `rename <ref> <name>` · `rm <ref>` · `pin <ref> <what>` · `unpin <ref> <key>` · `of [folder]`
+### `bhote project [list]` · `add <name>` · `rename <ref> <name>` · `rm <ref>` · `pin <ref> <what>` · `unpin <ref> <key>` · `set <ref> <field> <value>` · `of [folder]`
 
 Projects group the agents (and the topics). An agent belongs to a project by its git repository, known by its key: the
 origin URL as `host/owner/name` (`git@github.com:Acme/Shop.git` → `github.com/acme/shop`) or `dir:<folder>` without a
@@ -168,6 +168,7 @@ remote; a worktree has the key of its main repository, so it inherits the projec
 to a project by its herdr workspace (`ws:<name>`). `pin` takes a folder, an agent (`bhote agents`: its repository, else
 its workspace), `ws:<workspace>` or a key. `of` prints the project of a folder (default: here). Projects are records in
 the topic store and travel with the topics; `--json` on `list` gives `[{"id", "n", "name", "repos", "workspaces"}]`.
+`set` writes one field of a project: `repos` and `workspaces` (comma-separated lists, as `pin` keeps them), and its CI and runbook: `ci` (`github:owner/repo` or `circleci:gh/owner/repo`, empty for none), `deploy_branches` (`develop=Staging,main=Production`), `deploy_names`, `test_names` and `runbook` (the stages after the merge, comma-separated; `none`: the path ends at the merge; empty: the default for its CI); the values are described in [monitors](monitors.md).
 `bhote add … -p <project>` gives a topic its project; a topic an agent makes gets the project of the agent's repository.
 
 ### `bhote rename <ref> <title>`
@@ -292,7 +293,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0","build":"0.6.0"}`; from a checkout past the release tag both
-the text and `build` say the local build, `0.9.2.1 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
+the text and `build` say the local build, `0.9.3.1 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`
