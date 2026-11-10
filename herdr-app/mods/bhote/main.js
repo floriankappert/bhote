@@ -1535,7 +1535,7 @@ export default class Bhote extends View {
   // What the card calls the agent: its name from Middle-earth (Frodo), a second agent in the same space with its place behind it (Frodo 2); the old code
   // (w2:a1) only while its record is not there yet. The key is "label of the machine/name of the space", normalised, as the records are.
   agentIdent(sp, machine, remote, spaceNo, agentNo, index) {
-    const label = remote ? (this.labelOf?.(machine) ?? machine) : this.hostLabel;
+    const label = remote ? this.machineLabel(machine) : this.hostLabel;   // (the alias: the records say Omarchy/IMS (wt1))
     const name = this.ringMap?.get(`${label}/${sp.name}`.toLowerCase().replace(/[^a-z0-9]/g, ""));
     return name ? (index > 0 ? `${name} ${index + 1}` : name) : this.paneCode(machine, remote, spaceNo, agentNo);
   }
@@ -1547,7 +1547,7 @@ export default class Bhote extends View {
       const c = n.slice(1).replace(/[AEIOU]/g, "").slice(0, 2);
       return n[0] + (c.length === 2 ? c : (c + n.slice(1)).slice(0, 2));
     };
-    return `${remote ? `${code(this.labelOf?.(machine) ?? machine)}/` : ""}w${spaceNo}:a${agentNo}`;
+    return `${remote ? `${code(this.machineLabel(machine))}/` : ""}w${spaceNo}:a${agentNo}`;
   }
 
   // The menu of the + next to a machine: a new space, and the last five spaces of that machine that are gone.
@@ -2620,7 +2620,7 @@ export default class Bhote extends View {
     const machineOf = (a) => sp.find((s) => s.id === a.space)?.machine ?? null;
     // a space that has its default name (the shell in the home folder: "~", or the user's name on another machine) is called "<machine>: ~"
     const homeName = home().split("/").pop();
-    const titled = (s) => (s.name === "~" || s.name === homeName ? `${s.machine ?? this.hostLabel}: ~` : null);
+    const titled = (s) => (s.name === "~" || s.name === homeName ? `${this.machineLabel(s.machine ?? null)}: ~` : null);
     const byMachine = new Map();
     for (const s of sp) {
       const m = s.machine ?? "This computer";
@@ -2629,7 +2629,7 @@ export default class Bhote extends View {
     }
     for (const [machine, spaceList] of byMachine) {
       const remote = spaceList[0]?.machine ?? null;
-      rows.push(div().flex_none().pt(8).child(this.dividerCaption(t, machine, [div().id(`ns-${machine}`).w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer().text_color(t.dim)
+      rows.push(div().flex_none().pt(8).child(this.dividerCaption(t, this.machineLabel(remote), [div().id(`ns-${machine}`).w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer().text_color(t.dim)
         .hover((e) => e.bg(t.hover).text_color(t.foreground))
         .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
         .on_click(this.guard(() => this.openSpaceMenu(remote, this.anchor))).child("＋")])));
