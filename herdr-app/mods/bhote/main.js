@@ -1501,8 +1501,8 @@ export default class Bhote extends View {
             { w: 22, size: 14, color: o.listen.on ? (active ? t.muted : t.dim) : t.ansi3, hover: o.listen.on ? t.foreground : t.ansi3 })))
           .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(div().flex_none().px(5).h(15).flex().items_center().rounded(8).text_size(10).font_semibold().text_color(t.ansi3)
             .bg(tint(t.ansi3, "26", t.raised)).border(1).border_color(tint(t.ansi3, "66", t.border)).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
-          .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).rounded(8).text_size(10).text_color(t.accent).bg(tint(t.accent, "26", t.raised)).border(1).border_color(tint(t.accent, "55", t.border))
-            .child(o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h")}`)))
+          .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(t.accent).bg(tint(t.accent, "22", t.surface)).border(1).border_color(tint(t.accent, "55", t.border))
+            .child((o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h")}`).toUpperCase())))
           .when(!!word, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(badgeColor)
             .bg(tint(badgeColor, "22", t.surface)).border(1).border_color(tint(badgeColor, "55", t.border)).child(word.toUpperCase()))))
         .when(!!task || !!ident, (el) => el.child(h_flex().gap(8).items_center().pl(indent)
@@ -1703,7 +1703,7 @@ export default class Bhote extends View {
 
   // The monitor jobs of the session an agent runs in (its folder), or null.
   monitorOf(a, machine) {
-    const cwd = this.agentCwd[a.address];
+    const cwd = this.agentDir[a.address]?.dir;   // where its program works (hc get); the folder hc ls gives is where the shell was started, the same for two agents: not used, a monitor must not land on the wrong card
     if (!cwd) return null;
     const jobs = (this.mons[this.srvKey(machine)] ?? []).filter((x) => x.cwd === cwd).flatMap((x) => x.jobs);
     return jobs.length ? jobs : null;
