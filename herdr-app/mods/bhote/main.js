@@ -3637,7 +3637,36 @@ export default class Bhote extends View {
 
   // The runs of a monitor grouped by project: the project with the newest run first; each group says what runs and what failed
   // and shows its ten newest runs.
+  // CircleCI runs a pipeline as several workflows (build-backend, build-images-backend ...): for one push they are one card, as the test runs are, with the workflows
+  // as chips, one bar (the mean of theirs) and the longest time left. A lone workflow stays as it is.
+  stackDeploys(rows) {
+    const pipe = (url) => { const m = /\/pipelines\/gh\/([^/]+)\/([^/]+)\/(\d+)(?:\/|$)/.exec(url ?? ""); return m ? { key: `${m[1]}/${m[2]}#${m[3]}`, n: m[3], repo: m[2] } : null; };
+    const groups = new Map(), out = [];
+    for (const x of rows) {
+      const pp = x.url && !x.pr ? pipe(x.url) : null;
+      if (!pp) { out.push(x); continue; }
+      const g = groups.get(pp.key) ?? { pp, rows: [], at: out.length };
+      if (!g.rows.length) out.push(null);   // (the place of the group: where its first row would be)
+      g.rows.push(x); groups.set(pp.key, g);
+    }
+    for (const { pp, rows: rs, at } of groups.values()) {
+      if (rs.length === 1) { out[out.indexOf(null)] = rs[0]; continue; }
+      const any = (st) => rs.some((r) => st.includes(r.state));
+      const state = any(["failed"]) ? "failed" : any(["running", "queued"]) ? "running" : any(["approval"]) ? "approval" : any(["waiting"]) ? "waiting" : rs.every((r) => r.state === "canceled") ? "canceled" : "ok";
+      const est = rs.filter((r) => r.state === "running" || r.state === "queued").map((r) => this.runEstimate(r, "d"));
+      const fr = est.filter((e) => e.frac != null).map((e) => e.frac), rem = est.filter((e) => e.remain != null).map((e) => e.remain);
+      const first = rs[0];
+      const row = { time: Math.min(...rs.map((r) => r.time)), project: first.project, label: `${pp.repo} pipeline #${pp.n}`, state, done: rs.reduce((a, r) => a + (r.done || 0), 0), total: rs.reduce((a, r) => a + (r.total || 0), 0),
+        branch: first.branch, title: first.title, url: first.url.replace(/\/workflows\/.*$/, ""), stacked: true, histKey: null,
+        jobs: rs.map((r) => ({ label: r.label.replace(/^ci\/circleci:\s*/i, ""), state: r.state })),
+        ...(state === "running" ? { est: { frac: fr.length ? fr.reduce((a, b) => a + b, 0) / fr.length : null, remain: rem.length ? Math.max(...rem) : null } } : {}) };
+      out[out.indexOf(null)] = row;
+    }
+    return out;
+  }
+
   monitorBody(t, rows, kind, prefix) {
+    if (kind === "d") rows = this.stackDeploys(rows);
     this.enterBegin(`mon-${prefix}`, rows.map((x) => this.runKey(x)));
     const projectOf = (name) => this.projectOf(name);
     const groups = new Map();
@@ -4537,6 +4566,9 @@ export default class Bhote extends View {
         .child(h_flex().gap(8).pl(indent).pr(4).items_center().text_size(11)
           .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(meta || " "))
           .child(div().flex_none().text_color(t.dim).child(clock(x.time))))
+        .when(!isTest && !!x.stacked && x.jobs?.length > 0, (el) => el.child(h_flex().gap(4).flex_wrap().children(x.jobs.map((j) => { const c = j.state === "failed" ? t.blocked : j.state === "ok" ? (t.ansi2 ?? t.done) : j.state === "canceled" ? t.dim : j.state === "approval" ? t.ansi3 : t.working;
+          return h_flex().gap(4).items_center().px(6).h(18).rounded(9).text_size(10.5).text_color(t.muted).bg(tint(c, "1f", t.surface)).border(1).border_color(tint(c, "55", t.border))
+            .child(div().w(6).h(6).rounded(3).flex_none().bg(c)).child(j.label); }))))
         .when(!isTest && !!this.runStages(x, kind), (el) => el.child(this.pathRow(t, this.runStages(x, kind))))
         .when(x.state === "running", (el) => {
           const e = this.runEstimate(x, kind);
