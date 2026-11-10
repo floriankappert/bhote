@@ -248,8 +248,76 @@ const tint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? `${c}${a
 
 const isLocalName = (m) => !m || m.toLowerCase() === "mac";
 
+// The shared folder of the collector, as a sh prefix that sets $s. The daemon of a machine may have been started without XDG_RUNTIME_DIR
+// (it then writes to /tmp/bhote-<uid>) while this call runs with it: take the folder whose tests.list is the newest, not the first guess.
+const SHARED_SH =
+  'u=$(id -u); s=""; for d in "$BHOTE_SHARED" "${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/bhote-$u}" "${TMPDIR:-/tmp}/bhote-$u" "/tmp/bhote-$u"; do ' +
+  '[ -n "$d" ] && [ -f "$d/tests.list" ] || continue; if [ -z "$s" ] || [ "$d/tests.list" -nt "$s/tests.list" ]; then s="$d"; fi; done; ' +
+  '[ -n "$s" ] || s="${BHOTE_SHARED:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bhote-$u}"; ';
+
+// --- the settings dialog: every setting of `bhote config list --json`, curated -----------------------------------------------------------
+// [key, group, section, name, description, unit, depends-on]. The order here is the order in the dialog. Names are short noun phrases,
+// descriptions one sentence ending in a full stop; a unit is drawn at the value. type and default come from the CLI, not from here.
+const SETTINGS = [
+  ["NOTIFY", "Topics", "", "Notifications", "Notify through herdr when a topic is ready, done or has waited too long."],
+
+  ["WAIT_REMIND", "Topics", "", "Remind waiting topics after", "A waiting topic is reminded once after this time (0 = never).", "h"],
+  ["FINISHED_MINUTES", "Topics", "", "Dismiss finished cards after", "An agent that finished without a question drops off the panel after this time (0 = never).", "min"],
+  ["GITHUB_BRANCHES", "Topics", "", "Show agent branches", "Show the git branch each topic's agent works on."],
+
+  ["AGENT_CARDS", "Agents", "", "Cards for agents without a topic", "A working agent without a topic gets a card on Now after 15 s of work."],
+  ["AUTO_REVIEW", "Agents", "", "Review topic for questions", "An agent that waits for an answer gets a review topic with its question."],
+  ["AGENT_CAN_CLOSE", "Agents", "", "Agents may close topics", "Off: agents can only hand a topic over for review."],
+  ["AGENT_TOPICS", "Agents", "", "Agents may create topics", "Off: bhote add run by an agent creates nothing."],
+  ["AUTO_ASSIGN", "Agents", "", "Auto-assign running topics", "A running topic without an agent goes to the next free agent of its project after 20 s."],
+  ["AUTO_ASSIGN_MACHINE", "Agents", "", "Prefer agents on", "Whose free agents come first: any (this machine first) or a machine name.", "", "AUTO_ASSIGN"],
+  ["TESTS_BUSY", "Agents", "", "Running tests keep an agent busy", "An agent whose workspace runs tests is not free, and its topic stays out of review until they finish."],
+  ["LOCAL_EVERY", "Agents", "", "Check local agents every", "How often the agents of this machine are queried.", "s"],
+
+  ["DEPLOY_MONITOR", "Monitors", "Deployments", "Deployment monitor", "Show the latest deployments above the agents."],
+  ["DEPLOY_EVERY", "Monitors", "Deployments", "Check every", "How often deployments are checked.", "s", "DEPLOY_MONITOR"],
+  ["DEPLOY_GITHUB", "Monitors", "Deployments", "GitHub Actions", "Include deployments from GitHub Actions (needs gh and its login).", "", "DEPLOY_MONITOR"],
+  ["DEPLOY_CIRCLECI", "Monitors", "Deployments", "CircleCI", "Include deployments from CircleCI (needs the token).", "", "DEPLOY_MONITOR"],
+  ["DEPLOY_PIPELINES", "Monitors", "Deployments", "Pipelines on other branches", "Also show CircleCI pipelines running on other branches, with branch and author.", "", "DEPLOY_MONITOR"],
+  ["DEPLOY_PROJECTS_OFF", "Monitors", "Deployments", "Hidden projects", "Comma-separated projects left out of the deployment monitor.", "", "DEPLOY_MONITOR"],
+  ["TEST_MONITOR", "Monitors", "Tests", "Test monitor", "Show the latest test runs above the agents."],
+  ["TEST_EVERY", "Monitors", "Tests", "Check every", "How often test runs are checked.", "s", "TEST_MONITOR"],
+  ["TEST_LOCAL", "Monitors", "Tests", "Local runs", "Include runs of bhote test run and live status files.", "", "TEST_MONITOR"],
+  ["TEST_GITHUB", "Monitors", "Tests", "GitHub Actions", "Include test jobs from GitHub Actions.", "", "TEST_MONITOR"],
+  ["TEST_CIRCLECI", "Monitors", "Tests", "CircleCI", "Include test jobs from CircleCI.", "", "TEST_MONITOR"],
+  ["TEST_STATUS_DIR", "Monitors", "Tests", "Status file folder", "Folder with the live status files of running test suites.", "", "TEST_MONITOR"],
+  ["TEST_PROJECTS_OFF", "Monitors", "Tests", "Hidden projects", "Comma-separated projects left out of the test monitor, with their worktrees.", "", "TEST_MONITOR"],
+  ["CIRCLECI_TOKEN", "Monitors", "Connection", "CircleCI token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
+
+  ["SLACK_WATCH", "Slack & Claude", "Slack", "Watch Slack pins", "Check the channels pinned to waiting topics and set a topic to review on a new message. One machine is enough."],
+  ["SLACK_EVERY", "Slack & Claude", "Slack", "Check Slack every", "How often the pinned channels are checked (one short Claude call each).", "s", "SLACK_WATCH"],
+  ["CLAUDE_CONFIG_DIR", "Slack & Claude", "Slack", "Claude profile folder", "Profile the Slack watch runs in, e.g. ~/.claude2 (empty = default).", "", "SLACK_WATCH"],
+  ["CLAUDE_MOD", "Slack & Claude", "Claude Code mod", "Show topic in Claude Code", "Show the agent's topic above the prompt and in the topic pane."],
+  ["FRIENDLY_REMINDER", "Slack & Claude", "Claude Code mod", "Friendly reminder", "Now and then show a waiting, next or parked topic above the prompt.", "", "CLAUDE_MOD"],
+
+  ["HOST_LABEL", "Machines & sync", "This machine", "Name of this machine", "How this machine appears in agent lists."],
+  ["MACHINE_LABELS", "Machines & sync", "This machine", "Names of other machines", "name=Label pairs, e.g. omarchy-flo=Omarchy."],
+  ["MACHINES_OFF", "Machines & sync", "This machine", "Hidden machines", "Comma-separated machines left out of the agent list."],
+  ["STORE", "Machines & sync", "Storage", "Topic storage", "Where topics live: local, a replica on the store machine, or kharka."],
+  ["STORE_MACHINE", "Machines & sync", "Storage", "Store machine", "The saved herdr machine that holds the replica."],
+  ["SYNC_VIA", "Machines & sync", "Storage", "Sync through", "How replicas travel: herdr or plain ssh."],
+  ["KHARKA", "Machines & sync", "Storage", "kharka binary", "Path to kharka (empty = from PATH)."],
+  ["KHARKA_WATCH_STALE", "Machines & sync", "Storage", "Restart kharka watch after", "Restart herdr-kharka when its entry has not been written for this long.", "s"],
+  ["REMOTE_AGENTS", "Machines & sync", "Remote agents", "Show agents of other machines", "Also list the agents of the other machines."],
+  ["AGENTS_VIA", "Machines & sync", "Remote agents", "Fetch remote agents through", "herdr (over its ssh connection) or kharka.", "", "REMOTE_AGENTS"],
+  ["PUSH_STATES", "Machines & sync", "Remote agents", "Push agent states", "Tell other machines at once when an agent changes state (herdr only).", "", "REMOTE_AGENTS"],
+  ["REMOTE_EVERY", "Machines & sync", "Remote agents", "Check other machines every", "How often the other machines are queried.", "s", "REMOTE_AGENTS"],
+
+
+
+];
+const SETTING_INFO = new Map(SETTINGS.map((r, i) => [r[0], { order: i, group: r[1], sec: r[2], name: r[3], desc: r[4], unit: r[5] ?? "", dep: r[6] ?? "" }]));
+const SETTING_GROUPS = [...new Set(SETTINGS.map((r) => r[1]))];
+function settingLabel(key) { const w = key.toLowerCase().replace(/_/g, " "); return w[0].toUpperCase() + w.slice(1); }
+
 export default class Bhote extends View {
   init(_props, cx) {
+    if (props()?.settings) { this.initSettings(cx); return; }   // the settings dialog
     if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
     // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
@@ -325,12 +393,15 @@ export default class Bhote extends View {
     this.srvAt = 0;
     this.srvHover = null;
     if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
+    if (this.side === "right") cx.timer.after(3000, (cx) => { const m = this.cfgMeta(); if (!m || Date.now() - (m.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); });   // (the settings dialog opens at once)
     if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
     this.pulsing = false;
     if (this.side === "right") cx.timer.every(100, (cx) => { if (this.pulsing) { this.pulsing = false; cx.notify(); } });   // (a render that draws a pulsing circle sets it again)
     // the scheduled headless agents (timers that run Claude: slack monitors, depbot ...) of every machine, in the left panel
     this.jobs = {};         // by machine: [{ timer, svc, name, active, next, last, running, failed }]
     this.jobPending = {};   // `${machine}|${timer}`: "run" | "pause" | "resume" until the poll shows it
+    this.commits = {};      // Commit-Inspector, by `${machine}|${folder}`: { at, list: [{ hash, subject, time, author }], dirty, error }
+    this.commitLoading = false;
     this.jobAt = 0;
     this.jobLoading = false;
     this.mons = {};         // by machine: the sessions with a monitor (a recurring job in a Claude Code session): [{ cwd, jobs: [...] }]
@@ -339,6 +410,7 @@ export default class Bhote extends View {
     this.monLoading = false;
     if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating) cx.notify(); }); cx.timer.every(2000, () => this.trackSpaces()); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
+    if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
     // Topics are plain files: reload when one changes.
     cx.spawn(async (cx) => {
       const dir = `${home()}/.local/share/bhote/topics`;
@@ -354,7 +426,7 @@ export default class Bhote extends View {
       try {
         const script =
           'd="${XDG_DATA_HOME:-$HOME/.local/share}/bhote/topics"; for f in "$d"/*.topic; do [ -f "$f" ] && { printf "\\036\\n"; cat "$f"; echo; }; done; ' +
-          's="${BHOTE_SHARED:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bhote-$(id -u)}"; ' +
+          SHARED_SH +
           'printf "\\037T\\n"; cat "$s/tests.list" 2>/dev/null; printf "\\037D\\n"; cat "$s/deploys.list" 2>/dev/null';
         const r = await exec("sh", ["-c", script], { timeout: 15000 });
         const [topics, rest = ""] = r.stdout.split("\x1fT\n");
@@ -401,7 +473,7 @@ export default class Bhote extends View {
     if (!names.length || this.remoteLoading || Date.now() - this.remoteAt < 8000) return;
     this.remoteLoading = true;
     this.remoteAt = Date.now();
-    const script = 's="${BHOTE_SHARED:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/bhote-$(id -u)}"; cat "$s/tests.list" 2>/dev/null';
+    const script = SHARED_SH + 'cat "$s/tests.list" 2>/dev/null';
     cx.spawn(async (cx) => {
       let changed = false;
       for (const m of names) {
@@ -1431,6 +1503,264 @@ export default class Bhote extends View {
       }))];
   }
 
+  // --- the settings dialog ------------------------------------------------------------------------------------------------
+  // What a setting is (type, default, description) hardly ever changes, but `bhote config list --json` is bash and takes seconds: it is
+  // read once in the background and kept (shared state + localStorage). The values come from the config file itself, which is instant.
+  cfgMeta() {
+    try { const m = shared("bhote.cfgmeta"); if (m?.list?.length) return m; } catch (_e) { /* not there */ }
+    try { const m = JSON.parse(localStorage.getItem("cfgmeta") ?? "null"); if (m?.list?.length) return m; } catch (_e) { /* not there */ }
+    return null;
+  }
+
+  fetchCfgMeta(cx, then) {
+    if (this.cfgFetching) return;
+    this.cfgFetching = true;
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("bhote", ["config", "list", "--json"], { timeout: 60000 });
+        const list = JSON.parse(r.stdout).map((x) => ({ key: x.key, type: x.type, default: x.default ?? null, description: x.description ?? "" }));
+        const meta = { at: Date.now(), list };
+        try { setShared("bhote.cfgmeta", meta); } catch (_e) { /* kept in localStorage */ }
+        try { localStorage.setItem("cfgmeta", JSON.stringify(meta)); } catch (_e) { /* not kept */ }
+        if (then) then(meta);
+      } catch (e) { if (then) then(null, String(e?.message ?? e)); }
+      this.cfgFetching = false;
+    });
+  }
+
+  async cfgValues() {
+    const vals = {};
+    try {
+      const text = await Promise.resolve(readTextFile(`${home()}/.config/bhote/config`));
+      for (const l of (text ?? "").split("\n")) { const k = l.indexOf("="); if (k > 0) vals[l.slice(0, k)] = l.slice(k + 1); }
+    } catch (_e) { /* no file: every default */ }
+    return vals;
+  }
+
+  initSettings(cx) {
+    this.setItems = null;     // null: loading
+    this.setCat = "All";
+    this.setBusy = {};        // key: true while `bhote config set` runs
+    this.setFlash = {};       // key: "saved" | "failed"
+    this.setIns = {};         // key: the InputState of a text setting
+    this.setMeta = null;
+    this.setSearch = InputState.new({ placeholder: "Search settings", value: "" });
+    this.setSearch.on("change", (_e, cx) => cx.notify());
+    const meta = this.cfgMeta();
+    const done = (m, err) => {
+      if (!m) { this.setItems = []; this.setError = err ?? "unknown error"; cx.notify(); return; }
+      this.setMeta = m;
+      this.cfgValues().then((vals) => { this.applySettings(vals); cx.notify(); });
+    };
+    if (meta) { done(meta); if (Date.now() - (meta.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); }
+    else this.fetchCfgMeta(cx, done);
+  }
+
+  applySettings(vals) {
+    const items = this.setMeta.list.filter((m) => SETTING_INFO.has(m.key)).map((m) => {   // (only what concerns the Mac client; the terminal panel is deprecated)
+      const kind = m.type.split(":")[0];
+      const info = SETTING_INFO.get(m.key);
+      const set = Object.prototype.hasOwnProperty.call(vals, m.key);
+      const value = kind === "secret" ? (set && vals[m.key] ? "(set)" : "") : set ? vals[m.key] : (m.default ?? "");
+      const x = { ...m, ...info, value, set, changed: set && m.default != null && vals[m.key] !== m.default && kind !== "secret" };
+      if (["text", "list", "color", "secret"].includes(kind)) {
+        const shown = kind === "secret" ? "" : value;
+        if (!this.setIns[m.key]) {
+          const st = InputState.new({ placeholder: kind === "secret" ? (value === "(set)" ? "(set) – type to replace" : "not set") : kind === "list" ? "a, b, c" : kind === "color" ? "#rrggbb" : "", value: shown });
+          st.on("submit", (_e, cx) => this.saveSetting(cx, m.key, st.value().trim()));
+          st.on("change", (_e, cx) => cx.notify());
+          this.setIns[m.key] = st;
+        } else if (this.setIns[m.key].value() === (this.setShown?.[m.key] ?? "")) this.setIns[m.key].set_value(shown);   // (what was typed and not saved stays)
+        (this.setShown ??= {})[m.key] = shown;
+      }
+      return x;
+    });
+    items.sort((a, b) => a.order - b.order);
+    this.setItems = items;
+  }
+
+  saveSetting(cx, key, value, unset) {
+    if (this.setBusy[key]) return;
+    this.setBusy[key] = true; cx.notify();
+    cx.spawn(async (cx) => {
+      let ok = true;
+      try { await exec("bhote", unset ? ["config", "unset", key] : ["config", "set", key, value], { timeout: 30000 }); } catch (_e) { ok = false; }
+      const st = this.setIns[key];
+      if (st && unset) { const m = this.setMeta.list.find((q) => q.key === key); st.set_value(m?.default ?? ""); }
+      this.applySettings(await this.cfgValues());
+      this.setBusy[key] = false;
+      this.setFlash[key] = ok ? "saved" : "failed";
+      cx.notify();
+      cx.timer.after(2500, (cx) => { delete this.setFlash[key]; cx.notify(); });
+    });
+  }
+
+  // The control of a setting: always the same slot on the right, so the rows line up.
+  settingControl(t, x) {
+    const [kind, ...rest] = x.type.split(":");
+    const key = x.key, busy = !!this.setBusy[key];
+    const save = (v) => (_e, cx) => this.saveSetting(cx, key, v);
+    const box = (id) => div().id(id).h(30).flex().items_center().justify_center().rounded(7).cursor_pointer().bg(t.chrome).border(1).border_color(t.border).text_color(t.foreground).hover((e) => e.bg(t.hover));
+    if (kind === "bool") {
+      const on = x.value === "on";
+      return div().id(`sw-${key}`).w(40).h(22).rounded(11).flex_none().cursor_pointer().flex().items_center().px(2).opacity(busy ? 0.5 : 1)
+        .when(on, (e) => e.justify_end()).bg(on ? t.accent : t.raised).border(1).border_color(on ? t.accent : t.border)
+        .on_click(save(on ? "off" : "on")).child(div().w(16).h(16).rounded(8).bg("#ffffff"));
+    }
+    if (kind === "enum") {
+      return h_flex().p(2).gap(2).rounded(9).border(1).border_color(t.border).bg(t.chrome).opacity(busy ? 0.6 : 1)
+        .children(rest.map((o) => { const on = x.value === o;
+          return div().id(`en-${key}-${o}`).px(12).h(28).flex().items_center().rounded(7).text_size(13).cursor_pointer()
+            .border(1).border_color(on ? t.border : "#00000000").bg(on ? t.raised : t.chrome).text_color(on ? t.foreground : t.muted)
+            .hover((e) => e.bg(on ? t.raised : t.hover)).on_click(save(o)).child(o); }));
+    }
+    if (kind === "int") {
+      const [lo, hi] = [Number(rest[0]), Number(rest[1])];
+      const step = hi - lo > 1000 ? 60 : hi - lo > 100 ? 10 : 1;
+      const cur = Number(x.value);
+      const set = (v) => save(String(Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo))));
+      return h_flex().gap(8).items_center()
+        .child(box(`mi-${key}`).w(30).text_size(15).on_click(set(cur - step)).child("−"))
+        .child(h_flex().w(84).gap(4).items_baseline?.().justify_center().text_size(14).text_color(t.foreground)
+          .child(x.value === "" || x.value == null ? "auto" : String(x.value)).when(!!x.unit && x.value !== "", (e) => e.child(div().text_size(12).text_color(t.dim).child(x.unit))))
+        .child(box(`pl-${key}`).w(30).text_size(15).on_click(set(cur + step)).child("+"));
+    }
+    // text, list, color, secret: a field of the same width; Enter or Save writes it
+    const st = this.setIns[key];
+    if (!st) return div();
+    const dirty = kind === "secret" ? st.value().length > 0 : st.value().trim() !== (x.value ?? "");
+    const swatch = kind === "color" && /^#[0-9a-fA-F]{6}$/.test(st.value().trim());
+    return h_flex().gap(8).items_center().w(300)
+      .when(swatch, (e) => e.child(div().w(22).h(22).flex_none().rounded(6).border(1).border_color(t.border).bg(st.value().trim())))
+      .child(Input.new(st).flex_1().min_w(0).h(32).px(10).rounded(8).border_1().border_color(dirty ? t.accent : t.border).bg(t.background).text_size(13).text_color(t.foreground))
+      .when(dirty, (e) => e.child(div().id(`sv-${key}`).px(12).h(32).flex().items_center().rounded(8).cursor_pointer().bg(t.accent).text_size(13)
+        .text_color(t.accent_foreground ?? "#ffffff").on_click(save(st.value().trim())).child(busy ? "…" : "Save")));
+  }
+
+  settingsView() {
+    const t = theme();
+    const close = () => { const o = props()?.overlay; if (o) closeOverlay(o); };
+    const q = this.setSearch.value().trim().toLowerCase();
+    const items = this.setItems ?? [];
+    const loading = this.setItems === null;
+    const icons = { Topics: "check", Agents: "launch", Monitors: "zap", "Slack & Claude": "log", "Machines & sync": "plug" };
+    const order = SETTING_GROUPS;
+    const cats = ["All", ...(loading ? SETTING_GROUPS : order.filter((g) => items.some((x) => x.group === g)))];
+    const count = (c) => items.filter((x) => c === "All" || x.group === c).length;
+    const shown = items.filter((x) => (this.setCat === "All" || x.group === this.setCat) && (!q || `${x.key} ${x.name} ${x.desc} ${x.group}`.toLowerCase().includes(q)));
+    const on = (k) => items.find((y) => y.key === k)?.value === "on";
+    const rowOf = (x) => {
+      const flash = this.setFlash[x.key];
+      const off = !!x.dep && !on(x.dep);   // (a sub-setting of a switch that is off)
+      return h_flex().id(`set-${x.key}`).gap(20).px(24).py(14).items_center().border_b(1).border_color(t.border).opacity(off ? 0.5 : 1)
+        .child(v_flex().flex_1().min_w(0).gap(3)
+          .child(h_flex().gap(8).items_center()
+            .child(div().text_size(15).text_color(t.foreground).child(x.name))
+            .when(x.changed, (e) => e.child(div().w(6).h(6).rounded(3).flex_none().bg(t.accent)))
+            .when(!!flash, (e) => e.child(div().text_size(12).text_color(flash === "saved" ? (t.ansi2 ?? t.done) : t.blocked).child(flash === "saved" ? "saved" : "failed"))))
+          .child(div().text_size(13).text_color(t.muted).child(x.desc)))
+        .child(div().flex_none().flex().justify_end().child(this.settingControl(t, x)))
+        .child(div().flex_none().w(46).flex().justify_end()
+          .when(x.changed, (e) => e.child(div().id(`rs-${x.key}`).px(8).h(24).flex().items_center().rounded(6).text_size(12).text_color(t.dim).cursor_pointer()
+            .hover((h) => h.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.saveSetting(cx, x.key, "", true)).child("reset"))));
+    };
+    const caption = (text) => div().px(24).pt(22).pb(6).text_size(12).text_color(t.dim).child(text.toUpperCase());
+    const body = [];
+    if (loading) {
+      for (let i = 0; i < 6; i++) body.push(h_flex().gap(20).px(24).py(16).items_center().border_b(1).border_color(t.border)
+        .child(v_flex().flex_1().gap(8).child(div().w(150 + (i % 3) * 40).h(14).rounded(4).bg(t.raised)).child(div().w(300 + (i % 2) * 120).h(11).rounded(4).bg(t.hover)))
+        .child(div().w(90).h(26).rounded(8).bg(t.raised)));
+    } else if (!shown.length) body.push(div().p(24).text_color(t.dim).child(this.setError ? `could not read the settings: ${this.setError}` : "no setting matches"));
+    else {
+      let last = null;
+      for (const x of shown) {
+        const cap = this.setCat === "All" || q ? (x.sec ? `${x.group} · ${x.sec}` : x.group) : x.sec;
+        if (cap !== last) { if (cap) body.push(caption(cap)); last = cap; }
+        body.push(rowOf(x));
+      }
+    }
+    return h_flex().id("settings-root").size_full().items_start().bg(t.popover).text_size(13)
+      .child(v_flex().flex_none().w(236).h_full().p(14).gap(3).border_r(1).border_color(t.border)
+        .child(div().px(10).pt(8).pb(14).text_size(21).font_semibold().text_color(t.foreground).child("Settings"))
+        .children(cats.map((c) => { const sel = this.setCat === c;
+          return h_flex().id(`cat-${c}`).gap(12).px(12).h(38).items_center().rounded(8).cursor_pointer().text_size(14)
+            .bg(sel ? t.selected : t.popover).text_color(sel ? t.foreground : t.muted).hover((e) => e.bg(sel ? t.selected : t.hover))
+            .on_click((_e, cx) => { this.setCat = c; cx.notify(); })
+            .child(svg(`mods/bhote/${icons[c] ?? (c === "All" ? "grid" : "dots")}.svg`).size(16).text_color(sel ? t.foreground : t.dim))
+            .child(div().flex_1().child(c === "All" ? "All settings" : c))
+            .when(!loading, (e) => e.child(div().text_size(12).text_color(t.dim).child(String(count(c))))); }))
+        .child(div().flex_1())
+        .child(h_flex().id("set-file").px(14).h(38).items_center().rounded(8).cursor_pointer().border(1).border_color(t.border).bg(t.surface).text_size(13).text_color(t.foreground)
+          .hover((e) => e.bg(t.raised)).on_click(() => exec("open", [`${home()}/.config/bhote/config`]).catch(() => {})).child("Open config file")))
+      .child(v_flex().flex_1().min_w(0).h_full()
+        .child(h_flex().flex_none().gap(10).items_center().px(24).pt(18).pb(8)
+          .child(Input.new(this.setSearch).flex_1().min_w(0).h(34).px(12).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground))
+          .when(loading, (e) => e.child(h_flex().gap(8).items_center().text_size(12).text_color(t.dim).child(div().text_color(t.working).frames(SPIN, 90)).child("first load: reading the settings (once)…")))
+          .child(div().id("set-close").w(30).h(30).flex_none().flex().items_center().justify_center().rounded(7).cursor_pointer().text_size(16).text_color(t.muted)
+            .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(close).child("✕")))
+        .child(v_flex().id("set-list").flex_1().min_h(0).overflow_y_scrollbar().children(body)));
+  }
+
+  // --- Commit-Inspector: the git commits of the agent that has the focus ----------------------------------------------------------
+  // The focused agent, its machine and its folder (the folder comes from `hc ls`, loadMonitors).
+  focusAgent() {
+    const a = agents().find((x) => x.focused);
+    if (!a) return null;
+    const cwd = this.agentCwd[a.address];
+    if (!cwd) return null;
+    const machine = spaces().find((x) => x.id === a.space)?.machine ?? null;
+    return { a, cwd, machine, key: `${this.srvKey(machine)}|${cwd}` };
+  }
+
+  loadCommits(cx) {
+    const f = this.focusAgent();
+    if (!f || this.commitLoading) return;
+    const c = this.commits[f.key];
+    if (c && Date.now() - c.at < 3500) return;
+    this.commitLoading = true;
+    cx.spawn(async (cx) => {
+      let next;
+      try {
+        const log = await this.srvExec(f.machine, "git", ["-C", f.cwd, "log", "-8", "--format=%h%x1f%s%x1f%ct%x1f%an"], 10000);
+        const st = await this.srvExec(f.machine, "git", ["-C", f.cwd, "status", "--porcelain"], 10000).catch(() => ({ stdout: "" }));
+        const list = log.stdout.split("\n").filter(Boolean).map((l) => { const [hash, subject, time, author] = l.split("\x1f"); return { hash, subject, time: Number(time), author }; });
+        next = { at: Date.now(), list, dirty: st.stdout.split("\n").filter(Boolean).length };
+      } catch (_e) {
+        next = { at: Date.now(), list: [], dirty: 0, error: true };   // not a git folder (or the machine does not answer)
+      }
+      const same = c && JSON.stringify(c.list) === JSON.stringify(next.list) && c.dirty === next.dirty && c.error === next.error;
+      this.commits[f.key] = next;
+      this.commitLoading = false;
+      if (!same) cx.notify();
+    });
+  }
+
+  commitBar(t) {
+    const f = this.focusAgent();
+    if (!f) return [];
+    const c = this.commits[f.key];
+    if (c?.error) return [];
+    const branch = spaces().find((x) => x.id === f.a.space)?.branch;
+    const head = h_flex().gap(8).items_center().px(15).h(22)
+      .child(div().text_size(11).text_color(t.dim).child("COMMIT-INSPECTOR"))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(branch ?? ""))
+      .when(c && c.dirty > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi3).child(`${c.dirty} uncommitted`)));
+    // the rail: a line through a dot per commit, the dots at the x of the dots of the job rows below (px 15, ml 3, 8 wide)
+    const line = (on) => div().w(2).flex_1().bg(on ? t.border : "#00000000");
+    const rows = !c
+      ? [h_flex().gap(9).items_center().px(15).h(24)
+          .child(div().ml(3).w(8).flex_none().text_color(t.working).text_size(10).frames(SPIN, 90))
+          .child(div().pl(5).text_size(12).text_color(t.dim).child("loading commits…"))]
+      : c.list.length ? c.list.map((x, i) => h_flex().id(`ci-${i}`).gap(9).items_center().px(15).h(26)
+          .child(v_flex().ml(3).w(8).h_full().flex_none().items_center()
+            .child(line(i > 0)).child(div().w(8).h(8).rounded(4).flex_none().bg(i === 0 ? t.accent : t.dim)).child(line(i < c.list.length - 1)))
+          .child(div().pl(5).w(66).flex_none().truncate().text_size(11).text_color(t.accent).child(x.hash))
+          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(i === 0 ? t.foreground : t.muted).child(x.subject))
+          .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(x.time))))
+        : [div().px(15).h(24).text_size(12).text_color(t.dim).child("no commits yet")];
+    return [v_flex().id("commit-inspector").flex_none().border_t(1).border_color(t.border).py(5).child(head).children(rows)];
+  }
+
   newSpaceBar(t) {
     return h_flex().id("new-space").flex_none().px(12).py(9).gap(11).items_center().cursor_pointer().border_t(1).border_color(t.border)
       .on_size_change((size) => { this.barH = size.height; })
@@ -2082,7 +2412,9 @@ export default class Bhote extends View {
           .when(running > 0, (el) => el.child(div().text_size(11).text_color(t.working).child(String(running))))
           .when(failed > 0, (el) => el.child(div().px(4).rounded(8).text_size(10).bg("#a8162e").text_color("#ffffff").child(String(failed))));
       }))
-      .when(this.tab === "prs", (el) => el.child(div().flex_1()).child(this.prFilterButton(t)));
+      .child(div().flex_1())
+      .when(this.tab === "prs", (el) => el.child(this.prFilterButton(t)))
+      .child(this.gearButton(t));
   }
 
   // The project a run belongs to: runs are named after worktrees ("IMS-wt1", "IMS (wt2)"); they belong to the project of that name.
@@ -2473,6 +2805,13 @@ export default class Bhote extends View {
   }
 
   // The button that folds the tiles to their small form and back.
+  openSettings() { openOverlay({ mod: "bhote", props: { settings: true }, kind: "dialog", modal: true, width: 860, height: 640 }); }
+
+  gearButton(t) {
+    return div().id("settings-gear").w(34).h(30).flex_none().flex().items_center().justify_center().rounded(7).cursor_pointer().text_size(20).text_color(t.muted)
+      .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(() => this.openSettings())).child("⚙");
+  }
+
   tilesToggle(t) {
     const small = this.compactTiles();
     return div().id("tiles-toggle").w(28).h(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
@@ -2610,6 +2949,7 @@ export default class Bhote extends View {
     const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id), this.tilesToggle(t));
     return v_flex().id("home-root").size_full().bg(t.chrome)
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
+      .child(h_flex().flex_none().justify_end().px(8).pt(6).child(this.gearButton(t)))
       .child(tiles).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
       .children(this.docks(t));
@@ -2788,6 +3128,7 @@ export default class Bhote extends View {
   }
 
   render(_cx) {
+    if (this.setItems !== undefined) return this.settingsView();
     if (this.menu) return this.menuView();
     if (this.side === "right" && this.showId()) return this.showView();
     if (this.side === "right" && this.tab === "home") return this.homeView(theme());
@@ -2795,6 +3136,7 @@ export default class Bhote extends View {
     if (this.side === "left") return v_flex().id("left-root").size_full().bg(t.chrome).text_size(13)
       .on_size_change((size) => { this.leftH = size.height; })
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(this.left()))
+      .children(this.commitBar(t))
       .children(this.jobsBar(t))
       .child(this.newSpaceBar(t));
     let body;
