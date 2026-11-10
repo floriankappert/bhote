@@ -383,6 +383,7 @@ topic_set() {  # topic_set <file> <key> <value>: also stamps `updated`
 topic_new() {  # topic_new <title> [waiting for] [description]
     mkdir -p "$TOPIC_DIR"
     local now id title status=now since=""; now=$(date +%s); id="$now-$RANDOM"
+    while [ -e "$TOPIC_DIR/$id.topic" ]; do id="$now-$RANDOM$((++TOPIC_NEW_N))"; done   # (bash 3.2 gives a subshell the same RANDOM again: a second topic in the same second must not take the file of the first)
     title=${1//[[:cntrl:]]/}; title=$(printf '%s' "$title" | sed 's/^ *//; s/ *$//'); set -- "$title" "${2//[[:cntrl:]]/}" "${3//[[:cntrl:]]/}"
     set -- "${1:0:500}" "$2" "${3:0:$DESC_MAX}"
     [ -n "$title" ] || return 1
@@ -1229,6 +1230,9 @@ collect_one() {  # collect_one <machine label> [herdr options: --machine X]
     if [ $# -eq 0 ]; then                                      # this machine: where its agents work (their branch, see branch_sync)
         printf '%s' "$panes" | jq -r '.result.panes[] | select(.agent) | [.pane_id, ((.foreground_cwd // .cwd // "") | tostring | gsub("[\u0000-\u001f]"; ""))] | join("\u001f")' > "$AGENT_CWD.tmp.$$" 2>/dev/null \
             && mv "$AGENT_CWD.tmp.$$" "$AGENT_CWD" 2>/dev/null
+        # the workspaces of this machine for the left panel: number, id, label, 1 for the focused one, the state of its agents (what daemon/src/agents.rs writes on Linux)
+        printf '%s' "$ws" | jq -r '.result.workspaces[]? | [(.number // ""), (.workspace_id // ""), (.label // ""), (if .focused == true then "1" else "0" end), (.agent_status // "")] | map(tostring | gsub("[\u0000-\u001f]"; "")) | join("\u001f")' > "$SHARED_DIR/workspaces.local.tmp.$$" 2>/dev/null \
+            && mv -f "$SHARED_DIR/workspaces.local.tmp.$$" "$SHARED_DIR/workspaces.local" 2>/dev/null
         # which pane has the focus, and its tab (the list says so): the panels read this file once a second instead of each asking herdr (a process pipeline and an API call per panel per second)
         printf '%s\n' "$(printf '%s' "$panes" | jq -r '[.result.panes[]? | select(.focused == true)][0] | if . == null then "" else "\(.pane_id) \(.tab_id // "")" end' 2>/dev/null)" > "$SHARED_DIR/focus.pane.tmp.$$" 2>/dev/null \
             && mv -f "$SHARED_DIR/focus.pane.tmp.$$" "$SHARED_DIR/focus.pane" 2>/dev/null
@@ -6482,6 +6486,11 @@ act_slack() {                                                                   
     printf '%s' "$FLASH_MSG"
 }
 act_clamp() { panel_width_clamp "$@"; }                                                         # (the width of the panel pane is kept between the two settings)
+act_agentnum() {  # <space name> ...: the agents of the herdr-app (its spaces, not in agents.local) get their number, so their name from Middle-earth, too
+    local tmp n; tmp=$(mktemp) || return 1
+    for n in "$@"; do printf '%s\037\037\037%s\037\n' "$HOST" "$n"; done > "$tmp"
+    AGENT_LOCAL=$tmp; agentnum_assign; rm -f "$tmp"
+}
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
     [ -n "${CLAUDECODE:-}" ] && return 0
@@ -7262,7 +7271,7 @@ bhote_cli() {
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
         reminder) bhote_info; cli_reminder "$@" ;;
-        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|startmsg|startdone|startcancel|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
+        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|startmsg|startdone|startcancel|transfer|slack|agentnum) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;

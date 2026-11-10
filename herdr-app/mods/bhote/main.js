@@ -205,6 +205,9 @@ function runbookStages(proj, o) {
   const pending = post.findIndex((l) => kind(l) === "Approval") >= 0 && bs.some((b) => b.state === "approval") ? post.findIndex((l) => kind(l) === "Approval") : -1;
   const busy = bs.some((b) => b.state === "failed") ? "failed" : bs.some((b) => b.state === "running") ? "running" : "";
   const first = post.findIndex((l) => !["Approval", "Release", "Merge"].includes(kind(l)));   // the stage a running or failed build is for
+  // a build of the merged pull request that finished well: the stages up to and including the first environment (Build + Deploy, or Staging) are done
+  const envAt = post.findIndex((l) => ["Deploy", "Staging", "Production"].includes(kind(l)));
+  const doneTo = o.merged && !o.off && !busy && pending < 0 && bs.some((b) => b.state === "ok") ? envAt : -1;
   post.forEach((l, i) => {
     let state = "waiting";
     if (o.at != null && o.at >= 0) state = i < o.at ? "ok" : i === o.at ? o.now : "waiting";   // (a run on a deploy branch)
@@ -212,6 +215,7 @@ function runbookStages(proj, o) {
       if (kind(l) === "Release" || o.off) state = kind(l) === "Release" || i === 0 ? "ready" : "waiting";   // (by hand, or not watched: the next step is yours)
       else if (pending >= 0) state = i < pending ? "ok" : i === pending ? "approval" : "waiting";
       else if (busy && i === first) state = busy;
+      else if (i <= doneTo && kind(l) !== "Release") state = "ok";
     }
     const m = /^Merge \((.+)\)$/.exec(l);   // (a second merge, e.g. develop into main: Merge → main)
     stages.push(m ? { name: "Merge", target: m[1], state } : { name: l, state });
@@ -595,6 +599,12 @@ export default class Bhote extends View {
         this.deploys = parseMonitor(deploys);
         this.projects = parseProjects(topics);
         this.ringMap = parseRing(topics);
+        // an agent of this computer in a space without a record gets one (the daemon only knows the agents of the classic herdr): then it has its name
+        try {
+          const have = new Set((agents() ?? []).map((a) => a.space));
+          const need = spaces().filter((s) => (s.machine ?? null) === null && have.has(s.id) && s.name && !this.ringMap.has(`${this.hostLabel}/${s.name}`.toLowerCase().replace(/[^a-z0-9]/g, "")) && !(this.ringAsked ??= new Set()).has(s.name)).map((s) => s.name);
+          if (need.length) { need.forEach((n) => this.ringAsked.add(n)); exec("bhote", ["__act", "agentnum", ...need], { timeout: 30000 }).catch(() => need.forEach((n) => this.ringAsked.delete(n))); }
+        } catch (_e) { /* the next load asks again */ }
         this.observeRows(this.tests, "t");
         this.observeRows(this.deploys, "d");
         if (this.side === "right") this.loadRemoteTests(cx);
@@ -684,12 +694,25 @@ export default class Bhote extends View {
   // --- how long runs take, and the time left of the running ones ------------------------------------------------------
   learn(key, sec) {
     if (!(sec > 5 && sec < 6 * 3600)) return;
-    const l = [...(this.hist[key] ?? []), Math.round(sec)].slice(-5);
+    const l = [...(this.hist[key] ?? []), Math.round(sec)].slice(-12);   // (the last twelve runs)
     this.hist[key] = l;
     try { localStorage.setItem("hist", JSON.stringify(this.hist)); } catch (_e) { /* not remembered */ }
   }
 
   typical(key) { return median(this.hist[key] ?? []); }
+
+  // What a run that has gone on for `elapsed` seconds will take, from the runs before it: only those that took at least as long count (a run that is
+  // already past the quick ones is not one of them), their median is the expectation. Past the longest one seen it is nearly done: a tenth more.
+  // { total, remain } in seconds, or null without history.
+  expected(key, elapsed) {
+    const h = [...(this.hist[key] ?? [])].sort((a, b) => a - b);
+    if (!h.length) return null;
+    const el = Math.max(0, elapsed || 0);
+    const longer = h.filter((v) => v >= el);
+    if (!longer.length) return { total: el * 1.1, remain: Math.max(10, el * 0.1), over: true };
+    const total = median(longer);
+    return { total, remain: Math.max(0, total - el) };
+  }
 
   // A run of a monitor list: seen running, then finished: its duration is what it took.
   observeRows(rows, kind) {
@@ -716,14 +739,15 @@ export default class Bhote extends View {
   runEstimate(x, kind) {
     if (x.est) return x.est;
     const elapsed = Date.now() / 1000 - x.time;
-    const med = this.typical(x.histKey ?? `${kind}|${x.project}|${x.label}`);
+    const ex = this.expected(x.histKey ?? `${kind}|${x.project}|${x.label}`, elapsed), med = ex?.total ?? 0;
     if (x.prTotal > 0) {   // a check of an open pull request: the checks that are through, plus its own share (its usual duration; without one a soft curve)
       const part = med ? Math.min(0.95, elapsed / med) : Math.min(0.9, 1 - Math.exp(-elapsed / 360));
-      return { frac: Math.min(0.99, (x.prDone + part) / x.prTotal), remain: med ? Math.max(0, med - elapsed) : null };
+      return { frac: Math.min(0.99, (x.prDone + part) / x.prTotal), remain: ex ? ex.remain : null };
     }
     const byStep = x.total > 0 ? x.done / x.total : null;
     const frac = byStep ?? (med ? Math.min(0.95, elapsed / med) : null);
-    const remain = med ? Math.max(0, med - elapsed) : byStep && x.done > 0 ? (elapsed * (x.total - x.done)) / x.done : null;
+    // the time left: from the runs before it (those that took at least as long as this one has), else from the pace of its steps
+    const remain = ex ? ex.remain : byStep && x.done > 0 ? (elapsed * (x.total - x.done)) / x.done : null;
     return { frac, remain };
   }
 
@@ -735,8 +759,8 @@ export default class Bhote extends View {
     let remain = null;
     for (const c of checks) {
       if (c.state !== "running") continue;
-      const med = this.typical(c.key);
-      if (med && c.started) remain = Math.max(remain ?? 0, Math.max(0, med - (now - c.started)));
+      const ex = c.started ? this.expected(c.key, now - c.started) : null;
+      if (ex) remain = Math.max(remain ?? 0, ex.remain);
     }
     return { frac: total ? finished / total : null, finished, total, remain };
   }
@@ -1502,7 +1526,7 @@ export default class Bhote extends View {
           .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(div().flex_none().px(5).h(15).flex().items_center().rounded(8).text_size(10).font_semibold().text_color(t.ansi3)
             .bg(tint(t.ansi3, "26", t.raised)).border(1).border_color(tint(t.ansi3, "66", t.border)).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(t.accent).bg(tint(t.accent, "22", t.surface)).border(1).border_color(tint(t.accent, "55", t.border))
-            .child((o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h")}`).toUpperCase())))
+            .child((o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h").replace(" seconds", "s").replace(" second", "s")}`).toUpperCase())))
           .when(!!word, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(badgeColor)
             .bg(tint(badgeColor, "22", t.surface)).border(1).border_color(tint(badgeColor, "55", t.border)).child(word.toUpperCase()))))
         .when(!!task || !!ident, (el) => el.child(h_flex().gap(8).items_center().pl(indent)
@@ -1514,9 +1538,9 @@ export default class Bhote extends View {
           .children(dep.names.map((n) => h_flex().gap(6).items_center().child(div().w(9).flex_none().text_color(t.working).text_size(9).frames(SPIN, 90)).child(div().flex_1().min_w(0).truncate().text_size(11).text_color(active ? t.muted : t.dim).child(n))))
           .when((dep.more ?? 0) > 0, (e2) => e2.child(div().text_size(10.5).text_color(t.dim).pl(15).child(`+${dep.more} more`)))))
         // the deployment under way: a bar across the card, the percentage and the time left at its end
-        .when(!!dep && dep.frac != null, (el) => el.child(h_flex().gap(8).items_center().pl(indent).pt(3)
-          .child(div().flex_1().h(4).rounded(2).bg(tint(t.working, "30", t.border)).overflow_hidden().child(div().h(4).w(`${Math.round(Math.max(0, Math.min(1, dep.frac)) * 100)}%`).rounded(2).bg(t.working)))
-          .child(div().flex_none().text_size(10.5).text_color(t.working).child(`${Math.round(Math.max(0, Math.min(1, dep.frac)) * 100)}%${dep.remain != null ? ` · ${left(dep.remain).replace(" left", "")}` : ""}`)))));
+        .when(!!dep, (el) => { const fr = Math.max(0, Math.min(1, dep.frac ?? 0)); return el.child(h_flex().gap(8).items_center().pl(indent).pt(3)   // (yellow always has its bar: empty while there is no figure yet)
+          .child(div().flex_1().h(4).rounded(2).bg(tint(t.working, "30", t.border)).overflow_hidden().child(div().h(4).w(`${Math.round(fr * 100)}%`).rounded(2).bg(t.working)))
+          .child(div().flex_none().text_size(10.5).text_color(t.working).child(dep.frac != null ? `${Math.round(fr * 100)}%${dep.remain != null ? ` · ${left(dep.remain).replace(" left", "")}` : ""}` : "…"))); }));
   }
 
   // A new space is a new shell on a machine (its default shell, in its home). The bar at the bottom asks which machine first (with
@@ -2766,9 +2790,13 @@ export default class Bhote extends View {
     if (!f || f.failed) return [];
     const c = f.key ? this.commits[f.key] : null;
     if (c?.error || (c && !c.list.length && !c.base)) return [];   // (nothing to show: no box)
+    let folded = false;
+    try { folded = shared("bhote.commitFold") === true; } catch (_e) { folded = false; }   // (kept across reloads)
+    const toggle = this.ibtn(t, "commit-fold", folded ? "chevron-up" : "chevron-down", (cx) => { try { setShared("bhote.commitFold", !folded); } catch (_e) { /* not kept */ } cx.notify(); }, { size: 14 });
     const head = this.dividerCaption(t, "Commit inspector", [
       ...(f.branch ? [div().flex_none().max_w(150).truncate().text_size(11).text_color(t.muted).child(f.branch)] : []),
-      ...(c && c.dirty > 0 ? [div().flex_none().text_size(11).text_color(t.ansi3).child(`${c.dirty} uncommitted`)] : [])]);
+      ...(c && c.dirty > 0 ? [div().flex_none().text_size(11).text_color(t.ansi3).child(`${c.dirty} uncommitted`)] : []), toggle]);
+    if (folded) return [v_flex().id("commit-inspector").flex_none().pt(4).pb(5).child(head)];
     // the rail: a line through a dot per commit, the dots at the x of the dots of the job rows below (px 15, ml 3, 8 wide)
     const line = (on) => div().w(2).flex_1().bg(on ? t.border : "#00000000");
     const now = Date.now();
@@ -2776,7 +2804,11 @@ export default class Bhote extends View {
       ? [h_flex().gap(9).items_center().px(15).h(24)
           .child(div().ml(3).w(8).flex_none().text_color(t.working).text_size(10).frames(SPIN, 90))
           .child(div().pl(5).text_size(12).text_color(t.dim).child("loading commits…"))]
-      : c.list.length ? [...(c.base ? [c.base] : []), ...[...c.list].reverse()].map((x, i, disp) => {   // (the base it left from on top, then the oldest, the newest at the bottom, where the work goes on)
+      : c.list.length ? (() => {
+          // a small screen (the left panel under 1000 px, as the home view counts it) shows the 5 newest commits only, without the base row
+          const small = this.leftH > 0 && this.leftH < 1000;
+          return small ? [...c.list.slice(0, 5)].reverse() : [...(c.base ? [c.base] : []), ...[...c.list].reverse()];
+        })().map((x, i, disp) => {   // (the base it left from on top, then the oldest, the newest at the bottom, where the work goes on)
           const isHead = i === disp.length - 1, isBase = !!x.base;
           // a new commit grows in from nothing (0.45 s, slowing down) and lights up in the accent colour, which then fades (2.2 s)
           const age = c.enter[x.hash] ? now - c.enter[x.hash] : 1e9;
@@ -4101,7 +4133,7 @@ export default class Bhote extends View {
       if (!live.length) continue;
       const total = p.checks.length, done = total - live.length;
       let part = 0, remain = null;
-      for (const c of live) { const med = this.typical(c.key); const el = c.started ? now - c.started : 0; part += med ? Math.min(0.95, el / med) : Math.min(0.9, 1 - Math.exp(-el / 360)); if (med && c.started) remain = Math.max(remain ?? 0, Math.max(0, med - el)); }
+      for (const c of live) { const el = c.started ? now - c.started : 0; const ex = c.started ? this.expected(c.key, el) : null; const med = ex?.total ?? 0; part += med ? Math.min(0.95, el / med) : Math.min(0.9, 1 - Math.exp(-el / 360)); if (ex) remain = Math.max(remain ?? 0, ex.remain); }
       rows.push({ branch: p.branch, sha: p.sha ?? "", project: p.project, label: `#${p.number} ${p.title}`, names: live.slice(0, 4).map((c) => clean(c.name)), more: Math.max(0, live.length - 4), pr: true,
         frac: Math.min(0.99, (done + part) / total), remain, done, total });
     }
