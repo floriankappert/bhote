@@ -9,6 +9,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 - The setting `PR_CHECKS_IGNORE` (default `codecov/*`): checks of pull requests that the herdr-app leaves out (not shown, not counted, they never turn a pull request red), names with `*` as a wildcard. For a status the code cannot fix, such as Codecov saying that the author is not an activated member of its organization; `bhote config set PR_CHECKS_IGNORE ""` takes the exception away again.
 
 ### Fixed
+- herdr-app: a message for an agent carries its text in the line the agent gets (up to 1500 characters); a longer one is read with the full path of kharka. Before, the line said `kharka get ...`, which an agent without kharka in its PATH could not run.
 - herdr-app: the ear on an agent's card works at once: a look at kharka that was under way cannot take the change back, and the messages that waited for the ear are handed over right away, not at the next round.
 
 ## [0.9.3] - 2026-11-10

@@ -2593,7 +2593,10 @@ export default class Bhote extends View {
           busy.add(lk);
           // an agent as sender is answered by its name; a message from the person (sent from bhote, no agent behind it) is answered in the session itself
           const reply = rec.fromRef ? ` To answer: bhote send ${rec.fromRef} "..."` : " It comes from the person, not from an agent: answer here in this session.";
-          const line = `Message from ${rec.from}${rec.title ? ` - ${rec.title}` : ""}. Read it with: kharka get ${k}  (the field text).${reply}`;
+          // the text itself is in the line (an agent often has no kharka in its PATH); only a long one is read from kharka, by the full path of the binary
+          const body = String(rec.text ?? "").replace(/\s+/g, " ").trim();
+          const read = body && body.length <= 1500 ? `Text: ${body}` : `Read it with: ${this.kharkaBin || "kharka"} get ${k}  (the field text).`;
+          const line = `Message from ${rec.from}${rec.title ? ` - ${rec.title}` : ""}. ${read}${reply}`;
           try {
             await exec("hc", ["send", hit.a.address, line.replace(/\s+/g, " ")], { timeout: 20000 });
             await this.kharka(["put", k, JSON.stringify({ ...rec, state: "delivered", deliveredAt: Math.floor(Date.now() / 1000) })]);
