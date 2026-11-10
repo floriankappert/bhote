@@ -14,6 +14,7 @@ mod menuui;
 mod agentsui;
 mod theme;
 mod cards;
+mod ring;
 mod follow;
 use std::collections::HashMap;
 use std::fs;

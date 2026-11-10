@@ -2358,7 +2358,7 @@ export default class Bhote extends View {
     const sp = spaces();
     for (const a of agents()) {
       const s = sp.find((q) => q.id === a.space);
-      if (s && (s.machine ?? this.localNode) === node && norm(s.name) === slug) return { a, sp: s };
+      if (s && (s.machine ?? this.localNode) === node && (norm(s.name) || "home") === slug) return { a, sp: s };
     }
     return null;
   }
@@ -2384,7 +2384,9 @@ export default class Bhote extends View {
           if (!this.listensTo(hit.sp).on) continue;                        // ear off: held
           if (!(hit.a.status === "idle" || hit.a.status === "done") || busy.has(lk)) continue;   // at work: when it is free, one at a time
           busy.add(lk);
-          const line = `Message from ${rec.from}${rec.title ? ` - ${rec.title}` : ""}. Read it with: kharka get ${k}  (the field text). To answer: bhote send <agent> "..." --from <your name>.`;
+          // an agent as sender is answered by its name; a message from the person (sent from bhote, no agent behind it) is answered in the session itself
+          const reply = rec.fromRef ? ` To answer: bhote send ${rec.fromRef} "..."` : " It comes from the person, not from an agent: answer here in this session.";
+          const line = `Message from ${rec.from}${rec.title ? ` - ${rec.title}` : ""}. Read it with: kharka get ${k}  (the field text).${reply}`;
           try {
             await exec("hc", ["send", hit.a.address, line.replace(/\s+/g, " ")], { timeout: 20000 });
             await this.kharka(["put", k, JSON.stringify({ ...rec, state: "delivered", deliveredAt: Math.floor(Date.now() / 1000) })]);
@@ -2406,7 +2408,7 @@ export default class Bhote extends View {
 
   listenKey(sp) {
     if (!sp?.name || (sp.machine == null && !this.localNode)) return null;
-    return `${sp.machine ?? this.localNode}/${norm(sp.name)}`;
+    return `${sp.machine ?? this.localNode}/${norm(sp.name) || "home"}`;   // (a space called "~" is home)
   }
 
   listensTo(sp) {

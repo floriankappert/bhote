@@ -2129,7 +2129,7 @@ idle_cards() {  # the agents that are idle and have no card (nothing in review, 
 done_mc() {  # done_mc <topic index>: DONE_MC = the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine
     local _m=${T_AM[$1]:-}; DONE_MC=""; [ -n "$_m" ] || return 0
     [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; [ "${MC_N:-0}" -gt 1 ] || return 0
-    agent_pane_code_set DONE_MC "$_m" "${T_AP[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # MAC/w3:a1 (the agent), else MAC
+    agent_ring_set DONE_MC "$_m" "${T_AG[$1]:-}"; [ -n "$DONE_MC" ] || agent_pane_code_set DONE_MC "$_m" "${T_AP[$1]:-}"; [ -n "$DONE_MC" ] || machine_code_set DONE_MC "$_m" || DONE_MC=""   # Frodo (its name), else MAC/w3:a1 (the pane), else MAC
 }
 done_block() {  # done_block <max>: the last done topics (newest first, a green check each), above the agents; a chosen one too
     bhoted_block done --max "$1" && return 0
@@ -2310,7 +2310,7 @@ agents_block() {  # the agents by project (a caption each; the panel's own proje
                 IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
                 [ "$m" = "$mm" ] && [ -z "${aidle[$i]}" ] || continue
                 if [ "$pm" = "-" ]; then project_name "${apj[$i]}" >/dev/null && continue; else [ "${apj[$i]}" = "$pm" ] || continue; fi
-                pre=""; plen=0; [ -n "$pre0" ] && { agent_pane_code_set pre "$m" "$id"; [ -n "$pre" ] && { pre="$pre|"; dw_set plen "$pre"; }; }
+                pre=""; plen=0; [ -n "$pre0" ] && { agent_ring_set pre "$m" "$name"; [ -n "$pre" ] || agent_pane_code_set pre "$m" "$id"; [ -n "$pre" ] && { pre="$pre|"; dw_set plen "$pre"; }; }
                 raw=$st; off=0; case "$st" in off-*) off=1; st=${st#off-} ;; esac   # its machine does not answer: as seen last, muted
                 case "$st" in working|testing) rkst=0 ;; blocked) rkst=1 ;; *) rkst=2 ;; esac; [ "$rkst" = "$rk" ] || continue
                 case "$st" in working|testing) ic="${ORANGE}${SPIN_CH:-✶}" ;; blocked) ic="${NN}◉" ;; *) ic="${D}○" ;; esac
@@ -3800,7 +3800,7 @@ RING_NAMES=(
 # The place of every agent record in the order they were made (created, then its normalised title): its rank. Deleted records count too, so that no name
 # moves when one goes. The numbers of bhote.agentnums count per machine (Mac 1…9, Omarchy 1…9), the rank is over all of them: one name for one agent.
 ring_norm() { printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -cd 'a-z0-9'; }
-RG_KEY=(); RG_RANK=(); RG_N=0; RG_AT=-999
+RG_KEY=(); RG_RANK=(); RG_TITLE=(); RG_N=0; RG_AT=-999
 ring_load() {
     local f line t c i j k n=0; local -a RT RC RK; [ $(( SECONDS - RG_AT )) -ge 5 ] || return 0; RG_AT=$SECONDS
     for f in "$TOPIC_DIR"/an-*.topic; do
@@ -3809,13 +3809,13 @@ ring_load() {
         [ -n "$t" ] || continue; case "$c" in ''|*[!0-9]*) c=0 ;; esac
         RT[$n]=$t; RC[$n]=$c; RK[$n]=$(ring_norm "$t"); n=$(( n + 1 ))
     done
-    RG_KEY=(); RG_RANK=(); RG_N=$n
+    RG_KEY=(); RG_RANK=(); RG_TITLE=(); RG_N=$n
     for (( i = 0; i < n; i++ )); do
         k=0
         for (( j = 0; j < n; j++ )); do
             if [ "${RC[$j]}" -lt "${RC[$i]}" ] || { [ "${RC[$j]}" -eq "${RC[$i]}" ] && [[ "${RK[$j]}" < "${RK[$i]}" ]]; }; then k=$(( k + 1 )); fi
         done
-        RG_KEY[$i]=${RK[$i]}; RG_RANK[$i]=$k
+        RG_KEY[$i]=${RK[$i]}; RG_RANK[$i]=$k; RG_TITLE[$i]=${RT[$i]}
     done
 }
 agent_ring_set() {  # agent_ring_set <var> <machine> <agent name>: its name from Middle-earth (Frodo, Sam …), the same on every machine; "" without a record
@@ -5199,30 +5199,67 @@ cli_reload() {  # bhote reload: restarts every bhote panel of this machine (afte
     done <<< "$(herdr pane list 2>/dev/null | jq -r '.result.panes[] | select((.agent // "") == "") | .pane_id' 2>/dev/null)"
     printf 'reloaded %d panel(s)%s\n' "$n" "$( [ "$skipped" -gt 0 ] && echo ", $skipped left alone")"
 }
+ring_name_of_rank() {  # ring_name_of_rank <var> <rank>: the name at that place of RING_NAMES (Frodo2 from the 61st on)
+    local _r=$(( $2 / ${#RING_NAMES[@]} ))
+    printf -v "$1" '%s' "${RING_NAMES[$(( $2 % ${#RING_NAMES[@]} ))]}$([ "$_r" -gt 0 ] && printf '%s' $(( _r + 1 )))"
+}
+party_set() {  # party_set <label var> <name var> <ref>: an agent found by its records alone (no list of agents needed, as on a machine without herdr-app):
+    # its Middle-earth name (Frodo), machine/name (Mac/bilendo), or a name on this machine (IMS-wt2). 1 when none matches.
+    local _i _n _l _w="" _t _rf; ring_load; _l=$(printf '%s' "$3" | LC_ALL=C tr '[:upper:]' '[:lower:]')
+    for (( _i = 0; _i < RG_N; _i++ )); do
+        ring_name_of_rank _n "${RG_RANK[$_i]}"
+        [ "$(printf '%s' "$_n" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$_l" ] && { _w=${RG_TITLE[$_i]}; break; }
+    done
+    if [ -z "$_w" ]; then
+        _rf=$(ring_norm "$3"); [ "${3#*/}" != "$3" ] || _rf=$(ring_norm "${HOST:-}/$3")
+        for (( _i = 0; _i < RG_N; _i++ )); do [ "${RG_KEY[$_i]}" = "$_rf" ] && { _w=${RG_TITLE[$_i]}; break; }; done
+    fi
+    [ -n "$_w" ] || return 1
+    printf -v "$1" '%s' "${_w%%/*}"; printf -v "$2" '%s' "${_w#*/}"
+}
+node_of_label() {  # node_of_label <var> <machine label>: the kharka node of a machine (this one: kharka whoami; the others publish their label in herdr/<node>)
+    local _node="" _k _lb
+    if [ "$2" = "${HOST:-}" ]; then _node=$(kharka_run whoami 2>/dev/null)
+    else
+        for _k in $(kharka_run ls herdr 2>/dev/null); do
+            _lb=$(kharka_run get "$_k" 2>/dev/null | jq -r '.label // empty' 2>/dev/null); [ "$_lb" = "$2" ] && { _node=${_k#herdr/}; break; }
+        done
+    fi
+    printf -v "$1" '%s' "$_node"
+}
 cli_send() {  # bhote send <agent> <text...> [--title <t>] [--from <name>]: a message for another agent
     # It is kept in kharka (msg/<node>/<name>/<id>, state queued). The herdr-app takes it to the agent (a one-line prompt that says where to read it) as soon as
-    # the ear on the agent's card is on and the agent is free; with the ear off it waits. <agent> is any agent ref: its name (Frodo), a number, machine/pane.
-    local ref="" text="" title="" from=${BHOTE_FROM:-} node="" slug rn id key json lbl k v
+    # the ear on the agent's card is on and the agent is free; with the ear off it waits. <agent> is any agent ref: its name (Frodo), a number, machine/pane;
+    # on a machine that has no list of agents (no herdr-app) its name or machine/name from the records is enough.
+    local ref="" text="" title="" from=${BHOTE_FROM:-} node="" slug rn id key json k v fm="" fname="" fring="" fref="" tm="" tname="" wh=""
     while [ $# -gt 0 ]; do
         case "$1" in --title|-t) title=${2:-}; shift ;; --from) from=${2:-}; shift ;; *) if [ -z "$ref" ]; then ref=$1; else text="${text:+$text }$1"; fi ;; esac
         shift
     done
     { [ -n "$ref" ] && [ -n "$text" ]; } || { echo "bhote: send <agent> <text> [--title <t>] [--from <name>]" >&2; return 1; }
     kharka_found || { echo "bhote: send needs kharka (the setting KHARKA)" >&2; return 1; }
-    cli_agents_load; agent_ref "$ref" || return $?
-    if [ "$AR_M" = "$HOST" ]; then node=$(kharka_run whoami 2>/dev/null)
-    else kharka_node_of "$AR_M" && node=$KN_NODE
-        if [ -z "$node" ]; then   # (a label is the alias of a herdr machine: MACHINE_LABELS name=Label)
-            lbl=$(cfg_get MACHINE_LABELS ""); for k in ${lbl//,/ }; do v=${k#*=}; [ "$v" = "$AR_M" ] && node=${k%%=*}; done
-        fi
-        [ -n "$node" ] || node=$AR_M
+    cli_agents_load 2>/dev/null
+    # who sends: the agent that --from names, else the agent this is called from (its terminal, HC_TERMINAL_ID); the receiver answers to its name
+    if [ -n "$from" ]; then
+        if agent_ref "$from" 2>/dev/null; then fm=$AR_M; fname=$AR_NAME; else party_set fm fname "$from" || { fm=""; fname=""; }; fi
+    elif [ -n "${HC_TERMINAL_ID:-}" ]; then
+        if agent_ref "$HOST/$HC_TERMINAL_ID" 2>/dev/null; then fm=$AR_M; fname=$AR_NAME
+        else wh=$(hc get "$HC_TERMINAL_ID" 2>/dev/null | jq -r '.labels.where // empty' 2>/dev/null); [ -n "$wh" ] && { fm=${HOST:-}; fname=${wh%% / *}; }; fi
     fi
-    [ -n "$node" ] || { echo "bhote: no kharka node for $AR_M" >&2; return 1; }
-    slug=$(ring_norm "$AR_NAME"); agent_ring_set rn "$AR_M" "$AR_NAME"
+    if [ -n "$fname" ]; then agent_ring_set fring "$fm" "$fname"; fref=${fring:-}; fi
+    # to whom: from the list of agents, else from the records
+    if agent_ref "$ref" 2>/dev/null; then tm=$AR_M; tname=$AR_NAME
+    else party_set tm tname "$ref" || { echo "bhote: no agent matches '$ref' (bhote agents)" >&2; return 1; }; fi
+    node_of_label node "$tm"
+    if [ -z "$node" ]; then   # (a label is the alias of a herdr machine: MACHINE_LABELS name=Label)
+        for k in $(cfg_get MACHINE_LABELS "" | tr ',' ' '); do v=${k#*=}; [ "$v" = "$tm" ] && node=${k%%=*}; done
+    fi
+    [ -n "$node" ] || { echo "bhote: no kharka node for $tm" >&2; return 1; }
+    slug=$(ring_norm "$tname"); [ -n "$slug" ] || slug=home; agent_ring_set rn "$tm" "$tname"   # (a name without letters, "~", is home)
     id="$(date +%s)-$$"; key="msg/$node/$slug/$id"
-    json=$(jq -cn --arg from "${from:-$HOST}" --arg to "$AR_NAME" --arg title "$title" --arg text "$text" --argjson at "$(date +%s)" '{from: $from, to: $to, title: $title, text: $text, at: $at, state: "queued"}') || return 1
+    json=$(jq -cn --arg from "${fring:-${from:-the user}}" --arg fromRef "$fref" --arg to "$tname" --arg title "$title" --arg text "$text" --argjson at "$(date +%s)" '{from: $from, fromRef: $fromRef, to: $to, title: $title, text: $text, at: $at, state: "queued"}') || return 1
     kharka_run put "$key" "$json" >/dev/null || { echo "bhote: kharka did not take the message" >&2; return 1; }
-    echo "queued for ${rn:-$AR_NAME} ($AR_M): it gets it when its ear is on and it is free ($key)"
+    echo "queued for ${rn:-$tname} ($tm), from ${fring:-${from:-the user}}${fref:+ (it answers with: bhote send $fref ...)}: it gets it when its ear is on and it is free ($key)"
 }
 cli_update() {  # bhote update: asks GitHub now; prints whether there is a newer version and the command that updates
     update_fetch || { echo "bhote: could not ask GitHub (offline?)" >&2; return 1; }

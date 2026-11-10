@@ -454,6 +454,7 @@ impl<'a> Cards<'a> {
     /// done_mc: the agent that did it (w3:a1, MAC/w3:a1 on another machine), only with more than one machine
     fn done_mc(&self, t: &Topic) -> String {
         if t.am.is_empty() || self.v.mcodes.len() <= 1 { return String::new(); }
+        if let Some(n) = crate::ring::name(&self.c.topics, &t.am, &t.ag) { return n; }   // (its name from Middle-earth, the pane code while it has none)
         let p = &t.ap;
         let ok = p.starts_with('w') && p.len() > 1 && p.chars().nth(1).map_or(false, |c| c.is_ascii_alphanumeric()) && p.contains(":p") && p.rsplit(":p").next().map_or(false, |n| n.starts_with(|c: char| c.is_ascii_digit()));
         if ok {

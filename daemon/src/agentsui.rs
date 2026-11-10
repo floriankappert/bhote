@@ -164,7 +164,7 @@ impl<'a> Cards<'a> {
                     for i in 0..ag.len() {
                         let r = &ag[i]; if r.m != *mm || !in_pm(pm, i) { continue; }
                         let (mut pr, mut plen) = (String::new(), 0i64);
-                        if !pre0.is_empty() { pr = self.pane_code(&r.m, &r.id, mcodes); if !pr.is_empty() { pr.push('|'); plen = dw(&pr); } }
+                        if !pre0.is_empty() { pr = crate::ring::name(&self.c.topics, &r.m, &r.name).unwrap_or_else(|| self.pane_code(&r.m, &r.id, mcodes)); if !pr.is_empty() { pr.push('|'); plen = dw(&pr); } }   // (its name from Middle-earth, the pane code while it has none)
                         let raw = r.st.clone(); let mut off = false; let mut st = r.st.as_str();
                         if let Some(s) = st.strip_prefix("off-") { off = true; st = s; }
                         let rkst = match st { "working" | "testing" => 0, "blocked" => 1, _ => 2 };

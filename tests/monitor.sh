@@ -384,13 +384,15 @@ cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
 ( js=$(sed -n '/^const RING = \[/,/^\];/p' herdr-app/mods/bhote/main.js | grep -o '"[A-Za-z]*"' | tr -d '"' | tr '\n' ' ')
   sh_=$(BHOTE_SOURCE_ONLY=1; . ./bhote; printf '%s ' "${RING_NAMES[@]}")
   [ "$js" = "$sh_" ] || exit 1
+  rs_=$(sed -n '/^pub const RING_NAMES/,/^\];/p' daemon/src/ring.rs | grep -o '"[A-Za-z]*"' | tr -d '"' | tr '\n' ' ')   # (the Rust panel has the list, too)
+  [ "$rs_" = "$sh_" ] || exit 4
   [ "$(printf '%s\n' $js | wc -l | tr -d ' ')" -ge 50 ] || exit 2
   ad=$T/an; rm -rf "$ad"; mkdir -p "$ad"
   mk() { printf 'id=an-%s\nkind=agentnum\ntitle=%s\nnum=%s\ncreated=%s\nupdated=%s\ndeleted=%s\n' "$1" "$2" "$3" "$4" "$4" "${5:-0}" > "$ad/an-$1.topic"; }
   mk a "Mac/IMS (main)" 1 20; mk b "Omarchy/bhote" 1 10; mk c "Mac/old" 2 15 1; mk d "Omarchy/IMS (wt1)" 2 30
   r=$( BHOTE_SOURCE_ONLY=1; . ./bhote; TOPIC_DIR=$ad; RG_AT=-999; for k in "Omarchy/bhote" "Mac/old" "Mac/IMS (main)" "Omarchy/IMS-wt1" "Mac/none"; do m=${k%%/*}; agent_ring_set x "$m" "${k#*/}"; printf '%s,' "$x"; done )
   [ "$r" = "Frodo,Sam,Merry,Pippin,," ] || { echo "$r" >&2; exit 3; }   # (rank, not number: the two agents numbered 1 are two names; a deleted one keeps its place; a herdr-app name matches the old one)
-  exit 0 ) && ok "agent names: one list in script and mod, the rank of the record gives the name" || bad "agent names: step $?"
+  exit 0 ) && ok "agent names: one list in script, mod and Rust panel, the rank of the record gives the name" || bad "agent names: step $?"
 
 # the version in the panel: on its release tag it is the version, past the tag (local work) its local build number
 ( vd=$T/vl; rm -rf "$vd"; mkdir -p "$vd"; cp ./bhote "$vd/bhote"; cd "$vd" || exit 9

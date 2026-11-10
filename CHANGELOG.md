@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Agent names in the panels of the terminal** (Rust and bash): the agent list and the done cards show Frodo, Sam … instead of `w2:a1` (the pane code stays while an agent has no record yet).
+- `bhote send` needs no list of agents: on a machine without herdr-app (Omarchy: `bhote agents` is empty there) the target and the sender are found by their records (a name like Saruman, `machine/name`, or a name on this machine with `--from`), the machine's node by the label in `herdr/<node>`; a message from the person (not from an agent) says "the user" and is answered in the session. A space called `~` is `home` in the keys.
 - **`bhote send <agent> <text>`** and an ear that picks messages up: a message for an agent is kept in kharka (`msg/<node>/<name>/<id>`) and the herdr-app hands it to the agent, as a one-line prompt, when the ear on its card is on and the agent is free; with the ear off, or while it works, it waits (the card counts them next to the ear).
 - herdr-app: the **start menu of a topic** names the machines by their alias (Mac, Omarchy) like everywhere else.
 - herdr-app: a **service that does not start** is shown: the card turns red with the reason and the last lines of its log (the start command ended without the port answering, or no answer within 2 minutes), and a **topic in review** (`<name> did not start on <machine>`, the log's key line as its description, in the service's project) is made once per start.
