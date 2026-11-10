@@ -4195,29 +4195,30 @@ export default class Bhote extends View {
   }
 
   tile(t, id, o) {
-    const small = this.compactTiles();   // small: a smaller tile, only the figure and what it says; the three short lines are left out
+    const small = this.compactTiles();
+    const red = !!o.red;   // something in it is red (a failed test, deployment or pull request): the tile is red, its text light   // small: a smaller tile, only the figure and what it says; the three short lines are left out
     return v_flex().id(`tile-${id}`).flex_1().h(small ? 118 : 238).min_w(0).overflow_hidden().gap(small ? 2 : 4).p(small ? 10 : 12).rounded(12).cursor_pointer()
-      .bg(t.surface).border(1).border_color(o.border ?? t.border).hover((e) => e.bg(t.raised))
+      .bg(red ? "#8e1b2c" : t.surface).border(1).border_color(red ? "#e5484d" : o.border ?? t.border).hover((e) => e.bg(red ? "#a3203a" : t.raised))
       .on_click((_e, cx) => this.setTab(cx, id))
       .child(h_flex().flex_none().gap(6).items_center()
-        .child(div().w(8).h(8).rounded(4).flex_none().bg(o.accent ?? t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).font_semibold().text_color(t.dim).child(o.title.toUpperCase()))
-        .when(!!o.badge, (el) => el.child(div().px(6).rounded(8).text_size(10).bg("#a8162e").text_color("#ffffff").child(String(o.badge)))))
+        .child(div().w(8).h(8).rounded(4).flex_none().bg(red ? "#ffffff" : o.accent ?? t.dim))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).font_semibold().text_color(red ? "#fecdd3" : t.dim).child(o.title.toUpperCase()))
+        .when(!!o.badge, (el) => el.child(div().px(6).rounded(8).text_size(10).bg(red ? "#ffffff" : "#a8162e").text_color(red ? "#8e1b2c" : "#ffffff").child(String(o.badge)))))
       .child(h_flex().flex_none().items_end().gap(8).pt(small ? 0 : 4)
-        .child(div().text_size(small ? 24 : 32).font_semibold().text_color(o.bigColor ?? t.foreground).child(String(o.big)))
+        .child(div().text_size(small ? 24 : 32).font_semibold().text_color(red ? "#ffffff" : o.bigColor ?? t.foreground).child(String(o.big)))
         // the small tile has no room for the time in the bar: it stands beside the figure
-        .when(small && !!o.bar && o.bar.remain != null, (el) => el.child(div().pb(small ? 4 : 6).text_size(11.5).text_color(t.working).child(left(o.bar.remain)))))
-      .child(div().flex_none().truncate().text_size(small ? 11.5 : 12).text_color(t.muted).child(o.label ?? ""))
-      .when(!(small && o.bar), (el) => el.child(div().flex_none().truncate().text_size(small ? 10.5 : 11).text_color(t.dim).child(o.sub ?? "")))   // the small tile has room for the bar or the line, not both
+        .when(small && !!o.bar && o.bar.remain != null, (el) => el.child(div().pb(small ? 4 : 6).text_size(11.5).text_color(red ? "#ffe4e6" : t.working).child(left(o.bar.remain)))))
+      .child(div().flex_none().truncate().text_size(small ? 11.5 : 12).text_color(red ? "#ffe4e6" : t.muted).child(o.label ?? ""))
+      .when(!(small && o.bar), (el) => el.child(div().flex_none().truncate().text_size(small ? 10.5 : 11).text_color(red ? "#fecdd3" : t.dim).child(o.sub ?? "")))   // the small tile has room for the bar or the line, not both
       .when(!!o.bar, (el) => el.child(h_flex().flex_none().gap(8).items_center().pt(2)
-        .child(div().flex_1().h(5).rounded(3).bg(t.border).overflow_hidden().child(div().h(5).w(`${Math.round(o.bar.frac * 100)}%`).rounded(3).bg(t.working)))
-        .child(div().flex_none().text_size(10.5).text_color(t.working).child(`${Math.round(o.bar.frac * 100)}%${o.bar.remain != null && !small ? ` · ${left(o.bar.remain)}` : ""}`))))
-      .when(!small, (el) => el.child(div().flex_none().h(1).my(6).bg(t.border))
+        .child(div().flex_1().h(5).rounded(3).bg(red ? "#ffffff33" : t.border).overflow_hidden().child(div().h(5).w(`${Math.round(o.bar.frac * 100)}%`).rounded(3).bg(red ? "#ffffff" : t.working)))
+        .child(div().flex_none().text_size(10.5).text_color(red ? "#ffe4e6" : t.working).child(`${Math.round(o.bar.frac * 100)}%${o.bar.remain != null && !small ? ` · ${left(o.bar.remain)}` : ""}`))))
+      .when(!small, (el) => el.child(div().flex_none().h(1).my(6).bg(red ? "#ffffff33" : t.border))
         .child(v_flex().flex_1().gap(6).min_h(0).overflow_hidden().children((o.rows ?? []).slice(0, 3).map((r) => h_flex().gap(7).items_center().text_size(11.5)
-          .child(div().w(6).h(6).rounded(3).flex_none().bg(r.color ?? t.dim))
-          .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(r.text))
-          .when(!!r.right, (e) => e.child(div().flex_none().text_size(10.5).text_color(r.rightColor ?? t.dim).child(r.right))))))
-        .when(!(o.rows ?? []).length, (e) => e.child(div().text_size(11.5).text_color(t.dim).child(o.empty ?? "nothing yet"))));
+          .child(div().w(6).h(6).rounded(3).flex_none().bg(red ? "#ffd1d6" : r.color ?? t.dim))
+          .child(div().flex_1().min_w(0).truncate().text_color(red ? "#ffffff" : t.foreground).child(r.text))
+          .when(!!r.right, (e) => e.child(div().flex_none().text_size(10.5).text_color(red ? "#fecdd3" : r.rightColor ?? t.dim).child(r.right))))))
+        .when(!(o.rows ?? []).length, (e) => e.child(div().text_size(11.5).text_color(red ? "#fecdd3" : t.dim).child(o.empty ?? "nothing yet"))));
   }
 
   // The deployments that run, for the left panel (which does not ask CI itself): the branch they are for, what they are, how far they are.
@@ -4348,7 +4349,7 @@ export default class Bhote extends View {
         .child(this.tile(t, "prs", { title: "Pull requests", accent: prsFailed ? t.blocked : t.done, badge: prsFailed || null, big: prs.length, bigColor: prsFailed ? t.blocked : t.foreground,
           label: prs.length === 1 ? "open pull request" : "open pull requests", bar: this.prsBar(prs),
           sub: !this.prAt ? "asking GitHub..." : prsFailed ? `${prsFailed} with failing checks` : prs.length ? "all checks fine" : "nothing open",
-          rows: prRows, empty: this.prAt ? "no open pull requests" : "loading", border: prsFailed ? "#a8162e" : undefined })))
+          rows: prRows, empty: this.prAt ? "no open pull requests" : "loading", red: prsFailed > 0, border: prsFailed ? "#a8162e" : undefined })))
       .child(h_flex().flex_none().gap(10)
         .child(this.tile(t, "deploys", { title: "Deployments", accent: depFailed ? t.blocked : depRunning ? t.working : t.done, badge: depFailed || null,
           big: depRunning ? depRunning : deploys.length ? dword(deploys[0]) : "–", bigColor: depRunning ? t.working : deploys.length ? dcolor(deploys[0]) : t.dim,
@@ -4357,10 +4358,10 @@ export default class Bhote extends View {
           sub: [watched.length ? `${watched.join(", ")} watched` : "no project watched", switchedOff ? `${switchedOff} off` : ""].filter(Boolean).join(" · "),
           rows: deploys.map((x) => ({ text: x.state === "ok" || x.state === "failed" ? `${x.project} · ${this.whatOf(x).text || x.label}` : `${x.project} · ${x.label}`,
             color: dcolor(x), right: x.state === "running" || x.state === "waiting" ? dword(x) : ago(x.time), rightColor: dcolor(x) })),
-          empty: watched.length ? "no pipeline seen on the deploy branches yet" : "all projects are switched off (DEPLOY_PROJECTS_OFF)", border: depFailed ? "#a8162e" : undefined }))
+          empty: watched.length ? "no pipeline seen on the deploy branches yet" : "all projects are switched off (DEPLOY_PROJECTS_OFF)", red: depFailed > 0, border: depFailed ? "#a8162e" : undefined }))
         .child(this.tile(t, "tests", { title: "Tests", accent: tFailed.length ? t.blocked : tRunning ? t.working : t.done, badge: tFailed.length || null,
           big: tFailed.length || tRunning || tPassed.length, bigColor: tFailed.length ? t.blocked : tRunning ? t.working : t.done, label: tFailed.length ? "failed" : tRunning ? "running" : "passed",
-          bar: this.runsBar(shown, "t"), sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", border: tFailed.length ? "#a8162e" : undefined })));
+          bar: this.runsBar(shown, "t"), sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", red: tFailed.length > 0, border: tFailed.length ? "#a8162e" : undefined })));
     const list = this.right();
     const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id), this.tilesToggle(t));
     return v_flex().id("home-root").size_full().bg(t.chrome)

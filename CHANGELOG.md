@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- herdr-app: a tile of the overview (Pull requests, Deployments, Tests) is **red with light text** while something in it is red: a failed test run, a failed deployment, a pull request with a failing check.
 - The setting `PR_CHECKS_IGNORE` (default `codecov/*`): checks of pull requests that the herdr-app leaves out (not shown, not counted, they never turn a pull request red), names with `*` as a wildcard. For a status the code cannot fix, such as Codecov saying that the author is not an activated member of its organization; `bhote config set PR_CHECKS_IGNORE ""` takes the exception away again.
 
 ### Fixed
