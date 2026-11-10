@@ -6423,6 +6423,35 @@ act_pickstart() {                                                               
     topic_set "$f" agent_session "$sess"; topic_set "$f" delegated "$(date +%s)"
     agent_send "$m" "$id" "Your bhote topic: $(delegation_text "$f")"; : > "$STORE_DIRTY"; sleep 0.3
 }
+act_startmsg() {  # <topic id> <machine label> <pane> <name>: hand the topic to that agent as a message (kharka msg/…): the ear of the agent and the agent being free decide when it takes it
+    ui_load; local f m=$2 id=$3 name=$4 node="" slug json old k v
+    f=$(topic_file_of "$1"); [ -f "$f" ] || return 0
+    old=$(topic_get "$f" start_msg); [ -n "$old" ] && kharka_run del "$old" >/dev/null 2>&1   # (a new choice replaces a message that still waits)
+    node_of_label node "$m"
+    if [ -z "$node" ]; then for k in $(cfg_get MACHINE_LABELS "" | tr ',' ' '); do v=${k#*=}; [ "$v" = "$m" ] && node=${k%%=*}; done; fi
+    [ -n "$node" ] || return 0
+    slug=$(ring_norm "$name"); [ -n "$slug" ] || slug=home
+    json=$(jq -cn --arg to "$name" --arg title "$(topic_get "$f" title)" --arg text "Your bhote topic: $(delegation_text "$f")" --arg topic "$1" --argjson at "$(date +%s)" \
+        '{from: "the user", fromRef: "", to: $to, title: $title, text: $text, at: $at, state: "queued", topic: $topic}') || return 0
+    k="msg/$node/$slug/$(date +%s)-$$"; kharka_run put "$k" "$json" >/dev/null || return 0
+    topic_set "$f" status now; topic_set "$f" waiting_for ""
+    topic_set "$f" start_msg "$k"; topic_set "$f" start_agent "$name"; topic_set "$f" start_machine "$m"; topic_set "$f" start_pane "$id"
+    : > "$STORE_DIRTY"
+}
+act_startdone() {  # <topic id>: the agent has taken the message: it is the agent of the topic now, and it stays (the topic cannot go to another one from the panel)
+    ui_load; local f m id name sess; f=$(topic_file_of "$1"); [ -f "$f" ] || return 0
+    m=$(topic_get "$f" start_machine); id=$(topic_get "$f" start_pane); name=$(topic_get "$f" start_agent); [ -n "$m" ] || return 0
+    agent_live "$m" "$id"; sess=$LIVE_SESS
+    topic_set "$f" agent "$name"; topic_set "$f" agent_machine "$m"; topic_set "$f" agent_pane "$id"; topic_set "$f" agent_session "$sess"; topic_set "$f" delegated "$(date +%s)"
+    topic_set "$f" start_msg ""; topic_set "$f" start_agent ""; topic_set "$f" start_machine ""; topic_set "$f" start_pane ""
+    : > "$STORE_DIRTY"
+}
+act_startcancel() {  # <topic id>: the message that still waits is taken back
+    ui_load; local f k; f=$(topic_file_of "$1"); [ -f "$f" ] || return 0
+    k=$(topic_get "$f" start_msg); [ -n "$k" ] && kharka_run del "$k" >/dev/null 2>&1
+    topic_set "$f" start_msg ""; topic_set "$f" start_agent ""; topic_set "$f" start_machine ""; topic_set "$f" start_pane ""
+    : > "$STORE_DIRTY"
+}
 act_transfer() {                                                                                       # <topic id> <machine> <pane> <name> [force]
     ui_load; local f; f=$(topic_file_of "$1"); [ -f "$f" ] || return 0; [ "${5:-}" = force ] && TRANSFER_FORCE=1
     transfer_start "$f" "$(topic_get "$f" agent_machine)" "$(topic_get "$f" agent_pane)" "$(topic_get "$f" agent agent)" "$2" "$3" "$4" 2>/dev/null; TRANSFER_FORCE=""; sleep 0.3
@@ -7217,7 +7246,7 @@ bhote_cli() {
         dump) if [ "${1:-}" = --packed ]; then topics_dump_packed; else topics_dump; fi ;;   # for the herdr plugin action "dump"
         current) bhote_info; cli_current "$@" ;;
         reminder) bhote_info; cli_reminder "$@" ;;
-        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
+        __act) case "${1:-}" in agent_jump|topic_jump|review|dismiss|flash|clamp|resume|deploy|pickstart|startmsg|startdone|startcancel|transfer|slack) bhote_info; "act_${1}" "${@:2}" ;; *) exit 2 ;; esac ;;   # (what the Rust panel asks for; nothing else)
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;
