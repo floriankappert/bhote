@@ -448,6 +448,9 @@ export default class Bhote extends View {
     this.kharkaBin = "";          // KHARKA: the kharka binary (empty: from the PATH)
     this.listenDefault = true;    // AGENT_LISTEN: do agents accept messages from other agents unless their card says otherwise
     this.listenMap = {};          // `${node}/${name}`: the records of listen/ in kharka ({ listening, name, at })
+    this.startedAt = Date.now();  // (what is there in the first seconds is not "new")
+    this.entered = {};            // by list: { seen, at } what has been seen and when something new came in (enterBegin, enterWrap)
+    this.animUntil = 0;           // a card or row is coming in until then: the view looks again every 70 ms
     this.agDrag = null;           // an agent card being moved: { id (its space), mk (its machine), over (the space under the pointer) }
     this.agMoved = false;         // (a press that moved a card is not a click that shows the agent)
     this.msgDone = new Set();     // messages (msg/… in kharka) that are handed over or not for us
@@ -520,6 +523,7 @@ export default class Bhote extends View {
     });
     if (this.side === "right") cx.timer.after(3000, (cx) => { const m = this.cfgMeta(); if (!m || Date.now() - (m.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); });   // (the settings dialog opens at once)
     if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
+    if (this.side === "right") cx.timer.every(70, (cx) => { if (Date.now() < (this.animUntil ?? 0)) cx.notify(); });   // (what comes in is drawn again while it does)
     if (this.side === "right") { this.loadLiveTests(cx); cx.timer.every(5000, (cx) => this.loadLiveTests(cx)); }
     this.pulsing = false;
     if (this.side === "right") cx.timer.every(100, (cx) => { if (this.pulsing) { this.pulsing = false; cx.notify(); } });   // (a render that draws a pulsing circle sets it again)
@@ -534,7 +538,7 @@ export default class Bhote extends View {
     this.agentCwd = {};     // an agent's address: the folder it runs in
     this.monReady = {};     // machines where monitors.py is in place
     this.monLoading = false;
-    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < (this.commitAnimUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
+    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < Math.max(this.commitAnimUntil ?? 0, this.animUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
     if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); cx.timer.every(4000, (cx) => this.loadMessages(cx)); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
@@ -1720,6 +1724,7 @@ export default class Bhote extends View {
     const clock = (e) => { const d = new Date(e * 1000); const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; return d.toDateString() === new Date().toDateString() ? hm : `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][d.getDay()]} ${hm}`; };
     const add = div().id("headless-add").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).text_color(t.dim).cursor_pointer()
       .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(() => this.openHeadless())).child("＋");
+    this.enterBegin("jobs", list.map((j) => `${this.srvKey(j.machine)}|${j.timer}`));
     return [v_flex().flex_none().pt(4).pb(3)
       .child(this.dividerCaption(t, "Headless agents", [...(list.length ? [div().flex_none().text_size(10.5).text_color(t.dim).child(String(list.length))] : []), add]))
       .children(list.map((j) => {
@@ -1727,16 +1732,18 @@ export default class Bhote extends View {
         const pend = this.jobPending[pk];
         const color = j.failed ? t.blocked : j.running || pend?.what === "run" ? t.working : j.on ? (t.ansi2 ?? t.done) : t.ansi3;
         const note = pend ? "…" : j.running ? "running" : !j.on ? "paused" : j.next ? clock(j.next) : "";
-        return h_flex().id(`job-${pk}`).gap(9).items_center().px(15).h(24)
+        const jrow = h_flex().id(`job-${pk}`).gap(9).items_center().px(15).h(24)
           .child(j.running || pend ? div().ml(3).w(9).flex_none().text_color(color).text_size(10).frames(SPIN, 90) : div().ml(3).w(8).h(8).rounded(4).flex_none().bg(color))
-          .child(div().flex_1().min_w(0).truncate().pl(5).text_size(12).text_color(j.on ? t.foreground : t.muted).child(j.name))
-          .child(div().flex_none().px(6).h(16).flex().items_center().rounded(8).text_size(10).text_color(t.dim).border(1).border_color(t.border).child(this.machineLabel(j.machine)))   // (where it runs)
+          .child(div().min_w(0).truncate().pl(5).text_size(12).text_color(j.on ? t.foreground : t.muted).child(j.name))
+          .child(div().flex_none().px(6).h(16).flex().items_center().rounded(8).text_size(10).text_color(t.dim).border(1).border_color(t.border).child(this.machineLabel(j.machine)))   // (where it runs: right behind the name)
+          .child(div().flex_1().min_w(0))
           .child(div().flex_none().text_size(11).text_color(j.failed ? t.blocked : t.dim).child(j.failed && !j.running ? "failed" : note))
           .child(this.ibtn(t, `job-log-${pk}`, "log", (cx) => this.jobLog(cx, j), { color: t.muted }))
           .child(j.running
             ? this.ibtn(t, `job-kill-${pk}`, "stop", (cx) => this.jobDo(cx, j, "kill"), { dim: !!pend, color: t.muted, hover: t.blocked })   // (end the run that is going on)
             : j.adhoc ? div().w(20).flex_none() : this.ibtn(t, `job-run-${pk}`, "zap", (cx) => this.jobDo(cx, j, "run"), { dim: !!pend, color: t.accent }))
           .child(j.adhoc ? div().w(20).flex_none() : this.ibtn(t, `job-pause-${pk}`, j.on ? "pause" : "play", (cx) => this.jobDo(cx, j, j.on ? "pause" : "resume"), { dim: !!pend, color: j.on ? t.muted : (t.ansi2 ?? t.done) }));
+        return this.enterWrap(t, "jobs", pk, jrow, 24);
       }))];
   }
 
@@ -2336,6 +2343,25 @@ export default class Bhote extends View {
         .child(v_flex().id("set-list").flex_1().min_h(0).overflow_y_scrollbar().children(body)));
   }
 
+  // What comes in is animated, as the commits of the inspector are: a card or a row that was not there before (not on the first look at its list, and not in the first
+  // seconds of the view) grows in (0.45 s, slowing down), fades in and lights up in the accent colour, which fades out (2.2 s). enterBegin tells a list what is
+  // there now (once per drawing), enterWrap wraps what is drawn for one entry; a settled entry is not wrapped, so the layout stays as it was.
+  enterBegin(list, ids) {
+    const L = (this.entered[list] ??= { seen: new Set(), at: {}, init: false });
+    if (!L.init || Date.now() - this.startedAt < 4000) { if (ids.length || Date.now() - this.startedAt >= 4000) L.init = true; for (const i of ids) L.seen.add(i); return; }
+    for (const i of ids) if (!L.seen.has(i)) { L.seen.add(i); L.at[i] = Date.now(); this.animUntil = Math.max(this.animUntil ?? 0, Date.now() + 2400); }
+  }
+
+  enterWrap(t, list, id, child, natural = 64) {
+    const at = this.entered[list]?.at[id];
+    const age = at ? Date.now() - at : 1e9;
+    if (age >= 2300) return child;
+    const p = Math.min(1, age / 450), e = 1 - (1 - p) * (1 - p) * (1 - p);
+    const glow = Math.round(0x34 * Math.max(0, 1 - age / 2200)).toString(16).padStart(2, "0");
+    return div().flex_none().overflow_hidden().max_h(p < 1 ? Math.max(1, Math.round(natural * e)) : 2000).opacity(p < 1 ? e : 1).rounded(8)
+      .bg(tint(t.accent, glow, t.chrome)).child(child);
+  }
+
   // A divider line with its caption on it (like the legend of a frame): CAPTION ───────── what belongs to it at the right.
   dividerCaption(t, text, right = []) {
     return h_flex().flex_none().gap(8).px(10).h(22).items_center()
@@ -2664,6 +2690,7 @@ export default class Bhote extends View {
     const sp = spaces();
     const list = agents();
     if (!sp.length && !list.length) return [empty(t, "◌", "No agents running", "Start an agent in a space and its card shows up here")];
+    this.enterBegin("agents", [...sp.map((q) => `s-${q.id}`), ...list.map((a) => `a-${a.address}`)]);
     const machineOf = (a) => sp.find((s) => s.id === a.space)?.machine ?? null;
     // a space that has its default name (the shell in the home folder: "~", or the user's name on another machine) is called "<machine>: ~"
     const homeName = home().split("/").pop();
@@ -2691,8 +2718,8 @@ export default class Bhote extends View {
         const mine = list.filter((a) => a.space === s.id);
         if (!mine.length) {
           // a workspace without an agent: a card too, quieter, a click shows the workspace
-          rows.push(this.card(t, `s-${s.id}`, { dragId: s.id, dragMk: mk, agent: null, name: titled(s) ?? s.name, branch: s.branch,
-            st: { word: "", color: t.dim, bar: t.idle }, selected: s.active, dim: true, flat: true, onClick: () => run("space.select", { id: s.id }) }));
+          rows.push(this.enterWrap(t, "agents", `s-${s.id}`, this.card(t, `s-${s.id}`, { dragId: s.id, dragMk: mk, agent: null, name: titled(s) ?? s.name, branch: s.branch,
+            st: { word: "", color: t.dim, bar: t.idle }, selected: s.active, dim: true, flat: true, onClick: () => run("space.select", { id: s.id }) }), 44));
           continue;
         }
         // an agent is a card of its own: topics are not mixed in, a topic meets an agent when it is started on one
@@ -2702,7 +2729,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
+          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }), 84));
         }
       }
       if (ins === ids.length) rows.push(dropLine());   // (to the end of the section)
@@ -2891,12 +2918,13 @@ export default class Bhote extends View {
     let shut = true;   // folded by default
     try { shut = shared("bhote.doneShut") !== false; } catch (_e) { shut = true; }
     const done = all.slice(0, 3);
+    this.enterBegin("done", done.map((x) => x.id));
     return v_flex().flex_none().pb(shut ? 0 : 4).border_t(1).border_color(t.border).bg(t.chrome)
       .child(h_flex().id("done-head").px(10).pt(10).pb(shut ? 10 : 4).items_center().cursor_pointer().text_size(11).font_semibold().text_color(t.dim)
         .on_click(this.guard((_e, cx) => { setShared("bhote.doneShut", !shut); cx.notify(); }))
         .child(div().flex_1().child(`DONE · ${all.length}`))
         .child(svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).text_color(t.muted)))
-      .children(shut ? [] : done.map((x) => this.doneCard(t, x)));
+      .children(shut ? [] : done.map((x) => this.enterWrap(t, "done", x.id, this.doneCard(t, x), 38)));
   }
 
   // The state of a topic by itself (no agent): its word and colour.
@@ -3278,6 +3306,7 @@ export default class Bhote extends View {
     const rows = [];
     const f = this.prFilter();
     const all = f.size ? this.prs.filter((x) => f.has(x.project)) : this.prs;
+    this.enterBegin("prs", all.map((x) => `${x.project}|${x.kind}|${x.number || x.branch}`));
     const open = all.filter((x) => x.kind === "pr" && !x.merged);
     const branches = all.filter((x) => x.kind === "branch");
     const merged = all.filter((x) => x.merged).sort((a, b) => b.merged - a.merged);
@@ -3302,7 +3331,7 @@ export default class Bhote extends View {
           .child(div().flex_none().text_color(t.dim).child(String(xs.length))));
         for (const x of xs) {
           if (shown >= cap) break;
-          rows.push(slim ? this.prRow(t, `pr-${label.length}-${shown}`, x) : this.prCard(t, `pr-${label.length}-${shown}`, x));
+          rows.push(this.enterWrap(t, "prs", `${x.project}|${x.kind}|${x.number || x.branch}`, slim ? this.prRow(t, `pr-${label.length}-${shown}`, x) : this.prCard(t, `pr-${label.length}-${shown}`, x), slim ? 32 : 120));
           shown += 1;
         }
       }
@@ -3343,6 +3372,7 @@ export default class Bhote extends View {
   // The runs of a monitor grouped by project: the project with the newest run first; each group says what runs and what failed
   // and shows its ten newest runs.
   monitorBody(t, rows, kind, prefix) {
+    this.enterBegin(`mon-${prefix}`, rows.map((x) => this.runKey(x)));
     const projectOf = (name) => this.projectOf(name);
     const groups = new Map();
     for (const x of rows) {
@@ -3363,7 +3393,7 @@ export default class Bhote extends View {
         .when(hidden > 0, (el) => el.child(div().text_color(t.dim).child(`+${hidden} more`)))
         .when(running > 0, (el) => el.child(div().text_color(t.working).child(`${running} running`)))
         .when(failed > 0, (el) => el.child(div().px(5).rounded(8).bg("#a8162e").text_color("#ffffff").child(`✗ ${failed}`))), true));
-      list.slice(0, 10).forEach((x, i) => out.push(this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false)));
+      list.slice(0, 10).forEach((x, i) => out.push(this.enterWrap(t, `mon-${prefix}`, this.runKey(x), this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false), 84)));
     }
     return out;
   }
@@ -4203,6 +4233,7 @@ export default class Bhote extends View {
     const t = theme();
     const rows = [];
     if (this.error) rows.push(div().p(10).text_color(t.blocked).child(`bhote: ${this.error}`));
+    this.enterBegin("topics", this.topics.filter((x) => !x.dismissed).map((x) => x.id));
     // the topics by status, in the order of the work; no agent is shown (a topic meets one when it is started on it)
     const of = (g) => this.topics.filter((x) => x.group === g && !x.dismissed);
     const sections = [["review", "Review"], ["now", "Now"], ["testing", "Testing"], ["deploying", "Waiting for deployment"], ["finished", "Finished"],
@@ -4210,7 +4241,7 @@ export default class Bhote extends View {
     for (const [, label, list] of sections) {
       if (!list.length) continue;
       rows.push(this.head(t, `${label} · ${list.length}`));
-      for (const x of list) rows.push(this.line(t, x, null, ""));
+      for (const x of list) rows.push(this.enterWrap(t, "topics", x.id, this.line(t, x, null, ""), 46));
     }
     if (!rows.length) rows.push(empty(t, "☰", "No topics yet", 'Add one with  bhote add "Fix the login redirect"'));
     return rows;

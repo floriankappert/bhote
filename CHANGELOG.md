@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- herdr-app: what **comes in** is animated like the commits of the inspector (it grows in, fades in and lights up in the accent colour, which fades out): new headless agents, topics and done topics, pull requests, the runs of the Tests and Deploys tabs, and the agent cards. Not on the first look at a list, and not in the first seconds of the view. The machine tag of a headless agent stands right behind its name.
 - herdr-app: **Start on agent** is a message that waits for the agent (the ear on, the agent free): the topic shows a spinner and a Cancel, then the agent is fixed and the start cannot go to another one (`__act startmsg|startdone|startcancel`). Before, a start on an agent that was not free did nothing without a word.
 - herdr-app: the CircleCI **checks of an open pull request** show as "ci checks" on the agent's card, with their names and always a progress bar (finished checks plus the share of the running ones); in the Tests tab the **workflows of one pipeline are one card** (jobs as chips, one bar, the branch and the pull request from the open PRs), the path of a run no longer runs out of its card, and the runs are sorted again (the sort had slipped into a comment).
 - herdr-app: agents can be **moved by drag and drop** within their machine's section (whole spaces, a line shows the place; the order is kept per machine).
