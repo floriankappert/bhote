@@ -1,4 +1,4 @@
-// bhote for herdr-app: the topics and agents panels as a mod (bhote 0.9.2.1 split layout).
+// bhote for herdr-app: the topics and agents panels as a mod (bhote 0.9.3 split layout).
 // props().side "left":  the workspaces, then the cards (review, now, testing, deploying, finished; an agent without
 //                       a card has one of its own: idle, working, needs you).
 // props().side "right": the lines of the topics (next, waiting, later), the last done ones, the deployments and tests.
@@ -7,7 +7,7 @@
 
 import { View, div, svg, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay, machines, settings, readTextFile, window } from "herdr";
+import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay, machines, settings, readTextFile, window, focused } from "herdr";
 
 const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "review", "later", "done"]);
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
@@ -121,7 +121,7 @@ function parseProjects(text) {
       if (i > 0 && !(line.slice(0, i) in v)) v[line.slice(0, i)] = line.slice(i + 1);
     }
     if (v.kind !== "project" || v.deleted === "1" || !v.id) continue;
-    out.push({ id: v.id, title: v.title || v.id, ci: v.ci || "", repos: (v.repos ?? "").split(",").map((x) => x.trim()).filter(Boolean),
+    out.push({ id: v.id, title: v.title || v.id, ci: v.ci || "", raw: { ci: v.ci ?? "", deploy_branches: v.deploy_branches ?? "", deploy_names: v.deploy_names ?? "", test_names: v.test_names ?? "", runbook: v.runbook ?? "" }, repos: (v.repos ?? "").split(",").map((x) => x.trim()).filter(Boolean),
       deployBranches: (v.deploy_branches ?? "").split(",").map((e) => e.split("=")[0].trim()).filter(Boolean),
       deployJobs: (v.deploy_names ?? "").split(",").map((e) => e.split("=")[0].trim()).filter(Boolean),
       runbook: (v.runbook ?? "").split(",").map((e) => e.trim()).filter(Boolean),   // the stages after the merge, when the default of the project is not right
@@ -136,11 +136,10 @@ function parseProjects(text) {
 // branches, else "Deploy"): IMS builds a Docker image and deploys it, Bilendo Marketing has Staging, an Approval in CircleCI and Production, Bilendo is
 // released by hand with Capistrano, Bhote CLI ends at the merge. Marketing always goes through develop: the pull request is merged into develop (Staging),
 // then develop is merged into main, CircleCI asks for an Approval, and Production follows.
-const POST_STAGES = { "IMS": ["Build (Docker)", "Deploy"], "Bilendo Marketing": ["Staging", "Merge (main)", "Approval", "Production"], "Bilendo": ["Release (Capistrano)"], "Bhote CLI": [] };
-
+// (the stages after the merge are the project's own `runbook`, set in Settings › Runbooks: e.g. IMS "Build (Docker), Deploy", Bilendo Marketing "Staging, Merge (main),
+// Approval, Production", Bilendo "Release (Capistrano)"; "none" ends the path at the merge)
 function postStages(proj) {
-  if (proj?.runbook?.length) return proj.runbook;
-  if (proj && Object.prototype.hasOwnProperty.call(POST_STAGES, proj.title)) return POST_STAGES[proj.title];
+  if (proj?.runbook?.length) return proj.runbook.length === 1 && proj.runbook[0].toLowerCase() === "none" ? [] : proj.runbook;
   if (proj && !proj.ci) return [];   // (no CI: the path ends at the merge)
   return proj?.stages?.length ? proj.stages : ["Deploy"];
 }
@@ -263,37 +262,40 @@ const SETTINGS = [
 
   ["WAIT_REMIND", "Topics", "", "Remind waiting topics after", "A waiting topic is reminded once after this time (0 = never).", "h"],
   ["FINISHED_MINUTES", "Topics", "", "Dismiss finished cards after", "An agent that finished without a question drops off the panel after this time (0 = never).", "min"],
-  ["GITHUB_BRANCHES", "Topics", "", "Show agent branches", "Show the git branch each topic's agent works on."],
 
   ["AGENT_CARDS", "Agents", "", "Cards for agents without a topic", "A working agent without a topic gets a card on Now after 15 s of work."],
   ["AUTO_REVIEW", "Agents", "", "Review topic for questions", "An agent that waits for an answer gets a review topic with its question."],
   ["AGENT_CAN_CLOSE", "Agents", "", "Agents may close topics", "Off: agents can only hand a topic over for review."],
   ["AGENT_TOPICS", "Agents", "", "Agents may create topics", "Off: bhote add run by an agent creates nothing."],
   ["AUTO_ASSIGN", "Agents", "", "Auto-assign running topics", "A running topic without an agent goes to the next free agent of its project after 20 s."],
-  ["AUTO_ASSIGN_MACHINE", "Agents", "", "Prefer agents on", "Whose free agents come first: any (this machine first) or a machine name.", "", "AUTO_ASSIGN"],
+  ["AUTO_ASSIGN_MACHINE", "Agents", "", "Prefer agents on", "Whose free agents come first: any (this machine first) or a machine name.", ""],
   ["TESTS_BUSY", "Agents", "", "Running tests keep an agent busy", "An agent whose workspace runs tests is not free, and its topic stays out of review until they finish."],
   ["LOCAL_EVERY", "Agents", "", "Check local agents every", "How often the agents of this machine are queried.", "s"],
 
   ["DEPLOY_MONITOR", "Monitors", "Deployments", "Deployment monitor", "Show the latest deployments above the agents."],
-  ["DEPLOY_EVERY", "Monitors", "Deployments", "Check every", "How often deployments are checked.", "s", "DEPLOY_MONITOR"],
-  ["DEPLOY_GITHUB", "Monitors", "Deployments", "GitHub Actions", "Include deployments from GitHub Actions (needs gh and its login).", "", "DEPLOY_MONITOR"],
-  ["DEPLOY_CIRCLECI", "Monitors", "Deployments", "CircleCI", "Include deployments from CircleCI (needs the token).", "", "DEPLOY_MONITOR"],
-  ["DEPLOY_PIPELINES", "Monitors", "Deployments", "Pipelines on other branches", "Also show CircleCI pipelines running on other branches, with branch and author.", "", "DEPLOY_MONITOR"],
-  ["DEPLOY_PROJECTS_OFF", "Monitors", "Deployments", "Hidden projects", "Comma-separated projects left out of the deployment monitor.", "", "DEPLOY_MONITOR"],
+  ["DEPLOY_EVERY", "Monitors", "Deployments", "Check every", "How often deployments are checked.", "s"],
+  ["DEPLOY_PROJECTS_OFF", "Monitors", "Deployments", "Hidden projects", "Comma-separated projects left out of the deployment monitor.", ""],
   ["TEST_MONITOR", "Monitors", "Tests", "Test monitor", "Show the latest test runs above the agents."],
-  ["TEST_EVERY", "Monitors", "Tests", "Check every", "How often test runs are checked.", "s", "TEST_MONITOR"],
-  ["TEST_LOCAL", "Monitors", "Tests", "Local runs", "Include runs of bhote test run and live status files.", "", "TEST_MONITOR"],
-  ["TEST_GITHUB", "Monitors", "Tests", "GitHub Actions", "Include test jobs from GitHub Actions.", "", "TEST_MONITOR"],
-  ["TEST_CIRCLECI", "Monitors", "Tests", "CircleCI", "Include test jobs from CircleCI.", "", "TEST_MONITOR"],
-  ["TEST_STATUS_DIR", "Monitors", "Tests", "Status file folder", "Folder with the live status files of running test suites.", "", "TEST_MONITOR"],
-  ["TEST_PROJECTS_OFF", "Monitors", "Tests", "Hidden projects", "Comma-separated projects left out of the test monitor, with their worktrees.", "", "TEST_MONITOR"],
-  ["CIRCLECI_TOKEN", "Monitors", "Connection", "CircleCI token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
+  ["TEST_EVERY", "Monitors", "Tests", "Check every", "How often test runs are checked.", "s"],
+  ["TEST_LOCAL", "Monitors", "Tests", "Local runs", "Include runs of bhote test run and live status files.", ""],
+  ["TEST_STATUS_DIR", "Monitors", "Tests", "Status file folder", "Folder with the live status files of running test suites.", ""],
+  ["TEST_PROJECTS_OFF", "Monitors", "Tests", "Hidden projects", "Comma-separated projects left out of the test monitor, with their worktrees.", ""],
 
-  ["SLACK_WATCH", "Slack & Claude", "Slack", "Watch Slack pins", "Check the channels pinned to waiting topics and set a topic to review on a new message. One machine is enough."],
-  ["SLACK_EVERY", "Slack & Claude", "Slack", "Check Slack every", "How often the pinned channels are checked (one short Claude call each).", "s", "SLACK_WATCH"],
-  ["CLAUDE_CONFIG_DIR", "Slack & Claude", "Slack", "Claude profile folder", "Profile the Slack watch runs in, e.g. ~/.claude2 (empty = default).", "", "SLACK_WATCH"],
-  ["CLAUDE_MOD", "Slack & Claude", "Claude Code mod", "Show topic in Claude Code", "Show the agent's topic above the prompt and in the topic pane."],
-  ["FRIENDLY_REMINDER", "Slack & Claude", "Claude Code mod", "Friendly reminder", "Now and then show a waiting, next or parked topic above the prompt.", "", "CLAUDE_MOD"],
+
+  ["DEPLOY_GITHUB", "Integrations", "GitHub", "Deployments", "Include deployments from GitHub Actions (needs gh and its login).", ""],
+  ["TEST_GITHUB", "Integrations", "GitHub", "Test jobs", "Include test jobs from GitHub Actions.", ""],
+  ["GITHUB_BRANCHES", "Integrations", "GitHub", "Agent branches", "Show the git branch each topic's agent works on."],
+  ["CIRCLECI_TOKEN", "Integrations", "CircleCI", "API token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
+  ["DEPLOY_CIRCLECI", "Integrations", "CircleCI", "Deployments", "Include deployments from CircleCI.", ""],
+  ["DEPLOY_PIPELINES", "Integrations", "CircleCI", "Pipelines on other branches", "Also show CircleCI pipelines running on other branches, with branch and author.", ""],
+  ["TEST_CIRCLECI", "Integrations", "CircleCI", "Test jobs", "Include test jobs from CircleCI.", ""],
+  ["SLACK_WATCH", "Integrations", "Slack", "Watch pinned channels", "Check the channels pinned to waiting topics and set a topic to review on a new message. One machine is enough."],
+  ["SLACK_EVERY", "Integrations", "Slack", "Check every", "How often the pinned channels are checked (one short Claude call each).", "s"],
+  ["CLAUDE_MOD", "Integrations", "Claude Code", "Show topic in Claude Code", "Show the agent's topic above the prompt and in the topic pane."],
+  ["FRIENDLY_REMINDER", "Integrations", "Claude Code", "Friendly reminder", "Now and then show a waiting, next or parked topic above the prompt.", ""],
+  ["CLAUDE_CONFIG_DIR", "Integrations", "Claude Code", "Profile folder", "Profile the Slack watch runs in, e.g. ~/.claude2 (empty = default).", ""],
+  ["KHARKA", "Integrations", "kharka", "Binary", "Path to kharka (empty = from PATH)."],
+  ["KHARKA_WATCH_STALE", "Integrations", "kharka", "Restart watch after", "Restart herdr-kharka when its entry has not been written for this long.", "s"],
 
   ["HOST_LABEL", "Machines & sync", "This machine", "Name of this machine", "How this machine appears in agent lists."],
   ["MACHINE_LABELS", "Machines & sync", "This machine", "Names of other machines", "name=Label pairs, e.g. omarchy-flo=Omarchy."],
@@ -301,18 +303,35 @@ const SETTINGS = [
   ["STORE", "Machines & sync", "Storage", "Topic storage", "Where topics live: local, a replica on the store machine, or kharka."],
   ["STORE_MACHINE", "Machines & sync", "Storage", "Store machine", "The saved herdr machine that holds the replica."],
   ["SYNC_VIA", "Machines & sync", "Storage", "Sync through", "How replicas travel: herdr or plain ssh."],
-  ["KHARKA", "Machines & sync", "Storage", "kharka binary", "Path to kharka (empty = from PATH)."],
-  ["KHARKA_WATCH_STALE", "Machines & sync", "Storage", "Restart kharka watch after", "Restart herdr-kharka when its entry has not been written for this long.", "s"],
   ["REMOTE_AGENTS", "Machines & sync", "Remote agents", "Show agents of other machines", "Also list the agents of the other machines."],
-  ["AGENTS_VIA", "Machines & sync", "Remote agents", "Fetch remote agents through", "herdr (over its ssh connection) or kharka.", "", "REMOTE_AGENTS"],
-  ["PUSH_STATES", "Machines & sync", "Remote agents", "Push agent states", "Tell other machines at once when an agent changes state (herdr only).", "", "REMOTE_AGENTS"],
-  ["REMOTE_EVERY", "Machines & sync", "Remote agents", "Check other machines every", "How often the other machines are queried.", "s", "REMOTE_AGENTS"],
+  ["AGENTS_VIA", "Machines & sync", "Remote agents", "Fetch remote agents through", "herdr (over its ssh connection) or kharka.", ""],
+  ["PUSH_STATES", "Machines & sync", "Remote agents", "Push agent states", "Tell other machines at once when an agent changes state (herdr only).", ""],
+  ["REMOTE_EVERY", "Machines & sync", "Remote agents", "Check other machines every", "How often the other machines are queried.", "s"],
 
 
 
 ];
-const SETTING_INFO = new Map(SETTINGS.map((r, i) => [r[0], { order: i, group: r[1], sec: r[2], name: r[3], desc: r[4], unit: r[5] ?? "", dep: r[6] ?? "" }]));
+// What a setting needs. dep: all of these must hold, else the row is dimmed (a sub-setting). needs: at least one of these must hold, else the row
+// warns (a feature without a source). "KEY" holds when that switch is on (or a secret is set), "KEY=a|b" when its value is one of those.
+const SETTING_DEPS = {
+  DEPLOY_EVERY: { dep: ["DEPLOY_MONITOR"] }, DEPLOY_PROJECTS_OFF: { dep: ["DEPLOY_MONITOR"] },
+  DEPLOY_MONITOR: { needs: ["DEPLOY_GITHUB", "DEPLOY_CIRCLECI"] },
+  DEPLOY_GITHUB: { dep: ["DEPLOY_MONITOR"] }, DEPLOY_CIRCLECI: { dep: ["DEPLOY_MONITOR"], needs: ["CIRCLECI_TOKEN"] },
+  DEPLOY_PIPELINES: { dep: ["DEPLOY_MONITOR", "DEPLOY_CIRCLECI"] },
+  TEST_EVERY: { dep: ["TEST_MONITOR"] }, TEST_PROJECTS_OFF: { dep: ["TEST_MONITOR"] },
+  TEST_MONITOR: { needs: ["TEST_LOCAL", "TEST_GITHUB", "TEST_CIRCLECI"] },
+  TEST_LOCAL: { dep: ["TEST_MONITOR"] }, TEST_STATUS_DIR: { dep: ["TEST_MONITOR", "TEST_LOCAL"] },
+  TEST_GITHUB: { dep: ["TEST_MONITOR"] }, TEST_CIRCLECI: { dep: ["TEST_MONITOR"], needs: ["CIRCLECI_TOKEN"] },
+  SLACK_EVERY: { dep: ["SLACK_WATCH"] }, CLAUDE_CONFIG_DIR: { dep: ["SLACK_WATCH"] }, FRIENDLY_REMINDER: { dep: ["CLAUDE_MOD"] },
+  AUTO_ASSIGN_MACHINE: { dep: ["AUTO_ASSIGN"] },
+  STORE_MACHINE: { dep: ["STORE=remote"] }, SYNC_VIA: { dep: ["STORE=remote"] },
+  KHARKA: { needs: ["STORE=kharka", "AGENTS_VIA=kharka"] }, KHARKA_WATCH_STALE: { needs: ["STORE=kharka", "AGENTS_VIA=kharka"] },
+  AGENTS_VIA: { dep: ["REMOTE_AGENTS"] }, PUSH_STATES: { dep: ["REMOTE_AGENTS", "AGENTS_VIA=herdr"] },
+  REMOTE_EVERY: { dep: ["REMOTE_AGENTS"] }, MACHINES_OFF: { dep: ["REMOTE_AGENTS"] },
+};
+const SETTING_INFO = new Map(SETTINGS.map((r, i) => [r[0], { order: i, group: r[1], sec: r[2], name: r[3], desc: r[4], unit: r[5] ?? "", dep: SETTING_DEPS[r[0]]?.dep ?? [], needs: SETTING_DEPS[r[0]]?.needs ?? [] }]));
 const SETTING_GROUPS = [...new Set(SETTINGS.map((r) => r[1]))];
+const GROUP_ORDER = ["Topics", "Agents", "Monitors", "Runbooks", "Integrations", "Machines & sync"];
 function settingLabel(key) { const w = key.toLowerCase().replace(/_/g, " "); return w[0].toUpperCase() + w.slice(1); }
 
 export default class Bhote extends View {
@@ -393,6 +412,14 @@ export default class Bhote extends View {
     this.srvAt = 0;
     this.srvHover = null;
     if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
+    // the version in the branding of the foot row: the last one seen at once, then what `bhote --version` says now
+    try { this.version = localStorage.getItem("version") ?? ""; } catch (_e) { this.version = ""; }
+    if (this.side === "right") cx.spawn(async (cx) => {
+      try {
+        const v = (await exec("bhote", ["--version"], { timeout: 15000 })).stdout.trim().replace(/^bhote\s+/i, "");
+        if (v && v !== this.version) { this.version = v; try { localStorage.setItem("version", v); } catch (_e) { /* not kept */ } cx.notify(); }
+      } catch (_e) { /* the last one stays */ }
+    });
     if (this.side === "right") cx.timer.after(3000, (cx) => { const m = this.cfgMeta(); if (!m || Date.now() - (m.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); });   // (the settings dialog opens at once)
     if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
     this.pulsing = false;
@@ -408,7 +435,7 @@ export default class Bhote extends View {
     this.agentCwd = {};     // an agent's address: the folder it runs in
     this.monReady = {};     // machines where monitors.py is in place
     this.monLoading = false;
-    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating) cx.notify(); }); cx.timer.every(2000, () => this.trackSpaces()); }
+    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < (this.commitAnimUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, () => this.trackSpaces()); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
     // Topics are plain files: reload when one changes.
@@ -1540,9 +1567,14 @@ export default class Bhote extends View {
   initSettings(cx) {
     this.setItems = null;     // null: loading
     this.setCat = "All";
-    this.setBusy = {};        // key: true while `bhote config set` runs
+    this.setBusy = {};        // key: true while a `bhote` call for it runs
     this.setFlash = {};       // key: "saved" | "failed"
     this.setIns = {};         // key: the InputState of a text setting
+    this.setProjects = [];
+    this.setAdd = {};         // project id: the panel to add a stage is open
+    this.setPick = {};        // project id: the stage type picked in it
+    this.setRename = {};      // project id: its name is being edited
+    this.setAdv = {};         // project id: the job filters are shown
     this.setMeta = null;
     this.setSearch = InputState.new({ placeholder: "Search settings", value: "" });
     this.setSearch.on("change", (_e, cx) => cx.notify());
@@ -1550,10 +1582,36 @@ export default class Bhote extends View {
     const done = (m, err) => {
       if (!m) { this.setItems = []; this.setError = err ?? "unknown error"; cx.notify(); return; }
       this.setMeta = m;
-      this.cfgValues().then((vals) => { this.applySettings(vals); cx.notify(); });
+      this.reloadSettings().then(() => cx.notify());
     };
     if (meta) { done(meta); if (Date.now() - (meta.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); }
     else this.fetchCfgMeta(cx, done);
+  }
+
+  // The project records (the runbooks live there, not in the config file): read from the topic files, which is instant.
+  async projectRecords() {
+    try {
+      const r = await exec("sh", ["-c", 'd="${XDG_DATA_HOME:-$HOME/.local/share}/bhote/topics"; for f in "$d"/proj-*.topic; do [ -f "$f" ] && { printf "\\036\\n"; cat "$f"; echo; }; done'], { timeout: 15000 });
+      return parseProjects(r.stdout).sort((a, b) => a.title.localeCompare(b.title));
+    } catch (_e) { return []; }
+  }
+
+  async reloadSettings() {
+    const [vals, projects] = await Promise.all([this.cfgValues(), this.projectRecords()]);
+    this.setProjects = projects;
+    this.applySettings(vals);
+  }
+
+  // The InputState of a text setting: made once, refreshed when what was shown is still what is in the field (typed text stays).
+  ensureInput(key, kind, value, placeholder) {
+    const shown = kind === "secret" ? "" : value;
+    if (!this.setIns[key]) {
+      const st = InputState.new({ placeholder, value: shown });
+      st.on("submit", (_e, cx) => this.submitInput(cx, key, st));
+      st.on("change", (_e, cx) => cx.notify());
+      this.setIns[key] = st;
+    } else if (this.setIns[key].value() === (this.setShown?.[key] ?? "")) this.setIns[key].set_value(shown);
+    (this.setShown ??= {})[key] = shown;
   }
 
   applySettings(vals) {
@@ -1562,18 +1620,36 @@ export default class Bhote extends View {
       const info = SETTING_INFO.get(m.key);
       const set = Object.prototype.hasOwnProperty.call(vals, m.key);
       const value = kind === "secret" ? (set && vals[m.key] ? "(set)" : "") : set ? vals[m.key] : (m.default ?? "");
-      const x = { ...m, ...info, value, set, changed: set && m.default != null && vals[m.key] !== m.default && kind !== "secret" };
       if (["text", "list", "color", "secret"].includes(kind)) {
-        const shown = kind === "secret" ? "" : value;
-        if (!this.setIns[m.key]) {
-          const st = InputState.new({ placeholder: kind === "secret" ? (value === "(set)" ? "(set) – type to replace" : "not set") : kind === "list" ? "a, b, c" : kind === "color" ? "#rrggbb" : "", value: shown });
-          st.on("submit", (_e, cx) => this.saveSetting(cx, m.key, st.value().trim()));
-          st.on("change", (_e, cx) => cx.notify());
-          this.setIns[m.key] = st;
-        } else if (this.setIns[m.key].value() === (this.setShown?.[m.key] ?? "")) this.setIns[m.key].set_value(shown);   // (what was typed and not saved stays)
-        (this.setShown ??= {})[m.key] = shown;
+        this.ensureInput(m.key, kind, value, kind === "secret" ? (value === "(set)" ? "(set) – type to replace" : "not set") : kind === "list" ? "a, b, c" : kind === "color" ? "#rrggbb" : "");
       }
-      return x;
+      return { ...m, ...info, value, set, changed: set && m.default != null && vals[m.key] !== m.default && kind !== "secret" };
+    });
+    // the projects and their runbooks (project records, not config keys): which projects there are, what belongs to each, how it is watched,
+    // and the stages after the merge. Nothing about a project is in the code.
+    const fields = [
+      ["title", "Name", "How the project is called in the panel."],
+      ["repos", "Repositories", "Git repositories that belong to it, comma-separated (host/owner/name), e.g. github.com/bilendo/ims."],
+      ["ci", "CI source", "Where deployments and tests come from: github:owner/repo or circleci:gh/owner/repo. Detect reads it from the repository."],
+      ["deploy_branches", "Deploy branches", "Branches that deploy, with their environment: develop=Staging,main=Production."],
+      ["deploy_names", "Deploy workflows or jobs", "What counts as a deployment, Name=Label (empty: found automatically)."],
+      ["test_names", "Test jobs", "What counts as a test run (empty: every job with test in its name)."],
+      ["runbook", "Stages after the merge", "Comma-separated, e.g. Staging, Approval, Production. none: the path ends at the merge. Empty: the default for its CI."],
+    ];
+    this.ensureInput("__new", "text", "", "Project name");
+    items.push({ key: "__new", type: "text", default: null, group: "Runbooks", sec: "Projects", name: "New project", desc: "Add a project, then give it its repositories and its runbook.", unit: "", dep: [], needs: [], order: 999,
+      value: "", set: false, changed: false, source: "project", field: "__new", addLabel: "Add" });
+    this.setProjects.forEach((pr, pi) => {
+      fields.forEach(([f, name, desc], fi) => {
+        const key = `${pr.id}:${f}`, value = f === "title" ? pr.title : (pr.raw[f] ?? "");
+        this.ensureInput(key, "text", value, f === "runbook" ? (postStages(pr).join(", ") || "none") : f === "ci" ? "not watched" : f === "repos" ? "none pinned" : "automatic");
+        items.push({ key, type: "text", default: null, group: "Runbooks", sec: pr.title, name, desc, unit: "", dep: [], needs: [], order: 1000 + pi * 10 + fi,
+          value, set: value !== "", changed: f !== "title" && value !== "", source: "project", projId: pr.id, projTitle: pr.title, field: f, addLabel: f === "title" ? "Rename" : "",
+          offHint: ["deploy_branches", "deploy_names", "test_names"].includes(f) && !pr.raw.ci ? "Needs a CI source (set it above, or Detect)" : "" });
+      });
+      for (const [f, ph] of [["__detail", "detail"], ["__custom", "Name of the stage"], ["__repo", "host/owner/name"], ["__branch", "branch"], ["__env", "environment"]]) this.ensureInput(`${pr.id}:${f}`, "text", "", ph);
+      items.push({ key: `${pr.id}:__delete`, type: "action", default: null, group: "Runbooks", sec: pr.title, name: "Delete project", desc: "Its topics keep existing, without a project.", unit: "", dep: [], needs: [], order: 1000 + pi * 10 + 9,
+        value: "", set: false, changed: false, source: "project", projId: pr.id, projTitle: pr.title, field: "__delete" });
     });
     items.sort((a, b) => a.order - b.order);
     this.setItems = items;
@@ -1581,18 +1657,181 @@ export default class Bhote extends View {
 
   saveSetting(cx, key, value, unset) {
     if (this.setBusy[key]) return;
+    const it = (this.setItems ?? []).find((x) => x.key === key);
     this.setBusy[key] = true; cx.notify();
     cx.spawn(async (cx) => {
       let ok = true;
-      try { await exec("bhote", unset ? ["config", "unset", key] : ["config", "set", key, value], { timeout: 30000 }); } catch (_e) { ok = false; }
+      const args = it?.source === "project"
+        ? (it.field === "__new" ? ["project", "add", value] : it.field === "__delete" ? ["project", "rm", it.projId] : it.field === "title" ? ["project", "rename", it.projId, value]
+          : ["project", "set", it.projId, it.field, unset ? "" : value])
+        : unset ? ["config", "unset", key] : ["config", "set", key, value];
+      if (it?.field === "__new" && !value) { this.setBusy[key] = false; cx.notify(); return; }
+      try { await exec("bhote", args, { timeout: 30000 }); } catch (_e) { ok = false; }
       const st = this.setIns[key];
-      if (st && unset) { const m = this.setMeta.list.find((q) => q.key === key); st.set_value(m?.default ?? ""); }
-      this.applySettings(await this.cfgValues());
+      if (st && unset) { const m = this.setMeta.list.find((q) => q.key === key); st.set_value(it?.source === "project" ? "" : (m?.default ?? "")); }
+      if (st && it?.field === "__new" && ok) st.set_value("");
+      if (it?.field === "__delete") delete this.setConfirm?.[key];
+      await this.reloadSettings();
       this.setBusy[key] = false;
       this.setFlash[key] = ok ? "saved" : "failed";
       cx.notify();
       cx.timer.after(2500, (cx) => { delete this.setFlash[key]; cx.notify(); });
     });
+  }
+
+  // Detect: find the CI of a project from its repository (bhote monitor detect), then show what it wrote.
+  detectCi(cx, x) {
+    const key = x.key;
+    if (this.setBusy[key]) return;
+    this.setBusy[key] = true; cx.notify();
+    cx.spawn(async (cx) => {
+      let ok = true;
+      try { await exec("bhote", ["monitor", "detect", x.projTitle], { timeout: 120000 }); } catch (_e) { ok = false; }
+      for (const f of ["ci", "deploy_branches", "deploy_names"]) delete (this.setShown ??= {})[`${x.projId}:${f}`];   // (the fields take what was written)
+      await this.reloadSettings();
+      this.setBusy[key] = false;
+      this.setFlash[key] = ok ? "saved" : "failed";
+      cx.notify();
+      cx.timer.after(2500, (cx) => { delete this.setFlash[key]; cx.notify(); });
+    });
+  }
+
+  // Enter in one of the small fields of a runbook card adds what it holds; any other field saves its setting.
+  submitInput(cx, key, st) {
+    const [id, f] = key.split(":");
+    const pr = this.setProjects.find((x) => x.id === id);
+    if (!pr || !f?.startsWith("__")) { this.saveSetting(cx, key, st.value().trim()); return; }
+    if (f === "__repo") this.addRepo(cx, pr);
+    else if (f === "__branch" || f === "__env") this.addBranch(cx, pr);
+    else if (f === "__detail" || f === "__custom") this.addStage(cx, pr);
+  }
+
+  listOf(raw) { return (raw ?? "").split(",").map((x) => x.trim()).filter(Boolean); }
+
+  addRepo(cx, pr) {
+    const st = this.setIns[`${pr.id}:__repo`]; const v = st.value().trim();
+    if (!v) return;
+    st.set_value("");
+    this.saveSetting(cx, `${pr.id}:repos`, [...new Set([...this.listOf(pr.raw.repos), v])].join(","));
+  }
+
+  addBranch(cx, pr) {
+    const b = this.setIns[`${pr.id}:__branch`], e = this.setIns[`${pr.id}:__env`];
+    const br = b.value().trim(), env = e.value().trim();
+    if (!br) return;
+    b.set_value(""); e.set_value("");
+    const rest = this.listOf(pr.raw.deploy_branches).filter((x) => x.split("=")[0].trim() !== br);
+    this.saveSetting(cx, `${pr.id}:deploy_branches`, [...rest, env ? `${br}=${env}` : br].join(","));
+  }
+
+  // A stage after the merge: the type (Build, Deploy, Staging, Production, Approval, Merge, Release or a name of its own) and, for some, a detail
+  // (Merge → the branch, Build → what is built, Release → how). The runbook is stored as the text "Type (detail), Type, …".
+  addStage(cx, pr, type, detail) {
+    const pick = type ?? this.setPick[pr.id];
+    if (!pick) return;
+    const dIn = this.setIns[`${pr.id}:__detail`], cIn = this.setIns[`${pr.id}:__custom`];
+    const d = (detail ?? dIn.value()).trim(), c = cIn.value().trim();
+    const stage = pick === "custom" ? c : d ? `${pick} (${d})` : pick;
+    if (!stage) return;
+    dIn.set_value(""); cIn.set_value("");
+    this.setAdd[pr.id] = false; this.setPick[pr.id] = null;
+    this.saveSetting(cx, `${pr.id}:runbook`, [...postStages(pr), stage].join(", "));   // (the default stages become the explicit ones)
+  }
+
+  runbookCard(t, pr, items) {
+    const get = (f) => items.find((y) => y.key === `${pr.id}:${f}`);
+    const stages = postStages(pr), explicit = pr.runbook.length > 0;
+    const kindOf = (l) => l.split(" (")[0];
+    const color = (l) => { const k = kindOf(l);
+      return k === "Build" ? (t.ansi4 ?? t.accent) : ["Deploy", "Staging", "Production"].includes(k) ? (t.ansi2 ?? t.done) : k === "Approval" ? (t.ansi3 ?? "#e0af68")
+        : k === "Merge" ? (t.ansi5 ?? "#bb9af7") : k === "Release" ? (t.ansi6 ?? t.muted) : t.accent; };
+    const write = (cx, list) => this.saveSetting(cx, `${pr.id}:runbook`, list.length ? list.join(", ") : "none");
+    const move = (cx, i, d) => { const l = [...stages]; const j = i + d; if (j < 0 || j >= l.length) return; [l[i], l[j]] = [l[j], l[i]]; write(cx, l); };
+    const tiny = (id, label, onClick) => div().id(id).w(20).h(24).flex_none().flex().items_center().justify_center().rounded(6).text_size(12).text_color(t.dim).cursor_pointer()
+      .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(onClick).child(label);
+    const btn = (id, label, onClick, o = {}) => div().id(id).px(12).h(30).flex_none().flex().items_center().rounded(8).cursor_pointer().text_size(13)
+      .border(1).border_color(o.primary ? t.accent : t.border).bg(o.primary ? t.accent : t.chrome).text_color(o.primary ? (t.accent_foreground ?? "#ffffff") : t.foreground)
+      .hover((e) => e.bg(o.primary ? t.accent : t.hover)).on_click(onClick).child(label);
+    const field = (id, key, w) => Input.new(this.setIns[`${pr.id}:${key}`]).w(w).h(28).px(9).rounded(7).border_1().border_color(t.border).bg(t.background).text_size(12.5).text_color(t.foreground);
+    const arrow = () => div().flex_none().text_size(13).text_color(t.dim).child("→");
+    const row = (label, ...kids) => h_flex().gap(14).items_start().child(div().flex_none().w(140).pt(5).text_size(13).text_color(t.muted).child(label))
+      .child(v_flex().flex_1().min_w(0).gap(8).children(kids));
+    const chip = (id, text, onX) => h_flex().id(id).gap(4).items_center().pl(10).pr(3).h(26).rounded(13).border(1).border_color(t.border).bg(t.chrome).text_size(12.5).text_color(t.foreground)
+      .child(div().child(text)).child(tiny(`${id}-x`, "✕", onX));
+
+    // header: name (or its field), CI, delete
+    const renaming = !!this.setRename[pr.id];
+    const ci = pr.raw.ci.startsWith("github:") ? "GitHub Actions" : pr.raw.ci.startsWith("circleci:") ? "CircleCI" : "no CI";
+    const delKey = `${pr.id}:__delete`, ask = !!this.setConfirm?.[delKey];
+    const header = h_flex().gap(10).items_center()
+      .child(renaming
+        ? h_flex().gap(8).items_center().flex_1().child(Input.new(this.setIns[`${pr.id}:title`]).w(240).h(30).px(10).rounded(8).border_1().border_color(t.accent).bg(t.background).text_size(15).text_color(t.foreground))
+            .child(btn(`rn-ok-${pr.id}`, "Rename", (_e, cx) => { this.setRename[pr.id] = false; this.saveSetting(cx, `${pr.id}:title`, this.setIns[`${pr.id}:title`].value().trim()); }, { primary: true }))
+            .child(btn(`rn-no-${pr.id}`, "Cancel", (_e, cx) => { this.setRename[pr.id] = false; this.setIns[`${pr.id}:title`].set_value(pr.title); cx.notify(); }))
+        : h_flex().gap(10).items_center().flex_1().child(div().text_size(17).font_semibold().text_color(t.foreground).child(pr.title))
+            .child(div().px(9).h(22).flex().items_center().rounded(11).text_size(12).border(1).border_color(t.border).text_color(pr.raw.ci ? t.muted : t.dim).child(ci))
+            .child(tiny(`rn-${pr.id}`, "✎", (_e, cx) => { this.setRename[pr.id] = true; cx.notify(); })))
+      .child(div().id(`dl-${pr.id}`).px(10).h(26).flex().items_center().rounded(7).cursor_pointer().text_size(12).border(1).border_color(ask ? t.blocked : "#00000000")
+        .bg(ask ? t.blocked : t.popover).text_color(ask ? "#ffffff" : t.dim).hover((e) => e.text_color(ask ? "#ffffff" : t.blocked))
+        .on_click((_e, cx) => { if (ask) this.saveSetting(cx, delKey, ""); else { (this.setConfirm ??= {})[delKey] = true; cx.notify(); cx.timer.after(4000, (cx) => { delete this.setConfirm[delKey]; cx.notify(); }); } })
+        .child(ask ? "Really delete?" : "Delete"));
+
+    // the path of a change: the stages every project has, then this project's own
+    const fixed = ["Commit", "PR", "Tests", "Merge"].map((n) => h_flex().gap(6).items_center().px(10).h(30).rounded(15).border(1).border_color(t.border).bg(t.popover)
+      .child(div().w(8).h(8).rounded(4).flex_none().bg(t.dim)).child(div().text_size(13).text_color(t.muted).child(n)));
+    const path = [];
+    fixed.forEach((f) => { path.push(f); path.push(arrow()); });
+    stages.forEach((l, i) => {
+      const c = color(l);
+      path.push(h_flex().id(`st-${pr.id}-${i}`).gap(6).items_center().pl(11).pr(3).h(30).rounded(15).border(1).border_color(c).bg(tint(c, "22", t.surface))
+        .child(div().w(8).h(8).rounded(4).flex_none().bg(c)).child(div().text_size(13).text_color(t.foreground).child(l))
+        .child(tiny(`st-${pr.id}-${i}-l`, "‹", (_e, cx) => move(cx, i, -1))).child(tiny(`st-${pr.id}-${i}-r`, "›", (_e, cx) => move(cx, i, 1)))
+        .child(tiny(`st-${pr.id}-${i}-x`, "✕", (_e, cx) => write(cx, stages.filter((_x, k) => k !== i)))));
+      if (i < stages.length - 1) path.push(arrow());
+    });
+    if (!stages.length) path.push(div().text_size(13).text_color(t.dim).child("ends at the merge"));
+    path.push(btn(`st-add-${pr.id}`, this.setAdd[pr.id] ? "Cancel" : "＋ Stage", (_e, cx) => { this.setAdd[pr.id] = !this.setAdd[pr.id]; this.setPick[pr.id] = null; cx.notify(); }));
+
+    // adding a stage: pick a type; the ones with a detail ask for it
+    const types = [["Build", "image or artifact, e.g. Docker"], ["Deploy", ""], ["Staging", ""], ["Production", ""], ["Approval", ""], ["Merge", "target branch, e.g. main"], ["Release", "how, e.g. Capistrano"], ["custom", ""]];
+    const pick = this.setPick[pr.id];
+    const adder = !this.setAdd[pr.id] ? [] : [v_flex().gap(10).p(12).rounded(10).bg(t.chrome).border(1).border_color(t.border)
+      .child(h_flex().gap(6).flex_wrap().children(types.map(([ty, hint]) => { const c = color(ty === "custom" ? "x" : ty), on = pick === ty;
+        return div().id(`ty-${pr.id}-${ty}`).px(12).h(28).flex().items_center().gap(6).rounded(14).cursor_pointer().text_size(13).border(1).border_color(on ? c : t.border)
+          .bg(on ? tint(c, "33", t.selected) : t.surface).text_color(on ? t.foreground : t.muted).hover((e) => e.bg(on ? tint(c, "40", t.selected) : t.raised))
+          .on_click((_e, cx) => { if (ty === "custom" || hint) { this.setPick[pr.id] = ty; cx.notify(); } else this.addStage(cx, pr, ty, ""); })
+          .child(div().w(7).h(7).rounded(4).bg(c)).child(ty === "custom" ? "Custom…" : ty); })))
+      .when(!!pick, (e) => e.child(h_flex().gap(8).items_center()
+        .child(field(`ad-${pr.id}`, pick === "custom" ? "__custom" : "__detail", 280))
+        .child(div().text_size(12).text_color(t.dim).child(pick === "custom" ? "name of the stage" : (types.find((x) => x[0] === pick)?.[1] ?? "")))
+        .child(btn(`ad-ok-${pr.id}`, "Add", (_e, cx) => this.addStage(cx, pr), { primary: true }))))];
+
+    const repos = this.listOf(pr.raw.repos);
+    const branches = this.listOf(pr.raw.deploy_branches);
+    const adv = !!this.setAdv[pr.id];
+    const plain = (f) => { const it = get(f); return it ? h_flex().gap(14).items_center().child(div().flex_none().w(140).text_size(13).text_color(t.muted).child(it.name)).child(this.settingControl(t, it)) : div(); };
+    return v_flex().id(`rb-${pr.id}`).gap(16).mx(24).my(10).p(18).rounded(14).border(1).border_color(t.border).bg(t.surface)
+      .child(header)
+      .child(v_flex().gap(10)
+        .child(div().text_size(12).text_color(t.dim).child(`PATH OF A CHANGE${explicit ? "" : " · default for its CI"}`))
+        .child(h_flex().gap(8).flex_wrap().items_center().children(path))
+        .children(adder)
+        .when(explicit, (e) => e.child(div().id(`rbdef-${pr.id}`).text_size(12).text_color(t.dim).cursor_pointer().hover((h) => h.text_color(t.foreground))
+          .on_click((_e, cx) => this.saveSetting(cx, `${pr.id}:runbook`, "", true)).child("Use the default again"))))
+      .child(div().h(1).bg(t.border))
+      .child(plain("ci"))
+      .child(row("Repositories",
+        h_flex().gap(6).flex_wrap().children(repos.length ? repos.map((r, i) => chip(`rp-${pr.id}-${i}`, r, (_e, cx) => this.saveSetting(cx, `${pr.id}:repos`, repos.filter((_x, k) => k !== i).join(",")))) : [div().text_size(13).text_color(t.dim).child("none pinned")]),
+        h_flex().gap(8).items_center().child(field(`rp-in-${pr.id}`, "__repo", 260)).child(btn(`rp-add-${pr.id}`, "Add", (_e, cx) => this.addRepo(cx, pr)))))
+      .child(row("Deploy branches",
+        h_flex().gap(6).flex_wrap().children(branches.length ? branches.map((b, i) => { const [br, env] = b.split("=");
+          return chip(`br-${pr.id}-${i}`, env && env.trim() !== br.trim() ? `${br.trim()} → ${env.trim()}` : br.trim(), (_e, cx) => this.saveSetting(cx, `${pr.id}:deploy_branches`, branches.filter((_x, k) => k !== i).join(","))); })
+          : [div().text_size(13).text_color(t.dim).child(pr.raw.ci ? "none" : "needs a CI source")]),
+        h_flex().gap(8).items_center().child(field(`br-b-${pr.id}`, "__branch", 130)).child(div().text_color(t.dim).child("→")).child(field(`br-e-${pr.id}`, "__env", 150))
+          .child(btn(`br-add-${pr.id}`, "Add", (_e, cx) => this.addBranch(cx, pr)))))
+      .child(div().id(`adv-${pr.id}`).text_size(12).text_color(t.dim).cursor_pointer().hover((h) => h.text_color(t.foreground))
+        .on_click((_e, cx) => { this.setAdv[pr.id] = !adv; cx.notify(); }).child(`${adv ? "▾" : "▸"} Job filters`))
+      .children(adv ? [plain("deploy_names"), plain("test_names")] : []);
   }
 
   // The control of a setting: always the same slot on the right, so the rows line up.
@@ -1625,6 +1864,13 @@ export default class Bhote extends View {
           .child(x.value === "" || x.value == null ? "auto" : String(x.value)).when(!!x.unit && x.value !== "", (e) => e.child(div().text_size(12).text_color(t.dim).child(x.unit))))
         .child(box(`pl-${key}`).w(30).text_size(15).on_click(set(cur + step)).child("+"));
     }
+    if (kind === "action") {   // a destructive button: the first click asks, the second does it
+      const ask = !!this.setConfirm?.[key];
+      return div().id(`ac-${key}`).px(14).h(30).flex().items_center().rounded(8).cursor_pointer().text_size(13).opacity(busy ? 0.5 : 1)
+        .border(1).border_color(ask ? t.blocked : t.border).bg(ask ? t.blocked : t.chrome).text_color(ask ? "#ffffff" : t.blocked)
+        .on_click((_e, cx) => { if (ask) this.saveSetting(cx, key, ""); else { (this.setConfirm ??= {})[key] = true; cx.notify(); cx.timer.after(4000, (cx) => { delete this.setConfirm[key]; cx.notify(); }); } })
+        .child(busy ? "…" : ask ? "Really delete?" : "Delete");
+    }
     // text, list, color, secret: a field of the same width; Enter or Save writes it
     const st = this.setIns[key];
     if (!st) return div();
@@ -1634,7 +1880,9 @@ export default class Bhote extends View {
       .when(swatch, (e) => e.child(div().w(22).h(22).flex_none().rounded(6).border(1).border_color(t.border).bg(st.value().trim())))
       .child(Input.new(st).flex_1().min_w(0).h(32).px(10).rounded(8).border_1().border_color(dirty ? t.accent : t.border).bg(t.background).text_size(13).text_color(t.foreground))
       .when(dirty, (e) => e.child(div().id(`sv-${key}`).px(12).h(32).flex().items_center().rounded(8).cursor_pointer().bg(t.accent).text_size(13)
-        .text_color(t.accent_foreground ?? "#ffffff").on_click(save(st.value().trim())).child(busy ? "…" : "Save")));
+        .text_color(t.accent_foreground ?? "#ffffff").on_click(save(st.value().trim())).child(busy ? "…" : "Save")))
+      .when(!dirty && x.field === "ci", (e) => e.child(div().id(`dt-${key}`).px(12).h(32).flex().items_center().rounded(8).cursor_pointer().bg(t.chrome).border(1).border_color(t.border)
+        .text_size(13).text_color(t.foreground).hover((h) => h.bg(t.hover)).on_click((_e, cx) => this.detectCi(cx, x)).child(busy ? "…" : "Detect")));
   }
 
   settingsView() {
@@ -1643,22 +1891,32 @@ export default class Bhote extends View {
     const q = this.setSearch.value().trim().toLowerCase();
     const items = this.setItems ?? [];
     const loading = this.setItems === null;
-    const icons = { Topics: "check", Agents: "launch", Monitors: "zap", "Slack & Claude": "log", "Machines & sync": "plug" };
-    const order = SETTING_GROUPS;
-    const cats = ["All", ...(loading ? SETTING_GROUPS : order.filter((g) => items.some((x) => x.group === g)))];
+    const icons = { Topics: "check", Agents: "launch", Monitors: "zap", Runbooks: "st-merged", Integrations: "log", "Machines & sync": "plug" };
+    const order = GROUP_ORDER;
+    const cats = ["All", ...(loading ? GROUP_ORDER : order.filter((g) => items.some((x) => x.group === g)))];
     const count = (c) => items.filter((x) => c === "All" || x.group === c).length;
-    const shown = items.filter((x) => (this.setCat === "All" || x.group === this.setCat) && (!q || `${x.key} ${x.name} ${x.desc} ${x.group}`.toLowerCase().includes(q)));
-    const on = (k) => items.find((y) => y.key === k)?.value === "on";
+    const shown = items.filter((x) => (this.setCat === "All" || x.group === this.setCat) && (!q || `${x.key} ${x.name} ${x.desc} ${x.group} ${x.sec}`.toLowerCase().includes(q)));
+    const valueOf = (k) => items.find((y) => y.key === k)?.value ?? "";
+    const met = (c) => { const [k, vs] = c.split("="); const v = valueOf(k); return vs ? vs.split("|").includes(v) : v === "on" || v === "(set)"; };
+    // how a requirement reads: the setting's name (an integration with its section), "name: value" for a choice
+    const say = (c) => { const [k, vs] = c.split("="); const i = SETTING_INFO.get(k); const nm = i.group === "Integrations" ? `${i.sec} · ${i.name}` : i.name; return vs ? `${nm}: ${vs.split("|").join(" or ")}` : nm; };
+    const joined = (l, w) => (l.length < 2 ? l.join("") : `${l.slice(0, -1).join(", ")} ${w} ${l[l.length - 1]}`);
     const rowOf = (x) => {
       const flash = this.setFlash[x.key];
-      const off = !!x.dep && !on(x.dep);   // (a sub-setting of a switch that is off)
+      const unmet = x.dep.filter((c) => !met(c));
+      const off = unmet.length > 0 || !!x.offHint;                     // (a sub-setting whose parent is off: dimmed)
+      const lacking = !off && x.needs.length > 0 && !x.needs.some(met);   // (a feature without any source: a warning)
+      const hint = x.offHint ? x.offHint : off ? `Needs ${joined(unmet.map(say), "and")}` : lacking ? `Needs ${joined(x.needs.map(say), "or")}` : "";
+      const target = x.offHint ? null : SETTING_INFO.get((off ? unmet : x.needs)[0]?.split("=")[0] ?? "")?.group;
       return h_flex().id(`set-${x.key}`).gap(20).px(24).py(14).items_center().border_b(1).border_color(t.border).opacity(off ? 0.5 : 1)
         .child(v_flex().flex_1().min_w(0).gap(3)
           .child(h_flex().gap(8).items_center()
             .child(div().text_size(15).text_color(t.foreground).child(x.name))
             .when(x.changed, (e) => e.child(div().w(6).h(6).rounded(3).flex_none().bg(t.accent)))
             .when(!!flash, (e) => e.child(div().text_size(12).text_color(flash === "saved" ? (t.ansi2 ?? t.done) : t.blocked).child(flash === "saved" ? "saved" : "failed"))))
-          .child(div().text_size(13).text_color(t.muted).child(x.desc)))
+          .child(div().text_size(13).text_color(t.muted).child(x.desc))
+          .when(!!hint, (e) => e.child(div().id(`need-${x.key}`).text_size(12).text_color(lacking ? t.ansi3 : t.dim).cursor_pointer()
+            .hover((h2) => h2.text_color(t.foreground)).on_click((_e, cx) => { if (target) { this.setCat = target; this.setSearch.set_value(""); cx.notify(); } }).child(`${lacking ? "⚠ " : ""}${hint} →`))))
         .child(div().flex_none().flex().justify_end().child(this.settingControl(t, x)))
         .child(div().flex_none().w(46).flex().justify_end()
           .when(x.changed, (e) => e.child(div().id(`rs-${x.key}`).px(8).h(24).flex().items_center().rounded(6).text_size(12).text_color(t.dim).cursor_pointer()
@@ -1673,9 +1931,18 @@ export default class Bhote extends View {
     } else if (!shown.length) body.push(div().p(24).text_color(t.dim).child(this.setError ? `could not read the settings: ${this.setError}` : "no setting matches"));
     else {
       let last = null;
+      const carded = new Set();
       for (const x of shown) {
-        const cap = this.setCat === "All" || q ? (x.sec ? `${x.group} · ${x.sec}` : x.group) : x.sec;
+        const proj = x.group === "Runbooks" && x.projId;
+        const cap = proj ? (this.setCat === "All" || q ? "Runbooks · Projects" : "Projects") : this.setCat === "All" || q ? (x.sec ? `${x.group} · ${x.sec}` : x.group) : x.sec;
         if (cap !== last) { if (cap) body.push(caption(cap)); last = cap; }
+        if (proj) {   // a project is one card with its path, not one row per field
+          if (carded.has(x.projId)) continue;
+          carded.add(x.projId);
+          const pr = this.setProjects.find((y) => y.id === x.projId);
+          if (pr) body.push(this.runbookCard(t, pr, items));
+          continue;
+        }
         body.push(rowOf(x));
       }
     }
@@ -1702,63 +1969,148 @@ export default class Bhote extends View {
   }
 
   // --- Commit-Inspector: the git commits of the agent that has the focus ----------------------------------------------------------
-  // The focused agent, its machine and its folder (the folder comes from `hc ls`, loadMonitors).
+  // The focused agent and where its work is. The folder `hc ls` reports for a terminal can be the one it was started in (the agent of IMS-wt2
+  // reported IMS-wt1), so the folder is not taken as it is: the candidates (the live folder of the focused terminal, the folder of the space, the
+  // folder of `hc ls`) only lead to the repository, and the worktree that has the branch of the space is the one that is read.
   focusAgent() {
     const a = agents().find((x) => x.focused);
     if (!a) return null;
-    const cwd = this.agentCwd[a.address];
-    if (!cwd) return null;
-    const machine = spaces().find((x) => x.id === a.space)?.machine ?? null;
-    return { a, cwd, machine, key: `${this.srvKey(machine)}|${cwd}` };
+    const sp = spaces().find((x) => x.id === a.space);
+    let fo = null; try { fo = focused(); } catch (_e) { fo = null; }
+    const live = fo && (fo.terminal === a.address || fo.agent === a.address) ? fo.cwd : null;
+    const cands = [...new Set([live, sp?.folder, this.agentCwd[a.address]].filter(Boolean))];
+    if (!cands.length) return null;
+    const machine = sp?.machine ?? null, branch = sp?.branch ?? null;
+    const rkey = `${this.srvKey(machine)}|${a.address}|${branch ?? ""}`;
+    const dir = this.commitDir?.[rkey];
+    return { a, cands, machine, branch, rkey, dir: dir?.dir ?? null, failed: !!dir && !dir.dir, key: dir?.dir ? `${this.srvKey(machine)}|${dir.dir}` : null };
+  }
+
+  async resolveDir(f) {
+    let first = null;
+    for (const c of f.cands) {
+      let out;
+      try { out = (await this.srvExec(f.machine, "git", ["-C", c, "worktree", "list", "--porcelain"], 10000)).stdout; } catch (_e) { continue; }   // (not a repository)
+      if (!first) first = c;
+      if (!f.branch) break;
+      for (const block of out.split("\n\n")) {
+        const path = /^worktree (.+)$/m.exec(block)?.[1], br = /^branch refs\/heads\/(.+)$/m.exec(block)?.[1];
+        if (path && br === f.branch) return path;
+      }
+    }
+    return first;
   }
 
   loadCommits(cx) {
     const f = this.focusAgent();
     if (!f || this.commitLoading) return;
-    const c = this.commits[f.key];
-    if (c && Date.now() - c.at < 3500) return;
+    const c = f.key ? this.commits[f.key] : null;
+    // fresh enough: 1.5 s here, 3 s on another machine; at once when the agent has changed (it has just worked, maybe committed)
+    if (c && c.seq === f.a.seq && Date.now() - c.at < (f.machine ? 3000 : 1500)) return;
     this.commitLoading = true;
     cx.spawn(async (cx) => {
-      let next;
+      let next, key = f.key;
       try {
-        const log = await this.srvExec(f.machine, "git", ["-C", f.cwd, "log", "-8", "--format=%h%x1f%s%x1f%ct%x1f%an"], 10000);
-        const st = await this.srvExec(f.machine, "git", ["-C", f.cwd, "status", "--porcelain"], 10000).catch(() => ({ stdout: "" }));
-        const list = log.stdout.split("\n").filter(Boolean).map((l) => { const [hash, subject, time, author] = l.split("\x1f"); return { hash, subject, time: Number(time), author }; });
-        next = { at: Date.now(), list, dirty: st.stdout.split("\n").filter(Boolean).length };
+        let dir = f.dir;
+        if (!dir) {
+          dir = await this.resolveDir(f);
+          (this.commitDir ??= {})[f.rkey] = { dir };
+          if (!dir) throw new Error("no repository");
+          key = `${this.srvKey(f.machine)}|${dir}`;
+        }
+        const r = await this.srvExec(f.machine, "sh", ["-c", 'git -C "$1" log -8 --format="%h%x1f%s%x1f%ct%x1f%an"; echo @@@; git -C "$1" status --porcelain', "_", dir], 10000);
+        const [log, st = ""] = r.stdout.split("@@@\n");
+        const list = log.split("\n").filter(Boolean).map((l) => { const [hash, subject, time, author] = l.split("\x1f"); return { hash, subject, time: Number(time), author }; });
+        next = { at: Date.now(), seq: f.a.seq, list, dirty: st.split("\n").filter(Boolean).length, enter: {} };
       } catch (_e) {
-        next = { at: Date.now(), list: [], dirty: 0, error: true };   // not a git folder (or the machine does not answer)
+        next = { at: Date.now(), seq: f.a.seq, list: [], dirty: 0, error: true, enter: {} };   // not a git folder (or the machine does not answer)
       }
-      const same = c && JSON.stringify(c.list) === JSON.stringify(next.list) && c.dirty === next.dirty && c.error === next.error;
-      this.commits[f.key] = next;
+      const old = key ? this.commits[key] : null;
+      let fresh = false;
+      if (old && !old.error && !next.error) {
+        next.enter = { ...old.enter };   // a commit that was not in the list before comes in with a transition (not the first load)
+        const had = new Set(old.list.map((x) => x.hash));
+        for (const x of next.list) if (!had.has(x.hash)) { next.enter[x.hash] = Date.now(); fresh = true; }
+      }
+      const same = old && JSON.stringify(old.list) === JSON.stringify(next.list) && old.dirty === next.dirty && old.error === next.error;
+      if (key) this.commits[key] = next;
       this.commitLoading = false;
-      if (!same) cx.notify();
+      if (fresh) this.commitAnimUntil = Date.now() + 2300;
+      const minute = Math.floor(Date.now() / 60000);
+      if (!same || !old || this.commitMinute !== minute) { this.commitMinute = minute; cx.notify(); }   // (a new minute: "3m ago" counts on)
     });
+  }
+
+  // A click on a commit: its full message opens in a small box above the inspector (a second click on it, or the ✕, closes it).
+  openCommit(cx, f, x) {
+    if (this.commitSel?.key === f.key && this.commitSel?.hash === x.hash) { this.commitSel = null; cx.notify(); return; }
+    this.commitSel = { key: f.key, hash: x.hash };
+    const k = `${f.key}|${x.hash}`;
+    cx.notify();
+    if (this.commitMsg?.[k]) return;
+    (this.commitMsg ??= {})[k] = "loading";
+    cx.spawn(async (cx) => {
+      try {
+        const r = await this.srvExec(f.machine, "sh", ["-c", 'git -C "$1" show -s --format="%an%x1f%ct%x1f%B" "$2"; echo @@@; git -C "$1" show --shortstat --format= "$2"', "_", f.dir, x.hash], 10000);
+        const [head, stat = ""] = r.stdout.split("@@@\n");
+        const [author, time, ...msg] = head.split("\x1f");
+        this.commitMsg[k] = { author, time: Number(time), msg: msg.join("\x1f").trim(), stat: stat.trim() };
+      } catch (_e) { this.commitMsg[k] = { author: "", time: 0, msg: x.subject, stat: "" }; }
+      cx.notify();
+    });
+  }
+
+  commitDetail(t, f) {
+    const sel = this.commitSel;
+    if (!sel || sel.key !== f.key) return [];
+    const d = this.commitMsg?.[`${sel.key}|${sel.hash}`];
+    const lines = d && d !== "loading" ? d.msg.split("\n") : [];
+    return [v_flex().id("commit-detail").flex_none().gap(6).px(15).py(10).border_t(1).border_color(t.border).bg(t.surface)
+      .child(h_flex().gap(8).items_center()
+        .child(div().text_size(11).text_color(t.accent).child(sel.hash))
+        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(d && d !== "loading" ? [d.author, d.time ? ago(d.time) : ""].filter(Boolean).join(" · ") : ""))
+        .child(div().id("commit-detail-x").w(20).h(20).flex_none().flex().items_center().justify_center().rounded(5).text_size(11).text_color(t.dim).cursor_pointer()
+          .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => { this.commitSel = null; cx.notify(); }).child("✕")))
+      .child(d && d !== "loading"
+        ? v_flex().id("commit-msg").gap(4).max_h(170).overflow_y_scrollbar()
+            .children(lines.map((l, i) => (l.trim() === "" ? div().h(4) : div().text_size(i === 0 ? 13 : 12).when(i === 0, (e) => e.font_semibold()).text_color(i === 0 ? t.foreground : t.muted).child(l))))
+        : h_flex().gap(8).items_center().text_size(12).text_color(t.dim).child(div().text_color(t.working).frames(SPIN, 90)).child("loading…"))
+      .when(!!d && d !== "loading" && !!d.stat, (e) => e.child(div().text_size(11).text_color(t.dim).child(d.stat)))];
   }
 
   commitBar(t) {
     const f = this.focusAgent();
-    if (!f) return [];
-    const c = this.commits[f.key];
+    if (!f || f.failed) return [];
+    const c = f.key ? this.commits[f.key] : null;
     if (c?.error) return [];
-    const branch = spaces().find((x) => x.id === f.a.space)?.branch;
     const head = h_flex().gap(8).items_center().px(15).h(22)
       .child(div().text_size(11).text_color(t.dim).child("COMMIT-INSPECTOR"))
-      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(branch ?? ""))
+      .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(f.branch ?? ""))
       .when(c && c.dirty > 0, (el) => el.child(div().flex_none().text_size(11).text_color(t.ansi3).child(`${c.dirty} uncommitted`)));
     // the rail: a line through a dot per commit, the dots at the x of the dots of the job rows below (px 15, ml 3, 8 wide)
     const line = (on) => div().w(2).flex_1().bg(on ? t.border : "#00000000");
+    const now = Date.now();
     const rows = !c
       ? [h_flex().gap(9).items_center().px(15).h(24)
           .child(div().ml(3).w(8).flex_none().text_color(t.working).text_size(10).frames(SPIN, 90))
           .child(div().pl(5).text_size(12).text_color(t.dim).child("loading commits…"))]
-      : c.list.length ? c.list.map((x, i) => h_flex().id(`ci-${i}`).gap(9).items_center().px(15).h(26)
-          .child(v_flex().ml(3).w(8).h_full().flex_none().items_center()
-            .child(line(i > 0)).child(div().w(8).h(8).rounded(4).flex_none().bg(i === 0 ? t.accent : t.dim)).child(line(i < c.list.length - 1)))
-          .child(div().pl(5).w(66).flex_none().truncate().text_size(11).text_color(t.accent).child(x.hash))
-          .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(i === 0 ? t.foreground : t.muted).child(x.subject))
-          .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(x.time))))
+      : c.list.length ? c.list.map((x, i) => {
+          // a new commit grows in from nothing (0.45 s, slowing down) and lights up in the accent colour, which then fades (2.2 s)
+          const age = c.enter[x.hash] ? now - c.enter[x.hash] : 1e9;
+          const p = Math.min(1, age / 450), ease = 1 - (1 - p) * (1 - p) * (1 - p);
+          const glow = age < 2200 ? Math.round(0x38 * (1 - age / 2200)).toString(16).padStart(2, "0") : null;
+          const sel = this.commitSel?.key === f.key && this.commitSel?.hash === x.hash;
+          return h_flex().id(`ci-${x.hash}`).gap(9).items_center().px(15).h(Math.max(1, Math.round(26 * ease))).flex_none().overflow_hidden().opacity(age < 450 ? ease : 1)
+            .cursor_pointer().hover((e) => e.bg(sel ? t.selected : t.hover)).on_click((_e, cx) => this.openCommit(cx, f, x))
+            .bg(sel ? t.selected : glow ? tint(t.accent, glow, t.chrome) : "#00000000")
+            .child(v_flex().ml(3).w(8).h_full().flex_none().items_center()
+              .child(line(i > 0)).child(div().w(8).h(8).rounded(4).flex_none().bg(i === 0 || sel ? t.accent : t.dim).border(sel ? 2 : 0).border_color(t.foreground)).child(line(i < c.list.length - 1)))
+            .child(div().pl(5).w(66).flex_none().truncate().text_size(11).text_color(t.accent).child(x.hash))
+            .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(i === 0 ? t.foreground : t.muted).child(x.subject))
+            .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(x.time)));
+        })
         : [div().px(15).h(24).text_size(12).text_color(t.dim).child("no commits yet")];
-    return [v_flex().id("commit-inspector").flex_none().border_t(1).border_color(t.border).py(5).child(head).children(rows)];
+    return [...this.commitDetail(t, f), v_flex().id("commit-inspector").flex_none().border_t(1).border_color(t.border).py(5).child(head).children(rows)];
   }
 
   newSpaceBar(t) {
@@ -2412,9 +2764,7 @@ export default class Bhote extends View {
           .when(running > 0, (el) => el.child(div().text_size(11).text_color(t.working).child(String(running))))
           .when(failed > 0, (el) => el.child(div().px(4).rounded(8).text_size(10).bg("#a8162e").text_color("#ffffff").child(String(failed))));
       }))
-      .child(div().flex_1())
-      .when(this.tab === "prs", (el) => el.child(this.prFilterButton(t)))
-      .child(this.gearButton(t));
+      .when(this.tab === "prs", (el) => el.child(div().flex_1()).child(this.prFilterButton(t)));
   }
 
   // The project a run belongs to: runs are named after worktrees ("IMS-wt1", "IMS (wt2)"); they belong to the project of that name.
@@ -2805,11 +3155,20 @@ export default class Bhote extends View {
   }
 
   // The button that folds the tiles to their small form and back.
-  openSettings() { openOverlay({ mod: "bhote", props: { settings: true }, kind: "dialog", modal: true, width: 860, height: 640 }); }
+  openSettings() { openOverlay({ mod: "bhote", props: { settings: true }, kind: "dialog", modal: true, width: 1032, height: 768 }); }
 
-  gearButton(t) {
-    return div().id("settings-gear").w(34).h(30).flex_none().flex().items_center().justify_center().rounded(7).cursor_pointer().text_size(20).text_color(t.muted)
-      .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(() => this.openSettings())).child("⚙");
+  // The settings row at the foot of the panel, under Done: always there, on the overview and in every tab (like the rows under the agents).
+  settingsDock(t) {
+    // the look of the DONE caption above: same left edge (px 10), same size and colour; the gear is a drawn icon, left-aligned like the first letter
+    const v = (this.version ?? "").replace(/^(\d+\.\d+\.\d+)\.\d+/, "$1");   // (0.9.3.1 Preview: the build number is not for the panel)
+    return h_flex().id("settings-dock").flex_none().h(36).px(10).gap(8).items_center().cursor_pointer().border_t(1).border_color(t.border).bg(t.chrome)
+      .text_color(t.dim).hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_click(this.guard(() => this.openSettings()))
+      .child(svg("mods/bhote/gear.svg").size(14).flex_none())
+      .child(div().flex_1().text_size(11).font_semibold().child("SETTINGS"))
+      .child(h_flex().gap(6).items_center().flex_none()   // the branding
+        .child(div().text_size(12).font_semibold().text_color(t.accent).child("bhote"))
+        .when(!!v, (e) => e.child(div().text_size(11).text_color(t.dim).child(v))));
   }
 
   tilesToggle(t) {
@@ -2949,10 +3308,9 @@ export default class Bhote extends View {
     const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id), this.tilesToggle(t));
     return v_flex().id("home-root").size_full().bg(t.chrome)
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
-      .child(h_flex().flex_none().justify_end().px(8).pt(6).child(this.gearButton(t)))
       .child(tiles).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
-      .children(this.docks(t));
+      .children([...this.docks(t), this.settingsDock(t)]);
   }
 
   setTab(cx, id) {
@@ -3159,6 +3517,6 @@ export default class Bhote extends View {
     return v_flex().size_full().bg(t.chrome).text_size(13)
       .child(this.tabBar(t))
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body))
-      .children(this.tab === "tests" ? this.archiveDock(t) : this.tab === "topics" ? this.docks(t) : []);
+      .children([...(this.tab === "tests" ? this.archiveDock(t) : this.tab === "topics" ? this.docks(t) : []), this.settingsDock(t)]);
   }
 }
