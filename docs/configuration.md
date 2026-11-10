@@ -27,6 +27,8 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `AUTO_ASSIGN_MACHINE` | `any` | Prefer agents on | Whose free agents come first: `any` (this machine first) or a machine label; when none is free there, the others. |
 | `AGENT_CAN_CLOSE` | `on` | Agents may close topics | An agent may set its topic to done itself; `off`: only to review, you close it. |
 | `AGENT_TOPICS` | `on` | Agents may create topics | An agent may create topics with `bhote add` (the bhote skill tells it to when it hands work back or waits); `off`: `bhote add` run by an agent creates nothing (a note on stderr, `null` with `--json`, exit `0`), and the agent goes on without a topic. Topics you create, take or transfer are not affected; the “Question from” topics are `AUTO_REVIEW`. |
+| `AGENT_LISTEN` | `on` | Agents listen by default | Whether agents accept messages from other agents (text in kharka under `handoff/`, a one-line prompt through `herdr.commands`). The ear on an agent's card in the herdr-app switches one agent: the record `listen/<kharka node>/<name>` (the name of its space, letters and digits in lower case) holds `{"listening": false}`; without a record this setting counts. An agent that wants to message another reads the record first. |
+| `STASH_LINK` | `off` | Ctrl+S stashes into bhote | Ctrl+S in the terminal of an agent in the herdr Mac app also puts the text of its prompt into the bhote stash (with the agent as a badge; a topic made of it is queued on that agent) and passes the key on, so Claude Code stashes it, too. Switching it on binds `bhote.stash` to `ctrl-s` in `~/.config/herdr-app/keys.json`, off removes that binding; `bhote app install` sets it by the setting. |
 | `CLICK_FOCUS_AGENT` | `on` | A click on a topic focuses its agent | A click on a topic card shows its agent in herdr and leaves the focus on the agent, so that its grey bar stays in herdr's agent list; `off`: the focus goes back to the bhote panel of that tab (what ⏎ always does). |
 | `FINISHED_MINUTES` | `30` | Recently finished: dismiss after (min) | A recently finished card (an agent that stopped without a question) is dismissed by itself after this many minutes; it comes back when the agent works again. `0`: never. |
 | `AGENTS_COMPACT` | `off` | Agent overview: counts only | Shows only how many agents are active and how many are inactive instead of the list of agents. The `↕` button at the right end of the divider above the agents switches it. |
@@ -48,7 +50,8 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `DEPLOY_PROJECTS_OFF` | | Projects off (deployments) | Comma-separated project names switched off in the Deployments block: the switches in the settings (Connections) write it. |
 | `TEST_PROJECTS_OFF` | | Projects off (tests) | The same for the Tests block; the local runs of a project's worktrees (`IMS-wt1` is IMS) go with it. |
 | `KHARKA_WATCH_STALE` | `90` | Restart after (s) | `bhote kharka watch` restarts `herdr-kharka` when its entry in kharka (`herdr/<node>`) is older than this. |
-| `CLAUDE_MOD` | `on` | Claude Code mod (band, pane) | Whether the [Claude Code mod](claude-mod.md) shows the topic of the agent: the band above the prompt and the pane (`/topic pane`). Off: the mod stays installed but draws nothing and asks bhote for nothing (it asks as `bhote current --json --mod` and gets `{"disabled":true}`). |
+| `CLAUDE_MOD` | `on` | Claude Code mod (pane) | Whether the [Claude Code mod](claude-mod.md) shows the topic of the agent: the pane (`/topic pane`). Off: the mod stays installed but draws nothing and asks bhote for nothing (it asks as `bhote current --json --mod` and gets `{"disabled":true}`). |
+| `FRIENDLY_REMINDER` | `on` | Show Friendly Reminder | The Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description, above the prompt: a reminder at random, not a status. Needs the mod (`bhote mod install`). |
 | `MONITOR_ROWS` | `4` | Entries shown | Entries each monitor shows. |
 | `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`. |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |
@@ -72,3 +75,13 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 
 Numbers that are not plain digits fall back to their default. Values never contain control characters (they are removed when
 written).
+
+## Services (herdr-app)
+
+Dev servers that are not IMS are listed in `~/.config/bhote/servers.json` (Settings › Servers writes it; it is made with two entries the first time):
+`[{"id": "marketing", "name": "Bilendo Marketing", "machine": null, "port": 3002, "url": "http://localhost:3002", "start": "marketing-start", "stop": "marketing-stop"}]`.
+`machine` is `null` for this computer, else the name of a herdr machine (shown by its alias, `MACHINE_LABELS`: `omarchy-flo=Omarchy`). A service belongs to one machine: Bilendo on the Mac and Bilendo on Omarchy are two entries, each under its machine in the Servers tab, the overview tile and Settings › Servers (`Copy to Omarchy` makes the second one). On Linux a service starts as a systemd user unit `bhote-svc-<id>` (a program started through `hc exec` does not outlive it); on macOS as a detached process group. The start command runs in the dev shell (`zsh -ic`), detached, with its output in
+`~/.cache/bhote/svc/<id>.log` and its process group in `<id>.pid`; the service counts as running while its port answers. Stopping runs the stop command (if any),
+then ends the process group and whatever still listens on the port.
+
+A start that does not work shows as `failed` on the service's card, with the last lines of `<id>.log` (the shell's own noise left out): the start command ended and the port does not answer (checked after 6 s), or the port did not answer within 2 minutes. A topic `<name> did not start on <machine>` is made in `review`, in the project of the same name, with the key line of the log as its description (140 characters). Start again, or dismiss the card, to clear it.

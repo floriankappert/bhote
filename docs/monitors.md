@@ -25,6 +25,23 @@ the worktree, as an agent in it has it checked out, or of the folder where `bhot
 
 `✶` running (progress from the jobs' steps), `◌` queued, `⏸` waiting for an approval, `✓` done, `✗` failed, `⊘` canceled.
 
+## Where a pull request stands (the herdr-app panel)
+
+Every project works in the same order: the checks of the pull request, the merge, then the environments it is deployed to. The panel
+shows that as a row under each open pull request, `Tests - Merge - Staging - Production`, and the stage the pull request is at stands out.
+Nothing about the order is typed in anywhere: it comes from what is already configured.
+
+| What | Where it comes from |
+|---|---|
+| Tests | the checks of the pull request (GitHub Actions, and CircleCI's statuses) |
+| Merge | ready when the tests are green |
+| The environments | the project's `deploy_branches` in its CI settings: `develop=Staging,main=Production` is two stages, `main=main` one stage `Deploy` |
+| A project without CI deployments (Capistrano) | switch it off under *Deployment monitor* (`DEPLOY_PROJECTS_OFF=Bilendo`): its row ends at the merge, and it has no builds or pipelines in the Deployments tab |
+
+A merged pull request is found again on the deploy branch by its number (`Merge pull request #1784`), so its deployment shows on its row. The
+pipelines that run on the deploy branches and on other people's pull requests are listed under *Deployments* as builds, from GitHub's statuses
+of the commit (no CircleCI token needed); `deploy_names` lets the jobs that are still waiting for their build show up as waiting.
+
 ## Connections
 
 | Connection | How | Used by |
@@ -41,7 +58,7 @@ the wizard, or ⏎ on *CI* in the project's settings):
 |---|---|---|
 | `ci` | `github:<owner/repo>` | `circleci:gh/<owner/repo>` (when the repository has `.circleci/config.yml`) |
 | `deploy_branches` | the default branch (`main`) | `branch=Label` from the deploy jobs' branch filters: `develop=Staging,main=Production` |
-| `deploy_names` | the workflows with "deploy" in their name, `Workflow=Label` (`Backend Deployment=Backend`) | deploy jobs, `job=Label` (`deploy-ecs-backend=Backend`); empty: every job with "deploy" in it (else "approv"), labelled by the last word of its name |
+| `deploy_names` | the workflows with "deploy" in their name, `Workflow=Label` (`Backend Deployment=Backend`) | deploy jobs, `job=Label` (`deploy-ecs-backend=Backend`); empty (what the detection writes for CircleCI): every job with "deploy" in it (else "approv"), labelled by the last word of its name |
 | `test_names` | job names; empty: every job with "test" in it (matrix shards `Tests (1/4)` are one entry) | job names; empty: every job with "test" or "build" in it |
 
 **CircleCI deployments.** A deployment is a workflow run that contains a deploy job: one entry per workflow, labelled by that job

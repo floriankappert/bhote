@@ -1,5 +1,7 @@
 # herdr plugin
 
+> **Deprecated since 0.9.3.** This page describes the plugin of the terminal UI. bhote is a native add-on for the herdr Mac app now ([the add-on](herdr-app.md)); the terminal UI stays for machines without the app and gets no new features.
+
 `herdr-plugin/` is a herdr plugin (`bhote.panel`) that puts the panel next to your agents. `./install.sh` links it
 (`herdr plugin link <repo>/herdr-plugin`).
 
@@ -27,6 +29,7 @@ Rules the plugin follows:
 - A tab that already shows a pane titled `Bhote` is left alone.
 - It labels the panes it creates `bhote`. A pane with that label that does not run bhote any more (restored after a restart)
   gets `bhote` started in it. A pane is never typed into because of its title alone, and never when it runs an agent.
+- With `PANEL_LAYOUT=split` (and `BHOTED_PANEL=on`) every tab gets two panes: `bhote-left` (`PANEL_LEFT_WIDTH` columns, left of the agent) and `bhote-right`; in `single` the left one is closed again
 - It splits only when the agent keeps at least 64 columns (`BHOTE_AGENT_MIN_WIDTH`); the panel width is `BHOTE_PANEL_WIDTH`, kept between the settings `PANEL_MIN_WIDTH` and `PANEL_MAX_WIDTH`
   (56).
 - `AUTOSTART=off` in the settings switches the startup and event hooks off.

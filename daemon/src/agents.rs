@@ -96,16 +96,76 @@ fn put_list(path: &Path, text: &str) -> bool {
     put_tmp(path, text)
 }
 
+/// workspaces.local: one line per workspace of this machine, for the left panel: number, id, label, 1 when it is the focused one, the state of its agents
+pub fn workspaces_text(ws: &Value) -> String {
+    let empty = Vec::new();
+    let mut out = String::new();
+    for w in ws.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty) {
+        let f = [tostr(&or_empty(w.get("number"))), tostr(&or_empty(w.get("workspace_id"))), clean(&tostr(w.get("label").unwrap_or(&Value::Null))), (if truthy(w.get("focused")) { "1" } else { "0" }).to_string(), tostr(&or_empty(w.get("agent_status")))];
+        out.push_str(&f.iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&US.to_string())); out.push('\n');
+    }
+    out
+}
+
 /// One collection of this machine: asks herdr, writes the files. false when herdr did not answer (the old files stay).
 pub fn collect_local(shared: &Path, host: &str, tests_busy: bool) -> bool {
-    let Some(panes) = herdr(&["pane", "list"], 20) else { return false };
-    let ws = herdr(&["workspace", "list"], 20).unwrap_or(Value::Null);
+    let (panes, ws) = if crate::herdr_app::enabled() {
+        let Some(x) = crate::herdr_app::local() else { return false };
+        x
+    } else {
+        let Some(panes) = herdr(&["pane", "list"], 20) else { return false };
+        (panes, herdr(&["workspace", "list"], 20).unwrap_or(Value::Null))
+    };
     let o = build(host, &panes, &ws, tests_busy);
     let _ = put_tmp(&shared.join("agents.meta.local"), &o.meta);
     let a = put_list(&shared.join("agents.now.local"), &o.now);
     let b = put_list(&shared.join("agents.local"), &o.local);
     let _ = put_tmp(&shared.join("agents.cwd"), &o.cwd);
     let _ = put_tmp(&shared.join("focus.pane"), &o.focus);
+    let _ = put_tmp(&shared.join("workspaces.local"), &workspaces_text(&ws));
+    if a || b {
+        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));
+    }
+    true
+}
+
+// ── the other machines through herdr-app: the same files as collect_remote_kharka, from what herdr-app shows ───────
+
+/// collect_remote_app: every machine herdr-app shows besides this one, in the files of the kharka collection (agents.remote,
+/// agents.meta.remote, agents.now.remote, workspaces.remote, agents.nodes, machines.offline). `labels` is MACHINE_LABELS,
+/// `off_list` MACHINES_OFF. false when herdr-app did not answer (the old files stay).
+pub fn collect_remote_app(shared: &Path, host: &str, labels: &str, off_list: &str, tests_busy: bool) -> bool {
+    let Some(machines) = crate::herdr_app::snapshot() else { return false };
+    let off = format!(",{},", off_list);
+    let us = US.to_string();
+    let (mut nodes, mut offline, mut meta, mut now, mut agents, mut wsout) = (String::new(), String::new(), String::new(), String::new(), String::new(), String::new());
+    for m in machines {
+        let Some(name) = m.name.clone() else { continue };
+        let lbl = crate::herdr_app::label(labels, &name);
+        if lbl == host || off.contains(&format!(",{},", lbl)) { continue; }
+        let o = build(&lbl, &m.panes, &m.workspaces, tests_busy);
+        nodes.push_str(&[lbl.clone(), name.clone(), (if m.down { "1" } else { "0" }).to_string(), String::new()].join(&us)); nodes.push('\n');
+        if m.down { offline.push_str(&lbl); offline.push('\n'); }
+        // a machine that is down: its agents stay, muted (off-<state>), as with kharka
+        for l in o.local.lines() {
+            let mut p: Vec<String> = l.split(US).map(|x| x.to_string()).collect();
+            if m.down && p.len() >= 3 && !p[2].starts_with("off-") { p[2] = format!("off-{}", p[2]); }
+            agents.push_str(&p.join(&us)); agents.push('\n');
+        }
+        meta.push_str(&o.meta); now.push_str(&o.now);
+        let empty = Vec::new();
+        for w in m.workspaces.pointer("/result/workspaces").and_then(|v| v.as_array()).unwrap_or(&empty) {
+            let st = if m.down { "off".to_string() } else { match tostr(&or_empty(w.get("agent_status"))).as_str() { s @ ("working" | "blocked" | "done") => s.to_string(), _ => "idle".to_string() } };
+            wsout.push_str(&[lbl.clone(), tostr(&or_empty(w.get("workspace_id"))), clean(&tostr(&or_empty(w.get("label")))), tostr(&or_empty(w.get("number"))), st].iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&us)); wsout.push('\n');
+        }
+    }
+    let _ = put_tmp(&shared.join("agents.nodes"), &nodes);
+    let _ = put_tmp(&shared.join("machines.offline"), &offline);
+    let _ = put_tmp(&shared.join("agents.meta.remote"), &meta);
+    let _ = put_tmp(&shared.join("workspaces.remote"), &wsout);
+    let a = put_list(&shared.join("agents.now.remote"), &now);
+    let b = put_list(&shared.join("agents.remote"), &agents);
     if a || b {
         let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let _ = fs::write(shared.join("agents.rev"), format!("{} {}{}\n", t, std::process::id(), t % 32768));
@@ -121,7 +181,7 @@ fn kharka_ls(bin: &str, prefix: &str) -> Option<Vec<Value>> {
     Some(String::from_utf8_lossy(&out).lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
 }
 
-pub struct Remote { pub nodes: String, pub offline: String, pub meta: String, pub now: String, pub agents: String }
+pub struct Remote { pub nodes: String, pub offline: String, pub meta: String, pub now: String, pub agents: String, pub workspaces: String }
 
 fn ctl_strip(s: &str) -> String { clean(s) }
 
@@ -130,7 +190,7 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
     let mut on = std::collections::HashMap::new();
     for e in n { if let Some(k) = e["key"].as_str() { on.insert(k.trim_start_matches("_nodes/").to_string(), !matches!(e.pointer("/value/online"), Some(Value::Bool(false)))); } }
     let off = format!(",{},", off_list);
-    let (mut nodes, mut offline, mut meta, mut now, mut agents) = (String::new(), String::new(), String::new(), String::new(), String::new());
+    let (mut nodes, mut offline, mut meta, mut now, mut agents, mut wsout) = (String::new(), String::new(), String::new(), String::new(), String::new(), String::new());
     let us = US.to_string();
     for e in h {
         let key = e["key"].as_str().unwrap_or("");
@@ -147,6 +207,19 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
         let cmds: Vec<String> = v.get("commands").and_then(|x| x.as_array()).into_iter().flatten().map(|c| tostr(c).chars().filter(|c| c.is_ascii_lowercase() || *c == '.' || *c == '_').collect()).collect();
         nodes.push_str(&[m.clone(), node.to_string(), (if down { "1" } else { "0" }).to_string(), cmds.join(",")].join(&us)); nodes.push('\n');
         if down { offline.push_str(&m); offline.push('\n'); }
+        // workspaces.remote: machine, id, label, number, state of its agents (working > blocked > done > idle)
+        let mut wst: std::collections::HashMap<String, u8> = std::collections::HashMap::new();
+        for a in v.get("agents").and_then(|x| x.as_array()).into_iter().flatten() {
+            let r = match tostr(&or_empty(a.get("status"))).as_str() { "working" => 4, "blocked" => 3, "done" => 2, _ => 1 };
+            let e = wst.entry(tostr(&or_empty(a.get("workspace")))).or_insert(0); if r > *e { *e = r; }
+        }
+        let mut wl: Vec<&Value> = v.get("workspaces").and_then(|x| x.as_array()).into_iter().flatten().filter(|w| w.is_object()).collect();
+        wl.sort_by_key(|w| w.get("number").and_then(|n| n.as_i64()).unwrap_or(1_000_000));
+        for w in wl {
+            let id = tostr(&or_empty(w.get("id")));
+            let st = if down { "off" } else { match wst.get(&id) { Some(4) => "working", Some(3) => "blocked", Some(2) => "done", _ => "idle" } };
+            wsout.push_str(&[m.clone(), id, clean(&tostr(&or_empty(w.get("label")))), tostr(&or_empty(w.get("number"))), st.to_string()].iter().map(|s| clean_lo(s)).collect::<Vec<_>>().join(&us)); wsout.push('\n');
+        }
         for a in v.get("agents").and_then(|x| x.as_array()).into_iter().flatten() {
             if !a.is_object() { continue; }
             let pane = tostr(&or_empty(a.get("pane")));
@@ -166,7 +239,7 @@ pub fn build_remote(h: &[Value], n: &[Value], me: &str, host: &str, off_list: &s
             if !tn.is_empty() { now.push_str(&[m.clone(), pane.clone(), ctl_strip(&tn)].join(&us)); now.push('\n'); }
         }
     }
-    Remote { nodes, offline, meta, now, agents }
+    Remote { nodes, offline, meta, now, agents, workspaces: wsout }
 }
 
 fn kharka_self(shared: &Path, bin: &str) -> String {
@@ -199,6 +272,7 @@ pub fn collect_remote_kharka(shared: &Path, host: &str, bin: &str, off_list: &st
     let _ = put_tmp(&shared.join("agents.nodes"), &r.nodes);
     let _ = put_tmp(&shared.join("machines.offline"), &r.offline);
     let _ = put_tmp(&shared.join("agents.meta.remote"), &r.meta);
+    let _ = put_tmp(&shared.join("workspaces.remote"), &r.workspaces);
     let a = put_list(&shared.join("agents.now.remote"), &r.now);
     let b = put_list(&remote, &r.agents);
     if a || b {

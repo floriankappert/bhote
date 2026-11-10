@@ -1,5 +1,7 @@
 # The panel
 
+> **Deprecated since 0.9.3.** This page describes the terminal UI. bhote is a native add-on for the herdr Mac app now ([the add-on](herdr-app.md)); the terminal UI stays for machines without the app and gets no new features.
+
 `bhote` without arguments is a panel for a herdr pane of about 56 columns (it works from 30 to any width; the list uses up to
 100 columns). It opens with a welcome screen that closes on any key (or by itself after 15 s), then shows the topics on top
 and the agents below.
@@ -36,6 +38,13 @@ branch is still on its way; the deployment is found by the branch, by the pull r
 project and deployment (`IMS · Backend`) behind the branch, its state (deploying, queued, needs approval) and the progress as a bar with a percentage,
 taken from the deployment monitor. When the deployment is over the topic goes to review. A topic that says it waits for a deployment while none runs
 for it is a line in the normal Waiting list.
+
+## Two panels per tab (split)
+
+`PANEL_LAYOUT=split` (settings › *Panel layout*) is for the Rust panel (`BHOTED_PANEL=on`): not one panel with everything, but two. The **left** one shows
+the agents' cards (also the idle ones) and the agent overview, the **right** one the lines of the topics (next, waiting, parked), done, deployments and tests.
+A panel knows its side from the label of its herdr pane (`bhote-left`, `bhote-right`) or from `BHOTE_SIDE=left|right`; without either it is the one panel
+with everything, as before. (Panes for the two sides are made by the herdr plugin; the workspaces join the left panel next.)
 
 ## Keys
 
@@ -98,7 +107,7 @@ front of it: `w3:a1|Shop (main)`, `MAC/w3:a1|root` (a session in the home folder
 hand (empty: made from the name again). A code set by hand is a record in the topic store, so every machine shows the same.
 A machine that does not answer shows `· OMR ◐ reconnecting` in the project caption, its agents muted. The ↕ at the end of the rule above the agents
 switches the agent overview to counts only (there is no drag handle; `AGENT_ROWS` sets the area's height). A topic handed to an agent shows that agent's state in its meta line (`working`, `needs you`,
-`finished · x = done`, `gone`).
+`finished`, `gone`).
 
 ## Handing a topic to an agent
 

@@ -2,7 +2,8 @@
 # Runs the test suites (all of them, or the ones named) and exits 1 when one of them fails. Usage: bash tests/run.sh [smoke cli ...]
 # Needs jq, python3 and git. Each suite works in throw-away folders and never touches your config, data or herdr.
 cd "$(dirname "$0")/.." || exit 1
-[ $# -gt 0 ] || set -- smoke cli agents input store slack monitor follow frame fuzz panel sync kharka   # (kharka is skipped without the kharka binary)
+export BHOTE_HERDR_BACKEND=classic   # the suites answer with a fake herdr; the herdr-app source has its own checks (tests/herdr_app.sh)
+[ $# -gt 0 ] || set -- smoke cli agents herdr_app input store slack monitor follow frame fuzz panel sync kharka   # (kharka is skipped without the kharka binary)
 fail=0
 for s in "$@"; do
     printf '── %s\n' "$s"

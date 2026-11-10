@@ -160,7 +160,7 @@ the watch on.
 Run by an agent (in herdr): it takes the topic over, it becomes the topic's agent (its session, pane, machine and name),
 status `now`. `bhote now <ref>` run by an agent does the same. Exit `1` outside an agent.
 
-### `bhote project [list]` · `add <name>` · `rename <ref> <name>` · `rm <ref>` · `pin <ref> <what>` · `unpin <ref> <key>` · `of [folder]`
+### `bhote project [list]` · `add <name>` · `rename <ref> <name>` · `rm <ref>` · `pin <ref> <what>` · `unpin <ref> <key>` · `set <ref> <field> <value>` · `of [folder]`
 
 Projects group the agents (and the topics). An agent belongs to a project by its git repository, known by its key: the
 origin URL as `host/owner/name` (`git@github.com:Acme/Shop.git` → `github.com/acme/shop`) or `dir:<folder>` without a
@@ -168,6 +168,7 @@ remote; a worktree has the key of its main repository, so it inherits the projec
 to a project by its herdr workspace (`ws:<name>`). `pin` takes a folder, an agent (`bhote agents`: its repository, else
 its workspace), `ws:<workspace>` or a key. `of` prints the project of a folder (default: here). Projects are records in
 the topic store and travel with the topics; `--json` on `list` gives `[{"id", "n", "name", "repos", "workspaces"}]`.
+`set` writes one field of a project: `repos` and `workspaces` (comma-separated lists, as `pin` keeps them), and its CI and runbook: `ci` (`github:owner/repo` or `circleci:gh/owner/repo`, empty for none), `deploy_branches` (`develop=Staging,main=Production`), `deploy_names`, `test_names` and `runbook` (the stages after the merge, comma-separated; `none`: the path ends at the merge; empty: the default for its CI); the values are described in [monitors](monitors.md).
 `bhote add … -p <project>` gives a topic its project; a topic an agent makes gets the project of the agent's repository.
 
 ### `bhote rename <ref> <title>`
@@ -214,9 +215,9 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 
 The agents herdr knows (this machine, and the other machines when `REMOTE_AGENTS=on`: herdr's saved ones, or the ones in
 kharka with `AGENTS_VIA=kharka`), numbered. Every agent also has a
-name of its own: herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (with the machine's code in front on another machine,
+name of its own from Middle-earth (`Frodo`, `Sam`, `Merry` … 60 short names, then `Frodo2`), the same on every machine: it follows from the rank of the agent's record among all agent records (by the time it was made), shown on the agent card in the herdr-app and as `ring` in `--json`; and the older name, herdr's workspace and pane number, `w3:a1` for the pane `w3:p1` (with the machine's code in front on another machine,
 `MAC/w3:a1`; it is shown in the agent list and behind done topics). The older code, a machine code and a number kept for good (`MAC4`, `OMR1`),
-still works as a ref and is the `alias` in `--json`. The numbers, the names and the codes are agent refs for `transfer` and `jump`; a name that two
+still works as a ref and is the `alias` in `--json`. The numbers, the names (`frodo` too, in any case) and the codes are agent refs for `transfer` and `jump`; a name that two
 machines have (`w3:a1`) asks for the machine (`MAC/w3:a1`). `--json`: an array of `{"n", "code", "alias", "machine", "pane", "status", "name", "task", "free", "topic"}`.
 
 ### `bhote jump <machine> <pane> | <agent>`
@@ -246,6 +247,12 @@ nothing when there is none. `--json` adds `progress` (the [Claude Code mod](clau
 ```json
 {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "bhote current"}]}]}}
 ```
+
+### `bhote reminder`
+
+A random topic that waits, is next or is parked, as one JSON line (`id`, `title`, `description`, `status`, `waiting_for`): what the [Claude Code
+mod](claude-mod.md) shows as its friendly reminder. Not a wait for a deployment, not an automatic card, not a dismissed one, not
+`Waiting for New Work`. `{}` when there is none, `{"disabled":true}` with `FRIENDLY_REMINDER` off.
 
 ### `bhote event`
 
@@ -286,7 +293,7 @@ its page (title, description, status, actions) in the bhote panel of the tab, an
 ### `bhote version` · `bhote help`
 
 `bhote version` prints `bhote 0.6.0` (`--json`: `{"version":"0.6.0","build":"0.6.0"}`; from a checkout past the release tag both
-the text and `build` say the local build, `0.9.3 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
+the text and `build` say the local build, `0.9.3.1 Preview`); also `--version`, `-V`. `bhote help` (`-h`,
 `--help`) prints the short usage, with `bhote event` and `bhote setup` among the commands.
 
 ### `bhote skills [install]`
@@ -316,6 +323,15 @@ a profile failed.
 
 Asks GitHub whether a newer version is out and prints the command that updates this installation (brew, `git pull`,
 pacman). The panel also says so, checked every 6 hours (`UPDATE_CHECK`).
+
+### `bhote app install` · `bhote app check`
+
+The add-on for the herdr Mac app ([the add-on](herdr-app.md)). `install` copies the mod (`herdr-app/mods/bhote`) and the layout (`herdr-app/layouts/bhote.json`) from this checkout or from the package
+into `~/.config/herdr-app` (`HERDR_APP_HOME` picks another folder), then loads the mod once (`herdr-app check`) and says how to show the layout. `check` only loads it. Exit `1` when the files are not here or the check fails.
+
+### `bhote send <agent> <text...> [--title <t>] [--from <name>]`
+
+A message for another agent. `<agent>` is any agent ref (its name `Frodo`, a number, `machine/pane`). The message is kept in kharka (`msg/<kharka node>/<name of its space, letters and digits in lower case>/<id>`, state `queued`), and the herdr-app hands it to the agent, as a one-line prompt that says where to read it (`kharka get <key>`, the field `text`), as soon as the **ear** on the agent's card is on and the agent is free (`idle` or `done`: not working, not asking). With the ear off, or while the agent works, it waits; the card shows how many wait next to the ear. Afterwards the record says `delivered`. The sender is the agent the command is called from (its terminal, `HC_TERMINAL_ID`) or the agent `--from` names (or `$BHOTE_FROM`); the receiver sees its name and answers with `bhote send <that name>`. A message from the person (no agent behind it) says `the user` and is answered in the receiver's own session. The target and the sender are found by their records, so it works on a machine that has no list of agents (`bhote agents` is empty without herdr-app); a space called `~` is `home` in the key.
 
 ### `bhote reload`
 

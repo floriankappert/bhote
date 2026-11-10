@@ -1,12 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Progress, Topic } from '../types'
+import type { Progress, Reminder, Topic } from '../types'
 
 const PANE = 'bhote-topic'
 
 const topic = atom({ plugin: 'bhote-topic', key: 'topic' } as const, null)
 const isHidden = atom({ plugin: 'bhote-topic', key: 'isHidden' } as const, false)
+// the friendly reminder above the prompt: a topic that waits, is next or is parked (random, now and then, for a short while)
+const reminder = atom({ plugin: 'bhote-topic', key: 'reminder' } as const, null)
 
 // /topic <sub>: the bhote status commands that act on the topic of this agent
 const STATUS = ['now', 'testing', 'next', 'review', 'later', 'done', 'dismiss']
@@ -98,6 +100,35 @@ let isBusyNow = false
 let isOff = false // bhote says the mod is switched off (CLAUDE_MOD)
 let isPaneOpen = false // the pane is open: the whole picture (pull request, other topics) is read
 let tick = 0
+let reminderUntil = 0 // ms: how long the reminder on show stays
+let lastReminder = 0 // ms: when the last one came up
+const REMINDER_GAP = 10 * 60 * 1000 // at least ten minutes between two reminders
+const REMINDER_SHOWN = 45 * 1000 // and one stays for 45 seconds
+
+const parseReminder = (stdout: string): Reminder | null => {
+  try {
+    const r = JSON.parse(stdout)
+    if (!r || !r.id || !r.title) return null // {} (nothing waits) or {"disabled":true} (FRIENDLY_REMINDER off)
+    return { id: r.id, title: r.title, description: r.description ?? null, status: r.status, waitingFor: r.waiting_for ?? null }
+  } catch {
+    return null
+  }
+}
+
+// a random topic from the bhote parking lot (waiting, next, later) goes up as a reminder; "hey, did you still have this on your screen?"
+async function remind($: EngineInterface) {
+  try {
+    const ran = await $.process.run(['bhote', 'reminder'], { timeoutMs: 5000 })
+    const r = ran.exitCode === 0 ? parseReminder(ran.stdout) : null
+    if (r === null) return
+    const now = await $.clock.now()
+    reminderUntil = now + REMINDER_SHOWN
+    lastReminder = now
+    await update($, reminder, () => r)
+  } catch {
+    // no reminder this time
+  }
+}
 
 async function refresh($: EngineInterface) {
   try {
@@ -116,14 +147,22 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'topic',
-      description: 'Your bhote topic: /topic [pane|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]',
+      description: 'Your bhote topic: /topic [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]',
     })
+    lastReminder = (await $.clock.now()) - REMINDER_GAP + 2 * 60 * 1000 // the first one is possible after about two minutes
     await refresh($)
     // the "3min ago" runs on between turns
     // and a running suite or deployment moves its bar: every 5 s while a turn runs or something is under way, else once a minute
     $.clock.every(5000, async () => {
       tick += 1
       if (isWorking || isBusyNow || (isPaneOpen && tick % 2 === 0) || tick % 12 === 0) await refresh($)
+      const now = await $.clock.now()
+      if (reminderUntil > 0 && now >= reminderUntil) { // the reminder has been up long enough
+        reminderUntil = 0
+        await update($, reminder, () => null)
+      } else if (reminderUntil === 0 && now - lastReminder > REMINDER_GAP && Math.random() < 0.012) {
+        await remind($) // now and then, not on a clock: about one tick in eighty once the gap is over
+      }
       $.ui.invalidate('ui.render')
     })
 
@@ -146,6 +185,7 @@ export const register: Register = (on, options) => {
   on('turn.complete', async ($, e, next) => {
     isWorking = false
     await refresh($)
+    if (reminderUntil === 0 && (await $.clock.now()) - lastReminder > REMINDER_GAP && Math.random() < 0.2) await remind($) // after a turn: sometimes
 
     return next(e)
   })
@@ -153,6 +193,12 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'topic' }, async ($, e) => {
     const [sub = 'status', ...rest] = e.args.trim().split(/\s+/)
     const current = await read($, topic)
+    if (sub === 'remind') { // the friendly reminder on demand (otherwise it comes up by itself, at random)
+      await update($, isHidden, () => false)
+      await remind($)
+      const shown = await read($, reminder)
+      return { text: shown === null ? 'No reminder: nothing waits, is next or is parked, or Show Friendly Reminder is off in the bhote settings.' : 'Friendly reminder shown.' }
+    }
     if (isOff) return { text: 'The topic display is switched off in bhote (setting CLAUDE_MOD).' }
 
     if (sub === 'pane') {
@@ -172,7 +218,7 @@ export const register: Register = (on, options) => {
         isPaneOpen = false
         await $.ui.close({ id: PANE }) // the pane goes with the band, also after a reload reset the flag
       }
-      return { text: sub === 'hide' ? 'Topic band and pane hidden.' : 'Topic band shown.' }
+      return { text: sub === 'hide' ? 'Friendly reminder and pane hidden.' : 'Friendly reminder shown.' }
     }
     if (current === null) {
       return { text: 'No bhote topic for this agent.' }
@@ -187,7 +233,7 @@ export const register: Register = (on, options) => {
     } else if (sub === 'wait' && rest.length > 0) {
       argv = ['bhote', 'wait', current.id, rest.join(' ')]
     } else {
-      return { text: 'Usage: /topic [pane|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]' }
+      return { text: 'Usage: /topic [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]' }
     }
 
     const ran = await $.process.run(argv, { timeoutMs: 10000 })
@@ -196,76 +242,30 @@ export const register: Register = (on, options) => {
     return { text: ran.exitCode === 0 ? `#${current.n}: ${argv.slice(1, 2).join('')} ok` : `bhote failed: ${ran.stderr.trim()}` }
   })
 
+  // the friendly reminder: in orange, with the dog, a topic that waits, is next or is parked, its description under it (no status of the agent any more)
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const current = await read($, topic)
+    const r = await read($, reminder)
 
-    if (e.props.hasSurvey || current === null || (await read($, isHidden))) {
+    if (e.props.hasSurvey || r === null || (await read($, isHidden))) {
       return next(e)
     }
 
     const { Box, Text } = $.ui.resolve(e)
-    const since = current.updated ? ago((await $.clock.now()) / 1000 - current.updated) : ''
-    const color = colorOf(current)
-    const label = current.waitingFor ? `waiting for ${current.waitingFor}` : current.status
-
-    const { tests, deploy } = current.progress
-    const deployUnder = deploy !== null && ['running', 'queued', 'approval'].includes(deploy.state)
-    const rows = []
-    for (const t of tests) {
-      const b = bar(t.done, t.total)
-      rows.push(
-        <Text key={'t-' + t.suite}>
-          <Text dimColor>{cap(t.suite) + ' '}</Text>
-          <Text color="permission">{'■'.repeat(b.full)}</Text>
-          <Text dimColor>{'■'.repeat(b.rest)}</Text>
-          <Text bold>{` ${b.pct}%`}</Text>
-          <Text dimColor>{` (${t.done}/${t.total})`}</Text>
-        </Text>,
-      )
-    }
-    if (deploy !== null && (deployUnder || deploy.state === 'failed')) {
-      const b = bar(deploy.done ?? 0, deploy.total ?? 0)
-      const known = deploy.total !== null && deploy.total > 0
-      rows.push(
-        <Text key="deploy">
-          <Text dimColor>{deploy.project + ' · ' + deploy.label + ' '}</Text>
-          {known && deploy.state === 'running' ? (
-            <Text>
-              <Text color="claude">{'■'.repeat(b.full)}</Text>
-              <Text dimColor>{'■'.repeat(b.rest)}</Text>
-              <Text bold>{` ${b.pct}%`}</Text>
-              <Text dimColor>{` (${deploy.done}/${deploy.total})`}</Text>
-            </Text>
-          ) : (
-            <Text bold color={deploy.state === 'failed' ? 'error' : 'warning'}>
-              {DEPLOY_STATE[deploy.state] ?? 'deploying'}
-            </Text>
-          )}
-        </Text>,
-      )
-    }
+    const note = r.waitingFor ? `waiting for ${r.waitingFor}` : r.status === 'later' ? 'parked' : r.status
 
     return (
-      <Box borderStyle="round" borderColor={color} paddingX={1} flexDirection="column">
-        <Box justifyContent="space-between">
-          <Box flexDirection="column">
-            <Text bold color="text">
-              🐕 {current.title}
+      <Box borderStyle="round" borderColor="claude" paddingX={1} flexDirection="column">
+        <Text bold color="claude">
+          {'🐶 ' + r.title}
+          <Text dimColor>{'  ' + note}</Text>
+        </Text>
+        {r.description && (
+          <Box paddingLeft={3}>
+            <Text color="claude" dimColor>
+              {r.description}
             </Text>
-            {current.description && (
-              <Box paddingLeft={3}>
-                <Text color="inactive">{current.description}</Text>
-              </Box>
-            )}
           </Box>
-          <Box flexDirection="column" alignItems="flex-end">
-            <Text bold inverse color={color}>
-              {` ${label.toUpperCase()} `}
-            </Text>
-            {since !== '' && <Text dimColor>{since}</Text>}
-          </Box>
-        </Box>
-        {rows.length > 0 && <Box flexDirection="column" paddingLeft={3}>{rows}</Box>}
+        )}
       </Box>
     )
   })

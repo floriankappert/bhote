@@ -6,34 +6,42 @@
 
 *by Florian Kappert and Jakob Beyer*
 
-A side panel for [herdr](https://herdr.dev) that keeps your **topics** (what you work on, who you wait for) next to your
-**agents** (who is free, who is busy), on every machine you work on. herdr is a terminal multiplexer for coding agents
-such as Claude Code and Codex; bhote sits in a narrow pane next to them. It is a single bash script, about 56 columns
-wide, with a small sheepdog that guards the herd.
+**bhote is a native add-on for the [herdr](https://herdr.dev) Mac app.** It keeps your **topics** (what you work on, who you wait for) next to your
+**agents** (who is free, who is busy) on every machine you work on, and around them what you look at all day: the commits and pull requests of an agent,
+the tests and deployments of your projects, the dev servers and the headless agents. herdr is a workspace for coding agents such as Claude Code and Codex;
+the add-on is a mod of the herdr app with a layout of its own: its panels are drawn by the app (a settings dialog, drag and drop, transitions), it is **not a terminal UI**.
 
-<p align="center"><img src="docs/screenshot.svg" width="380" alt="The bhote panel: topics in review, now, next and waiting, the last done topics, and the agents grouped by project"></p>
+> **Since 0.9.3 the terminal UI is deprecated.** The panel that bhote drew in a herdr pane (bash and Rust) stays for machines without the app, such as Omarchy,
+> and gets no new features: see [Terminal UI (deprecated)](#terminal-ui-deprecated). The CLI, the topic files and the collector are the same underneath.
 
 ## Features
 
-- **Topics** move through `now`, `next`, `waiting` (for a name, with a date), `review`, `later` and `done`, each with an optional description.
-  The panel shows review and now as cards, next, waiting and parked ones as lines grouped by status; the last done topics sit in their own area, with the agent that did them.
-- **Agents of all machines** in one list, grouped by project: working ones in Claude orange, ones that need you in red, idle ones grey,
-  with the topic each works on. Every agent has a name of its own, herdr's workspace and pane number (`w3:a1`, `MAC/w3:a1` on another machine), also a ref for the CLI.
-- **Start a topic on a free agent** (`s`): bhote sends title and description to its pane. With `AUTO_ASSIGN` a `now` topic is started by itself on the next free agent of its project.
-- **Review topics by themselves:** an agent that asks you a question or waits for an answer gets a review topic (`Question from <agent>`); it goes when the agent works again (`AUTO_REVIEW`).
-- **Waiting:** agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); when you mark the wait as over, the agent goes on. A waiting topic can carry a **Slack pin** (channel, DM or thread); when someone writes there, it goes to review. Claude Code and its Slack connector do the reading, so bhote needs no Slack token.
+**In the herdr Mac app** (details in [the add-on](docs/herdr-app.md)):
+
+- **Overview and tabs:** tiles for topics, pull requests, deployments, tests, servers and runbooks, a tab for each, and the settings dialog in a row at the foot.
+- **Topics** move through `now`, `next`, `waiting`, `review`, `later` and `done`. **Start on agent** hands a topic over as a message: a spinner runs until the agent takes it, then that agent is fixed.
+- **Agents of all machines** as cards under their machine (by its alias, e.g. *Omarchy*), each with a name from Middle-earth (Frodo, Sam, Merry …). Working agents are orange, those with tests or CI running yellow,
+  those that need you red, finished ones green. Drag and drop sets the order. The **ear** on a card says whether other agents may message it (`bhote send`); with it on, the agent picks the message up when it is free.
+- **Commit inspector:** the last ten commits of the focused agent's branch since `main`, a click shows the whole message.
+- **Pull requests, tests and deployments:** a PR's CI checks show on its agent's card with a progress bar (found by branch or by the head commit, so a local branch pushed under another name works); the Tests tab shows local runs, CI jobs
+  and test processes found on any machine, the workflows of one CircleCI pipeline as one card.
+- **Servers:** the IMS systems of every machine, **dev servers** you start and stop per machine (Bilendo, Marketing, any command: a start that fails turns the card red with the log and becomes a topic in review) and the SSH tunnel.
+- **Headless agents:** your scheduled Claude jobs on every machine with their machine, run now, pause and stop, their log as a small conversation, and a form to start another run (machine, folder, prompt).
+- **Runbooks:** per project the path of a change as stages (commit, PR, tests, merge, your deploy stages), set in the settings.
+- **Settings dialog** for everything that concerns the app, with the dependencies between settings shown.
+
+**Everywhere** (the CLI, the collector and the files, with or without the app):
+
 - **Steal & Transfer:** an agent commits its state with a handover on its branch, and a free agent takes over ([how](docs/steal-and-transfer.md)).
-- **Projects:** an agent belongs to a project by its git repository (worktrees inherit); the panel can list only its project's topics. **GitHub:** the branch a topic's agent works on.
-- **Deployment and test monitor:** the last deployments (GitHub Actions, CircleCI with its approvals) and test runs (CI test jobs, local runs through `bhote test run`, live status files) of your projects, seven each, with progress bars, above the agents.
-- **Search from anywhere in herdr** (the find key, e.g. `ctrl+alt+t`): all agents and topics, `⏎` jumps there, `ctrl+n` adds a topic.
-- **Topics are plain files**, kept in sync with a second machine through herdr's own connection, or with every machine through [kharka](https://github.com/jakobbeyer/kharka) (opt-in); **update notice** when a newer version is out.
-- **Claude Code mod:** the agent's topic as a coloured band above the prompt (status, description, age) and `/topic review|done|…` to change it without a turn ([how](docs/claude-mod.md); `bhote mod install`).
-- **Omarchy bar widget**, themes (terminal colours, Catppuccin or Dracula, each role overridable), a **setup wizard** and the Claude skill `/bhote-install`.
-- A **CLI** (every command with `--json`) to create and close topics from scripts and agents.
+- **Waiting:** agents that have to wait for someone create a waiting topic themselves (bhote skill for Claude Code); a waiting topic can carry a **Slack pin**; an agent that asks you a question gets a review topic by itself (`AUTO_REVIEW`).
+- **Projects:** an agent belongs to a project by its git repository (worktrees inherit). **Deployment and test monitor:** GitHub Actions and CircleCI (with approvals), local runs through `bhote test run`, live status files.
+- **Topics are plain files**, kept in sync with a second machine through herdr's own connection, or with every machine through [kharka](https://github.com/jakobbeyer/kharka) (opt-in); an update notice when a newer version is out.
+- **Claude Code mod:** the topic as a band above the prompt, `/topic review|done|…`, a friendly reminder now and then.
+- A **CLI** (every command with `--json`) to create and close topics and to message agents from scripts and agents.
 
-## The Rust daemon (optional)
+## The engine: the collector and the Rust daemon (optional)
 
-bhote is still one bash script and runs without anything else. Next to it there is a small Rust program, `bhoted` (`daemon/`), that
+The add-on reads what the collector writes; the daemon is part of that engine. bhote is still one bash script and runs without anything else. Next to it there is a small Rust program, `bhoted` (`daemon/`), that
 takes over what costs time in bash: agents of all machines, the topic store, the monitors, the follow-ups, building the frame, and, if you
 switch it on (`BHOTED_PANEL=on`), the panel itself (keys, mouse, drawing). One daemon runs per machine; the panels and the collector start it. Without the binary, or with
 `BHOTED=off`, everything runs in bash as before. Measured on a busy machine: load 10.6 down to 0.8, a frame 90 ms down to 3 ms, an idle panel 0.2 % of a core.
@@ -70,11 +78,62 @@ switch it on (`BHOTED_PANEL=on`), the panel itself (keys, mouse, drawing). One d
 
 ## Requirements
 
+- **The herdr Mac app** (`herdr-app`, with its `hc`): the add-on's home. Other machines (Linux, Omarchy) join as machines: their agents, servers and headless agents show in the app, and on them bhote runs the CLI and the collector (and the terminal UI, where there is no app)
+- bash 3.2 or newer (the bash that ships with macOS is enough) and `jq`
+- optional: Claude Code (skills, the SessionStart hook, the Slack watch, the topic mod), `gh` or a CircleCI token (the monitors), [kharka](https://github.com/jakobbeyer/kharka) (sync between machines)
+
+## Install
+
+```sh
+brew install floriankappert/bhote/bhote      # the CLI, the collector and the add-on files
+bhote app install                            # the add-on into the herdr Mac app (~/.config/herdr-app)
+bhote skills install                         # optional: the Claude Code skills bhote and bhote-install, in every Claude profile
+```
+
+Then show the layout in the app: `herdr-app do layout.show --id bhote`, or pick the layout *bhote*. `bhote app check` loads the mod once and reports what is wrong.
+**Update:** `brew upgrade bhote && bhote app install` (the app reloads a changed mod by itself). From a checkout: `git clone https://github.com/floriankappert/bhote && cd bhote && ./install.sh && bhote app install`.
+Arch Linux: the package in `packaging/arch` (`makepkg -si`) brings the CLI and the add-on files for a Mac to copy; there is no app on Linux, so the terminal UI is what runs there.
+More in **[the add-on](docs/herdr-app.md)**.
+
+## Quick start
+
+Open the layout *bhote* in the herdr app. The panel on the right is your topics, the one on the left your agents. Then:
+
+- **Add a topic** with the button at the top (`Fix the login redirect; users land on /home`), open it, **Start on agent**.
+- **Message an agent** from a script or another agent: `bhote send frodo "please look at the vendor page"`; the ear on its card decides when it takes it.
+- **Settings** are the row at the foot of the panel (the gear): everything that concerns the app, the runbooks of your projects and your dev servers.
+- From a script or an agent:
+
+  ```sh
+  id=$(bhote add "Migrate the billing export" -d "CSV to Parquet" --json | jq -r .id)   # keep the id, not the number
+  bhote wait "$id" DevOps && bhote now "$id" && bhote done "$id"
+  ```
+
+## CLI and configuration
+
+The CLI is the API: the panel, scripts and agents all work on the same topics through it. Every command takes `--json`
+(one document per call), results go to stdout, messages to stderr. Exit codes: `0` ok · `1` error · `2` the ref matches
+more than one topic. `bhote help` lists every command; the **[CLI reference](docs/cli-reference.md)** has the detail.
+
+Settings live in `~/.config/bhote/config` (`KEY=value` lines, never sourced, so a value cannot run as code). Edit them in
+the panel (`,`) or with `bhote config set KEY value`; `bhote config list` shows all. Nothing that reaches another machine
+is on by default. Every key is in the **[configuration reference](docs/configuration.md)**.
+
+## Terminal UI (deprecated)
+
+Until 0.9.2 bhote was a panel in a herdr pane: one bash script (and, with `BHOTED_PANEL=on`, a Rust program) drawing about 56 columns of cards, with a small sheepdog.
+It is **deprecated since 0.9.3**: it stays for machines without the herdr Mac app (Omarchy and other Linux machines) and gets no new features; the add-on above replaces it.
+Everything below is how it is installed and used.
+
+<p align="center"><img src="docs/screenshot.svg" width="380" alt="The bhote panel: topics in review, now, next and waiting, the last done topics, and the agents grouped by project"></p>
+
+### Requirements
+
 - macOS or Linux, bash 3.2 or newer (the bash that ships with macOS is enough)
 - [herdr](https://herdr.dev) and `jq`
 - optional: Claude Code (skills, the SessionStart hook, the Slack watch, the 2.1.287+ topic mod), `gh` or a CircleCI token (the monitors), Omarchy (the bar widget)
 
-## Install
+### Install
 
 **Recommended: install it, then let Claude Code finish the setup.** Two commands, then one word in a Claude Code session:
 
@@ -117,7 +176,7 @@ to the bhote panel in herdr (right click: the search). `bhote bar` prints the sa
 
 After an update, `bhote reload` restarts the panels of the machine (never type into a running panel: keys act as hotkeys there).
 
-## Quick start
+### Quick start
 
 Start herdr; the panel opens next to the agent pane of each tab (or run `bhote` in any pane). The first start shows the
 setup wizard. Then:
@@ -131,7 +190,7 @@ setup wizard. Then:
   bhote wait "$id" DevOps && bhote now "$id" && bhote done "$id"
   ```
 
-## Keys
+### Keys
 
 | key | does |
 |---|---|
@@ -151,16 +210,6 @@ setup wizard. Then:
 
 The full list is in [the panel](docs/panel.md).
 
-## CLI and configuration
-
-The CLI is the API: the panel, scripts and agents all work on the same topics through it. Every command takes `--json`
-(one document per call), results go to stdout, messages to stderr. Exit codes: `0` ok · `1` error · `2` the ref matches
-more than one topic. `bhote help` lists every command; the **[CLI reference](docs/cli-reference.md)** has the detail.
-
-Settings live in `~/.config/bhote/config` (`KEY=value` lines, never sourced, so a value cannot run as code). Edit them in
-the panel (`,`) or with `bhote config set KEY value`; `bhote config list` shows all. Nothing that reaches another machine
-is on by default. Every key is in the **[configuration reference](docs/configuration.md)**.
-
 ## Data and safety
 
 Topics live in `${XDG_DATA_HOME:-~/.local/share}/bhote/topics` (one small file per topic). With a replica machine (or
@@ -174,6 +223,8 @@ they become files; control characters are stripped from everything shown or sent
 
 ## Troubleshooting
 
+- **The add-on does not show:** `bhote app check` must say `check passed`; `herdr-app status` shows errors of the app; show the layout with `herdr-app do layout.show --id bhote`.
+- **A change of the mod does not show:** `bhote app install` copies the files again; the app reloads a changed mod by itself.
 - **Something is missing:** `bhote setup --json` lists what is installed and what is not (herdr plugin, Claude hook,
   machines); `/bhote-install` in Claude Code repairs it.
 - **No panel opens:** `herdr plugin list` must show `bhote.panel`; `AUTOSTART=off` keeps it closed; a tab narrower than
@@ -186,6 +237,7 @@ they become files; control characters are stripped from everything shown or sent
 ## Uninstall
 
 ```sh
+rm -r ~/.config/herdr-app/mods/bhote ~/.config/herdr-app/layouts/bhote.json   # the add-on (the layout, the mod)
 herdr plugin unlink bhote.panel                       # every install
 brew uninstall bhote                                  # Homebrew
 sudo pacman -R bhote                                  # Arch

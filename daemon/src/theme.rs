@@ -28,7 +28,7 @@ pub fn apply(cfg: &HashMap<String, String>, color: bool, head_text: &str) -> The
             set(&mut v, "R", rgb("203;166;247")); set(&mut v, "NN", rgb("243;139;168")); set(&mut v, "S", rgb("148;226;213")); set(&mut v, "C", rgb("250;179;135")); set(&mut v, "PINK", rgb("245;194;231")); set(&mut v, "ORANGE", rgb("217;119;87"));
             set(&mut v, "L", format!("{}[1m{}", esc, rgb("205;214;244"))); set(&mut v, "D", rgb("108;112;134")); let d = g(&v, "D"); set(&mut v, "B", d);
             set(&mut v, "MUTED", rgb("69;71;90")); set(&mut v, "Y", rgb("249;226;175")); set(&mut v, "GREEN", rgb("166;227;161")); set(&mut v, "BLUE", rgb("137;180;250"));
-            for (k, s) in [("SELBG", "49;50;68"), ("CARDBG", "33;34;50"), ("CARDSEL", "49;50;68"), ("CARDHOV", "40;41;58"), ("CARDSUB", "25;25;38")] { set(&mut v, k, format!("{}[48;2;{}m", esc, s)); }
+            for (k, s) in [("SELBG", "49;50;68"), ("CARDBG", "33;34;50"), ("CARDSEL", "41;42;58"), ("CARDHOV", "40;41;58"), ("CARDSUB", "25;25;38")] { set(&mut v, k, format!("{}[48;2;{}m", esc, s)); }
             set(&mut v, "CARDBTN", format!("{}[48;2;108;112;134m{}[1;38;2;30;30;46m", esc, esc));
             set(&mut v, "LSEL", format!("{}[1m{}", esc, rgb("245;247;255"))); set(&mut v, "DSEL", rgb("186;194;222"));
             set(&mut v, "TITLE", format!("{}[1m{}", esc, rgb("166;173;200"))); set(&mut v, "TITLESEL", format!("{}[1m{}", esc, rgb("205;214;244")));
@@ -38,7 +38,7 @@ pub fn apply(cfg: &HashMap<String, String>, color: bool, head_text: &str) -> The
             set(&mut v, "R", rgb("255;121;198")); set(&mut v, "NN", rgb("255;85;85")); set(&mut v, "S", rgb("139;233;253")); set(&mut v, "C", rgb("255;184;108")); set(&mut v, "PINK", rgb("255;146;223")); set(&mut v, "ORANGE", rgb("217;119;87"));
             set(&mut v, "L", format!("{}[1m{}", esc, rgb("248;248;242"))); set(&mut v, "D", rgb("98;114;164")); let d = g(&v, "D"); set(&mut v, "B", d);
             set(&mut v, "MUTED", rgb("68;71;90")); set(&mut v, "Y", rgb("241;250;140")); set(&mut v, "GREEN", rgb("80;250;123")); set(&mut v, "BLUE", rgb("189;147;249"));
-            for (k, s) in [("SELBG", "68;71;90"), ("CARDBG", "46;48;62"), ("CARDSEL", "68;71;90"), ("CARDHOV", "56;58;74"), ("CARDSUB", "33;34;44")] { set(&mut v, k, format!("{}[48;2;{}m", esc, s)); }
+            for (k, s) in [("SELBG", "68;71;90"), ("CARDBG", "46;48;62"), ("CARDSEL", "56;58;75"), ("CARDHOV", "56;58;74"), ("CARDSUB", "33;34;44")] { set(&mut v, k, format!("{}[48;2;{}m", esc, s)); }
             set(&mut v, "CARDBTN", format!("{}[48;2;98;114;164m{}[1;38;2;40;42;54m", esc, esc));
             set(&mut v, "LSEL", format!("{}[1m{}", esc, rgb("255;255;255"))); set(&mut v, "DSEL", rgb("189;195;223"));
             set(&mut v, "TITLE", format!("{}[1m{}", esc, rgb("214;216;228"))); set(&mut v, "TITLESEL", format!("{}[1m{}", esc, rgb("248;248;242")));
@@ -46,7 +46,7 @@ pub fn apply(cfg: &HashMap<String, String>, color: bool, head_text: &str) -> The
         }
         _ => {
             for (k, s) in [("R", "[35m"), ("NN", "[31m"), ("S", "[36m"), ("C", "[33m"), ("L", "[1;39m"), ("D", "[90m"), ("PINK", "[95m"), ("ORANGE", "[38;5;173m"), ("Y", "[93m"), ("GREEN", "[32m"), ("BLUE", "[34m"), ("MUTED", "[2;90m"),
-                ("SELBG", "[48;5;236m"), ("CARDBG", "[48;5;234m"), ("CARDSEL", "[48;2;46;46;60m"), ("CARDHOV", "[48;2;36;36;46m"), ("CARDSUB", "[48;2;22;22;30m"), ("LSEL", "[1;97m"), ("DSEL", "[38;5;251m"),
+                ("SELBG", "[48;5;236m"), ("CARDBG", "[48;5;234m"), ("CARDSEL", "[48;2;36;36;48m"), ("CARDHOV", "[48;2;36;36;46m"), ("CARDSUB", "[48;2;22;22;30m"), ("LSEL", "[1;97m"), ("DSEL", "[38;5;251m"),
                 ("TITLE", "[1;37m"), ("TITLESEL", "[1;97m"), ("DESC", "[3;39m"), ("DESCSEL", "[3;97m")] { set(&mut v, k, format!("{}{}", esc, s)); }
             let d = g(&v, "D"); set(&mut v, "B", d);
             set(&mut v, "CARDBTN", format!("{}[48;5;244m{}[1;38;5;232m", esc, esc));
