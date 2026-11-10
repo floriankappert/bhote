@@ -132,6 +132,7 @@ DEPLOY_PROJECTS_OFF||list|Projects that are switched off in the deployment monit
 TEST_PROJECTS_OFF||list|Projects that are switched off in the test monitor: their entries and the local runs of their worktrees are not shown
 KHARKA_WATCH_STALE|90|int:20:3600|Seconds after which bhote kharka watch restarts herdr-kharka when its entry in kharka (herdr/<node>) was not written
 CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of the agent: the band above the prompt and the pane (/topic pane). Off: it draws nothing and asks bhote for nothing
+STASH_LINK|off|bool|Ctrl+S in the terminal of an agent in the herdr Mac app also puts the text of its prompt into the bhote stash (and passes the key on, so Claude Code stashes it, too). Needs the add-on (bhote app install); the app may have to be restarted once
 FRIENDLY_REMINDER|on|bool|Show Friendly Reminder: the Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description (a reminder, not a status)
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
 CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
@@ -5231,6 +5232,13 @@ node_of_label() {  # node_of_label <var> <machine label>: the kharka node of a m
     fi
     printf -v "$1" '%s' "$_node"
 }
+stash_link_keys() {  # stash_link_keys on|off: Ctrl+S in a terminal of the herdr Mac app goes to the mod (bhote.stash: the prompt into the stash, the key on to the program); off: only that binding goes
+    local f=${HERDR_APP_HOME:-$HOME/.config/herdr-app}/keys.json tmp
+    [ -f "$f" ] && command -v jq >/dev/null 2>&1 || return 0
+    tmp="$f.tmp.$$"
+    if [ "$1" = on ]; then jq '.terminal["ctrl-s"] = "bhote.stash"' "$f" > "$tmp"
+    else jq 'if .terminal["ctrl-s"] == "bhote.stash" then del(.terminal["ctrl-s"]) else . end' "$f" > "$tmp"; fi && [ -s "$tmp" ] && mv "$tmp" "$f" || rm -f "$tmp"
+}
 cli_app() {  # bhote app install | check: the add-on for the herdr Mac app (the mod herdr-app/mods/bhote and the layout herdr-app/layouts/bhote.json)
     local sub=${1:-} home=${HERDR_APP_HOME:-$HOME/.config/herdr-app} src
     src=$(w_share herdr-app) || { echo "bhote: the add-on files (herdr-app) are not here: use a checkout or the package" >&2; return 1; }; src=$src/herdr-app
@@ -5239,6 +5247,7 @@ cli_app() {  # bhote app install | check: the add-on for the herdr Mac app (the 
             mkdir -p "$home/mods/bhote" "$home/layouts" || return 1
             cp -R "$src/mods/bhote/." "$home/mods/bhote/" && cp "$src/layouts/bhote.json" "$home/layouts/bhote.json" || { echo "bhote: could not copy into $home" >&2; return 1; }
             echo "installed in $home: the mod bhote and the layout bhote"
+            stash_link_keys "$(cfg_get STASH_LINK off)"   # (the binding of Ctrl+S follows the setting)
             if command -v herdr-app >/dev/null 2>&1; then herdr-app check "$home/mods/bhote" || return 1
             else echo "herdr-app is not on the PATH: the add-on needs the herdr Mac app (it checks the mod when it starts)"; fi
             echo "show it: herdr-app do layout.show --id bhote (or pick the layout bhote in the app)" ;;
@@ -6952,11 +6961,13 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
              if [ "$key" = JUMP_KEY ]; then jump_key_apply "$v" || return 1; cli_config get "$key"; return; fi
              if [ "$key" = FIND_KEY ]; then find_key_apply "$v" || return 1; cli_config get "$key"; return; fi
              cfg_set "$key" "$v"
+             [ "$key" = STASH_LINK ] && stash_link_keys "$v"
              case "$key" in STORE|STORE_MACHINE) : > "$STORE_DIRTY" ;; esac
              cli_config get "$key" ;;
         unset) setting_check "$key" "" || return 1
              [ "$key" = JUMP_KEY ] && { jump_key_apply off || return 1; }
              [ "$key" = FIND_KEY ] && { find_key_apply off || return 1; }
+             [ "$key" = STASH_LINK ] && stash_link_keys off
              local tmp="$CONFIG_FILE.tmp.$$"
              if [ -r "$CONFIG_FILE" ]; then grep -v "^$key=" "$CONFIG_FILE" > "$tmp"; mv "$tmp" "$CONFIG_FILE"; fi
              cli_config get "$key" ;;
