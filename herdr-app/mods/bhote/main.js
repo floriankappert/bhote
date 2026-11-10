@@ -4208,7 +4208,8 @@ export default class Bhote extends View {
         .child(div().text_size(small ? 24 : 32).font_semibold().text_color(red ? "#ffffff" : o.bigColor ?? t.foreground).child(String(o.big)))
         // the small tile has no room for the time in the bar: it stands beside the figure
         .when(small && !!o.bar && o.bar.remain != null, (el) => el.child(div().pb(small ? 4 : 6).text_size(11.5).text_color(red ? "#ffe4e6" : t.working).child(left(o.bar.remain)))))
-      .child(div().flex_none().truncate().text_size(small ? 11.5 : 12).text_color(red ? "#ffe4e6" : t.muted).child(o.label ?? ""))
+      .child(red ? div().flex_none().max_h(small ? 30 : 34).overflow_hidden().text_size(small ? 11.5 : 12).text_color("#ffe4e6").child(o.label ?? "")   // (what is red: the agent and the test, up to two lines)
+        : div().flex_none().truncate().text_size(small ? 11.5 : 12).text_color(t.muted).child(o.label ?? ""))
       .when(!(small && o.bar), (el) => el.child(div().flex_none().truncate().text_size(small ? 10.5 : 11).text_color(red ? "#fecdd3" : t.dim).child(o.sub ?? "")))   // the small tile has room for the bar or the line, not both
       .when(!!o.bar, (el) => el.child(h_flex().flex_none().gap(8).items_center().pt(2)
         .child(div().flex_1().h(5).rounded(3).bg(red ? "#ffffff33" : t.border).overflow_hidden().child(div().h(5).w(`${Math.round(o.bar.frac * 100)}%`).rounded(3).bg(red ? "#ffffff" : t.working)))
@@ -4305,6 +4306,20 @@ export default class Bhote extends View {
     return { frac: est.reduce((a, e) => a + e.frac, 0) / est.length, remain: rem.length ? Math.max(...rem) : null };
   }
 
+  // The agent that works on a branch or in a worktree (by the branch of its space, else by the name of the space): its name from Middle-earth, or null.
+  agentLabel(branch, project) {
+    const sp = spaces();
+    for (const a of agents()) {
+      const q = sp.find((x) => x.id === a.space);
+      if (!q) continue;
+      if ((branch && q.branch && q.branch === branch) || (project && norm(q.name) === norm(project))) {
+        const label = this.machineLabel(q.machine ?? null);
+        return this.ringMap?.get(`${label}/${q.name}`.toLowerCase().replace(/[^a-z0-9]/g, "")) ?? q.name;
+      }
+    }
+    return null;
+  }
+
   homeView(t) {
     const count = (g) => this.topics.filter((x) => x.group === g && !x.dismissed).length;
     const n = { review: count("review"), now: count("now"), testing: count("testing"), deploying: count("deploying"), finished: count("finished"), next: count("next"), waiting: count("waiting"), later: count("later") };
@@ -4317,6 +4332,8 @@ export default class Bhote extends View {
     const failing = (p) => p.checks.filter((c) => c.state === "failed").length;
     const running = (p) => p.checks.filter((c) => c.state === "running").length;
     const prsFailed = prs.filter((p) => failing(p) > 0).length;
+    const pf = prs.find((p) => failing(p) > 0);   // what is red, to say it on the tile: the agent, the pull request, the check
+    const pfWhat = pf ? [this.agentLabel(pf.branch, pf.project), `${pf.number ? `#${pf.number} ` : ""}${pf.title}`].filter(Boolean).join(" · ") + (prsFailed > 1 ? `  +${prsFailed - 1}` : "") : "";
     const prRows = [...prs].sort((a, b) => failing(b) - failing(a)).map((p) => ({ text: `${p.number ? `#${p.number} ` : ""}${p.title}`,
       color: failing(p) ? t.blocked : running(p) ? t.working : t.done, right: failing(p) ? `${failing(p)} failed` : running(p) ? "running" : "", rightColor: failing(p) ? t.blocked : t.working }));
 
@@ -4327,6 +4344,8 @@ export default class Bhote extends View {
     const dword = (x) => (x.state === "ok" ? "deployed" : x.state);
     const depRunning = this.deploysAll().filter((x) => x.state === "running" || x.state === "queued" || x.state === "approval").length;
     const depFailed = deploys.filter((x) => x.state === "failed").length;
+    const df = deploys.find((x) => x.state === "failed");
+    const dfWhat = df ? [this.agentLabel(df.branch, ""), `${df.project} · ${this.whatOf(df).text || df.label}`].filter(Boolean).join(" · ") + (depFailed > 1 ? `  +${depFailed - 1}` : "") : "";
     // the context of the tile: which projects are watched, which are switched off, and when the last one was
     const watched = this.projects.filter((q) => q.ci && !this.deployOff.has(q.title)).map((q) => q.title);
     const switchedOff = this.projects.filter((q) => q.ci && this.deployOff.has(q.title)).length;
@@ -4335,6 +4354,8 @@ export default class Bhote extends View {
     const { shown } = this.testsShown();
     const tFailed = shown.filter((x) => x.state === "failed"), tPassed = shown.filter((x) => x.state === "ok");
     const tRunning = shown.filter((x) => x.state === "running" || x.state === "queued").length;
+    const tf = tFailed[0];
+    const tfWhat = tf ? [this.agentLabel(tf.branch, tf.project), `${tf.project} · ${tf.label}`].filter(Boolean).join(" · ") + (tFailed.length > 1 ? `  +${tFailed.length - 1}` : "") : "";
     const tRows = [...tFailed, ...tRunning ? shown.filter((x) => x.state === "running") : [], ...tPassed].map((x) => ({ text: `${x.project} · ${x.label}`,
       color: x.state === "failed" ? t.blocked : x.state === "running" ? t.working : t.done, right: ago(x.time), rightColor: t.dim }));
 
@@ -4347,20 +4368,20 @@ export default class Bhote extends View {
         .child(this.tile(t, "topics", { title: "Topics", accent: n.review ? t.ansi4 : t.ansi3, big: open, label: open === 1 ? "open topic" : "open topics",
           sub: `${n.review + n.now + n.testing + n.deploying + n.finished} active · ${n.next} next · ${n.waiting} waiting`, rows: topicRows, empty: "no topics yet" }))
         .child(this.tile(t, "prs", { title: "Pull requests", accent: prsFailed ? t.blocked : t.done, badge: prsFailed || null, big: prs.length, bigColor: prsFailed ? t.blocked : t.foreground,
-          label: prs.length === 1 ? "open pull request" : "open pull requests", bar: this.prsBar(prs),
-          sub: !this.prAt ? "asking GitHub..." : prsFailed ? `${prsFailed} with failing checks` : prs.length ? "all checks fine" : "nothing open",
+          label: pfWhat || (prs.length === 1 ? "open pull request" : "open pull requests"), bar: this.prsBar(prs),
+          sub: !this.prAt ? "asking GitHub..." : prsFailed ? `failing: ${pf.checks.filter((c) => c.state === "failed").map((c) => c.name).slice(0, 2).join(", ")}` : prs.length ? "all checks fine" : "nothing open",
           rows: prRows, empty: this.prAt ? "no open pull requests" : "loading", red: prsFailed > 0, border: prsFailed ? "#a8162e" : undefined })))
       .child(h_flex().flex_none().gap(10)
         .child(this.tile(t, "deploys", { title: "Deployments", accent: depFailed ? t.blocked : depRunning ? t.working : t.done, badge: depFailed || null,
           big: depRunning ? depRunning : deploys.length ? dword(deploys[0]) : "–", bigColor: depRunning ? t.working : deploys.length ? dcolor(deploys[0]) : t.dim,
-          label: depRunning ? `${(() => { const r = this.deploysAll().find((x) => x.state === "running" || x.state === "queued"); return r ? this.whatOf(r).text || r.label : ""; })()}` : lastOne ? `last: ${this.whatOf(lastOne).text || lastOne.label}` : "nothing running",
+          label: dfWhat ? `failed: ${dfWhat}` : depRunning ? `${(() => { const r = this.deploysAll().find((x) => x.state === "running" || x.state === "queued"); return r ? this.whatOf(r).text || r.label : ""; })()}` : lastOne ? `last: ${this.whatOf(lastOne).text || lastOne.label}` : "nothing running",
           bar: this.runsBar(this.deploysAll(), "d"),
           sub: [watched.length ? `${watched.join(", ")} watched` : "no project watched", switchedOff ? `${switchedOff} off` : ""].filter(Boolean).join(" · "),
-          rows: deploys.map((x) => ({ text: x.state === "ok" || x.state === "failed" ? `${x.project} · ${this.whatOf(x).text || x.label}` : `${x.project} · ${x.label}`,
+          rows: [...deploys].sort((x, y) => (y.state === "failed") - (x.state === "failed")).map((x) => ({ text: x.state === "ok" || x.state === "failed" ? `${x.project} · ${this.whatOf(x).text || x.label}` : `${x.project} · ${x.label}`,
             color: dcolor(x), right: x.state === "running" || x.state === "waiting" ? dword(x) : ago(x.time), rightColor: dcolor(x) })),
           empty: watched.length ? "no pipeline seen on the deploy branches yet" : "all projects are switched off (DEPLOY_PROJECTS_OFF)", red: depFailed > 0, border: depFailed ? "#a8162e" : undefined }))
         .child(this.tile(t, "tests", { title: "Tests", accent: tFailed.length ? t.blocked : tRunning ? t.working : t.done, badge: tFailed.length || null,
-          big: tFailed.length || tRunning || tPassed.length, bigColor: tFailed.length ? t.blocked : tRunning ? t.working : t.done, label: tFailed.length ? "failed" : tRunning ? "running" : "passed",
+          big: tFailed.length || tRunning || tPassed.length, bigColor: tFailed.length ? t.blocked : tRunning ? t.working : t.done, label: tFailed.length ? `failed: ${tfWhat}` : tRunning ? "running" : "passed",
           bar: this.runsBar(shown, "t"), sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", red: tFailed.length > 0, border: tFailed.length ? "#a8162e" : undefined })));
     const list = this.right();
     const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id), this.tilesToggle(t));
