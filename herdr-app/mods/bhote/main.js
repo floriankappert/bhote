@@ -447,6 +447,8 @@ export default class Bhote extends View {
     this.kharkaBin = "";          // KHARKA: the kharka binary (empty: from the PATH)
     this.listenDefault = true;    // AGENT_LISTEN: do agents accept messages from other agents unless their card says otherwise
     this.listenMap = {};          // `${node}/${name}`: the records of listen/ in kharka ({ listening, name, at })
+    this.msgDone = new Set();     // messages (msg/… in kharka) that are handed over or not for us
+    this.msgWaiting = {};         // `${node}/${name}`: how many messages wait for that agent
     this.finMin = 30;             // FINISHED_MINUTES: how long an agent counts as recently finished (0: until it works again)
     this.prevSt = {};             // an agent's address: its status at the last look
     this.topics = [];
@@ -531,7 +533,7 @@ export default class Bhote extends View {
     this.monLoading = false;
     if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < (this.commitAnimUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
-    if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); }
+    if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); cx.timer.every(4000, (cx) => this.loadMessages(cx)); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
     // Topics are plain files: reload when one changes.
     cx.spawn(async (cx) => {
@@ -1174,7 +1176,7 @@ export default class Bhote extends View {
     if (!all.length) return [{ type: "head", label: "No agent running anywhere" }];
     const free = all.filter(({ a }) => a.status === "idle" || a.status === "done");
     const busy = all.filter(({ a }) => !(a.status === "idle" || a.status === "done"));
-    const where = (m) => m ?? "this computer";
+    const where = (m) => this.machineLabel(m ?? null);   // (the alias: Mac, Omarchy)
     return [
       { type: "head", label: free.length ? "Start on agent" : "No free agent" },
       // every agent of every machine is listed; only a free one can take the topic, the others show what they are doing
@@ -1424,6 +1426,8 @@ export default class Bhote extends View {
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
           .when(!!agent && !!o.listen?.key, (el) => el.child(this.ibtn(t, `ear-${id}`, o.listen.on ? "ear" : "ear-off", (cx) => o.onListen(cx),
             { w: 22, size: 14, color: o.listen.on ? (active ? t.muted : t.dim) : t.ansi3, hover: o.listen.on ? t.foreground : t.ansi3 })))
+          .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(div().flex_none().px(5).h(15).flex().items_center().rounded(8).text_size(10).font_semibold().text_color(t.ansi3)
+            .bg(tint(t.ansi3, "26", t.raised)).border(1).border_color(tint(t.ansi3, "66", t.border)).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).rounded(8).text_size(10).text_color(t.accent).bg(tint(t.accent, "26", t.raised)).border(1).border_color(tint(t.accent, "55", t.border))
             .child(o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h")}`)))
           .when(!!word, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(badgeColor)
@@ -2347,6 +2351,53 @@ export default class Bhote extends View {
         .child(div().text_size(12).text_color(t.blocked).child(this.hdError)));
   }
 
+  // The ear is not only a note for the senders: with it on, the agent takes the messages that wait for it. A message is the record msg/<node>/<name>/<id> in
+  // kharka (bhote send); it is handed over, as a one-line prompt that says where to read it, when the ear of that agent is on and the agent is free (idle or
+  // done, not working and not asking). With the ear off, or while it works, it waits (the number next to the ear). Then the record says delivered.
+  agentOfKey(node, slug) {
+    const sp = spaces();
+    for (const a of agents()) {
+      const s = sp.find((q) => q.id === a.space);
+      if (s && (s.machine ?? this.localNode) === node && norm(s.name) === slug) return { a, sp: s };
+    }
+    return null;
+  }
+
+  loadMessages(cx) {
+    if (this.msgLoading) return;
+    this.msgLoading = true;
+    cx.spawn(async (cx) => {
+      let changed = false;
+      try {
+        if (!this.localNode) this.localNode = (await this.kharka(["whoami"])).stdout.trim();
+        const keys = (await this.kharka(["ls", "msg"])).stdout.split("\n").map((x) => x.trim()).filter(Boolean);
+        const waiting = {}, busy = new Set();
+        for (const k of keys) {
+          if (this.msgDone.has(k)) continue;
+          let rec; try { rec = JSON.parse((await this.kharka(["get", k])).stdout); } catch (_e) { continue; }
+          if (rec.state !== "queued") { this.msgDone.add(k); continue; }
+          const [, node, slug] = k.split("/");
+          const hit = this.agentOfKey(node, slug);
+          if (!hit) continue;                                              // (that agent is not here now: it waits)
+          const lk = `${node}/${slug}`;
+          waiting[lk] = (waiting[lk] ?? 0) + 1;
+          if (!this.listensTo(hit.sp).on) continue;                        // ear off: held
+          if (!(hit.a.status === "idle" || hit.a.status === "done") || busy.has(lk)) continue;   // at work: when it is free, one at a time
+          busy.add(lk);
+          const line = `Message from ${rec.from}${rec.title ? ` - ${rec.title}` : ""}. Read it with: kharka get ${k}  (the field text). To answer: bhote send <agent> "..." --from <your name>.`;
+          try {
+            await exec("hc", ["send", hit.a.address, line.replace(/\s+/g, " ")], { timeout: 20000 });
+            await this.kharka(["put", k, JSON.stringify({ ...rec, state: "delivered", deliveredAt: Math.floor(Date.now() / 1000) })]);
+            this.msgDone.add(k); waiting[lk] -= 1; changed = true;
+          } catch (_e) { /* the next round tries again */ }
+        }
+        if (JSON.stringify(waiting) !== JSON.stringify(this.msgWaiting)) { this.msgWaiting = waiting; changed = true; }
+      } catch (_e) { /* no kharka here: nothing to hand over */ }
+      this.msgLoading = false;
+      if (changed) cx.notify();
+    });
+  }
+
   // --- listening: may other agents message this agent? ---------------------------------------------------------------------------
   // Agents send each other messages through kharka (the text under handoff/…, a one-line prompt through herdr.commands). Whether an agent takes them
   // is the record listen/<kharka node>/<name of its space, letters and digits in lower case> ({"listening": false}); no record = AGENT_LISTEN
@@ -2361,7 +2412,7 @@ export default class Bhote extends View {
   listensTo(sp) {
     const key = this.listenKey(sp);
     const rec = key ? this.listenMap[key] : null;
-    return { key, on: rec ? rec.listening !== false : this.listenDefault };
+    return { key, on: rec ? rec.listening !== false : this.listenDefault, waiting: key ? (this.msgWaiting[key] ?? 0) : 0 };
   }
 
   loadListen(cx) {
@@ -2576,10 +2627,10 @@ export default class Bhote extends View {
     }
     for (const [machine, spaceList] of byMachine) {
       const remote = spaceList[0]?.machine ?? null;
-      rows.push(this.head(t, machine, div().id(`ns-${machine}`).px(7).py(1).rounded(4).text_size(14).cursor_pointer().text_color(t.dim)
+      rows.push(div().flex_none().pt(8).child(this.dividerCaption(t, machine, [div().id(`ns-${machine}`).w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer().text_color(t.dim)
         .hover((e) => e.bg(t.hover).text_color(t.foreground))
         .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
-        .on_click(this.guard(() => this.openSpaceMenu(remote, this.anchor))).child("＋")));
+        .on_click(this.guard(() => this.openSpaceMenu(remote, this.anchor))).child("＋")])));
       for (const s of spaceList) {
         const mine = list.filter((a) => a.space === s.id);
         if (!mine.length) {
@@ -3694,7 +3745,7 @@ export default class Bhote extends View {
     if (!machines.length) return [empty(t, "", "Looking for the servers", "Asking this computer and the other machines for their IMS systems and services", true)];
     const tun = (this.srv.local?.tunnels ?? [])[0];
     if (tun) {
-      rows.push(this.head(t, "Tunnel"));
+      rows.push(div().flex_none().pt(8).child(this.dividerCaption(t, "Tunnel")));
       rows.push(h_flex().gap(10).items_center().mx(10).mb(6).px(12).py(9).rounded(8).bg(t.surface).border(1).border_color(t.border)
         .child(this.icon(t, tun.open ? "plug" : "unplug", tun.open ? (t.ansi2 ?? t.done) : t.dim, 16))
         .child(v_flex().flex_1().min_w(0).gap(1)
@@ -3704,7 +3755,7 @@ export default class Bhote extends View {
     }
     for (const { m, d, svcs } of machines) {
       const key = this.srvKey(m.name);
-      rows.push(this.head(t, m.label, null, true));
+      rows.push(div().flex_none().pt(8).child(this.dividerCaption(t, m.label)));
       if (!d) { for (const x of svcs) rows.push(this.svcCard(t, x)); continue; }   // (no IMS here, or it does not answer yet: the services still show)
       if (d.error && !d.machine) { rows.push(div().mx(10).mb(6).text_size(11).text_color(t.blocked).child(d.error.slice(0, 160))); for (const x of svcs) rows.push(this.svcCard(t, x)); continue; }
       rows.push(v_flex().gap(5).mx(10).mb(8).px(12).py(9).rounded(8).bg(t.surface).border(1).border_color(t.border)

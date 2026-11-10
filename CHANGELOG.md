@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **`bhote send <agent> <text>`** and an ear that picks messages up: a message for an agent is kept in kharka (`msg/<node>/<name>/<id>`) and the herdr-app hands it to the agent, as a one-line prompt, when the ear on its card is on and the agent is free; with the ear off, or while it works, it waits (the card counts them next to the ear).
+- herdr-app: the **start menu of a topic** names the machines by their alias (Mac, Omarchy) like everywhere else.
 - herdr-app: a **service that does not start** is shown: the card turns red with the reason and the last lines of its log (the start command ended without the port answering, or no answer within 2 minutes), and a **topic in review** (`<name> did not start on <machine>`, the log's key line as its description, in the service's project) is made once per start.
 - herdr-app: the **Headless agents** bar has a caption on its divider line (as the commit inspector has), shows the machine each job runs on, ends a run that is going on (stop), and a ＋ starts another headless run: machine, folder, command (`claude -p`) and prompt; it shows in the bar with its log and a stop button.
 - herdr-app: the commit inspector shows the last 10 commits of the branch since it left `main` (with a line "N earlier · from main" when there are more), finds the folder through the program the agent runs (`hc get`), and is left out when there is nothing to show.

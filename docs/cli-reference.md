@@ -324,6 +324,10 @@ a profile failed.
 Asks GitHub whether a newer version is out and prints the command that updates this installation (brew, `git pull`,
 pacman). The panel also says so, checked every 6 hours (`UPDATE_CHECK`).
 
+### `bhote send <agent> <text...> [--title <t>] [--from <name>]`
+
+A message for another agent. `<agent>` is any agent ref (its name `Frodo`, a number, `machine/pane`). The message is kept in kharka (`msg/<kharka node>/<name of its space, letters and digits in lower case>/<id>`, state `queued`), and the herdr-app hands it to the agent, as a one-line prompt that says where to read it (`kharka get <key>`, the field `text`), as soon as the **ear** on the agent's card is on and the agent is free (`idle` or `done`: not working, not asking). With the ear off, or while the agent works, it waits; the card shows how many wait next to the ear. Afterwards the record says `delivered`. `--from` (or `$BHOTE_FROM`) names the sender, which the receiver sees; without it the machine's label.
+
 ### `bhote reload`
 
 Restarts the bhote panels of this machine, for example after an update. It ends each panel itself and starts bhote again

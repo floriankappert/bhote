@@ -5199,6 +5199,31 @@ cli_reload() {  # bhote reload: restarts every bhote panel of this machine (afte
     done <<< "$(herdr pane list 2>/dev/null | jq -r '.result.panes[] | select((.agent // "") == "") | .pane_id' 2>/dev/null)"
     printf 'reloaded %d panel(s)%s\n' "$n" "$( [ "$skipped" -gt 0 ] && echo ", $skipped left alone")"
 }
+cli_send() {  # bhote send <agent> <text...> [--title <t>] [--from <name>]: a message for another agent
+    # It is kept in kharka (msg/<node>/<name>/<id>, state queued). The herdr-app takes it to the agent (a one-line prompt that says where to read it) as soon as
+    # the ear on the agent's card is on and the agent is free; with the ear off it waits. <agent> is any agent ref: its name (Frodo), a number, machine/pane.
+    local ref="" text="" title="" from=${BHOTE_FROM:-} node="" slug rn id key json lbl k v
+    while [ $# -gt 0 ]; do
+        case "$1" in --title|-t) title=${2:-}; shift ;; --from) from=${2:-}; shift ;; *) if [ -z "$ref" ]; then ref=$1; else text="${text:+$text }$1"; fi ;; esac
+        shift
+    done
+    { [ -n "$ref" ] && [ -n "$text" ]; } || { echo "bhote: send <agent> <text> [--title <t>] [--from <name>]" >&2; return 1; }
+    kharka_found || { echo "bhote: send needs kharka (the setting KHARKA)" >&2; return 1; }
+    cli_agents_load; agent_ref "$ref" || return $?
+    if [ "$AR_M" = "$HOST" ]; then node=$(kharka_run whoami 2>/dev/null)
+    else kharka_node_of "$AR_M" && node=$KN_NODE
+        if [ -z "$node" ]; then   # (a label is the alias of a herdr machine: MACHINE_LABELS name=Label)
+            lbl=$(cfg_get MACHINE_LABELS ""); for k in ${lbl//,/ }; do v=${k#*=}; [ "$v" = "$AR_M" ] && node=${k%%=*}; done
+        fi
+        [ -n "$node" ] || node=$AR_M
+    fi
+    [ -n "$node" ] || { echo "bhote: no kharka node for $AR_M" >&2; return 1; }
+    slug=$(ring_norm "$AR_NAME"); agent_ring_set rn "$AR_M" "$AR_NAME"
+    id="$(date +%s)-$$"; key="msg/$node/$slug/$id"
+    json=$(jq -cn --arg from "${from:-$HOST}" --arg to "$AR_NAME" --arg title "$title" --arg text "$text" --argjson at "$(date +%s)" '{from: $from, to: $to, title: $title, text: $text, at: $at, state: "queued"}') || return 1
+    kharka_run put "$key" "$json" >/dev/null || { echo "bhote: kharka did not take the message" >&2; return 1; }
+    echo "queued for ${rn:-$AR_NAME} ($AR_M): it gets it when its ear is on and it is free ($key)"
+}
 cli_update() {  # bhote update: asks GitHub now; prints whether there is a newer version and the command that updates
     update_fetch || { echo "bhote: could not ask GitHub (offline?)" >&2; return 1; }
     update_load
@@ -7124,6 +7149,7 @@ bhote — topics and agents next to herdr.
   bhote mod [install|remove|status]  the Claude Code mod bhote-topic (your topic above the prompt, /topic) in every Claude profile
   bhote update                       is there a newer version, and the command that updates it
   bhote reload                       restart the bhote panels of this machine (after an update)
+  bhote send <agent> <text>          a message for another agent: the herdr-app hands it over when its ear is on and it is free
   bhote find                         search topics and agents, jump there (for a herdr popup: settings › Find key)
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
@@ -7158,6 +7184,7 @@ bhote_cli() {
         bar) cli_bar ;;
         update) cli_update ;;
         reload) cli_reload ;;
+        send) bhote_info; cli_send "$@" ;;
         skills) cli_skills "$@" ;;
         mod) cli_mod "$@" ;;
         jump) bhote_info; cli_jump "$@" ;;
