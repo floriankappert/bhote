@@ -111,6 +111,35 @@ function bar(done, total) {
 // bhote names an agent after its old herdr workspace ("IMS (wt2)"), herdr-app after the folder ("IMS-wt2"): compare letters and digits only.
 const norm = (s) => (s ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 
+// The names of the agents: a name from Middle-earth instead of w2:a1. An agent has a number that is the same on every machine (bhote.agentnums in
+// kharka, the record of its machine and name) and counts per machine, so the name comes from the rank of its record among all of them (by the time they
+// were made, deleted ones count too: no name moves). Its name is the one at that place of this list, from the 61st on with a count behind it (Frodo2).
+// Short, letters only, easy to type. The same list is RING_NAMES in the bhote script (a test keeps them equal).
+const RING = [
+  "Frodo", "Sam", "Merry", "Pippin", "Bilbo", "Gandalf", "Aragorn", "Legolas", "Gimli", "Boromir", "Elrond", "Arwen", "Gollum", "Sauron", "Saruman", "Theoden", "Eowyn", "Eomer", "Faramir", "Haldir",
+  "Thorin", "Balin", "Dwalin", "Fili", "Kili", "Bofur", "Bombur", "Dori", "Nori", "Ori", "Oin", "Gloin", "Smaug", "Beorn", "Bard", "Tauriel", "Shelob", "Grima", "Isildur", "Elendil", "Rosie", "Tom",
+  "Gwaihir", "Elladan", "Elrohir", "Azog", "Bolg", "Imrahil", "Hama", "Gamling", "Rohan", "Gondor", "Mordor", "Moria", "Lorien", "Erebor", "Bree", "Shire", "Dale", "Rumil",
+];
+// The names of all agents seen in the topic records: normalised "machine/name" -> its name. Same order and same tie-break as ring_load in the bhote script.
+function parseRing(text) {
+  const recs = [];
+  for (const block of text.split("\x1e\n")) {
+    const v = {};
+    for (const line of block.split("\n")) { const i = line.indexOf("="); if (i > 0 && !(line.slice(0, i) in v)) v[line.slice(0, i)] = line.slice(i + 1); }
+    if (v.kind === "agentnum" && v.title) recs.push({ key: v.title.toLowerCase().replace(/[^a-z0-9]/g, ""), created: Number(v.created) || 0 });
+  }
+  recs.sort((a, b) => a.created - b.created || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  const map = new Map();
+  recs.forEach((r, i) => { if (!map.has(r.key)) map.set(r.key, ringName(i + 1)); });
+  return map;
+}
+function ringName(num) {
+  const n = Number(num);
+  if (!(n >= 1)) return "";
+  const r = Math.floor((n - 1) / RING.length);
+  return RING[(n - 1) % RING.length] + (r ? String(r + 1) : "");
+}
+
 // The project records (kind=project): their repositories say which GitHub repos to ask for pull requests.
 function parseProjects(text) {
   const out = [];
@@ -504,6 +533,7 @@ export default class Bhote extends View {
         this.tests = this.mergeTests();
         this.deploys = parseMonitor(deploys);
         this.projects = parseProjects(topics);
+        this.ringMap = parseRing(topics);
         this.observeRows(this.tests, "t");
         this.observeRows(this.deploys, "d");
         if (this.side === "right") this.loadRemoteTests(cx);
@@ -1459,6 +1489,14 @@ export default class Bhote extends View {
   // The pane code of an agent as bhote shows it: w<space number>:a<number of the agent in it>, with the code of its machine in front when it is not
   // this one (OMR/w3:a1). The space number is its place among the spaces of its machine, the machine code the first letter and the next two consonants
   // of its name (Omarchy: OMR), a name of three letters or less as it is (Mac: MAC).
+  // What the card calls the agent: its name from Middle-earth (Frodo), a second agent in the same space with its place behind it (Frodo 2); the old code
+  // (w2:a1) only while its record is not there yet. The key is "label of the machine/name of the space", normalised, as the records are.
+  agentIdent(sp, machine, remote, spaceNo, agentNo, index) {
+    const label = remote ? (this.labelOf?.(machine) ?? machine) : this.hostLabel;
+    const name = this.ringMap?.get(`${label}/${sp.name}`.toLowerCase().replace(/[^a-z0-9]/g, ""));
+    return name ? (index > 0 ? `${name} ${index + 1}` : name) : this.paneCode(machine, remote, spaceNo, agentNo);
+  }
+
   paneCode(machine, remote, spaceNo, agentNo) {
     const code = (name) => {
       const n = String(name).replace(/[^A-Za-z]/g, "").toUpperCase();
@@ -2429,7 +2467,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.card(t, `a-${a.address}`, { agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.paneCode(machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
+          rows.push(this.card(t, `a-${a.address}`, { agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }));
         }
       }
     }

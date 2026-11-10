@@ -380,6 +380,18 @@ cfg_set HERDR_KEYS_MACHINE Elsewhere; keys_cache_set; rm -f "$KEYS_CACHE"; focus
 printf '[keys]\nprefix = "ctrl+b"\n[[keys.command]]\nkey = "prefix+t"\ncommand = "bhote.panel.focus"\n' > "$KEYS_CACHE"; focus_key_set KK; [ "$KK" = "Ctrl+B|T" ] && ok "keys: read from the other machine's config" || bad "keys after: $KK"
 cfg_set HERDR_KEYS_MACHINE any; rm -f "$KEYS_CACHE"
 
+# the names of the agents: the list in the script is the one in the mod, and the rank of a record (not the number per machine) gives the name
+( js=$(sed -n '/^const RING = \[/,/^\];/p' herdr-app/mods/bhote/main.js | grep -o '"[A-Za-z]*"' | tr -d '"' | tr '\n' ' ')
+  sh_=$(BHOTE_SOURCE_ONLY=1; . ./bhote; printf '%s ' "${RING_NAMES[@]}")
+  [ "$js" = "$sh_" ] || exit 1
+  [ "$(printf '%s\n' $js | wc -l | tr -d ' ')" -ge 50 ] || exit 2
+  ad=$T/an; rm -rf "$ad"; mkdir -p "$ad"
+  mk() { printf 'id=an-%s\nkind=agentnum\ntitle=%s\nnum=%s\ncreated=%s\nupdated=%s\ndeleted=%s\n' "$1" "$2" "$3" "$4" "$4" "${5:-0}" > "$ad/an-$1.topic"; }
+  mk a "Mac/IMS (main)" 1 20; mk b "Omarchy/bhote" 1 10; mk c "Mac/old" 2 15 1; mk d "Omarchy/IMS (wt1)" 2 30
+  r=$( BHOTE_SOURCE_ONLY=1; . ./bhote; TOPIC_DIR=$ad; RG_AT=-999; for k in "Omarchy/bhote" "Mac/old" "Mac/IMS (main)" "Omarchy/IMS-wt1" "Mac/none"; do m=${k%%/*}; agent_ring_set x "$m" "${k#*/}"; printf '%s,' "$x"; done )
+  [ "$r" = "Frodo,Sam,Merry,Pippin,," ] || { echo "$r" >&2; exit 3; }   # (rank, not number: the two agents numbered 1 are two names; a deleted one keeps its place; a herdr-app name matches the old one)
+  exit 0 ) && ok "agent names: one list in script and mod, the rank of the record gives the name" || bad "agent names: step $?"
+
 # the version in the panel: on its release tag it is the version, past the tag (local work) its local build number
 ( vd=$T/vl; rm -rf "$vd"; mkdir -p "$vd"; cp ./bhote "$vd/bhote"; cd "$vd" || exit 9
   git init -q . && git -c user.name=t -c user.email=t@t add bhote && git -c user.name=t -c user.email=t@t commit -qm one && git tag "v$VERSION" || exit 8

@@ -3787,6 +3787,47 @@ agent_pane_code_set() {  # agent_pane_code_set <var> <machine> <pane id>: the ag
     if [ -n "$2" ] && [ "$2" != "$HOST" ]; then [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; machine_code_set _c "$2" || _c=$2; _b="$_c/$_b"; fi
     printf -v "$1" '%s' "$_b"
 }
+# the names of the agents (a name from Middle-earth instead of w2:a1): the one at the place of the agent's rank among the agent records (see ring_load), from 61 on with a count (Frodo2).
+# Letters only, short; the same list is RING in herdr-app/mods/bhote/main.js (tests/monitor.sh keeps them equal).
+RING_NAMES=(
+    Frodo Sam Merry Pippin Bilbo Gandalf Aragorn Legolas Gimli Boromir
+    Elrond Arwen Gollum Sauron Saruman Theoden Eowyn Eomer Faramir Haldir
+    Thorin Balin Dwalin Fili Kili Bofur Bombur Dori Nori Ori
+    Oin Gloin Smaug Beorn Bard Tauriel Shelob Grima Isildur Elendil
+    Rosie Tom Gwaihir Elladan Elrohir Azog Bolg Imrahil Hama Gamling
+    Rohan Gondor Mordor Moria Lorien Erebor Bree Shire Dale Rumil
+)
+# The place of every agent record in the order they were made (created, then its normalised title): its rank. Deleted records count too, so that no name
+# moves when one goes. The numbers of bhote.agentnums count per machine (Mac 1…9, Omarchy 1…9), the rank is over all of them: one name for one agent.
+ring_norm() { printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | LC_ALL=C tr -cd 'a-z0-9'; }
+RG_KEY=(); RG_RANK=(); RG_N=0; RG_AT=-999
+ring_load() {
+    local f line t c i j k n=0; local -a RT RC RK; [ $(( SECONDS - RG_AT )) -ge 5 ] || return 0; RG_AT=$SECONDS
+    for f in "$TOPIC_DIR"/an-*.topic; do
+        [ -f "$f" ] || continue; t=""; c=0
+        while IFS= read -r line; do case "$line" in title=*) [ -z "$t" ] && t=${line#title=} ;; created=*) c=${line#created=} ;; esac; done < "$f"
+        [ -n "$t" ] || continue; case "$c" in ''|*[!0-9]*) c=0 ;; esac
+        RT[$n]=$t; RC[$n]=$c; RK[$n]=$(ring_norm "$t"); n=$(( n + 1 ))
+    done
+    RG_KEY=(); RG_RANK=(); RG_N=$n
+    for (( i = 0; i < n; i++ )); do
+        k=0
+        for (( j = 0; j < n; j++ )); do
+            if [ "${RC[$j]}" -lt "${RC[$i]}" ] || { [ "${RC[$j]}" -eq "${RC[$i]}" ] && [[ "${RK[$j]}" < "${RK[$i]}" ]]; }; then k=$(( k + 1 )); fi
+        done
+        RG_KEY[$i]=${RK[$i]}; RG_RANK[$i]=$k
+    done
+}
+agent_ring_set() {  # agent_ring_set <var> <machine> <agent name>: its name from Middle-earth (Frodo, Sam …), the same on every machine; "" without a record
+    local _k _i _best=-1 _r; ring_load; printf -v "$1" '%s' ""; _k=$(ring_norm "$2/$3")
+    for (( _i = 0; _i < RG_N; _i++ )); do
+        [ "${RG_KEY[$_i]}" = "$_k" ] || continue
+        if [ "$_best" -lt 0 ] || [ "${RG_RANK[$_i]}" -lt "$_best" ]; then _best=${RG_RANK[$_i]}; fi
+    done
+    [ "$_best" -ge 0 ] || return 0
+    _r=$(( _best / ${#RING_NAMES[@]} ))
+    printf -v "$1" '%s' "${RING_NAMES[$(( _best % ${#RING_NAMES[@]} ))]}$([ "$_r" -gt 0 ] && printf '%s' $(( _r + 1 )))"
+}
 agent_code_set() {  # agent_code_set <var> <machine> <agent name>: MAC4 (the machine's code and the agent's number), "" without a code
     local _c _n; [ "${MC_N:-0}" -gt 0 ] || machine_codes_load; agentnum_load
     machine_code_set _c "$2" || _c=""; agentnum_set _n "$2" "$3"; printf -v "$1" '%s' "${_c:+$_c$_n}"
@@ -6649,6 +6690,13 @@ agent_ref() {  # agent_ref <ref>: AR_M AR_P AR_NAME AR_ST AR_TASK. ref: a number
             IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
             agent_code_set ac "$m" "$name"; [ "$ac" = "$want" ] && { AR_M=$m; AR_P=$id; AR_ST=$st; AR_NAME=$name; AR_TASK=$task; return 0; }
         done ;; esac
+    case "$ref" in [A-Za-z]*[A-Za-z]|[A-Za-z]*[A-Za-z][0-9]) local lw rn hit2=0 h2m="" h2p="" h2s="" h2n="" h2t=""; lw=$(printf '%s' "$ref" | LC_ALL=C tr '[:upper:]' '[:lower:]')   # Frodo, frodo, Sam2: the name of an agent
+        for (( i = 0; i < AG_N; i++ )); do
+            IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
+            agent_ring_set rn "$m" "$name"; [ -n "$rn" ] && [ "$(printf '%s' "$rn" | LC_ALL=C tr '[:upper:]' '[:lower:]')" = "$lw" ] || continue
+            hit2=$(( hit2 + 1 )); h2m=$m; h2p=$id; h2s=$st; h2n=$name; h2t=$task
+        done
+        if [ "$hit2" = 1 ]; then AR_M=$h2m; AR_P=$h2p; AR_ST=$h2s; AR_NAME=$h2n; AR_TASK=$h2t; return 0; fi ;; esac
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
         title_has "$name" "$ref" && { hits=$(( hits + 1 )); AR_M=$m; AR_P=$id; AR_ST=$st; AR_NAME=$name; AR_TASK=$task; }
@@ -6658,19 +6706,19 @@ agent_ref() {  # agent_ref <ref>: AR_M AR_P AR_NAME AR_ST AR_TASK. ref: a number
     echo "bhote: '$ref' matches $hits agents, use the number or machine/pane (bhote agents)" >&2; return 2
 }
 cli_agents() {  # bhote agents [--json]
-    local i m id st name task first=1 tid t code alias
+    local i m id st name task first=1 tid t code alias ring
     cli_agents_load; agentnum_load
     [ -n "$json" ] && printf '['
     for (( i = 0; i < AG_N; i++ )); do
         IFS=$US read -r m id st name task <<< "${AG_LINES[$i]}"
-        agent_pane_code_set code "$m" "$id"; agent_code_set alias "$m" "$name"
+        agent_pane_code_set code "$m" "$id"; agent_code_set alias "$m" "$name"; agent_ring_set ring "$m" "$name"
         tid=""; for (( t = 0; t < T_N; t++ )); do [ "${T_STATUS[$t]}" != done ] && [ "${T_AM[$t]}" = "$m" ] && [ "${T_AP[$t]}" = "$id" ] && { tid=${T_ID[$t]}; break; }; done
         if [ -n "$json" ]; then
             [ "$first" = 1 ] || printf ','; first=0
             local free=false; case "$st" in idle|done) free=true ;; esac   # (not inside $( ): bash 3.2 misreads a case there)
-            printf '{"n":%s,"code":%s,"alias":%s,"machine":%s,"pane":%s,"status":%s,"name":%s,"task":%s,"free":%s,"topic":%s}' "$(( i + 1 ))" "$(json_opt "$code")" "$(json_opt "$alias")" "$(json_str "$m")" "$(json_str "$id")" \
+            printf '{"n":%s,"code":%s,"alias":%s,"ring":%s,"machine":%s,"pane":%s,"status":%s,"name":%s,"task":%s,"free":%s,"topic":%s}' "$(( i + 1 ))" "$(json_opt "$code")" "$(json_opt "$alias")" "$(json_opt "$ring")" "$(json_str "$m")" "$(json_str "$id")" \
                 "$(json_str "$st")" "$(json_str "$name")" "$(json_opt "$task")" "$free" "$(json_opt "$tid")"
-        else local mp; pad_set mp "$m" 8; local cp; pad_set cp "$code" 10; printf '%3s  %s %s %-9s %s%s\n' "$(( i + 1 ))" "$cp" "$mp" "$st" "$name" "${task:+  · $task}"; fi
+        else local mp; pad_set mp "$m" 8; local cp; pad_set cp "${ring:-$code}" 10; printf '%3s  %s %s %-9s %s%s\n' "$(( i + 1 ))" "$cp" "$mp" "$st" "$name" "${task:+  · $task}"; fi
     done
     if [ -n "$json" ]; then printf ']\n'; fi
     return 0
