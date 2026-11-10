@@ -270,6 +270,7 @@ function runOf(r) {
   return { name: r.workflowName || r.name || "run", url: r.url || "", started: secOf(r.createdAt), ended: 0, state };
 }
 
+const DEFAULT_IGNORE = [/^codecov\/.*$/i];   // (until the settings are read: PR_CHECKS_IGNORE defaults to codecov/*)
 const PR_FIELDS = "number,title,headRefName,headRefOid,baseRefName,url,isDraft,state,mergedAt,reviewDecision,statusCheckRollup,updatedAt";
 
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
@@ -408,6 +409,7 @@ const SETTINGS = [
 
   ["DEPLOY_GITHUB", "Integrations", "GitHub", "Deployments", "Include deployments from GitHub Actions (needs gh and its login).", ""],
   ["TEST_GITHUB", "Integrations", "GitHub", "Test jobs", "Include test jobs from GitHub Actions.", ""],
+  ["PR_CHECKS_IGNORE", "Integrations", "GitHub", "Ignored checks", "Checks of pull requests that bhote leaves out (comma-separated, * as a wildcard, e.g. codecov/*). They are not shown, not counted and never turn a pull request red. Empty: none.", ""],
   ["GITHUB_BRANCHES", "Integrations", "GitHub", "Agent branches", "Show the git branch each topic's agent works on."],
   ["CIRCLECI_TOKEN", "Integrations", "CircleCI", "API token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
   ["DEPLOY_CIRCLECI", "Integrations", "CircleCI", "Deployments", "Include deployments from CircleCI.", ""],
@@ -593,18 +595,26 @@ export default class Bhote extends View {
   loadConfig() {
     const list = (v) => new Set(v.split(",").map((x) => x.trim()).filter(Boolean));
     return Promise.resolve(readTextFile(`${home()}/.config/bhote/config`)).then((text) => {
-      let labels = "", host = window()?.platform === "macos" ? "Mac" : "local", deployOff = new Set(), testsOff = new Set(), kharka = "", listen = true, fin = 30;
+      let labels = "", host = window()?.platform === "macos" ? "Mac" : "local", deployOff = new Set(), testsOff = new Set(), kharka = "", listen = true, fin = 30, ignore = "codecov/*";
       for (const l of (text ?? "").split("\n")) {
         if (l.startsWith("MACHINE_LABELS=")) labels = l.slice(15).trim();
         else if (l.startsWith("HOST_LABEL=")) host = l.slice(11).trim() || host;
         else if (l.startsWith("DEPLOY_PROJECTS_OFF=")) deployOff = list(l.slice(20));
         else if (l.startsWith("TEST_PROJECTS_OFF=")) testsOff = list(l.slice(18));
         else if (l.startsWith("KHARKA=")) kharka = l.slice(7).trim();
+        else if (l.startsWith("PR_CHECKS_IGNORE=")) ignore = l.slice(17).trim();
         else if (l.startsWith("AGENT_LISTEN=")) listen = l.slice(13).trim() !== "off";
         else if (l.startsWith("FINISHED_MINUTES=")) { const n = Number(l.slice(17).trim()); if (Number.isFinite(n)) fin = n; }
       }
-      Object.assign(this, { labels, hostLabel: host, deployOff, testsOff, kharkaBin: kharka, listenDefault: listen, finMin: fin });
+      const prIgnore = ignore.split(",").map((x) => x.trim()).filter(Boolean).map((g) => new RegExp(`^${g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"));
+      Object.assign(this, { prIgnore, labels, hostLabel: host, deployOff, testsOff, kharkaBin: kharka, listenDefault: listen, finMin: fin });
     }).catch(() => { /* the values stay */ });
+  }
+
+  // A check of a pull request that counts (PR_CHECKS_IGNORE, patterns with * such as codecov/*: those are not shown, not counted, never make a pull request red).
+  checkKept(c) {
+    const n = c?.name ?? "";
+    return !(this.prIgnore ?? DEFAULT_IGNORE).some((re) => re.test(n));
   }
 
   // A setting that was saved (the dialog says so in the shared state): every panel reads the settings and the projects again, at once, not at the next reload.
@@ -2560,8 +2570,8 @@ export default class Bhote extends View {
     return null;
   }
 
-  loadMessages(cx) {
-    if (this.msgLoading) return;
+  loadMessages(cx, again) {
+    if (this.msgLoading) { if (again) this.msgAgain = true; return; }   // (a round that is under way may have missed it: one more right after)
     this.msgLoading = true;
     cx.spawn(async (cx) => {
       let changed = false;
@@ -2595,6 +2605,7 @@ export default class Bhote extends View {
       } catch (_e) { /* no kharka here: nothing to hand over */ }
       this.msgLoading = false;
       if (changed) cx.notify();
+      if (this.msgAgain) { this.msgAgain = false; this.loadMessages(cx); }
     });
   }
 
@@ -2711,6 +2722,11 @@ export default class Bhote extends View {
         const keys = (await this.kharka(["ls", "listen"])).stdout.split("\n").map((x) => x.trim()).filter(Boolean);
         const map = {};
         await Promise.all(keys.map(async (k) => { try { map[k.replace(/^listen\//, "")] = JSON.parse((await this.kharka(["get", k])).stdout); } catch (_e) { /* a record that cannot be read counts as none */ } }));
+        for (const [k, e] of Object.entries(this.listenPend ?? {})) {   // a change of the last seconds counts until kharka shows it, too
+          const seen = map[k] ? map[k].listening !== false : this.listenDefault, want = e.rec ? e.rec.listening !== false : this.listenDefault;
+          if (seen === want || Date.now() - e.at > 12000) delete this.listenPend[k];
+          else if (e.rec) map[k] = e.rec; else delete map[k];
+        }
         if (JSON.stringify(map) !== JSON.stringify(this.listenMap)) { this.listenMap = map; cx.notify(); }
       } catch (_e) { /* no kharka here: every agent listens (the default) */ }
       this.listenLoading = false;
@@ -2722,11 +2738,13 @@ export default class Bhote extends View {
     const { key, on } = this.listensTo(sp);
     if (!key) return;
     const next = !on;
-    if (next === this.listenDefault) delete this.listenMap[key]; else this.listenMap[key] = { listening: next, name: sp.name };   // (at once; the next look confirms)
+    const rec = next === this.listenDefault ? null : { listening: next, name: sp.name };
+    // at once: the card shows it now, and a look at kharka that was under way before the change cannot take it back (the change is held over what is read until kharka says the same)
+    (this.listenPend ??= {})[key] = { rec, at: Date.now() };
+    if (rec) this.listenMap[key] = rec; else delete this.listenMap[key];
     cx.notify();
-    const args = next === this.listenDefault ? ["del", `listen/${key}`]
-      : ["put", `listen/${key}`, JSON.stringify({ listening: next, name: sp.name, at: Math.floor(Date.now() / 1000), by: "herdr-app" })];
-    this.kharka(args).catch(() => { this.listenLoading = false; this.loadListen(cx); });
+    const args = rec ? ["put", `listen/${key}`, JSON.stringify({ ...rec, at: Math.floor(Date.now() / 1000), by: "herdr-app" })] : ["del", `listen/${key}`];
+    this.kharka(args).then(() => { if (next) this.loadMessages(cx, true); }).catch(() => { delete this.listenPend[key]; this.listenLoading = false; this.loadListen(cx); });   // (an ear that goes on: what waited for it is handed over at once)
   }
 
   // --- Commit-Inspector: the git commits of the agent that has the focus ----------------------------------------------------------
@@ -3243,7 +3261,7 @@ export default class Bhote extends View {
               const merged = q.state === "MERGED" ? Math.floor(Date.parse(q.mergedAt) / 1000) : 0;
               if (q.state === "CLOSED" || (merged && merged < since)) continue;
               heads.add(q.headRefName);
-              const checks = (q.statusCheckRollup ?? []).map(checkOf);
+              const checks = (q.statusCheckRollup ?? []).map(checkOf).filter((c) => this.checkKept(c));   // (PR_CHECKS_IGNORE: codecov/* is not a check of the pull request)
               this.observeChecks(p.title, checks);
               // A red check that the base branch has fixed since (by another pull request) is not shown as failed: the same workflow was broken on
               // the base branch when this one ran (a failed run up to ten minutes after it, not older than three days) and a later run there passed.
@@ -3264,7 +3282,7 @@ export default class Bhote extends View {
             if (deploys) try {
               const r = await exec("gh", ["pr", "list", "-R", slug, "--state", "open", "--limit", "40", "--json", "number,title,headRefName,url,author,statusCheckRollup"], { timeout: 40000 });
               for (const q of JSON.parse(r.stdout)) {
-                const cks = (q.statusCheckRollup ?? []).map(checkOf);
+                const cks = (q.statusCheckRollup ?? []).map(checkOf).filter((c) => this.checkKept(c));
                 const live = cks.filter((c) => c.state === "running");
                 if (!live.length) continue;
                 this.observeChecks(p.title, cks);
