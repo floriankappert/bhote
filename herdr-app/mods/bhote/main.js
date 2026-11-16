@@ -579,6 +579,7 @@ export default class Bhote extends View {
     this.startedAt = Date.now();  // (what is there in the first seconds is not "new")
     this.entered = {};            // by list: { seen, at } what has been seen and when something new came in (enterBegin, enterWrap)
     this.animUntil = 0;           // a card or row is coming in until then: the view looks again every 70 ms
+    this.agentCtx = {};           // by agent address: how full the context of its session is (percent; the statusline writes it per terminal)
     this.agentDirty = {};         // by agent address: how many files have uncommitted changes in the folder its program works in
     this.agentHead = {};          // by agent address: the commit its work stands on (to find the pull request of a branch pushed under another name)
     this.agentDir = {};           // by agent address: { dir, at } where its program works
@@ -1724,6 +1725,9 @@ export default class Bhote extends View {
         .child(h_flex().gap(8).items_center()
           .child(this.agentIcon(t, agent, active, tone, st.word))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
+          .when(!!agent && o.ctx != null, (el) => { const c = o.ctx, col = c >= 85 ? t.blocked : c >= 60 ? t.ansi3 : t.done ?? t.accent;   // (the context of the session, a thin upright bar that fills from below: yellow from 60 %, red from 85 %)
+            return el.child(v_flex().id(`ctx-${id}`).flex_none().w(4).h(16).rounded(2).bg(tint(col, "30", t.border)).overflow_hidden().justify_end()
+              .child(div().w(4).h(Math.max(1, Math.round(16 * c / 100))).rounded(2).bg(col))); })
           .when(!!agent && (o.dirty ?? 0) > 0, (el) => el.child(h_flex().flex_none().gap(2).items_center().text_color(t.ansi3)
             .child(svg("mods/bhote/git-dirty.svg").size(13).flex_none().text_color(t.ansi3)).child(div().text_size(10.5).font_semibold().child(`${o.dirty}`))))   // (x uncommitted changes in its folder)
           .when(!!agent && !!o.listen?.key, (el) => el.child(this.ibtn(t, `ear-${id}`, o.listen.on ? "ear" : "ear-off", (cx) => o.onListen(cx),
@@ -2908,6 +2912,11 @@ export default class Bhote extends View {
       await Promise.all(agents().map(async (a) => {
         try {
           const machine = sp.find((q) => q.id === a.space)?.machine ?? null;
+          try {   // the context of the session: ~/.cache/bhote/ctx/<terminal> (written by the Claude statusline; a terminal id is per machine)
+            const v = Number((await this.srvExec(machine, "sh", ["-c", 'cat "${XDG_CACHE_HOME:-$HOME/.cache}/bhote/ctx/$1" 2>/dev/null', "_", a.address.split("/").pop()], 8000)).stdout.trim());
+            const c = Number.isFinite(v) && v > 0 ? Math.min(100, v) : null;
+            if ((this.agentCtx[a.address] ?? null) !== c) { this.agentCtx[a.address] = c; changed = true; }
+          } catch (_e) { /* no value: no bar */ }
           let d = this.agentDir[a.address];
           if (!d || Date.now() - d.at > 30000) { d = { dir: await this.fgCwd(a).catch(() => null), at: Date.now() }; this.agentDir[a.address] = d; }
           if (!d.dir) return;
@@ -3185,7 +3194,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0 }), 84));
+          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0, ctx: this.agentCtx[a.address] ?? null }), 84));
         }
       }
       if (ins === ids.length) rows.push(dropLine());   // (to the end of the section)
