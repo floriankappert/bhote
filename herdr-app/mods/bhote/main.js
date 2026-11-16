@@ -1919,7 +1919,7 @@ export default class Bhote extends View {
       .child(this.sectionHead(t, "usage-head", "Claude usage", shut, this.guard((_e, cx) => { setShared("bhote.usageShut", !shut); cx.notify(); })))
       .children((shut ? [] : list).map((a) => h_flex().id(`usage-${a.profile}`).px(15).py(3).gap(8).items_center()
         .child(div().w(72).flex_none().truncate().text_size(12).text_color(t.foreground).child(name(a)))
-        .child(a.error ? div().text_size(10.5).text_color(t.blocked).child(a.error) : h_flex().flex_1().min_w(0).gap(6).child(cell(a.five_hour)).child(cell(a.seven_day)))))];
+        .child(a.error ? div().text_size(10.5).text_color(a.error.startsWith("Rate limited") ? t.dim : t.blocked).child(a.error) : h_flex().flex_1().min_w(0).gap(6).child(cell(a.five_hour)).child(cell(a.seven_day)))))];
   }
 
   jobsBar(t) {
@@ -4264,14 +4264,19 @@ export default class Bhote extends View {
     const link = div().id("topics-select-all").cursor_pointer().text_size(10.5).text_color(t.dim).hover((e) => e.text_color(t.foreground))
       .on_click(this.guard((_e, cx) => { this.setSel(picked > 0 ? new Set() : new Set(keys), sel.tests); cx.notify(); }))
       .child(picked > 0 ? `clear ${picked}` : "select all");
+    // with a pick: the menu of what can be done with the picked topics
+    const actions = div().id("topics-actions").flex_none().flex().items_center().gap(4).px(8).h(18).rounded(5).text_size(11).cursor_pointer()
+      .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground).hover((e) => e.bg(t.hover))
+      .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
+      .on_click(this.guard(() => this.openMenu(this.batchItems("topics", keys), this.anchor)))
+      .child(div().child("Actions")).child(svg("mods/bhote/chevron-down.svg").size(11).text_color(t.dim));
     const caption = h_flex().flex_none().items_center()
       .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("TOPICS"))
       .child(div().ml(5).text_size(10.5).text_color(t.dim).child("("))
       .child(link)
       .child(div().text_size(10.5).text_color(t.dim).child(")"));
     return div().flex_none().pt(6).child(this.dividerCaption(t, caption, [
-      div().flex_none().text_size(10.5).text_color(t.dim).child(`${g("review") + g("now") + g("testing") + g("deploying") + g("finished")} active · ${g("next")} next · ${g("waiting")} waiting`),
-      this.countTag(t, open), plus, ...(withTiles ? [this.tilesToggle(t)] : [])]));
+      ...(picked > 0 ? [actions] : []), this.countTag(t, open), plus, ...(withTiles ? [this.tilesToggle(t)] : [])]));
   }
 
   tilesToggle(t) {
@@ -4445,8 +4450,12 @@ export default class Bhote extends View {
 
     // four tiles of one size stay at the top; under them the topics scroll
     const srvTile = this.serverTile(t);
+    // the Dashboard section: the three tiles (pull requests, deployments, tests) under a caption that folds them
+    let dashShut = false;
+    try { dashShut = shared("bhote.dashShut") === true; } catch (_e) { dashShut = false; }
+    const dashHead = this.sectionHead(t, "dash-head", "Dashboard", dashShut, this.guard((_e, cx) => { setShared("bhote.dashShut", !dashShut); cx.notify(); }));
     const rbTile = this.runbookTile(t);   // (a section like the servers: its own width, not inside the padding of the tiles)
-    const tiles = v_flex().flex_none().p(10).gap(10).border_b(1).border_color(t.border)
+    const tiles = v_flex().flex_none().px(10).pt(4).pb(10).gap(10)
       .child(h_flex().flex_none().gap(10)
         .child(this.tile(t, "prs", { title: "Pull requests", accent: prsFailed ? t.blocked : t.done, badge: prsFailed || null, big: prs.length, bigColor: prsFailed ? t.blocked : t.foreground,
           label: pfWhat || (prs.length === 1 ? "open pull request" : "open pull requests"), bar: this.prsBar(prs),
@@ -4465,11 +4474,10 @@ export default class Bhote extends View {
           big: tFailed.length || tRunning || tPassed.length, bigColor: tFailed.length ? t.blocked : tRunning ? t.working : t.done, label: tFailed.length ? `failed: ${tfWhat}` : tRunning ? "running" : "passed",
           bar: this.runsBar(shown, "t"), sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", red: tFailed.length > 0, border: tFailed.length ? "#a8162e" : undefined })));
     const list = this.right();
-    const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id));
     const topicsHead = this.topicsHead(t, true);
     return v_flex().id("home-root").size_full().bg(t.chrome)
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
-      .children(rbTile ? [rbTile] : []).child(tiles).child(topicsHead).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
+      .children(rbTile ? [rbTile] : []).child(dashHead).children(dashShut ? [] : [tiles]).child(topicsHead).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
       .children([...this.docks(t), ...(srvTile ? [srvTile] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
   }
@@ -4688,9 +4696,7 @@ export default class Bhote extends View {
     }
     else {
       body = this.right();
-      const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id));
       if (this.adding) body.unshift(this.addRow(t));
-      if (bar) body.unshift(bar);
       body.unshift(this.topicsHead(t, false));
     }
     return v_flex().size_full().bg(t.chrome).text_size(13)
