@@ -47,6 +47,12 @@ function parseTopics(text) {
   return out.sort((a, b) => b.updated - a.updated);
 }
 
+// The deployments of the last days are kept on disk (the CI answers only with its latest runs, and deploys.list is gone with the next restart).
+const DEPLOY_HISTORY_DAYS = 14, DEPLOY_HISTORY_MAX = 400;
+const deployKey = (x) => `${x.project}|${x.label}|${x.url || x.time}`;
+const DASH_RECENT_S = 4 * 3600;   // what finished in this time (a deployment, a merge) is still shown on the dashboard
+const DEPLOY_OPEN = new Set(["running", "queued", "approval", "waiting"]);   // (a run that was under way is not shown from the history: its end is unknown)
+
 // A progress bar: a track and a fill (a percentage of the track).
 function progress(t, frac, color, width) {
   const pct = Math.max(0, Math.min(100, Math.round(frac * 100)));
@@ -381,9 +387,9 @@ const SVC_STOP = 'd="$HOME/.cache/bhote/svc"; [ -n "$3" ] && zsh -ic "$3" >/dev/
 // Test runs that nobody reported: an agent that starts `bin/rails test`, rspec, vitest, jest, pytest or `npm test` in the background does not use
 // `bhote test run` and writes no status file, yet it runs for ten minutes. They are found as processes (the top one of each run, its workers do not count),
 // with the folder of the repository they run in and its branch. One line each: pid, seconds running, repository folder, branch, command.
-const LIVE_TESTS_SH = 'ps -Ao pid=,ppid=,etime=,command= | awk -v re="(rails|rake) +test|bin/rails +test|(^|[ /])rspec( |$)|vitest|(^|[ /])jest( |$)|pytest|(^|[ /])mocha( |$)|(yarn|npm|pnpm)( run)? +test( |$)" \''
+const LIVE_TESTS_SH = 'ps -Ao pid=,ppid=,etime=,command= | awk -v re="(rails|rake) +test|bin/rails +test|(^|[ /])rspec( |$)|vitest|(^|[ /])jest( |$)|pytest|(^|[ /])mocha( |$)|(yarn|npm|pnpm)( run)? +test( |$)|cargo +test|go +test|phpunit|(^|[ /])bats( |$)|(^|[ /])tests/[A-Za-z0-9_-]+[.](sh|py)" \''
   + 'function secs(e,  d,a,n){ d=0; if (index(e,"-")>0){ split(e,a,"-"); d=a[1]; e=a[2] } n=split(e,a,":"); if (n==3) return d*86400+a[1]*3600+a[2]*60+a[3]; return d*86400+a[1]*60+a[2] } '
-  + '{ cmd=$0; sub(/^ *[0-9]+ +[0-9]+ +[^ ]+ +/,"",cmd); if (cmd ~ re && cmd !~ /awk|ps -Ao|claude|bhote|hc exec|grep/) { P[$1]=1; PP[$1]=$2; ET[$1]=$3; C[$1]=cmd } } '
+  + '{ cmd=$0; sub(/^ *[0-9]+ +[0-9]+ +[^ ]+ +/,"",cmd); if (cmd ~ re && cmd !~ /awk|ps -Ao|hc exec|grep/ && cmd !~ /(^| |\\/)(claude|bhote)( |$)/) { P[$1]=1; PP[$1]=$2; ET[$1]=$3; C[$1]=cmd } } '
   + 'END { for (p in P) if (!(PP[p] in P)) printf "%s\\t%s\\t%s\\n", p, secs(ET[p]), C[p] }\' '
   + '| while IFS="$(printf \'\\t\')" read -r p s c; do cwd=$(readlink "/proc/$p/cwd" 2>/dev/null || lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n "s/^n//p"); '
   + '[ -n "$cwd" ] || continue; top=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || printf %s "$cwd"); br=$(git -C "$top" branch --show-current 2>/dev/null); '
@@ -522,7 +528,7 @@ export default class Bhote extends View {
     if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
     // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
-    try { this.tab = ["home", "topics", "prs", "deploys", "tests", "servers"].includes(shared("bhote.tab")) ? shared("bhote.tab") : "home"; } catch (_e) { this.tab = "home"; }
+    try { this.tab = ["home", "topics", "prs", "deploys", "tests", "runbooks", "servers"].includes(shared("bhote.tab")) ? shared("bhote.tab") : "home"; } catch (_e) { this.tab = "home"; }
     // How bhote names this machine and the others (HOST_LABEL, MACHINE_LABELS in its config): a topic is started on an agent by those names.
     this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
     this.labels = "";
@@ -558,6 +564,8 @@ export default class Bhote extends View {
     this.liveTests = {};     // by machine: test processes nobody reported (LIVE_TESTS_SH), as rows of the test list
     this.liveAt = 0;
     this.deploys = [];
+    this.deployHist = {};   // the kept deployments by deployKey (the file deploy-history.json), read at the start
+    this.histRaw = null;
     this.error = null;
     this.loading = false;
     this.projects = [];
@@ -615,7 +623,8 @@ export default class Bhote extends View {
     });
     if (this.side === "right") cx.timer.after(3000, (cx) => { const m = this.cfgMeta(); if (!m || Date.now() - (m.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); });   // (the settings dialog opens at once)
     if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
-    if (this.side === "right") cx.timer.every(70, (cx) => { if (Date.now() < (this.animUntil ?? 0)) cx.notify(); });   // (what comes in is drawn again while it does)
+    if (this.side === "right") this.loadDeployHistory().then(() => cx.notify());
+    if (this.side === "right") cx.timer.every(40, (cx) => { if (Date.now() < (this.animUntil ?? 0)) cx.notify(); });   // (what comes in is drawn again while it does)
     if (this.side === "right") { this.loadLiveTests(cx); cx.timer.every(5000, (cx) => this.loadLiveTests(cx)); }
     this.pulsing = false;
     if (this.side === "right") cx.timer.every(100, (cx) => { if (this.pulsing) { this.pulsing = false; cx.notify(); } });   // (a render that draws a pulsing circle sets it again)
@@ -701,6 +710,7 @@ export default class Bhote extends View {
         this.localTests = parseMonitor(tests);
         this.tests = this.mergeTests();
         this.deploys = parseMonitor(deploys);
+        if (this.side === "right") this.recordDeploys();
         this.projects = parseProjects(topics);
         this.ringMap = parseRing(topics);
         // an agent of this computer in a space without a record gets one (the daemon only knows the agents of the classic herdr): then it has its name
@@ -758,13 +768,21 @@ export default class Bhote extends View {
           const rows = r.stdout.split("\n").filter(Boolean).map((l) => {
             const [pid, secs, top, branch, ...cmd] = l.split("\t");
             const c = cmd.join(" ");
-            const runner = /(rails test|rake test|rspec|vitest|jest|pytest|mocha|(?:yarn|npm|pnpm)(?: run)? test)/.exec(c)?.[1] ?? "tests";
+            const runner = /(rails test|rake test|rspec|vitest|jest|pytest|mocha|cargo test|go test|phpunit|bats|tests\/[A-Za-z0-9_-]+\.(?:sh|py)|(?:yarn|npm|pnpm)(?: run)? test)/.exec(c)?.[1] ?? "tests";
             const args = c.slice(c.indexOf(runner) + runner.length).trim();
             return { time: now - (Number(secs) || 0), project: top.split("/").pop(), label: runner, state: "running", done: 0, total: 0, branch: branch ?? "",
               title: args.length > 90 ? `${args.slice(0, 89)}…` : args, url: "", live: true, pid };
           });
-          if (JSON.stringify((this.liveTests[key] ?? []).map((x) => x.pid)) !== JSON.stringify(rows.map((x) => x.pid))) changed = true;
-          this.liveTests[key] = rows;
+          // one run is often many processes (vitest forks its workers, yarn starts node starts the runner): the processes of one project and runner are one row
+          const by = new Map();
+          for (const r of rows) {
+            const k = `${r.project}|${r.label}`;
+            const e = by.get(k);
+            if (e) { e.count += 1; e.time = Math.min(e.time, r.time); e.pid = `${e.pid},${r.pid}`; } else by.set(k, { ...r, count: 1 });
+          }
+          const one = [...by.values()].map((r) => (r.count > 1 ? { ...r, title: `${r.count} processes${r.title ? ` · ${r.title}` : ""}` } : r));
+          if (JSON.stringify((this.liveTests[key] ?? []).map((x) => x.pid)) !== JSON.stringify(one.map((x) => x.pid)) || (this.liveTests[key] ?? []).some((x, i) => x.count !== one[i]?.count)) changed = true;
+          this.liveTests[key] = one;
         } catch (_e) { /* that machine does not answer: its last rows stay */ }
       }
       this.liveLoading = false;
@@ -3307,6 +3325,7 @@ export default class Bhote extends View {
       await this.cfgPromise;
       const out = [];
       const builds = [];
+      const reviewReqs = [];   // pull requests of others that ask the user for a review
       const baseCache = new Map();
       // the runs of the base branch (GitHub Actions), once per branch: was a workflow broken there, and is it green again?
       const baseRuns = async (slug, base) => {
@@ -3334,6 +3353,10 @@ export default class Bhote extends View {
               const r = await cachedGh(["pr", "list", "-R", slug, "--author", "@me", "--state", "all", "--limit", "20", "--json", PR_FIELDS]);
               list = JSON.parse(r.stdout);
             } catch (_e) { /* gh missing, not signed in or offline: this repo shows nothing */ }
+            try {
+              const rr = await cachedGh(["pr", "list", "-R", slug, "--search", "review-requested:@me", "--state", "open", "--limit", "20", "--json", "number,title,url,author,isDraft"]);
+              for (const q of JSON.parse(rr.stdout)) if (!q.isDraft) reviewReqs.push({ project: p.title, slug, number: q.number, title: q.title, url: q.url, author: q.author?.login ?? "" });
+            } catch (_e) { /* no review requests known */ }
             const heads = new Set();
             for (const q of list) {
               const merged = q.state === "MERGED" ? Math.floor(Date.parse(q.mergedAt) / 1000) : 0;
@@ -3430,6 +3453,8 @@ export default class Bhote extends View {
         }
         this.prs = out;
         this.builds = builds;
+        this.reviewReqs = reviewReqs;
+        if (this.side === "right") this.recordDeploys();
         this.prAt = Date.now();
       } catch (e) {
         this.error = String(e?.message ?? e);
@@ -3440,8 +3465,58 @@ export default class Bhote extends View {
   }
 
   // What the Deployments tab shows: the deployments (bhoted) and the builds that run on open pull requests (gh), newest first.
+  // --- the history of the deployments: kept on disk for DEPLOY_HISTORY_DAYS days ----------------------------------------------------
+  deployHistPath() { return `${home()}/.local/share/bhote/deploy-history.json`; }
+
+  async loadDeployHistory() {
+    try {
+      const raw = await readTextFile(this.deployHistPath());
+      this.histRaw = raw;
+      this.deployHist = { ...(raw ? JSON.parse(raw).runs ?? {} : {}), ...this.deployHist };
+    } catch (_e) { /* no history yet */ }
+  }
+
+  // What was seen of deployments (and the builds of the deploy branches) goes into the history; what is older than the days kept falls out.
+  recordDeploys() {
+    const h = this.deployHist ?? (this.deployHist = {});
+    let changed = false;
+    for (const x of [...this.deploys, ...(this.builds ?? [])]) {
+      if (!x.project || x.pr || !x.time) continue;
+      const k = deployKey(x);
+      const j = JSON.stringify(x);
+      if (JSON.stringify(h[k]) !== j) { h[k] = JSON.parse(j); changed = true; }
+    }
+    const since = Date.now() / 1000 - DEPLOY_HISTORY_DAYS * 86400;
+    const keep = Object.entries(h).filter(([, x]) => x.time >= since).sort((a, b) => b[1].time - a[1].time).slice(0, DEPLOY_HISTORY_MAX);
+    if (keep.length !== Object.keys(h).length) { this.deployHist = Object.fromEntries(keep); changed = true; }
+    if (changed) this.saveDeployHistory();
+  }
+
+  async saveDeployHistory() {
+    if (this.histSaving) { this.histDirty = true; return; }
+    this.histSaving = true;
+    try {
+      if (!this.histDir) { await exec("mkdir", ["-p", `${home()}/.local/share/bhote`], { timeout: 10000 }); this.histDir = true; }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const text = JSON.stringify({ v: 1, runs: this.deployHist });
+        try { await writeTextFile(this.deployHistPath(), text, this.histRaw); this.histRaw = text; break; }
+        catch (_e) { this.histRaw = (await readTextFile(this.deployHistPath()).catch(() => null)) ?? null; }   // (another panel wrote it: its state is the base, ours is merged over it)
+      }
+    } catch (_e) { /* the next change writes again */ }
+    this.histSaving = false;
+    if (this.histDirty) { this.histDirty = false; this.saveDeployHistory(); }
+  }
+
+  // The live rows (the daemon's list, the builds of the deploy branches) and, beside them, what only the history still knows.
+  deployRows() {
+    const live = [...this.deploys.map((x) => ({ ...x, src: "d" })), ...(this.builds ?? []).map((x) => ({ ...x, src: "b" }))];
+    const keys = new Set(live.map(deployKey));
+    const old = Object.values(this.deployHist ?? {}).filter((x) => !keys.has(deployKey(x)) && !DEPLOY_OPEN.has(x.state));
+    return [...live, ...old];
+  }
+
   deploysAll() {
-    return [...this.deploys, ...(this.builds ?? [])].filter((x) => !this.deployOff.has(this.projectOf(x.project))).sort((a, b) => b.time - a.time);
+    return this.deployRows().filter((x) => !this.deployOff.has(this.projectOf(x.project))).sort((a, b) => b.time - a.time);
   }
 
   // What a pipeline of a deploy branch is about: the pull request behind it ("#1784 fix: orphaned renewal plan ..."), found by the number in the
@@ -3462,7 +3537,7 @@ export default class Bhote extends View {
   // The deployments of a project that started after a pull request was merged: the first one of each environment.
   deploysAfter(pr) {
     const seen = new Map();
-    for (const x of [...this.deploys].sort((a, b) => a.time - b.time)) {
+    for (const x of this.deployRows().filter((q) => q.src !== "b").sort((a, b) => a.time - b.time)) {
       if (x.project !== pr.project || x.time < pr.merged || seen.has(x.label)) continue;
       seen.set(x.label, x);
     }
@@ -3644,7 +3719,8 @@ export default class Bhote extends View {
   }
 
   prsBody(t) {
-    const rows = [];
+    // no buttons in the tab bar: the project filter is on the divider that opens the tab's list
+    const rows = [div().flex_none().pt(6).child(this.dividerCaption(t, "Pull requests", [this.prFilterButton(t)]))];
     const f = this.prFilter();
     const all = f.size ? this.prs.filter((x) => f.has(x.project)) : this.prs;
     this.enterBegin("prs", all.map((x) => `${x.project}|${x.kind}|${x.number || x.branch}`));
@@ -3684,23 +3760,17 @@ export default class Bhote extends View {
   // The tab bar of the right panel: Topics, Deployments, Tests; a monitor's tab shows what runs (orange) and what failed (red).
   tabBar(t, cx) {
     const prList = this.prs.filter((x) => !x.merged).map((x) => ({ state: x.checks.some((c) => c.state === "failed") ? "failed" : x.checks.some((c) => c.state === "running") ? "running" : "ok" }));
-    const tabs = [["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["servers", "Servers", null]];
+    const tabs = [["home", "Overview", null], ["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null]];
     return h_flex().flex_none().gap(2).px(8).pt(8).pb(6).items_center().border_b(1).border_color(t.border)
-      .child(div().id("tab-home").w(28).h(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
-        .bg(t.chrome).hover((x) => x.bg(t.hover)).on_click((_e, cx) => this.setTab(cx, "home"))
-        .child(svg("mods/bhote/grid.svg").size(15).text_color(t.muted)))
       .children(tabs.map(([id, label, list]) => {
         const on = this.tab === id;
-        const running = list ? list.filter((x) => x.state === "running" || x.state === "queued" || x.state === "approval").length : 0;
         const failed = list ? list.filter((x) => x.state === "failed").length : 0;
-        return h_flex().id(`tab-${id}`).gap(4).px(7).py(4).rounded(6).items_center().text_size(12)
+        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).py(4).rounded(6).items_center().text_size(12)
           .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).hover((x) => x.bg(on ? t.selected : t.hover))
           .on_click((_e, cx) => this.setTab(cx, id))
-          .child(label)
-          .when(running > 0, (el) => el.child(div().text_size(11).text_color(t.working).child(String(running))))
+          .child(id === "home" ? svg("mods/bhote/layout-dashboard.svg").size(16).flex_none() : label)   // (the overview is an icon: Lucide layout-dashboard; no running counts on the tabs, they only took room)
           .when(failed > 0, (el) => el.child(div().px(4).rounded(8).text_size(10).bg("#a8162e").text_color("#ffffff").child(String(failed))));
-      }))
-      .when(this.tab === "prs", (el) => el.child(div().flex_1()).child(this.prFilterButton(t)));
+      }));
   }
 
   // The project a run belongs to: runs are named after worktrees ("IMS-wt1", "IMS (wt2)"); they belong to the project of that name.
@@ -3755,7 +3825,8 @@ export default class Bhote extends View {
     for (const [project, all] of ordered) {
       // at most two passed runs per project (the newest ones); every running and failed run stays
       let passed = 0;
-      const list = all.filter((x) => (x.state !== "ok" && x.state !== "canceled" && x.state !== "fixed") || ++passed <= 2);
+      const keepPassed = kind === "d" ? 15 : 2;   // (deployments: the last days are kept, so more of them show)
+      const list = all.filter((x) => (x.state !== "ok" && x.state !== "canceled" && x.state !== "fixed") || ++passed <= keepPassed);
       const hidden = all.length - list.length;
       const running = list.filter((x) => x.state === "running" || x.state === "queued" || x.state === "approval").length;
       const failed = list.filter((x) => x.state === "failed").length;
@@ -3763,7 +3834,7 @@ export default class Bhote extends View {
         .when(hidden > 0, (el) => el.child(div().text_color(t.dim).child(`+${hidden} more`)))
         .when(running > 0, (el) => el.child(div().text_color(t.working).child(`${running} running`)))
         .when(failed > 0, (el) => el.child(div().px(5).rounded(8).bg("#a8162e").text_color("#ffffff").child(`✗ ${failed}`))), true));
-      list.slice(0, 10).forEach((x, i) => out.push(this.enterWrap(t, `mon-${prefix}`, this.runKey(x), this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false), 84)));
+      list.slice(0, kind === "d" ? 25 : 10).forEach((x, i) => out.push(this.enterWrap(t, `mon-${prefix}`, this.runKey(x), this.monitorCard(t, `${prefix}-${project}-${i}`, x, kind, false), 84)));
     }
     return out;
   }
@@ -4159,22 +4230,17 @@ export default class Bhote extends View {
       .child(div().absolute().left(0).top(0).w(size).h(size).rounded(size / 2).bg(color).opacity(0.35 + 0.65 * k));
   }
 
-  runbookTile(t) {
+  // The Runbooks tab: every project with the stages of its latest change as circles (as a row of the Servers section), and what the change is about.
+  runbooksPage(t) {
     const items = this.runbookItems();
-    if (!items.length) return null;
-    let shut = true;
-    try { shut = shared("bhote.rbShut") !== false; } catch (_e) { shut = true; }
-    const toggle = (_e, cx) => { setShared("bhote.rbShut", !shut); cx.notify(); };
-    const head = this.sectionHead(t, "rb-head", "Runbooks", shut, this.guard(toggle));
-    // a row as in the Servers section: the project in its column, then the stages as circles, then what it is about
+    if (!items.length) return [empty(t, "◎", "No runbooks", "A project with CI settings shows the path of its changes here")];
     const row = (x) => h_flex().id(`rb-${x.project}-${x.ref}`).gap(4).items_center().px(15).py(3)
       .child(div().w(104).flex_none().truncate().text_size(12).text_color(t.foreground).child(x.project))
       .child(h_flex().gap(4).items_center().flex_none().children(x.stages.map((y) => this.stageCircle(t, y.state, 9))))
       .child(div().flex_1().min_w(0).truncate().pl(8).text_size(11).text_color(t.dim).child(x.ref.length > 34 ? `${x.ref.slice(0, 33)}…` : x.ref));
-    // folded: only the latest run
-    const shown = shut ? [[...items].sort((a, b) => b.at - a.at)[0]] : items;
-    return v_flex().id("tile-runbooks").flex_none().pb(6).child(head).children(shown.map(row));
+    return [div().flex_none().pt(6).child(this.dividerCaption(t, "Runbooks", [this.countTag(t, items.length)])), ...items.map(row)];
   }
+
 
   // The status page (the Servers tab): the machines with their load, the systems with their apps, the tunnel.
   serversPage(t) {
@@ -4225,13 +4291,6 @@ export default class Bhote extends View {
     return rows;
   }
 
-  // --- the overview: four large tiles, 2 x 2 -----------------------------------------------------------------------------------
-  // A tile: its name, one big figure, a line under it, a short list. A click opens the tab behind it.
-  // Small tiles (only the figure and what it says, no short lines): what the person chose with the button, else a panel that is not tall.
-  compactTiles() {
-    try { const v = shared("bhote.compact"); return typeof v === "boolean" ? v : !!this.compactHome; } catch (_e) { return !!this.compactHome; }
-  }
-
   // The button that folds the tiles to their small form and back.
   openSettings() { openOverlay({ mod: "bhote", props: { settings: true }, kind: "dialog", modal: true, width: 1032, height: 768 }); }
 
@@ -4249,9 +4308,193 @@ export default class Bhote extends View {
         .when(!!v, (e) => e.child(div().text_size(11).text_color(t.dim).child(v))));
   }
 
-  // The Topics section's head: its caption on a divider, what the old tile said (the figures) and the count at the right end, the plus that adds a topic, and
-  // (on the overview) the button that folds the tiles above.
-  topicsHead(t, withTiles) {
+  // --- the dashboard: the tiles are small while nothing happens and grow with what happens ---------------------------------------------------
+  // Per tile the items that matter: failed (the tile is red until it is green again), running (with its progress) and waiting (for the user: a pull request that is
+  // ready to merge or asks the user for a review, a deployment that waits for an approval, a runbook stage that does). Nothing of these: a small chip; the
+  // chips share a row (two to a row). A tile that was running stays open for 20 s after the last run, so that it does not flicker.
+  // The rows of deployments and runbooks can be dismissed (the x on hover): by their key, kept for 14 days (a new run has a new key).
+  dashDismissed() {
+    try {
+      const v = shared("bhote.dashDismissed") ?? {};
+      const since = Date.now() - 14 * 86400000;
+      return Object.fromEntries(Object.entries(v).filter(([, at]) => at >= since));
+    } catch (_e) { return {}; }
+  }
+
+  dismissDash(key, cx) {
+    setShared("bhote.dashDismissed", { ...this.dashDismissed(), [key]: Date.now() });
+    cx.notify();
+  }
+
+  dashSpecs(t) {
+    const specs = [];
+    const gone = this.dashDismissed();
+    const failing = (p) => p.checks.filter((c) => c.state === "failed").length;
+    const running = (p) => p.checks.filter((c) => c.state === "running").length;
+    // pull requests: of the user (failed, running, approved: ready to merge, changes requested) and those that ask the user for a review
+    const prs = this.prs.filter((p) => p.kind === "pr" && !p.merged);
+    const pi = [];
+    for (const p of prs) {
+      const text = `${p.number ? `#${p.number} ` : ""}${p.title}`;
+      const key = (what) => `p|${p.project}|${p.number}|${what}`;   // (another state of the same pull request is a new row)
+      if (failing(p)) pi.push({ kind: "failed", text, right: `${failing(p)} failed`, key: key("failed") });
+      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), key: key("running") }); }
+      else if (!p.draft && p.review === "APPROVED") pi.push({ kind: "waiting", text, right: "ready to merge", key: key("ready") });
+      else if (p.review === "CHANGES_REQUESTED") pi.push({ kind: "waiting", text, right: "changes requested", key: key("changes") });
+    }
+    for (const q of this.reviewReqs ?? []) pi.push({ kind: "waiting", text: `#${q.number} ${q.title}`, right: `review for you${q.author ? ` · ${q.author}` : ""}`, key: `p|${q.project}|${q.number}|review` });
+    specs.push({ id: "prs", title: "Pull requests", items: pi.filter((i) => !(i.key in gone)), fig: this.prAt ? String(prs.length) : "…", sub: prs.length ? "open" : "none open" });
+    // deployments: the newest run of each project and environment
+    const newest = new Map();
+    for (const x of this.deploysAll()) { const k = `${x.project}|${x.label}`; if (!newest.has(k)) newest.set(k, x); }
+    const deploys = [...newest.values()];
+    const di = [];
+    for (const x of deploys) {
+      const text = `${x.project} · ${this.whatOf(x).text || x.label}`;
+      const key = `d|${deployKey(x)}`;
+      if (x.state === "failed") di.push({ kind: "failed", text, right: "failed", key });
+      else if (x.state === "running" || x.state === "queued") { const e = this.runEstimate(x, "d"); di.push({ kind: "running", text, frac: e.frac, remain: e.remain, key }); }
+      else if (x.state === "approval") di.push({ kind: "waiting", text, right: "approval", key });
+    }
+    // what went live in the last four hours (every run, not only the newest of an environment) stays in view
+    const since = Date.now() / 1000 - DASH_RECENT_S;
+    for (const x of this.deploysAll()) if (x.state === "ok" && x.time >= since) di.push({ kind: "done", text: `${x.project} · ${this.whatOf(x).text || x.label}`, right: ago(x.time), key: `d|${deployKey(x)}` });
+    specs.push({ id: "deploys", title: "Deployments", items: di.filter((i) => !(i.key in gone)), fig: deploys.length ? (deploys[0].state === "ok" ? "deployed" : deploys[0].state) : "–", sub: "" });
+    // tests
+    const { shown } = this.testsShown();
+    const ti = [];
+    const runs = new Map();   // the runs of one project and suite that go on at once (on one machine) are one row, with how many
+    for (const x of shown) {
+      const text = `${x.project} · ${x.label}`;
+      if (x.state === "failed") ti.push({ kind: "failed", text, right: ago(x.time) });
+      else if (x.state === "running" || x.state === "queued") {
+        const k = `${x.machine ?? ""}|${text}`;
+        const e = this.runEstimate(x, "t");
+        const g = runs.get(k);
+        if (g) { g.n += 1; if (e.frac != null) g.fracs.push(e.frac); if (e.remain != null) g.remain = Math.max(g.remain ?? 0, e.remain); }
+        else { const it = { kind: "running", text, fracs: e.frac != null ? [e.frac] : [], remain: e.remain, n: 1 }; runs.set(k, it); ti.push(it); }
+      }
+    }
+    for (const it of runs.values()) { it.frac = it.fracs.length ? it.fracs.reduce((a, b) => a + b, 0) / it.fracs.length : null; if (it.n > 1) it.text = `${it.text} ×${it.n}`; }
+    specs.push({ id: "tests", title: "Tests", items: ti, fig: `${shown.filter((x) => x.state === "ok").length} passed`, sub: "" });
+    // runbooks: a project's stages as circles (the section above still shows them all)
+    const rb = this.runbookItems();
+    const ri = [];
+    const seen = new Set();
+    for (const x of rb) {
+      const st = x.stages.map((y) => y.state);
+      const kind = st.includes("failed") ? "failed" : st.includes("running") ? "running" : st.includes("approval") ? "waiting" : null;
+      if (kind) { ri.push({ kind, text: x.project, dots: x.stages, right: x.ref, key: `r|${x.project}|${x.ref}|${x.at}` }); seen.add(x.project); }
+      else if ((x.rank === 0 || x.rank === 5) && x.at >= since) { seen.add(x.project); ri.push({ kind: "done", text: x.project, dots: x.stages, right: `${x.ref} · ${ago(x.at)}`, key: `r|${x.project}|${x.ref}|${x.at}` }); }   // (a deployment or a merge of the last four hours)
+    }
+    // a project that was deployed in the last four hours shows the path of that deployment, whatever its runbook shows now
+    for (const proj of this.projects) {
+      if (!proj.ci || seen.has(proj.title)) continue;
+      const last = this.deploysAll().find((x) => x.state === "ok" && x.time >= since && this.projectOf(x.project) === proj.title);
+      const stages = last ? this.runStages(last, "d") : null;
+      if (stages) ri.push({ kind: "done", text: proj.title, dots: runbookPhases(stages), right: `${this.whatOf(last).text || last.label} · ${ago(last.time)}`, key: `r|${proj.title}|${deployKey(last)}` });
+    }
+    specs.push({ id: "runbooks", title: "Runbooks", items: ri.filter((i) => !(i.key in gone)), fig: String(rb.length), sub: rb.length === 1 ? "project" : "projects" });
+    return specs;
+  }
+
+  // One tile: its mode (red, active, waiting, recent, idle) from what it holds, and the element.
+  dashTile(t, s) {
+    const now = Date.now();
+    // What the tile shows comes in and goes out in steps (see the end of this method): the tile opens, makes room, the items fade in; and the other way round.
+    // While it leaves it keeps showing what it showed last.
+    const st = ((this.dashAnim ??= {})[s.id] ??= { S: 0, P: 0, O: 0, at: now, last: [] });
+    const has = s.items.length > 0;
+    if (has) st.last = s.items;
+    const src = has ? s.items : st.last;
+    const failed = src.filter((i) => i.kind === "failed"), run = src.filter((i) => i.kind === "running"), wait = src.filter((i) => i.kind === "waiting"), done = src.filter((i) => i.kind === "done");
+    const mode = failed.length ? "red" : run.length ? "active" : wait.length ? "waiting" : done.length ? "recent" : "idle";
+    const open = (_e, cx) => this.setTab(cx, s.id);
+    const accent = mode === "red" ? t.blocked : mode === "active" ? t.working : mode === "waiting" ? t.ansi3 : (t.ansi2 ?? t.done);
+    const red = mode === "red";
+    const items = [...failed, ...run, ...wait, ...done];
+    const cap = 5;
+    const ink = red ? "#ffffff" : t.foreground, faint = red ? "#fecdd3" : t.dim;
+    const kindColor = (k) => (k === "failed" ? (red ? "#ffd1d6" : t.blocked) : k === "running" ? (red ? "#fecdd3" : t.working) : k === "done" ? (red ? "#fecdd3" : (t.ansi2 ?? t.done)) : t.ansi3);
+    const chip = (n, label, color) => n ? div().flex_none().text_size(10.5).text_color(red ? "#ffe4e6" : color).child(`${n} ${label}`) : null;
+    // A row: the status dot, the text, at the right what it says; a running row has its own thin bar under the text (one segment per check for a pull
+    // request, a breathing bar when there is no estimate).
+    const short = (sec) => (sec == null ? "" : sec < 60 ? "<1m" : sec < 3600 ? `${Math.round(sec / 60)}m` : `${Math.floor(sec / 3600)}h ${Math.round((sec % 3600) / 60)}m`);
+    const track = red ? "#ffffff2e" : t.border;
+    const segColor = (st) => (st === "failed" ? (red ? "#ffffff" : t.blocked) : st === "running" ? t.working : (t.ansi2 ?? t.done));
+    const row = (it, i) => {
+      const c = kindColor(it.kind);
+      const pct = Math.max(0, Math.min(100, Math.round((it.frac ?? 0) * 100)));
+      let bar = null;
+      if (it.kind === "running") {
+        if (it.segs?.length) bar = h_flex().w_full().gap(2).children(it.segs.map((st) => div().flex_1().h(4).rounded(2).bg(st === "running" ? track : segColor(st)).overflow_hidden()
+          .when(st === "running", (e) => e.child(div().h(4).w("55%").rounded(2).bg(t.working)))));
+        else if (it.frac != null) bar = progress(t, it.frac, red ? "#ffffff" : t.working, "100%").bg(track);
+        else {
+          this.pulsing = true;   // (no estimate: the bar breathes; the panel is drawn again while it is on screen)
+          bar = div().w_full().h(4).rounded(2).bg(red ? "#ffffff" : t.working).opacity(0.28 + 0.3 * (0.5 + 0.5 * Math.sin((Date.now() / 1000) * 2 * Math.PI * 0.6)));
+        }
+      }
+      const done = it.segs?.filter((st) => st !== "running" && st !== "failed").length;
+      const rightText = it.kind === "running" ? [it.segs?.length ? `${done}/${it.segs.length}` : "", it.frac != null ? `${pct}%` : "", short(it.remain)].filter(Boolean).join(" · ") : (it.dots ? "" : it.right ?? "");
+      const hov = !!it.key && this.dashHover === it.key;
+      return h_flex().id(`dash-${s.id}-${i}`).w_full().flex_none().gap(8).items_start().py(2)
+        .when(!!it.key, (e) => e.on_hover((h, cx) => { if (h) this.dashHover = it.key; else if (this.dashHover === it.key) this.dashHover = null; cx.notify(); }))
+        .child(div().mt(6).w(6).h(6).rounded(3).flex_none().bg(c))
+        .child(v_flex().flex_1().min_w(0).gap(4)
+          .child(h_flex().gap(8).items_center().h(16)
+            .child(it.dots ? div().w(92).flex_none().truncate().text_size(12).text_color(ink).child(it.text) : div().flex_1().min_w(0).truncate().text_size(12).text_color(ink).child(it.text))
+            .when(!!it.dots, (e) => e.child(h_flex().gap(4).items_center().flex_none().children(it.dots.map((y) => this.stageCircle(t, y.state, 9))))
+              .child(div().flex_1().min_w(0).truncate().pl(4).text_size(11).text_color(faint).child(it.right ?? "")))
+            .when(!it.dots, (e) => e.child(div().flex_none().text_size(10.5).text_color(it.kind === "running" ? faint : c).child(rightText))))
+          .when(!!bar, (e) => e.child(bar)))
+        .when(!!it.key, (e) => e.child(hov
+          ? div().id(`dash-x-${i}`).w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).text_size(11).cursor_pointer().text_color(faint)
+            .hover((x) => x.bg(red ? "#ffffff2e" : t.hover).text_color(ink))
+            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+            .on_click((_e, cx) => { cx.stop_propagation(); this.dismissDash(it.key, cx); }).child("✕")
+          : div().w(16).h(16).flex_none()));
+    };
+    // The tile in steps. Coming: 1. it opens (S), 2. it makes room for the items (P, the height of the items), 3. the items fade in (O). Going: 1. the items fade
+    // out, 2. the room is taken back, 3. the tile closes (and fades) when nothing is left. A change of the items while it is open only moves P.
+    const rowH = (it) => (it.kind === "running" ? (it.frac != null && !it.segs?.length ? 29 : 28) : 20);   // (the bar of `progress` is 5 px, the segments and the breathing bar 4)
+    const wantP = has ? 4 + items.slice(0, cap).reduce((a, it) => a + rowH(it), 0) + 4 * (Math.min(items.length, cap) - 1) + (items.length > cap ? 18 : 0) : 0;
+    const dt = Math.min(100, now - st.at);
+    st.at = now;
+    const ease = (x) => x * x * (3 - 2 * x);
+    const toward = (v, to) => { const n = v + (to - v) * (1 - Math.exp(-dt / 110)); return Math.abs(to - n) < 0.6 ? to : n; };
+    let moving = false;
+    if (has) {
+      if (st.S < 1) { st.S = Math.min(1, st.S + dt / 260); moving = true; }
+      else if (Math.abs(wantP - st.P) > 0.1) { st.P = toward(st.P, wantP); moving = true; }
+      else if (st.O < 1) { st.O = Math.min(1, st.O + dt / 240); moving = true; }
+    } else if (st.O > 0) { st.O = Math.max(0, st.O - dt / 220); moving = true; }
+    else if (st.P > 0) { st.P = toward(st.P, 0); moving = true; }
+    else if (st.S > 0) { st.S = Math.max(0, st.S - dt / 260); moving = true; }
+    if (moving) this.animUntil = Math.max(this.animUntil ?? 0, now + 120);   // (the panel is drawn again while a tile moves)
+    if (!has && st.S === 0 && st.P === 0) { st.last = []; return { mode: "idle", el: null }; }
+    const HEAD = 44;   // (border, padding, the head line, padding, border)
+    const card = v_flex().id(`tile-${s.id}`).w_full().flex_none().gap(4).p(12).rounded(12).cursor_pointer().min_w(0)
+      .bg(red ? "#8e1b2c" : t.surface).border(1).border_color(red ? "#e5484d" : t.border).hover((e) => e.bg(red ? "#a3203a" : t.raised)).on_click(open)
+      .child(h_flex().gap(8).items_center().h(18)
+        .child(div().flex_1().min_w(0).truncate().text_size(11).font_semibold().text_color(red ? "#fecdd3" : accent).child(s.title.toUpperCase()))
+        .children([chip(failed.length, "failed", t.blocked), chip(run.length, "running", t.working), chip(wait.length, "waiting", t.ansi3), chip(done.length, "done", t.ansi2 ?? t.done)].filter(Boolean)))
+      .child(v_flex().w_full().gap(4).opacity(ease(st.O))
+        .children(items.slice(0, cap).map(row))
+        .when(items.length > cap, (e) => e.child(div().text_size(10.5).text_color(faint).child(`+${items.length - cap} more`))));
+    return { mode, el: div().w_full().flex_none().h(Math.round(ease(st.S) * (HEAD + 2) + st.P)).mb(Math.round(8 * ease(st.S))).overflow_hidden().opacity(ease(st.S)).child(card) };
+  }
+
+  dashboardView(t) {
+    const built = this.dashSpecs(t).map((s) => this.dashTile(t, s));
+    const big = built.filter((b) => b.el);   // (a tile that is closed is not there: its tab is one click away in the tab bar)
+    if (!big.length) return null;
+    return v_flex().flex_none().px(10).pt(4).pb(2).children(big.map((b) => b.el));
+  }
+
+  // The Topics section's head (in the Topics tab): its caption on a divider with "select all" as a link, with a pick the Actions button, the total count at the
+  // right end, the plus that adds a topic and (on the overview) the button that folds the tiles above.
+  topicsHead(t) {
     const g = (k) => this.topics.filter((x) => x.group === k && !x.dismissed).length;
     const open = ["review", "now", "testing", "deploying", "finished", "next", "waiting", "later"].reduce((a, k) => a + g(k), 0);
     const plus = div().id("add-topic").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer()
@@ -4276,42 +4519,7 @@ export default class Bhote extends View {
       .child(link)
       .child(div().text_size(10.5).text_color(t.dim).child(")"));
     return div().flex_none().pt(6).child(this.dividerCaption(t, caption, [
-      ...(picked > 0 ? [actions] : []), this.countTag(t, open), plus, ...(withTiles ? [this.tilesToggle(t)] : [])]));
-  }
-
-  tilesToggle(t) {
-    const small = this.compactTiles();
-    return div().id("tiles-toggle").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
-      .hover((e) => e.bg(t.hover)).on_click(this.guard(() => setShared("bhote.compact", !small)))
-      .child(svg(small ? "mods/bhote/chevron-down.svg" : "mods/bhote/chevron-up.svg").size(14).text_color(t.muted));
-  }
-
-  tile(t, id, o) {
-    const small = this.compactTiles();
-    const red = !!o.red;   // something in it is red (a failed test, deployment or pull request): the tile is red, its text light   // small: a smaller tile, only the figure and what it says; the three short lines are left out
-    return v_flex().id(`tile-${id}`).flex_1().h(small ? 118 : 238).min_w(0).overflow_hidden().gap(small ? 2 : 4).p(small ? 10 : 12).rounded(12).cursor_pointer()
-      .bg(red ? "#8e1b2c" : t.surface).border(1).border_color(red ? "#e5484d" : o.border ?? t.border).hover((e) => e.bg(red ? "#a3203a" : t.raised))
-      .on_click((_e, cx) => this.setTab(cx, id))
-      .child(h_flex().flex_none().gap(6).items_center()
-        .child(div().w(8).h(8).rounded(4).flex_none().bg(red ? "#ffffff" : o.accent ?? t.dim))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).font_semibold().text_color(red ? "#fecdd3" : t.dim).child(o.title.toUpperCase()))
-        .when(!!o.badge, (el) => el.child(div().px(6).rounded(8).text_size(10).bg(red ? "#ffffff" : "#a8162e").text_color(red ? "#8e1b2c" : "#ffffff").child(String(o.badge)))))
-      .child(h_flex().flex_none().items_end().gap(8).pt(small ? 0 : 4)
-        .child(div().text_size(small ? 24 : 32).font_semibold().text_color(red ? "#ffffff" : o.bigColor ?? t.foreground).child(String(o.big)))
-        // the small tile has no room for the time in the bar: it stands beside the figure
-        .when(small && !!o.bar && o.bar.remain != null, (el) => el.child(div().pb(small ? 4 : 6).text_size(11.5).text_color(red ? "#ffe4e6" : t.working).child(left(o.bar.remain)))))
-      .child(red ? div().flex_none().max_h(small ? 30 : 34).overflow_hidden().text_size(small ? 11.5 : 12).text_color("#ffe4e6").child(o.label ?? "")   // (what is red: the agent and the test, up to two lines)
-        : div().flex_none().truncate().text_size(small ? 11.5 : 12).text_color(t.muted).child(o.label ?? ""))
-      .when(!(small && o.bar), (el) => el.child(div().flex_none().truncate().text_size(small ? 10.5 : 11).text_color(red ? "#fecdd3" : t.dim).child(o.sub ?? "")))   // the small tile has room for the bar or the line, not both
-      .when(!!o.bar, (el) => el.child(h_flex().flex_none().gap(8).items_center().pt(2)
-        .child(div().flex_1().h(5).rounded(3).bg(red ? "#ffffff33" : t.border).overflow_hidden().child(div().h(5).w(`${Math.round(o.bar.frac * 100)}%`).rounded(3).bg(red ? "#ffffff" : t.working)))
-        .child(div().flex_none().text_size(10.5).text_color(red ? "#ffe4e6" : t.working).child(`${Math.round(o.bar.frac * 100)}%${o.bar.remain != null && !small ? ` · ${left(o.bar.remain)}` : ""}`))))
-      .when(!small, (el) => el.child(div().flex_none().h(1).my(6).bg(red ? "#ffffff33" : t.border))
-        .child(v_flex().flex_1().gap(6).min_h(0).overflow_hidden().children((o.rows ?? []).slice(0, 3).map((r) => h_flex().gap(7).items_center().text_size(11.5)
-          .child(div().w(6).h(6).rounded(3).flex_none().bg(red ? "#ffd1d6" : r.color ?? t.dim))
-          .child(div().flex_1().min_w(0).truncate().text_color(red ? "#ffffff" : t.foreground).child(r.text))
-          .when(!!r.right, (e) => e.child(div().flex_none().text_size(10.5).text_color(red ? "#fecdd3" : r.rightColor ?? t.dim).child(r.right))))))
-        .when(!(o.rows ?? []).length, (e) => e.child(div().text_size(11.5).text_color(red ? "#fecdd3" : t.dim).child(o.empty ?? "nothing yet"))));
+      ...(picked > 0 ? [actions] : []), this.countTag(t, open), plus]));
   }
 
   // The deployments that run, for the left panel (which does not ask CI itself): the branch they are for, what they are, how far they are.
@@ -4413,73 +4621,19 @@ export default class Bhote extends View {
   }
 
   homeView(t) {
-    const count = (g) => this.topics.filter((x) => x.group === g && !x.dismissed).length;
-    const n = { review: count("review"), now: count("now"), testing: count("testing"), deploying: count("deploying"), finished: count("finished"), next: count("next"), waiting: count("waiting"), later: count("later") };
-    const open = Object.values(n).reduce((a, b) => a + b, 0);
-
-    const prs = this.prs.filter((p) => !p.merged);
-    const failing = (p) => p.checks.filter((c) => c.state === "failed").length;
-    const running = (p) => p.checks.filter((c) => c.state === "running").length;
-    const prsFailed = prs.filter((p) => failing(p) > 0).length;
-    const pf = prs.find((p) => failing(p) > 0);   // what is red, to say it on the tile: the agent, the pull request, the check
-    const pfWhat = pf ? [this.agentLabel(pf.branch, pf.project), `${pf.number ? `#${pf.number} ` : ""}${pf.title}`].filter(Boolean).join(" · ") + (prsFailed > 1 ? `  +${prsFailed - 1}` : "") : "";
-    const prRows = [...prs].sort((a, b) => failing(b) - failing(a)).map((p) => ({ text: `${p.number ? `#${p.number} ` : ""}${p.title}`,
-      color: failing(p) ? t.blocked : running(p) ? t.working : t.done, right: failing(p) ? `${failing(p)} failed` : running(p) ? "running" : "", rightColor: failing(p) ? t.blocked : t.working }));
-
-    const newest = new Map();
-    for (const x of this.deploysAll()) { const k = `${x.project}|${x.label}`; if (!newest.has(k)) newest.set(k, x); }
-    const deploys = [...newest.values()];
-    const dcolor = (x) => (x.state === "ok" ? t.done : x.state === "failed" ? t.blocked : x.state === "running" ? t.working : x.state === "approval" ? t.ansi3 : t.dim);
-    const dword = (x) => (x.state === "ok" ? "deployed" : x.state);
-    const depRunning = this.deploysAll().filter((x) => x.state === "running" || x.state === "queued" || x.state === "approval").length;
-    const depFailed = deploys.filter((x) => x.state === "failed").length;
-    const df = deploys.find((x) => x.state === "failed");
-    const dfWhat = df ? [this.agentLabel(df.branch, ""), `${df.project} · ${this.whatOf(df).text || df.label}`].filter(Boolean).join(" · ") + (depFailed > 1 ? `  +${depFailed - 1}` : "") : "";
-    // the context of the tile: which projects are watched, which are switched off, and when the last one was
-    const watched = this.projects.filter((q) => q.ci && !this.deployOff.has(q.title)).map((q) => q.title);
-    const switchedOff = this.projects.filter((q) => q.ci && this.deployOff.has(q.title)).length;
-    const lastOne = deploys.filter((x) => x.state !== "running" && x.state !== "waiting")[0];
-
-    const { shown } = this.testsShown();
-    const tFailed = shown.filter((x) => x.state === "failed"), tPassed = shown.filter((x) => x.state === "ok");
-    const tRunning = shown.filter((x) => x.state === "running" || x.state === "queued").length;
-    const tf = tFailed[0];
-    const tfWhat = tf ? [this.agentLabel(tf.branch, tf.project), `${tf.project} · ${tf.label}`].filter(Boolean).join(" · ") + (tFailed.length > 1 ? `  +${tFailed.length - 1}` : "") : "";
-    const tRows = [...tFailed, ...tRunning ? shown.filter((x) => x.state === "running") : [], ...tPassed].map((x) => ({ text: `${x.project} · ${x.label}`,
-      color: x.state === "failed" ? t.blocked : x.state === "running" ? t.working : t.done, right: ago(x.time), rightColor: t.dim }));
-
-    // four tiles of one size stay at the top; under them the topics scroll
     const srvTile = this.serverTile(t);
-    // the Dashboard section: the three tiles (pull requests, deployments, tests) under a caption that folds them
+    // the Dashboard section: its tiles are small while nothing happens and grow with what happens (the caption folds the whole section)
     let dashShut = false;
     try { dashShut = shared("bhote.dashShut") === true; } catch (_e) { dashShut = false; }
     const dashHead = this.sectionHead(t, "dash-head", "Dashboard", dashShut, this.guard((_e, cx) => { setShared("bhote.dashShut", !dashShut); cx.notify(); }));
-    const rbTile = this.runbookTile(t);   // (a section like the servers: its own width, not inside the padding of the tiles)
-    const tiles = v_flex().flex_none().px(10).pt(4).pb(10).gap(10)
-      .child(h_flex().flex_none().gap(10)
-        .child(this.tile(t, "prs", { title: "Pull requests", accent: prsFailed ? t.blocked : t.done, badge: prsFailed || null, big: prs.length, bigColor: prsFailed ? t.blocked : t.foreground,
-          label: pfWhat || (prs.length === 1 ? "open pull request" : "open pull requests"), bar: this.prsBar(prs),
-          sub: !this.prAt ? "asking GitHub..." : prsFailed ? `failing: ${pf.checks.filter((c) => c.state === "failed").map((c) => c.name).slice(0, 2).join(", ")}` : prs.length ? "all checks fine" : "nothing open",
-          rows: prRows, empty: this.prAt ? "no open pull requests" : "loading", red: prsFailed > 0, border: prsFailed ? "#a8162e" : undefined })))
-      .child(h_flex().flex_none().gap(10)
-        .child(this.tile(t, "deploys", { title: "Deployments", accent: depFailed ? t.blocked : depRunning ? t.working : t.done, badge: depFailed || null,
-          big: depRunning ? depRunning : deploys.length ? dword(deploys[0]) : "–", bigColor: depRunning ? t.working : deploys.length ? dcolor(deploys[0]) : t.dim,
-          label: dfWhat ? `failed: ${dfWhat}` : depRunning ? `${(() => { const r = this.deploysAll().find((x) => x.state === "running" || x.state === "queued"); return r ? this.whatOf(r).text || r.label : ""; })()}` : lastOne ? `last: ${this.whatOf(lastOne).text || lastOne.label}` : "nothing running",
-          bar: this.runsBar(this.deploysAll(), "d"),
-          sub: [watched.length ? `${watched.join(", ")} watched` : "no project watched", switchedOff ? `${switchedOff} off` : ""].filter(Boolean).join(" · "),
-          rows: [...deploys].sort((x, y) => (y.state === "failed") - (x.state === "failed")).map((x) => ({ text: x.state === "ok" || x.state === "failed" ? `${x.project} · ${this.whatOf(x).text || x.label}` : `${x.project} · ${x.label}`,
-            color: dcolor(x), right: x.state === "running" || x.state === "waiting" ? dword(x) : ago(x.time), rightColor: dcolor(x) })),
-          empty: watched.length ? "no pipeline seen on the deploy branches yet" : "all projects are switched off (DEPLOY_PROJECTS_OFF)", red: depFailed > 0, border: depFailed ? "#a8162e" : undefined }))
-        .child(this.tile(t, "tests", { title: "Tests", accent: tFailed.length ? t.blocked : tRunning ? t.working : t.done, badge: tFailed.length || null,
-          big: tFailed.length || tRunning || tPassed.length, bigColor: tFailed.length ? t.blocked : tRunning ? t.working : t.done, label: tFailed.length ? `failed: ${tfWhat}` : tRunning ? "running" : "passed",
-          bar: this.runsBar(shown, "t"), sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", red: tFailed.length > 0, border: tFailed.length ? "#a8162e" : undefined })));
     const list = this.right();
-    const topicsHead = this.topicsHead(t, true);
+    const topicsHead = this.topicsHead(t);
+    const tiles = this.dashboardView(t);
     return v_flex().id("home-root").size_full().bg(t.chrome)
-      .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
-      .children(rbTile ? [rbTile] : []).child(dashHead).children(dashShut ? [] : [tiles]).child(topicsHead).children(this.adding ? [this.addRow(t)] : [])
+      .child(this.tabBar(t))   // (the tabs are there on the overview, too: its button is the lit one)
+      .children(tiles ? [dashHead] : []).children(tiles && !dashShut ? [tiles] : []).child(topicsHead).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
-      .children([...this.docks(t), ...(srvTile ? [srvTile] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
+      .children([this.stashDock(t), ...(srvTile ? [srvTile] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
   }
 
   setTab(cx, id) {
@@ -4685,6 +4839,7 @@ export default class Bhote extends View {
       .children(this.usageBar(t));
     let body;
     if (this.tab === "servers") body = this.serversPage(t);
+    else if (this.tab === "runbooks") body = this.runbooksPage(t);
     else if (this.tab === "prs") body = this.prsBody(t);
     else if (this.tab === "deploys") body = this.deploysAll().length ? this.monitorBody(t, this.deploysAll(), "d", "dp") : [empty(t, "⇪", "No deployments or builds seen", "Builds on open pull requests show up here. For deployments: if CircleCI rejects its token (401), set a new one:  bhote config set CIRCLECI_TOKEN <token>")];
     else if (this.tab === "tests") {
@@ -4697,7 +4852,7 @@ export default class Bhote extends View {
     else {
       body = this.right();
       if (this.adding) body.unshift(this.addRow(t));
-      body.unshift(this.topicsHead(t, false));
+      body.unshift(this.topicsHead(t));
     }
     return v_flex().size_full().bg(t.chrome).text_size(13)
       .child(this.tabBar(t))
