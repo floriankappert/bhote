@@ -1725,23 +1725,22 @@ export default class Bhote extends View {
         .child(h_flex().gap(8).items_center()
           .child(this.agentIcon(t, agent, active, tone, st.word))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
-          .when(!!agent && o.ctx != null, (el) => { const c = o.ctx, col = c >= 85 ? t.blocked : c >= 60 ? t.ansi3 : t.done ?? t.accent;   // (the context of the session, a thin upright bar that fills from below: yellow from 60 %, red from 85 %)
-            return el.child(v_flex().id(`ctx-${id}`).flex_none().w(4).h(16).rounded(2).bg(tint(col, "30", t.border)).overflow_hidden().justify_end()
-              .child(div().w(4).h(Math.max(1, Math.round(16 * c / 100))).rounded(2).bg(col))); })
-          .when(!!agent && (o.dirty ?? 0) > 0, (el) => el.child(h_flex().flex_none().gap(2).items_center().text_color(t.ansi3)
-            .child(svg("mods/bhote/git-dirty.svg").size(13).flex_none().text_color(t.ansi3)).child(div().text_size(10.5).font_semibold().child(`${o.dirty}`))))   // (x uncommitted changes in its folder)
-          .when(!!agent && !!o.listen?.key, (el) => el.child(this.ibtn(t, `ear-${id}`, o.listen.on ? "ear" : "ear-off", (cx) => o.onListen(cx),
-            { w: 22, size: 14, color: o.listen.on ? (active ? t.muted : t.dim) : t.ansi3, hover: o.listen.on ? t.foreground : t.ansi3 })))
-          .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(div().flex_none().px(5).h(15).flex().items_center().rounded(8).text_size(10).font_semibold().text_color(t.ansi3)
-            .bg(tint(t.ansi3, "26", t.raised)).border(1).border_color(tint(t.ansi3, "66", t.border)).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
+          .when(!!agent && o.ctx != null, (el) => { const c = o.ctx, col = c >= 85 ? t.blocked : c >= 60 ? t.ansi3 : t.done ?? t.accent;   // (the context of the session: an upright bar that fills from below; yellow from 60 %, red from 85 %)
+            return el.child(this.chip(t, col, `ctx-${id}`).px(5).child(v_flex().w(3).h(10).rounded(2).bg(tint(col, "40", t.border)).overflow_hidden().justify_end()
+              .child(div().w(3).h(Math.max(1, Math.round(10 * c / 100))).rounded(2).bg(col)))); })
+          .when(!!agent && (o.dirty ?? 0) > 0, (el) => el.child(this.chip(t, t.ansi3).child(svg("mods/bhote/git-dirty.svg").size(12).flex_none().text_color(t.ansi3)).child(`${o.dirty}`)))   // (x uncommitted changes in its folder)
+          .when(!!agent && !!o.listen?.key, (el) => { const ec = o.listen.on ? (active ? t.muted : t.dim) : t.ansi3;
+            return el.child(this.chip(t, ec, `ear-${id}`).w(26).px(0).cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.listen.on ? t.foreground : t.ansi3))
+              .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
+              .on_click(this.guard((_e, cx) => o.onListen(cx))).child(svg(`mods/bhote/${o.listen.on ? "ear" : "ear-off"}.svg`).size(13).flex_none())); })
+          .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(this.chip(t, t.ansi3).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(t.accent).bg(tint(t.accent, "22", t.surface)).border(1).border_color(tint(t.accent, "55", t.border))
             .child((o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h").replace(" seconds", "s").replace(" second", "s")}`).toUpperCase())))
-          .when(mini && !!ident, (el) => el.child(div().flex_none().text_size(10.5).text_color(active ? t.muted : t.dim).child(ident)))
-          .when(!!word, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(badgeColor)
-            .bg(tint(badgeColor, "22", t.surface)).border(1).border_color(tint(badgeColor, "55", t.border)).child(word.toUpperCase()))))
+          .when(mini && !!ident, (el) => el.child(this.chip(t, active ? t.muted : t.dim).child(ident)))
+          .when(!!word, (el) => el.child(this.chip(t, badgeColor).child(word.toUpperCase()))))
         .when(!mini && (!!task || !!ident), (el) => el.child(h_flex().gap(8).items_center().pl(indent)
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(active ? t.foreground : dim ? t.dim : t.muted).child(task || " "))
-          .when(!!ident, (e) => e.child(div().flex_none().text_size(10.5).text_color(active ? t.muted : t.dim).child(ident)))))
+          .when(!!ident, (e) => e.child(this.chip(t, active ? t.muted : t.dim).child(ident)))))
         .when(!mini && !!o.branch, (el) => el.child(div().truncate().pl(indent).text_size(11).text_color(active ? t.muted : t.dim).child(`⎇ ${o.branch}`)))
         // the deployment under way: a bar across the card, the percentage and the time left at its end
         .when(!!dep, (el) => { const fr = Math.max(0, Math.min(1, dep.frac ?? 0)); return el.child(h_flex().gap(8).items_center().pl(indent).pt(3)   // (yellow always has its bar: empty while there is no figure yet)
@@ -4277,6 +4276,14 @@ export default class Bhote extends View {
   }
 
   // A small icon button; it remembers where it is (for a menu) and never counts as a click on what is behind it.
+  // The small marks on an agent card (the bar of the context, uncommitted files, the ear, waiting messages, the state, the name) share one look: 18 high,
+  // rounded, a hairline and a tint of their own colour.
+  chip(t, color, id) {
+    const e = div().flex_none().h(18).px(6).flex().items_center().justify_center().gap(3).rounded(5).border(1)
+      .border_color(tint(color, "55", t.border)).bg(tint(color, "22", t.surface)).text_color(color).text_size(9.5).font_semibold();
+    return id ? e.id(id) : e;
+  }
+
   ibtn(t, id, icon, onClick, o = {}) {
     return div().id(id).w(o.w ?? 20).h(22).flex_none().flex().items_center().justify_center().rounded(5).text_color(o.color ?? t.muted).opacity(o.hidden ? 0 : o.dim && !o.spin ? 0.3 : 1)
       .when(!o.dim && !o.hidden, (el) => el.cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.hover ?? t.foreground))
