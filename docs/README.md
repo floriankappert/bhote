@@ -11,6 +11,7 @@
 | [Claude Code mod](claude-mod.md) | The topic as a band above the prompt, and `/topic`: a Claude Code mod (`bhote mod install`). |
 | [Setup wizard](setup.md) | The first-start wizard: checks, machines both ways, sync, agents, notifications. |
 | [The terminal UI](panel.md) | *Deprecated since 0.9.3.* Keys, the editor, agents, safety. |
+| [Secrets and environments](secrets.md) | `bhote secret` and `bhote env`: keys out of the chat, the store, scan and purge of the Claude context, the guard hook. |
 | [Configuration](configuration.md) | Every setting in `~/.config/bhote/config`. |
 | [Deployment and test monitor](monitors.md) | The last deployments and test runs above the agents: GitHub Actions, CircleCI, local runs. |
 | [Data and sync](data-and-sync.md) | Topic files, the replica and how it merges, what panels share. |

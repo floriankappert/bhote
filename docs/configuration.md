@@ -55,7 +55,11 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `CLAUDE_MOD` | `on` | Claude Code mod (pane) | Whether the [Claude Code mod](claude-mod.md) shows the topic of the agent: the pane (`/topic pane`). Off: the mod stays installed but draws nothing and asks bhote for nothing (it asks as `bhote current --json --mod` and gets `{"disabled":true}`). |
 | `FRIENDLY_REMINDER` | `on` | Show Friendly Reminder | The Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description, above the prompt: a reminder at random, not a status. Needs the mod (`bhote mod install`). |
 | `MONITOR_ROWS` | `4` | Entries shown | Entries each monitor shows. |
-| `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`. |
+| `CIRCLECI_TOKEN` | – | CircleCI token | CircleCI personal API token (a secret: `bhote config` prints `(set)`); else `$CIRCLECI_TOKEN`, else the secret `CIRCLECI_TOKEN` of the store; the value `secret:NAME` points at a stored secret. |
+| `SECRET_BACKEND` | `auto` | Secret backend | Where new secrets are kept by `bhote secret`: `auto`, `keychain`, `secret-tool` or `file`. [Secrets](secrets.md) |
+| `SECRET_GUARD` | `warn` | Chat guard | The hook `integrations/claude/hooks/secret-guard.sh`: `off`, `warn` or `block`. |
+| `SECRET_CLIP_SECONDS` | `30` | Clear the clipboard after | Seconds a copied secret stays on the clipboard. |
+| `ENV_INJECT` | `off` | Environments for started services | Services and headless agents started by the panel get the environment of their folder (`bhote env`). |
 | `WAIT_REMIND` | `24` | Remind waiting after (h) | Hours after which a waiting topic is reminded once (`0` = never). |
 | `THEME` | `terminal` | Colours | `terminal`: the terminal's own 16 colours, so bhote follows the terminal theme (and Omarchy's system theme) at once. `catppuccin` and `dracula`: exact truecolor values of that palette. |
 | `COLOR_<ROLE>` | | | Overrides one role with `#rrggbb` in either theme. Roles: `TEXT`, `DIM`, `FRAME`, `SELECTION` (background), `ACCENT`, `NOW` (also busy agents), `WAITING`, `REVIEW`, `LATER`, `DONE` (also free agents), `ERROR`. Example: `bhote config set COLOR_NOW '#fab387'`. |

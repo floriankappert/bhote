@@ -77,10 +77,30 @@ fn gh(args: &[&str]) -> Option<String> {
 fn gh_json(args: &[&str]) -> Option<Value> { serde_json::from_str(&gh(args)?).ok() }
 fn gh_ok() -> bool { run("gh", &["auth", "status"], 15).is_some() }
 
+/// A secret of the store (`bhote secret`): asked from the bhote script (its own process, the value only in this memory), kept for 5 minutes.
+fn store_secret(name: &str) -> Option<String> {
+    use std::sync::{Mutex, OnceLock};
+    static MEMO: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
+    let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some((at, v)) = memo.lock().ok()?.get(name) { if at.elapsed() < Duration::from_secs(300) { return v.clone(); } }
+    let bin = std::env::var("BHOTE_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let own = format!("{}/.local/bin/bhote", home);
+        if Path::new(&own).exists() { own } else { "bhote".to_string() }
+    });
+    let v = Command::new(bin).args(["secret", "get", name, "--reveal"]).env("BHOTE_ALLOW_REVEAL", "1")
+        .stdin(Stdio::null()).stderr(Stdio::null()).output().ok()
+        .filter(|o| o.status.success()).and_then(|o| String::from_utf8(o.stdout).ok()).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    memo.lock().ok()?.insert(name.to_string(), (Instant::now(), v.clone()));
+    v
+}
 fn token(c: &Ctx) -> String {
     let t = c.cfg.get("CIRCLECI_TOKEN").filter(|v| !v.is_empty()).cloned()
+        .and_then(|v| match v.strip_prefix("secret:") { Some(n) => store_secret(n), None => Some(v) })   // (secret:NAME: the secret store)
         .or_else(|| std::env::var("CIRCLECI_TOKEN").ok().filter(|v| !v.is_empty()))
-        .or_else(|| std::env::var("CIRCLE_TOKEN").ok()).unwrap_or_default();
+        .or_else(|| std::env::var("CIRCLE_TOKEN").ok())
+        .or_else(|| if Path::new(&format!("{}/.config/bhote/secrets.json", std::env::var("HOME").unwrap_or_default())).exists() { store_secret("CIRCLECI_TOKEN") } else { None })
+        .unwrap_or_default();
     t.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect()
 }
 fn circleci_get(c: &Ctx, path: &str) -> Option<Value> {

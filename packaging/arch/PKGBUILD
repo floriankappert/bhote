@@ -22,7 +22,7 @@ package() {
   install -Dm644 integrations/claude/skills/bhote/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote/SKILL.md"
   install -Dm644 integrations/claude/skills/bhote-install/SKILL.md "$pkgdir/usr/share/bhote/integrations/claude/skills/bhote-install/SKILL.md"
   install -d "$pkgdir/usr/share/bhote/integrations/claude"
-  cp -r integrations/claude/.claude-plugin integrations/claude/mods "$pkgdir/usr/share/bhote/integrations/claude/"
+  cp -r integrations/claude/.claude-plugin integrations/claude/mods integrations/claude/hooks "$pkgdir/usr/share/bhote/integrations/claude/"
   cp -r herdr-app "$pkgdir/usr/share/bhote/herdr-app"
   install -d "$pkgdir/usr/share/bhote/omarchy-plugin"
   install -m644 omarchy-plugin/manifest.json omarchy-plugin/BarWidget.qml "$pkgdir/usr/share/bhote/omarchy-plugin/"

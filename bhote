@@ -137,7 +137,11 @@ CLAUDE_MOD|on|bool|The Claude Code mod (bhote mod install) shows the topic of th
 STASH_LINK|off|bool|Ctrl+S in the terminal of an agent in the herdr Mac app also puts the text of its prompt into the bhote stash (and passes the key on, so Claude Code stashes it, too). Needs the add-on (bhote app install); the app may have to be restarted once
 FRIENDLY_REMINDER|on|bool|Show Friendly Reminder: the Claude Code mod shows now and then, in orange with a dog, a topic that waits, is next or is parked, with its description (a reminder, not a status)
 MONITOR_ROWS|4|int:1:20|Entries each monitor shows in the panel (the rest is counted: +3 more)
-CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN)
+CIRCLECI_TOKEN||secret|CircleCI personal API token (else $CIRCLECI_TOKEN, else the secret store; secret:NAME points at a secret of bhote secret)
+SECRET_BACKEND|auto|enum:auto:keychain:secret-tool:file|Secret manager (bhote secret): where new values are kept: auto (macOS Keychain, else secret-tool, else an encrypted file) or one of them; a stored value stays where it is
+SECRET_GUARD|warn|enum:off:warn:block|The Claude Code hook integrations/claude/hooks/secret-guard.sh: a prompt that contains a key is only reported (warn) or not sent (block)
+SECRET_CLIP_SECONDS|30|int:5:600|Seconds a copied secret (bhote secret get NAME --clip, Reveal in the Env tab) stays on the clipboard before it is cleared
+ENV_INJECT|off|bool|Environments (bhote env): a service, dev server or headless agent started by bhote gets the variables of the environment bound to its folder (bhote env bind); the values come from the store, nothing is written anywhere
 WAIT_REMIND|24|int:0:720|Hours after which a waiting topic is reminded (0 = never)
 THEME|terminal|enum:terminal:catppuccin:dracula|Colours: terminal (follows the terminal and system theme), catppuccin or dracula (exact colours)
 SPLASH_AUTOCLOSE|on|bool|The welcome screen closes by itself
@@ -4276,14 +4280,27 @@ slack_check() {  # one round of the watch: every waiting topic with a pin, in on
 # the summary line of Minitest, Vitest, RSpec, pytest and bhote's own tests is read) and live status files (TEST_STATUS_DIR,
 # one JSON per suite, see docs/monitors.md).
 MON_DIR="$DATA_DIR/testruns"
-circleci_token() {  # the CircleCI token: CIRCLECI_TOKEN in the config, else in the environment
+secret_py() {  # the secret manager (herdr-app/mods/bhote/secretstore.py): this checkout or a package's share folder
+    local s; s=$(w_share herdr-app) && [ -f "$s/herdr-app/mods/bhote/secretstore.py" ] && printf '%s' "$s/herdr-app/mods/bhote/secretstore.py"
+}
+secret_has() { [ -s "$(dirname "$CONFIG_FILE")/secrets.json" ]; }   # is there a store at all (no python started for nothing)
+secret_value() {  # secret_value <NAME>: the value from the store on stdout (for a variable or a pipe to curl, never to the screen); 1 when it is not there
+    local py; py=$(secret_py) && secret_has || return 1
+    BHOTE_ALLOW_REVEAL=1 python3 "$py" get "$1" --reveal 2>/dev/null
+}
+circleci_token() {  # the CircleCI token: CIRCLECI_TOKEN in the config (secret:NAME: the store), else in the environment, else the secret CIRCLECI_TOKEN of the store
     local t; cfg_var t CIRCLECI_TOKEN ""
+    case "$t" in secret:*) t=$(secret_value "${t#secret:}") ;; esac
     [ -n "$t" ] || t=${CIRCLECI_TOKEN:-${CIRCLE_TOKEN:-}}
+    [ -n "$t" ] || t=$(secret_value CIRCLECI_TOKEN)
     printf '%s' "${t//[!A-Za-z0-9_-]/}"
 }
 circleci_token_from() {  # where the token comes from (for the settings and the setup), or 1
-    local t; cfg_var t CIRCLECI_TOKEN ""; [ -n "$t" ] && { echo "bhote config"; return 0; }
+    local t; cfg_var t CIRCLECI_TOKEN ""
+    case "$t" in secret:*) echo "secret store"; return 0 ;; esac
+    [ -n "$t" ] && { echo "bhote config"; return 0; }
     [ -n "${CIRCLECI_TOKEN:-${CIRCLE_TOKEN:-}}" ] && { echo "environment"; return 0; }
+    secret_has && grep -q '"CIRCLECI_TOKEN"' "$(dirname "$CONFIG_FILE")/secrets.json" 2>/dev/null && { echo "secret store"; return 0; }
     return 1
 }
 # ── the shared API cache: one file per request (same names and format as daemon/src/apicache.rs and the mod's cachedGh), so that the
@@ -7024,6 +7041,15 @@ cli_config() {  # bhote config [list] | get <KEY> | set <KEY> <value> | unset <K
         *) echo "bhote: config list | get <KEY> | set <KEY> <value> | unset <KEY>" >&2; return 1 ;;
     esac
 }
+cli_secret() {  # bhote secret set|get|ls|rm|rename|verify|scan|import|purge-context|machines: the secret manager (herdr-app/mods/bhote/secretstore.py)
+    local py; py=$(secret_py) || { echo "bhote: the secret manager (herdr-app/mods/bhote/secretstore.py) is not here: use a checkout or the package" >&2; return 1; }
+    [ $# -gt 0 ] || { echo "bhote: secret set NAME [--from-file F [--shred] | --stdin | --op op://...] | get NAME [--reveal|--clip] | ls | rm NAME | rename OLD NEW | verify [NAME] | scan | import --from-scan | purge-context [--dry-run] | machines" >&2; return 1; }
+    python3 "$py" ${json:+--json} "$@"
+}
+cli_env() {  # bhote env ls | set NAME VAR=SECRET... | unset | rm | bind NAME [dir] | unbind | which [dir] | run [NAME] -- command
+    local py; py=$(secret_py) || { echo "bhote: the secret manager (herdr-app/mods/bhote/secretstore.py) is not here: use a checkout or the package" >&2; return 1; }
+    python3 "$py" env ${json:+--json} "${@:-ls}"
+}
 cli_done() {  # after a change: merge with the data location (silent when the data is only local)
     [ -n "${BHOTE_NO_SYNC:-}" ] && return 0
     store_synced || return 0
@@ -7284,6 +7310,8 @@ bhote — topics and agents next to herdr.
   bhote rm <ref>                     delete
   bhote sync                         merge with the data location now
   bhote config [list|get|set|unset]  read and change the settings (bhote config list shows them all)
+  bhote secret <cmd>                 the secret manager: set (typed, --from-file, --stdin) · get · ls · rm · rename · verify · scan · import --from-scan · purge-context · machines
+  bhote env <cmd>                    named sets of variables that point at secrets: ls · set · unset · rm · bind · run NAME -- command
   bhote current                      the topic of the agent that asks (for a Claude Code SessionStart hook)
   bhote reminder                     a random topic that waits, is next or is parked, as JSON (the Claude Code mod's friendly reminder)
   bhote agents                       the agents of herdr (numbered: refs for transfer)
@@ -7323,6 +7351,8 @@ bhote_cli() {
     case "$cmd" in
         help|-h|--help) bhote_help ;;
         config) cli_config "$@" ;;
+        secret) cli_secret "$@" ;;
+        env) cli_env "$@" ;;
         agents) bhote_info; cli_agents ;;
         transfer) bhote_info; cli_transfer "$@" ;;
         handover) cli_handover "$@" ;;

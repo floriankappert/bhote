@@ -411,6 +411,9 @@ const HEADLESS_START = 'd="$HOME/.cache/bhote/headless"; mkdir -p "$d"; id="$1";
   + 'BHOTE_CMD="$3" BHOTE_PROMPT="$4" nohup perl -MPOSIX -e \'POSIX::setsid(); exec @ARGV\' sh -c \'cd "$3" && echo $$ > "$1" && exec zsh -ic "$2"\' _ "$d/$id.pid" "$6" "$dir" > "$d/$id.log" 2>&1 < /dev/null & '
   + 'for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do [ -s "$d/$id.pid" ] && break; sleep 0.1; done; exit 0';
 const HEADLESS_ZSH = 'c=(${(z)BHOTE_CMD}); "${c[@]}" "$BHOTE_PROMPT"';   // (the command split like a shell does, the prompt as one argument)
+// ENV_INJECT on: the same through bhote env run --auto, which gives the command the variables of the environment bound to its folder (bhote env bind) and starts
+// it as it is when none is bound. The values come from the secret store into that process only.
+const HEADLESS_ZSH_ENV = 'c=(${(z)BHOTE_CMD}); b=$(command -v bhote || echo "$HOME/.local/bin/bhote"); if [ -x "$b" ]; then "$b" env run --auto -- "${c[@]}" "$BHOTE_PROMPT"; else "${c[@]}" "$BHOTE_PROMPT"; fi';
 const HEADLESS_STOP = 'd="${HOME:?}/.cache/bhote/headless"; systemctl --user stop "bhote-headless-$1" 2>/dev/null; systemctl --user reset-failed "bhote-headless-$1" 2>/dev/null; '
   + 'if [ -f "$d/$1.pid" ]; then p=$(cat "$d/$1.pid"); [ "$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ")" = "$p" ] && { kill -TERM -- "-$p" 2>/dev/null; sleep 2; kill -KILL -- "-$p" 2>/dev/null; }; fi; exit 0';
 
@@ -481,6 +484,10 @@ const SETTINGS = [
   ["CLAUDE_MOD", "Integrations", "Claude Code", "Show topic in Claude Code", "Show the agent's topic above the prompt and in the topic pane."],
   ["FRIENDLY_REMINDER", "Integrations", "Claude Code", "Friendly reminder", "Now and then show a waiting, next or parked topic above the prompt.", ""],
   ["CLAUDE_CONFIG_DIR", "Integrations", "Claude Code", "Profile folder", "Profile the Slack watch runs in, e.g. ~/.claude2 (empty = default).", ""],
+  ["SECRET_BACKEND", "Integrations", "Secrets", "Backend", "Where new secrets are kept: auto (macOS Keychain, else secret-tool, else an encrypted file) or one of them. A stored value stays where it is.", ""],
+  ["SECRET_GUARD", "Integrations", "Secrets", "Chat guard", "The Claude Code hook secret-guard.sh: a prompt with a key in it is only reported (warn) or not sent (block). Off: no look."],
+  ["SECRET_CLIP_SECONDS", "Integrations", "Secrets", "Clear the clipboard after", "A secret copied with Reveal leaves the clipboard after this time.", "s"],
+  ["ENV_INJECT", "Integrations", "Secrets", "Environments for started services", "A service or headless agent that bhote starts gets the variables of the environment bound to its folder (bhote env bind)."],
   ["KHARKA", "Integrations", "kharka", "Binary", "Path to kharka (empty = from PATH)."],
   ["KHARKA_WATCH_STALE", "Integrations", "kharka", "Restart watch after", "Restart herdr-kharka when its entry has not been written for this long.", "s"],
 
@@ -525,10 +532,12 @@ export default class Bhote extends View {
   init(_props, cx) {
     if (props()?.settings) { this.initSettings(cx); return; }   // the settings dialog
     if (props()?.headless) { this.initHeadless(cx); return; }   // the form for another headless agent
+    if (props()?.envForm) { this.initEnvForm(cx); return; }     // the form of the Env tab: add a secret, rename one
     if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
     // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
-    try { this.tab = ["home", "topics", "prs", "deploys", "tests", "runbooks", "servers"].includes(shared("bhote.tab")) ? shared("bhote.tab") : "home"; } catch (_e) { this.tab = "home"; }
+    const TABS = ["home", "topics", "prs", "deploys", "tests", "runbooks", "servers", "env"];
+    try { this.tab = TABS.includes(props()?.tab) ? props().tab : TABS.includes(shared("bhote.tab")) ? shared("bhote.tab") : "home"; } catch (_e) { this.tab = "home"; }   // (props.tab: a view that opens on a tab, for a check)
     // How bhote names this machine and the others (HOST_LABEL, MACHINE_LABELS in its config): a topic is started on an agent by those names.
     this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
     this.labels = "";
@@ -2628,7 +2637,8 @@ export default class Bhote extends View {
     const desc = prompt.replace(/\s+/g, " ").slice(0, 70);
     cx.spawn(async (cx) => {
       try {
-        await this.srvExec(this.hdPick, "bash", ["-c", HEADLESS_START, "_", id, dir, cmd, prompt, desc, HEADLESS_ZSH], 30000);
+        const inject = (await this.cfgValues()).ENV_INJECT === "on";
+        await this.srvExec(this.hdPick, "bash", ["-c", HEADLESS_START, "_", id, dir, cmd, prompt, desc, inject ? HEADLESS_ZSH_ENV : HEADLESS_ZSH], 30000);
         try { setShared("bhote.jobsRefresh", Date.now()); } catch (_e) { /* the list looks again within 15 s */ }
         const o = props()?.overlay; if (o) closeOverlay(o);
       } catch (e) { this.hdError = /no folder/.test(String(e?.message ?? e)) ? `no folder ${dir} on that machine` : "could not start it"; this.hdBusy = false; cx.notify(); }
@@ -3760,7 +3770,7 @@ export default class Bhote extends View {
   // The tab bar of the right panel: Topics, Deployments, Tests; a monitor's tab shows what runs (orange) and what failed (red).
   tabBar(t, cx) {
     const prList = this.prs.filter((x) => !x.merged).map((x) => ({ state: x.checks.some((c) => c.state === "failed") ? "failed" : x.checks.some((c) => c.state === "running") ? "running" : "ok" }));
-    const tabs = [["home", "Overview", null], ["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null]];
+    const tabs = [["home", "Overview", null], ["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Env", null]];
     return h_flex().flex_none().gap(2).px(8).pt(8).pb(6).items_center().border_b(1).border_color(t.border)
       .children(tabs.map(([id, label, list]) => {
         const on = this.tab === id;
@@ -3980,7 +3990,13 @@ export default class Bhote extends View {
     const m = x.machine ?? null;
     const args = [x.id, String(x.port)];
     const stop = () => this.srvExec(m, "bash", ["-c", SVC_STOP, "_", ...args, x.stop ?? ""], 60000);
-    const start = () => this.srvExec(m, "bash", ["-c", SVC_START, "_", ...args, x.start], 30000);
+    // a service with "env": "NAME" in servers.json gets that environment (bhote env) while ENV_INJECT is on
+    const startCmd = async () => {
+      if (!x.env || (await this.cfgValues()).ENV_INJECT !== "on") return x.start;
+      const q = (v) => `'${String(v).replace(/'/g, "'\\''")}'`;
+      return `b=$(command -v bhote || echo "$HOME/.local/bin/bhote"); c=${q(x.start)}; if [ -x "$b" ]; then "$b" env run ${q(x.env)} -- zsh -c "$c"; else zsh -c "$c"; fi`;
+    };
+    const start = async () => this.srvExec(m, "bash", ["-c", SVC_START, "_", ...args, await startCmd()], 30000);
     delete this.svcFail[x.id];
     this.srvPending[`svc|${x.id}`] = { want: what === "stop" ? "down" : "up", at };
     cx.notify();
@@ -4239,6 +4255,149 @@ export default class Bhote extends View {
       .child(h_flex().gap(4).items_center().flex_none().children(x.stages.map((y) => this.stageCircle(t, y.state, 9))))
       .child(div().flex_1().min_w(0).truncate().pl(8).text_size(11).text_color(t.dim).child(x.ref.length > 34 ? `${x.ref.slice(0, 33)}…` : x.ref));
     return [div().flex_none().pt(6).child(this.dividerCaption(t, "Runbooks", [this.countTag(t, items.length)])), ...items.map(row)];
+  }
+
+  // --- the Env tab: the secret manager (bhote secret). Only names, masked forms (first 6 and last 3 characters and the length), fingerprints and who has what
+  // come here, never a value. A key is typed into the field of the form (a password field) and travels to the store in a file of a 0700 folder
+  // (bhote secret set NAME --from-file F --shred), never in an argument; Reveal copies it to the clipboard through bhote (cleared after SECRET_CLIP_SECONDS).
+  loadEnv(cx, matrix) {
+    if (this.envLoading) return;
+    this.envLoading = true;
+    cx.spawn(async (cx) => {
+      try {
+        const [ls, es] = await Promise.all([exec("bhote", ["secret", "ls", "--json"], { timeout: 30000 }), exec("bhote", ["env", "ls", "--json"], { timeout: 30000 })]);
+        this.envData = { ...JSON.parse(ls.stdout), envs: JSON.parse(es.stdout || "[]") };
+        this.envError = "";
+      } catch (_e) { this.envError = "Could not read the secret store (bhote secret ls)"; }
+      this.envLoading = false; this.envAt = Date.now(); cx.notify();
+      if (matrix || Date.now() - (this.envMatrixAt ?? 0) > 300000) {
+        this.envMatrixAt = Date.now();
+        try { this.envMatrix = JSON.parse((await exec("bhote", ["secret", "machines", "--json"], { timeout: 120000 })).stdout); } catch (_e) { /* no other machines: only this one */ }
+        cx.notify();
+      }
+    });
+  }
+
+  envNoteSet(cx, text) { this.envNote = text; cx.notify(); cx.spawn(async (cx) => { await cx.sleep(5000); if (this.envNote === text) { this.envNote = ""; cx.notify(); } }); }
+
+  envDo(cx, args, done) {
+    cx.spawn(async (cx) => {
+      try { await exec("bhote", args, { timeout: 60000 }); if (done) this.envNoteSet(cx, done); }
+      catch (e) { this.envNoteSet(cx, String(e?.stderr ?? e?.message ?? "failed").split("\n")[0].slice(0, 140)); }
+      try { setShared("bhote.envAt", Date.now()); } catch (_e) { /* this view reloads below */ }
+      this.envMatrixAt = 0; this.loadEnv(cx, true);
+    });
+  }
+
+  openEnvForm(mode, name) { openOverlay({ mod: "bhote", props: { envForm: { mode, name: name ?? "" } }, kind: "dialog", modal: true, width: 560, height: mode === "add" ? 420 : 300 }); }
+
+  envPage(t, cx) {
+    try { const at = Number(shared("bhote.envAt") ?? 0); if (this.envSeen === undefined) this.envSeen = at; else if (at !== this.envSeen) { this.envSeen = at; this.envMatrixAt = 0; cx.timer.after(10, (cx2) => this.loadEnv(cx2, true)); } } catch (_e) { /* the next render looks again */ }
+    if (!this.envData && !this.envLoading && !this.envError) cx.timer.after(10, (cx2) => this.loadEnv(cx2, true));
+    const d = this.envData;
+    if (!d) return [this.envError ? empty(t, "!", "Secret store not readable", this.envError) : empty(t, "", "Reading the secret store", "bhote secret ls", true)];
+    const glyph = { present: "✓", different: "≠", missing: "–", unreachable: "?" };
+    const mm = this.envMatrix;
+    const presence = (name) => {
+      const row = mm?.secrets?.find((x) => x.name === name);
+      if (!row) return "";
+      return mm.machines.map((m) => `${m} ${glyph[row.machines[m]?.state] ?? "?"}`).join("   ");
+    };
+    const small = (id, label, onClick, color) => div().id(id).px(7).py(2).rounded(5).text_size(11).cursor_pointer().text_color(color ?? t.muted).hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(onClick)).child(label);
+    const add = div().id("env-add").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).text_color(t.dim).cursor_pointer()
+      .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(() => this.openEnvForm("add"))).child("+");
+    const rows = [div().flex_none().pt(6).child(this.dividerCaption(t, "Secrets", [add, this.countTag(t, d.secrets.length)]))];
+    rows.push(div().px(15).pb(4).text_size(11).text_color(t.dim).child(`Backend: ${d.backend}. Values are never shown here; Reveal copies one to the clipboard.`));
+    if (this.envNote) rows.push(div().px(15).pb(4).text_size(11.5).text_color(t.accent).child(this.envNote));
+    if (!d.secrets.length) rows.push(div().px(15).py(10).text_size(12).text_color(t.muted).child("No secrets yet. Add one with +, or in a terminal: bhote secret set NAME"));
+    for (const x of d.secrets) {
+      const asking = this.envConfirm === x.name;
+      rows.push(v_flex().id(`env-${x.name}`).gap(1).mx(10).mb(4).px(12).py(7).rounded(8).bg(t.surface).border(1).border_color(t.border)
+        .child(h_flex().gap(8).items_center()
+          .child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12.5).text_color(t.foreground).child(x.name))
+          .child(div().flex_none().text_size(11.5).text_color(t.muted).child(x.masked))
+          .child(div().flex_none().px(6).rounded(8).text_size(10).bg(t.raised).text_color(t.dim).child(x.backend)))
+        .child(h_flex().gap(4).items_center()
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child([x.fp ? `fp ${x.fp}` : "", presence(x.name)].filter(Boolean).join("   ·   ")))
+          .child(small(`env-reveal-${x.name}`, "Reveal", (_e, cx) => this.envDo(cx, ["secret", "get", x.name, "--clip"], "Copied to the clipboard (cleared soon)")))
+          .child(small(`env-rename-${x.name}`, "Rename", () => this.openEnvForm("rename", x.name)))
+          .child(asking
+            ? small(`env-rm-${x.name}`, "Really remove?", (_e, cx) => { this.envConfirm = null; this.envDo(cx, ["secret", "rm", x.name], `${x.name} removed`); }, t.blocked)
+            : small(`env-rm-${x.name}`, "Remove", (_e, cx) => { this.envConfirm = x.name; cx.notify(); }))));
+    }
+    if (d.envs?.length) {
+      rows.push(div().flex_none().pt(8).child(this.dividerCaption(t, "Environments", [this.countTag(t, d.envs.length)])));
+      for (const e of d.envs) {
+        rows.push(v_flex().gap(1).mx(10).mb(4).px(12).py(7).rounded(8).bg(t.surface).border(1).border_color(t.border)
+          .child(div().font_semibold().text_size(12.5).text_color(t.foreground).child(e.name))
+          .child(div().text_size(11).text_color(t.dim).child(Object.entries(e.vars).map(([k, v]) => (k === v ? k : `${k}=${v}`)).join(", ")))
+          .when(!!e.dirs?.length, (el) => el.child(div().text_size(11).text_color(t.dim).truncate().child(`in ${e.dirs.join(", ")}`))));
+      }
+    }
+    return rows;
+  }
+
+  initEnvForm(cx) {
+    const f = props().envForm;
+    this.efMode = f.mode; this.efOld = f.name; this.efBusy = false; this.efError = "";
+    this.efName = InputState.new({ placeholder: "ANTHROPIC_API_KEY", value: f.mode === "rename" ? f.name : "" });
+    this.efValue = InputState.new({ placeholder: "paste the key here", value: "" });
+    this.efValue.set_masked(true);
+    this.efName.on("change", (_e, cx) => cx.notify());
+    this.efValue.on("change", (_e, cx) => cx.notify());
+  }
+
+  saveEnvForm(cx) {
+    const name = this.efName.value().trim();
+    if (this.efBusy) return;
+    if (!/^[A-Za-z_][A-Za-z0-9_]{0,79}$/.test(name)) { this.efError = "A name is letters, digits and _ (not starting with a digit)"; cx.notify(); return; }
+    const close = () => { try { setShared("bhote.envAt", Date.now()); } catch (_e) { /* the tab looks again by itself */ } const o = props()?.overlay; if (o) closeOverlay(o); };
+    this.efBusy = true; this.efError = ""; cx.notify();
+    if (this.efMode === "rename") {
+      cx.spawn(async (cx) => {
+        try { await exec("bhote", ["secret", "rename", this.efOld, name], { timeout: 60000 }); close(); }
+        catch (e) { this.efError = String(e?.stderr ?? e?.message ?? "failed").split("\n")[0].slice(0, 140); this.efBusy = false; cx.notify(); }
+      });
+      return;
+    }
+    const value = this.efValue.value();
+    if (!value.trim() || /[\r\n]/.test(value)) { this.efError = "One line, not empty"; this.efBusy = false; cx.notify(); return; }
+    // The value must not travel in an argument (ps shows those): it goes into a file of a folder only this user can enter, bhote reads it from there,
+    // overwrites and removes the file (--shred), and the folder goes at once.
+    const dir = `${home()}/.cache/bhote/in-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    cx.spawn(async (cx) => {
+      let err = "";
+      try {
+        await exec("mkdir", ["-p", `${home()}/.cache/bhote`], { timeout: 10000 });
+        await exec("mkdir", ["-m", "700", dir], { timeout: 10000 });
+        await writeTextFile(`${dir}/v`, value, null);
+        await exec("bhote", ["secret", "set", name, "--from-file", `${dir}/v`, "--shred", "--source", "panel"], { timeout: 60000 });
+      } catch (e) { err = String(e?.stderr ?? e?.message ?? "failed").split("\n")[0].slice(0, 140) || "could not store it"; }
+      try { await exec("rm", ["-rf", dir], { timeout: 10000 }); } catch (_e) { /* the file was overwritten and removed by --shred anyway */ }
+      try { this.efValue.set_value(""); } catch (_e) { /* the form closes */ }
+      if (err) { this.efError = err; this.efBusy = false; cx.notify(); } else close();
+    });
+  }
+
+  envFormView() {
+    const t = theme();
+    const add = this.efMode === "add";
+    const ok = !!this.efName.value().trim() && (!add || !!this.efValue.value());
+    const field = (st) => Input.new(st).h(34).px(11).rounded(8).border_1().border_color(t.border).bg(t.background).text_size(13).text_color(t.foreground);
+    const row = (label, ...kids) => h_flex().gap(14).items_start().child(div().flex_none().w(70).pt(7).text_size(13).text_color(t.muted).child(label)).child(v_flex().flex_1().min_w(0).gap(8).children(kids));
+    return v_flex().id("envform-root").size_full().bg(t.popover)
+      .child(v_flex().flex_1().min_h(0).gap(18).px(26).pt(24).pb(8)
+        .child(div().text_size(19).font_semibold().text_color(t.foreground).child(add ? "Add a secret" : `Rename ${this.efOld}`))
+        .when(add, (el) => el.child(div().text_size(13).text_color(t.muted).child("The key goes straight into the secret store of this machine. It is not shown again: the list shows its first 6 and last 3 characters and the length.")))
+        .child(row("Name", field(this.efName)))
+        .when(add, (el) => el.child(row("Key", field(this.efValue), div().text_size(12).text_color(t.dim).child("Paste it here, never into the chat of an agent."))))
+        .when(add, (el) => el.child(div().text_size(12).text_color(t.dim).child("From 1Password instead: bhote secret set NAME --op op://vault/item/field"))))
+      .child(h_flex().flex_none().gap(10).items_center().px(26).py(16).border_t(1).border_color(t.border)
+        .child(div().flex_1().text_size(12).text_color(t.blocked).child(this.efError))
+        .child(div().id("ef-cancel").px(16).h(36).flex().items_center().rounded(8).cursor_pointer().text_size(13).border(1).border_color(t.border).bg(t.chrome).text_color(t.foreground)
+          .hover((e) => e.bg(t.hover)).on_click(() => { const o = props()?.overlay; if (o) closeOverlay(o); }).child("Cancel"))
+        .child(div().id("ef-save").px(20).h(36).flex().items_center().rounded(8).cursor_pointer().text_size(13).bg(ok && !this.efBusy ? t.accent : t.raised).opacity(ok ? 1 : 0.6)
+          .text_color(ok && !this.efBusy ? (t.accent_foreground ?? "#ffffff") : t.dim).on_click((_e, cx) => this.saveEnvForm(cx)).child(this.efBusy ? "Saving…" : add ? "Store" : "Rename")));
   }
 
 
@@ -4639,6 +4798,7 @@ export default class Bhote extends View {
   setTab(cx, id) {
     this.tab = id;
     setShared("bhote.tab", id);
+    if (id === "env") this.loadEnv(cx, true);
     cx.notify();
   }
 
@@ -4824,6 +4984,7 @@ export default class Bhote extends View {
   render(_cx) {
     if (this.setItems !== undefined) return this.settingsView();
     if (this.hdPick !== undefined) return this.headlessView();
+    if (this.efMode !== undefined) return this.envFormView();
     if (this.menu) return this.menuView();
     this.syncConfig(_cx);
     if (this.side === "right" && this.showId()) return this.showView();
@@ -4839,6 +5000,7 @@ export default class Bhote extends View {
       .children(this.usageBar(t));
     let body;
     if (this.tab === "servers") body = this.serversPage(t);
+    else if (this.tab === "env") body = this.envPage(t, _cx);
     else if (this.tab === "runbooks") body = this.runbooksPage(t);
     else if (this.tab === "prs") body = this.prsBody(t);
     else if (this.tab === "deploys") body = this.deploysAll().length ? this.monitorBody(t, this.deploysAll(), "d", "dp") : [empty(t, "⇪", "No deployments or builds seen", "Builds on open pull requests show up here. For deployments: if CircleCI rejects its token (401), set a new one:  bhote config set CIRCLECI_TOKEN <token>")];

@@ -211,6 +211,12 @@ $ bhote config set AGENT_CAN_CLOSE off --json
 
 `config list --json` is an array of `{"key", "value", "default", "type", "description"}`.
 
+### `bhote secret <set | get | ls | rm | rename | verify | scan | import | purge-context | machines>` · `bhote env <ls | set | unset | rm | bind | unbind | which | run>`
+
+The secret manager and named environments; see [secrets](secrets.md). `--json` works on `ls`, `get`, `scan`, `import`, `verify`, `purge-context`, `machines` and `env ls`. Values are never printed (masked: first 6, last 3
+characters and the length) except by `get --reveal`, which is refused inside a Claude Code session. `bhote env run [NAME] -- cmd` replaces itself with `cmd` and gives it the variables. Exit codes: `0` ok, `1` error
+(also `verify` when a secret is not readable or does not match).
+
 ### `bhote agents`
 
 The agents herdr knows (this machine, and the other machines when `REMOTE_AGENTS=on`: herdr's saved ones, or the ones in
