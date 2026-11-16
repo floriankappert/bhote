@@ -20,7 +20,7 @@ herdr-app do layout.show --id bhote
 | **Overview** | Tiles for topics, pull requests, deployments, tests, servers and runbooks; a tab for each. |
 | **Topics** | Statuses, the topic's page, the stash. *Start on agent* hands a topic over as a message and waits (spinner) until the agent takes it; then the agent is fixed. |
 | **Agents** (left panel) | Cards under their machine (alias: `MACHINE_LABELS`, e.g. `omarchy-flo=Omarchy`), a name from Middle-earth per agent, state by colour, drag and drop for the order, the ear. |
-| **Commit inspector** | The last ten commits of the focused agent's branch since it left the base branch; a click opens the message above it. |
+| **Commit inspector** | The last five commits of the focused agent's branch since it left the base branch; a click opens the message above it. |
 | **Headless agents** | Scheduled Claude jobs (systemd timers, on Linux machines), the machine of each, run now, pause, stop; the log as a small conversation; a form to start one more run. |
 | **Servers** | The IMS systems per machine, your dev servers (`~/.config/bhote/servers.json`), the SSH tunnel (`IMS_TUNNELS`). |
 | **Pull requests, tests, deployments** | PR cards with their checks; the Tests tab with local runs, CI jobs and test processes found on every machine; the workflows of a CircleCI pipeline as one card. |

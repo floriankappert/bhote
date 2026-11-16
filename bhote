@@ -5246,7 +5246,8 @@ cli_app() {  # bhote app install | check: the add-on for the herdr Mac app (the 
     case "$sub" in
         install)
             mkdir -p "$home/mods/bhote" "$home/layouts" || return 1
-            cp -R "$src/mods/bhote/." "$home/mods/bhote/" && cp "$src/layouts/bhote.json" "$home/layouts/bhote.json" || { echo "bhote: could not copy into $home" >&2; return 1; }
+            for d in "$src"/mods/*/; do mkdir -p "$home/mods/$(basename "$d")" && cp -R "$d." "$home/mods/$(basename "$d")/"; done   # (the mod bhote and the ones the layout uses: tabs-bhote, workspace-chrome-bhote)
+            cp "$src/layouts/bhote.json" "$home/layouts/bhote.json" || { echo "bhote: could not copy into $home" >&2; return 1; }
             echo "installed in $home: the mod bhote and the layout bhote"
             stash_link_keys "$(cfg_get STASH_LINK off)"   # (the binding of Ctrl+S follows the setting)
             if command -v herdr-app >/dev/null 2>&1; then herdr-app check "$home/mods/bhote" || return 1

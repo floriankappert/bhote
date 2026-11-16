@@ -336,12 +336,12 @@ const LIVE_TESTS_SH = 'ps -Ao pid=,ppid=,etime=,command= | awk -v re="(rails|rak
   + 'printf "%s\\t%s\\t%s\\t%s\\t%s\\n" "$p" "$s" "$top" "$br" "$c"; done';
 
 // What the commit inspector asks the repository: the commits of this branch since it left the base branch (origin/HEAD, else main or master), newest first, the
-// base commit it left from, and the uncommitted files. On the base branch itself (nothing of its own) the last 10 commits. Never more than the last 10 of a branch; the base line then says how many come before. Plain sh: it runs on every machine.
+// base commit it left from, and the uncommitted files. On the base branch itself (nothing of its own) the last 5 commits. Never more than the last 5 of a branch; the base line then says how many come before. Plain sh: it runs on every machine.
 const COMMITS_SH = 'd="$1"; f="%h%x1f%s%x1f%ct%x1f%an"; b=$(git -C "$d" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); '
   + '[ -n "$b" ] || for c in origin/main origin/master main master; do git -C "$d" rev-parse -q --verify "$c" >/dev/null 2>&1 && { b=$c; break; }; done; '
   + 'mb=""; [ -n "$b" ] && mb=$(git -C "$d" merge-base HEAD "$b" 2>/dev/null); h=$(git -C "$d" rev-parse HEAD 2>/dev/null); '
-  + 'if [ -n "$mb" ] && [ "$mb" != "$h" ]; then git -C "$d" log -10 --format="$f" "$mb..HEAD"; echo "@@@base"; git -C "$d" log -1 --format="$f" "$mb"; echo "$b"; git -C "$d" rev-list --count "$mb..HEAD"; '
-  + 'else git -C "$d" log -10 --format="$f"; echo "@@@base"; fi; echo "@@@status"; git -C "$d" status --porcelain';
+  + 'if [ -n "$mb" ] && [ "$mb" != "$h" ]; then git -C "$d" log -5 --format="$f" "$mb..HEAD"; echo "@@@base"; git -C "$d" log -1 --format="$f" "$mb"; echo "$b"; git -C "$d" rev-list --count "$mb..HEAD"; '
+  + 'else git -C "$d" log -5 --format="$f"; echo "@@@base"; fi; echo "@@@status"; git -C "$d" status --porcelain';
 
 // A headless run started by hand: a unit on Linux (a program started through hc exec does not outlive it), a detached process group elsewhere. Arguments: id,
 // folder, command (e.g. `claude -p`), prompt, description, the zsh line that runs them. The prompt travels in the environment, never inside a command line.
@@ -1617,15 +1617,6 @@ export default class Bhote extends View {
     return v_flex().flex_none().overflow_hidden().h(m.cur).child(body.flex_none());
   }
 
-  // A new space is a new shell on a machine (its default shell, in its home). The bar at the bottom asks which machine first (with
-  // one machine there is nothing to ask); the plus next to a machine's name makes one there at once.
-  chooseMachine() {
-    const ms = machines().filter((m) => m.layout !== "unavailable");
-    if (ms.length <= 1) { run("space.new", { machine: ms[0]?.name ?? "" }); return; }
-    this.openMenu([{ type: "head", label: "New space on" }, ...ms.map((m) => ({ type: "newspace", machine: m.name ?? "", label: m.name ?? "This computer" }))],
-      this.anchor, { placement: "above-left" });
-  }
-
   // The bar at the bottom of the agent pane: it stays there while the list scrolls.
   // --- scheduled agents: systemd user timers whose service runs a headless Claude (slack monitors, depbot) ------------------------------
   // One line per job at the bottom of the left panel: its state, when it runs next, run now, pause / resume. Read and driven with
@@ -1859,6 +1850,8 @@ export default class Bhote extends View {
   usageBar(t) {
     const list = this.usage ?? [];
     if (!list.length) return [];
+    let shut = false;
+    try { shut = shared("bhote.usageShut") === true; } catch (_e) { shut = false; }
     const reset = (iso) => { const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return ""; return s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`; };
     const colorOf = (u) => u >= 90 ? t.blocked : u >= 70 ? t.ansi3 : t.working;
     // the thin bar as before, its figure above it at the right end
@@ -1869,9 +1862,9 @@ export default class Bhote extends View {
           .child(div().flex_none().text_size(10.5).text_color(t.foreground).child(w ? `${Math.round(u)}%` : "–")))
         .child(progress(t, u / 100, colorOf(u), "100%")); };
     const name = (a) => a.profile === "claude" ? "Main" : "Alternative";
-    return [v_flex().flex_none().pt(4).pb(3)
-      .child(this.dividerCaption(t, "Claude usage"))
-      .children(list.map((a) => h_flex().id(`usage-${a.profile}`).px(15).py(3).gap(8).items_center()
+    return [v_flex().flex_none().pt(4).pb(12)
+      .child(this.sectionHead(t, "usage-head", "Claude usage", shut, this.guard((_e, cx) => { setShared("bhote.usageShut", !shut); cx.notify(); })))
+      .children((shut ? [] : list).map((a) => h_flex().id(`usage-${a.profile}`).px(15).py(3).gap(8).items_center()
         .child(div().w(72).flex_none().truncate().text_size(12).text_color(t.foreground).child(name(a)))
         .child(a.error ? div().text_size(10.5).text_color(t.blocked).child(a.error) : h_flex().flex_1().min_w(0).gap(6).child(cell(a.five_hour)).child(cell(a.seven_day)))))];
   }
@@ -1882,9 +1875,11 @@ export default class Bhote extends View {
     const add = div().id("headless-add").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).text_color(t.dim).cursor_pointer()
       .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(() => this.openHeadless())).child("＋");
     this.enterBegin("jobs", list.map((j) => `${this.srvKey(j.machine)}|${j.timer}`));
+    let shut = false;
+    try { shut = shared("bhote.jobsShut") === true; } catch (_e) { shut = false; }
     return [v_flex().flex_none().pt(4).pb(3)
-      .child(this.dividerCaption(t, "Headless agents", [...(list.length ? [div().flex_none().text_size(10.5).text_color(t.dim).child(String(list.length))] : []), add]))
-      .children(list.map((j) => {
+      .child(this.sectionHead(t, "jobs-head", "Headless agents", shut, this.guard((_e, cx) => { setShared("bhote.jobsShut", !shut); cx.notify(); }), [...(list.length ? [this.countTag(t, list.length)] : []), add]))
+      .children((shut ? [] : list).map((j) => {
         const pk = `${this.srvKey(j.machine)}|${j.timer}`;
         const pend = this.jobPending[pk];
         const color = j.failed ? t.blocked : j.running || pend?.what === "run" ? t.working : j.on ? (t.ansi2 ?? t.done) : t.ansi3;
@@ -2529,6 +2524,16 @@ export default class Bhote extends View {
       .children(right);
   }
 
+  // The count on the right of a divider (as on the left: Headless agents).
+  countTag(t, n) { return div().flex_none().text_size(10.5).text_color(t.dim).child(String(n)); }
+
+  // The head of a foldable section at the foot, as on the left: the divider runs through the caption's row, the chevron at its end.
+  sectionHead(t, id, text, shut, onClick, extra = []) {
+    return div().flex_none().pt(6)
+      .child(this.dividerCaption(t, text, [...extra, svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).flex_none().text_color(t.muted)])
+        .id(id).cursor_pointer().on_click(onClick));
+  }
+
   // --- another headless agent: where, in which folder, what it is asked --------------------------------------------------------
   openHeadless() { openOverlay({ mod: "bhote", props: { headless: true }, kind: "dialog", modal: true, width: 660, height: 640 }); }
 
@@ -2947,15 +2952,6 @@ export default class Bhote extends View {
     return [...this.commitDetail(t, f), v_flex().id("commit-inspector").flex_none().pt(4).pb(5).child(head).children(rows)];
   }
 
-  newSpaceBar(t) {
-    return h_flex().id("new-space").flex_none().px(12).py(9).gap(11).items_center().cursor_pointer().border_t(1).border_color(t.border)
-      .on_size_change((size) => { this.barH = size.height; })
-      .text_size(12).text_color(t.muted).hover((e) => e.bg(t.hover).text_color(t.foreground))
-      .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
-      .on_click(() => this.chooseMachine())
-      .child(div().ml(3).child("＋")).child(div().flex_1().child("New space"));
-  }
-
   // Left: one list. The workspaces by machine; a workspace with an agent is its agent's cards (a card per topic of the agent, or
   // one for the idle agent), a workspace without one a compact row.
   left() {
@@ -3153,24 +3149,19 @@ export default class Bhote extends View {
     try { shut = shared("bhote.stashShut") === true; } catch (_e) { shut = false; }
     const PITCH = 50;   // a row (46) and the gap under it (4)
     const empty = this.stashIn.value().length === 0;
-    return v_flex().id("stash-dock").flex_none().border_t(1).border_color(t.border).bg(t.chrome)
+    return v_flex().id("stash-dock").flex_none().bg(t.chrome)
       .on_mouse_up("left", (_e, cx) => { if (this.drag) this.dropStash(cx); })
-      .child(h_flex().id("stash-head").px(10).pt(10).pb(shut ? 10 : 6).items_center().cursor_pointer().text_size(11).font_semibold().text_color(t.dim)
-        .on_click(this.guard((_e, cx) => { setShared("bhote.stashShut", !shut); if (shut) this.stashIn.focus(); cx.notify(); }))
-        .child(div().flex_1().child(`STASH · ${list.length}`))
-        .child(svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).text_color(t.muted)))
+      .child(this.sectionHead(t, "stash-head", "Stash", shut, this.guard((_e, cx) => { setShared("bhote.stashShut", !shut); if (shut) this.stashIn.focus(); cx.notify(); }), [this.countTag(t, list.length)]))
       .when(!shut, (el) => el
         // the field: flat, with its own placeholder (italic, muted) over it while it is empty
-        .child(div().px(10).pb(4)
+        .child(div().px(10).pb(8)
           .child(div().relative().rounded(7).border(1).border_color(t.border).bg(t.background).px(10).py(6)
             .child(h_flex().gap(6).items_start()
-              .child(div().flex_1().min_w(0).child(Textarea.new(this.stashIn).px(0).py(0).bg(t.background).text_size(12.5).text_color(t.foreground)))
+              .child(v_flex().flex_1().min_w(0).min_h(24).justify_center().child(Textarea.new(this.stashIn).px(0).py(0).bg(t.background).text_size(12.5).text_color(t.foreground)))
               .child(this.stashButton(t, !empty))
               // dictate: the field has the focus, then superwhisper starts recording and types what it hears into it
               .child(this.ibtn(t, "stash-dictate", "mic", () => { this.stashIn.focus(); exec("open", ["superwhisper://record"]).catch(() => {}); }, { color: t.muted, hover: t.accent, w: 22 })))
-            .when(empty, (e) => e.child(div().absolute().left(10).top(6).italic().text_size(12.5).text_color(t.dim).opacity(0.6).child("Stash: write, or dictate with superwhisper")))))
-        .child(h_flex().px(12).pb(8).items_center().text_size(10.5).text_color(t.dim).child("Return for a new line  ·  ⌘Return stashes"))
-        .child(div().h(1).w_full().bg(t.border))
+            .when(empty, (e) => e.child(div().absolute().left(10).top(6).h(24).flex().items_center().text_size(12.5).text_color(t.dim).opacity(0.6).child(div().italic().font_family("Helvetica Neue").child("Stash: write, or dictate with superwhisper"))))))   // (the app font may have no italic: a system font that has one)
         .when(list.length > 0, (e) => e.child(v_flex().id("stash-list").max_h(PITCH * 4).overflow_y_scrollbar().pt(6).pb(4)
           .on_mouse_move((ev, cx) => {
             if (!this.drag) return;
@@ -3205,10 +3196,10 @@ export default class Bhote extends View {
           })))));
   }
 
-  // The docks at the bottom of the topics: the stash, then the done topics.
+  // The docks at the bottom of the topics: the done topics, then the stash.
   docks(t) {
     const done = this.doneDock(t);
-    return [this.stashDock(t), ...(done ? [done] : [])];
+    return [...(done ? [done] : []), this.stashDock(t)];
   }
 
   doneDock(t) {
@@ -3218,11 +3209,8 @@ export default class Bhote extends View {
     try { shut = shared("bhote.doneShut") !== false; } catch (_e) { shut = true; }
     const done = all.slice(0, 3);
     this.enterBegin("done", done.map((x) => x.id));
-    return v_flex().flex_none().pb(shut ? 0 : 4).border_t(1).border_color(t.border).bg(t.chrome)
-      .child(h_flex().id("done-head").px(10).pt(10).pb(shut ? 10 : 4).items_center().cursor_pointer().text_size(11).font_semibold().text_color(t.dim)
-        .on_click(this.guard((_e, cx) => { setShared("bhote.doneShut", !shut); cx.notify(); }))
-        .child(div().flex_1().child(`DONE · ${all.length}`))
-        .child(svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).text_color(t.muted)))
+    return v_flex().flex_none().pb(shut ? 3 : 4).bg(t.chrome)
+      .child(this.sectionHead(t, "done-head", "Done", shut, this.guard((_e, cx) => { setShared("bhote.doneShut", !shut); cx.notify(); }), [this.countTag(t, all.length)]))
       .children(shut ? [] : done.map((x) => this.enterWrap(t, "done", x.id, this.doneCard(t, x), 38)));
   }
 
@@ -4048,39 +4036,30 @@ export default class Bhote extends View {
     const waiting = this.srvMachines().some((m) => !this.srvInfo[this.srvKey(m.name)]);
     if (!machines.length && !waiting) return null;   // no IMS on any machine, no service
     const svcColor = (x) => this.svcColor(t, this.svcStatus(x));
-    const small = this.compactTiles();
     const tun = (this.srv.local?.tunnels ?? [])[0];
     const tunPending = this.tunBusy((this.srv.local?.tunnels ?? [])[0]);
     let shut = false;
     try { shut = shared("bhote.srvShut") !== false; } catch (_e) { shut = true; }
     const toggle = (_e, cx) => { setShared("bhote.srvShut", !shut); cx.notify(); };
+    const tunBtn = !tun ? [] : [tunPending ? div().text_size(12).text_color(t.working).frames(SPIN, 90) : this.ibtn(t, "srv-tunnel", tun.open ? "plug" : "unplug", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground })];
+    const head = this.sectionHead(t, "srv-head", "Servers", shut, this.guard(toggle), tunBtn);
     if (shut) {
-      // one line: a dot per system (green: runs, amber: partly, grey: stopped), per machine
+      // one line under the caption: a dot per system (green: runs, amber: partly, grey: stopped), per machine
       const dots = ({ m, d, svcs }) => h_flex().gap(4).items_center()
         .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(m.label))
         .children((d?.systems ?? []).map((sys) => div().w(8).h(8).rounded(4).flex_none().bg(this.slotColor(t, this.slotState(this.srvKey(m.name), sys)))))
         .children(svcs.length && d?.systems?.length ? [div().w(1).h(10).mx(2).flex_none().bg(t.border)] : [])   // (the services after the IMS systems of the machine)
         .children(svcs.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(svcColor(x))));
-      return h_flex().id("tile-servers").flex_none().gap(10).items_center().px(12).py(7).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border)
-        .hover((e) => e.bg(t.raised)).on_click(this.guard(toggle))
-        .child(div().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
-        .children(machines.map((g) => dots(g)))
-        .child(div().flex_1())
-        .when(!!tun, (el) => el.child(tunPending ? div().text_size(12).text_color(t.working).frames(SPIN, 90) : svg(tun.open ? "mods/bhote/plug.svg" : "mods/bhote/unplug.svg").size(14).text_color(tun.open ? (t.ansi2 ?? t.done) : t.dim)))
-        .child(svg("mods/bhote/chevron-down.svg").size(14).text_color(t.muted));
+      return v_flex().id("tile-servers").flex_none().pb(8).bg(t.chrome).child(head)
+        .child(h_flex().flex_none().gap(10).items_center().px(12).pt(2).children(machines.map((g) => dots(g))));
     }
-    return v_flex().id("tile-servers").flex_none().gap(8).p(small ? 10 : 12).rounded(12).bg(t.surface).border(1).border_color(t.border)
-      .child(h_flex().id("srv-head").gap(8).items_center().cursor_pointer().on_click(this.guard(toggle))
-        .child(div().w(8).h(8).rounded(4).flex_none().bg(machines.some((x) => (x.d?.systems ?? []).some((y) => y.running) || x.svcs.some((y) => this.svcStatus(y) === "running")) ? (t.ansi2 ?? t.done) : t.dim))
-        .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("SERVERS"))
-        .child(svg("mods/bhote/chevron-up.svg").size(14).text_color(t.muted))
-        .when(!!tun, (el) => el.child(this.ibtn(t, "srv-tunnel", tun.open ? "plug" : "unplug", (cx) => this.srvDo(cx, null, tun.open ? "tunnelClose" : "tunnelOpen"), { dim: tunPending, spin: tunPending, color: tun.open ? (t.ansi2 ?? t.done) : t.dim, hover: tun.open ? t.blocked : t.foreground }))))
-      .children(machines.map(({ m, d, svcs }) => v_flex().gap(6)
+    return v_flex().id("tile-servers").flex_none().gap(8).pb(10).bg(t.chrome).child(head)
+      .children(machines.map(({ m, d, svcs }) => v_flex().gap(6).px(12)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(m.label))
           .when(!!d?.machine, (el) => el.child(this.machineMeter(t, d.machine))))
         .child(h_flex().gap(6).flex_wrap().children([...(d?.systems ?? []).map((sys) => this.slotChip(t, m.name, sys)), ...svcs.map((x) => this.svcChip(t, x))]))))
-      .when(!machines.length, (el) => el.child(div().text_size(12).text_color(t.dim).child("Looking for the servers...")));
+      .when(!machines.length, (el) => el.child(div().px(12).text_size(12).text_color(t.dim).child("Looking for the servers...")));
   }
 
   // --- the runbooks tile: for each project the stages of the way a change goes, as circles ---------------------------------------------------------
@@ -4242,7 +4221,7 @@ export default class Bhote extends View {
       .text_color(t.dim).hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_click(this.guard(() => this.openSettings()))
       .child(svg("mods/bhote/gear.svg").size(14).flex_none())
-      .child(div().flex_1().text_size(11).font_semibold().child("SETTINGS"))
+      .child(div().flex_1().text_size(12).child("Bhote Settings"))
       .child(h_flex().gap(6).items_center().flex_none()   // the branding
         .child(div().text_size(12).font_semibold().text_color(t.accent).child("bhote"))
         .when(!!v, (e) => e.child(div().text_size(11).text_color(t.dim).child(v))));
@@ -4450,7 +4429,7 @@ export default class Bhote extends View {
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
       .child(tiles).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
-      .children([...this.docks(t), ...(srvTile ? [div().flex_none().p(10).border_t(1).border_color(t.border).child(srvTile)] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
+      .children([...this.docks(t), ...(srvTile ? [srvTile] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
   }
 
   setTab(cx, id) {
@@ -4648,8 +4627,7 @@ export default class Bhote extends View {
       .children(this.commitBar(t))
       .children(this.jobLogBox(t))
       .children(this.jobsBar(t))
-      .children(this.usageBar(t))
-      .child(this.newSpaceBar(t));
+      .children(this.usageBar(t));
     let body;
     if (this.tab === "servers") body = this.serversPage(t);
     else if (this.tab === "prs") body = this.prsBody(t);

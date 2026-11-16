@@ -22,7 +22,7 @@ the add-on is a mod of the herdr app with a layout of its own: its panels are dr
 - **Topics** move through `now`, `next`, `waiting`, `review`, `later` and `done`. **Start on agent** hands a topic over as a message: a spinner runs until the agent takes it, then that agent is fixed.
 - **Agents of all machines** as cards under their machine (by its alias, e.g. *Omarchy*), each with a name from Middle-earth (Frodo, Sam, Merry …). Working agents are orange, those with tests or CI running yellow,
   those that need you red, finished ones green. Drag and drop sets the order. The **ear** on a card says whether other agents may message it (`bhote send`); with it on, the agent picks the message up when it is free.
-- **Commit inspector:** the last ten commits of the focused agent's branch since `main`, a click shows the whole message.
+- **Commit inspector:** the last five commits of the focused agent's branch since `main`, a click shows the whole message.
 - **Pull requests, tests and deployments:** a PR's CI checks show on its agent's card with a progress bar (found by branch or by the head commit, so a local branch pushed under another name works); the Tests tab shows local runs, CI jobs
   and test processes found on any machine, the workflows of one CircleCI pipeline as one card.
 - **Servers:** the IMS systems of every machine, **dev servers** you start and stop per machine (Bilendo, Marketing, any command: a start that fails turns the card red with the log and becomes a topic in review) and the SSH tunnel.
