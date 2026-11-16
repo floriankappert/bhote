@@ -45,6 +45,7 @@ if "api.linear.app" in url:
     if "states" in qs: out(200, f("linear.states.json"))
     if "issues(first" in qs:
         after = (q.get("variables") or {}).get("after")
+        if "isMe: {eq" in qs: out(200, f("linear.mine.json") or '{"data":{"issues":{"nodes":[],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}')
         t = f("linear.triage.%s.json" % after) if after else f("linear.triage.json")
         out(200, t)
     if "issue(id" in qs:
@@ -176,7 +177,7 @@ chk linear-ABC-101 source_url https://linear.app/acme/issue/ABC-101 "the link of
 chk linear-ABC-101 title "Fix login" "the title is kept"
 chk linear-ABC-101 description "Line one" "the first line of the description"
 chk linear-ABC-101 source_status_raw Triage "the raw state name is kept (source_status_raw)"
-grep -q '^source_due=\|^source_kind=\|^source_parent=' "$D/linear-ABC-101.topic" && bad "a mirrored task carries a due date or kind: $(cat "$D/linear-ABC-101.topic")" || ok "a mirrored task has no due date, kind or parent"
+grep -q '^source_due=\|^source_parent=' "$D/linear-ABC-101.topic" || ! grep -q '^source_kind=triage$' "$D/linear-ABC-101.topic" && bad "a mirrored task carries a due date or parent, or has no kind triage: $(cat "$D/linear-ABC-101.topic")" || ok "a mirrored task has kind triage, no due date, no parent"
 n=$(ls "$D" | wc -l); B task sync --source linear >/dev/null; [ "$(ls "$D" | wc -l)" = "$n" ] && ok "sync twice: deduped by source and reference" || bad "duplicates after a second sync"
 f=$D/linear-ABC-101.topic; cp "$f" "$T/lin.before"; B task sync --source linear >/dev/null; cmp -s "$f" "$T/lin.before" && ok "a sync with no change writes nothing" || bad "idle sync rewrote the file"
 B list --source linear --json | jq -e 'length == 3' >/dev/null && ok "list --source linear" || bad "list linear"
@@ -295,10 +296,10 @@ snap() { { ls -la "$D" "$T/dryc" 2>&1; find "$T/shared" -type f 2>/dev/null | so
 s0=$(snap); dry=$(BHOTE_API_CACHE=$T/dryc B task sync --source linear --dry-run --json); s1=$(snap)
 [ -z "$(ls -A "$D")" ] && [ "$s0" = "$s1" ] && [ ! -e "$T/dryc" ] && [ ! -e "$T/shared/tasksync.lock" ] && ok "dry-run: no task file, no lock, no API cache entry, no change in the data or shared folder" || bad "dry-run wrote something: $(ls -A "$D") $(ls "$T/dryc" 2>&1)"
 echo "$dry" | jq -e '.dry_run == true and (.errors | length) == 0 and .totals.would_create == 3 and .totals.would_update == 0 and (.candidates | length) == 3' >/dev/null && ok "dry-run --json: counts and one candidate per would-be task" || bad "dry json: $dry"
-echo "$dry" | jq -e '.by_source.linear.would_create == 3 and .by_source.linear.would_skip == 1 and .by_source.linear.skip_reasons["not in triage"] == 1 and (.by_source.linear | has("task") | not)' >/dev/null && ok "dry-run: grouped by source only; the skip reason is 'not in triage'" || bad "dry by source: $(echo "$dry" | jq -c .by_source)"
+echo "$dry" | jq -e '.by_source.linear.would_create == 3 and .by_source.linear.would_skip == 1 and .by_source.linear.skip_reasons["not triage"] == 1 and (.by_source.linear | has("task") | not)' >/dev/null && ok "dry-run: grouped by source only; the skip reason is 'not in triage'" || bad "dry by source: $(echo "$dry" | jq -c .by_source)"
 echo "$dry" | jq -e '(.candidates | map(.status) | unique) == ["next"] and (.candidates[0] | has("due") | not) and (.candidates[0] | has("kind") | not)' >/dev/null && ok "dry-run: candidates are status next, without kind or due date" || bad "candidates: $(echo "$dry" | jq -c .candidates)"
 ! echo "$dry" | grep -q "$LKEY" && ! grep -q "$LKEY" <(B task sync --source linear --dry-run 2>&1) && ok "dry-run output holds no key" || bad "key in the dry-run output"
-out=$(B task sync --source linear -n); echo "$out" | grep -q "^dry run: nothing is written" && echo "$out" | grep -q "^linear: 3 would create" && echo "$out" | grep -q "would skip (1 not in triage)" && echo "$out" | grep -q "^create  linear  \[next\]" && ok "dry-run text: counts per source, the skip reason, the candidates" || bad "dry text: $out"
+out=$(B task sync --source linear -n); echo "$out" | grep -q "^dry run: nothing is written" && echo "$out" | grep -q "^linear: 3 would create" && echo "$out" | grep -q "would skip (1 not triage)" && echo "$out" | grep -q "^create  linear  \[next\]" && ok "dry-run text: counts per source, the skip reason, the candidates" || bad "dry text: $out"
 real=$(B task sync --source linear --json)
 echo "$real" | jq -e --argjson d "$dry" '.created == $d.totals.would_create and .updated == $d.totals.would_update and .done == $d.totals.would_close' >/dev/null && [ "$(ls "$D" | wc -l)" -eq "$(echo "$dry" | jq .totals.would_create)" ] && ok "the real sync then does what the dry run said" || bad "real vs dry: $real"
 dry2=$(B task sync --source linear --dry-run --json); echo "$dry2" | jq -e '.totals.would_create == 0 and .totals.would_update == 0 and .totals.would_close == 0 and .by_source.linear.unchanged == 3' >/dev/null && ok "after the sync: nothing to create, update or close" || bad "dry after sync: $dry2"

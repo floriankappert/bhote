@@ -13,7 +13,7 @@ One adapter per source: list() -> normalized tasks, fetch(ref), open(url), optio
     {source, source_ref, source_url, title, description, status, state}
 (status is bhote's vocabulary: now next waiting review later done; state is the name in the outside system).
 
-Linear mirrors ONLY the issues in triage (workflow state of type `triage`) of the teams in LINEAR_TEAMS (all teams the key sees when unset), assigned or not.
+Linear mirrors ONLY the issues in triage (workflow state of type `triage`) that are assigned to nobody (kind `triage`, to decide), plus the open issues assigned to you (kind `mine`), of the teams in LINEAR_TEAMS (all teams the key sees when unset).
 Each is status next. An issue that leaves triage drops out of the list; the caller then marks its task done.
 
 Secrets: the key comes from the secret store through secretstore.read_value (an internal call: `bhote secret get --reveal` is refused in Claude
@@ -198,29 +198,42 @@ class Linear:
         if not isinstance(data, dict): raise Fail("Linear: no data in the answer")
         return data
 
-    def norm(self, i):
+    def norm(self, i, kind="triage"):
         st = i.get("state") or {}
-        return {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300),
-                "title": clean(i.get("title")), "description": short(i.get("description")), "status": "next", "state": clean(st.get("name"), 60)}
+        status = "next"
+        if kind == "mine":      # the workflow state decides: started is now (a review state: review), backlog is later, the rest next
+            status = "review" if "review" in (st.get("name") or "").lower() else {"started": "now", "backlog": "later"}.get(st.get("type"), "next")
+        return {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300), "kind": kind,
+                "title": clean(i.get("title")), "description": short(i.get("description")), "status": status, "state": clean(st.get("name"), 60)}
 
-    def list(self):
-        teams = [x.strip().upper() for x in cfg("LINEAR_TEAMS").split(",") if x.strip()]
-        flt = '{state: {type: {eq: "triage"}}' + (', team: {key: {in: [%s]}}' % ", ".join(json.dumps(t) for t in teams) if teams else "") + "}"
-        q = ("query($after: String) { issues(first: 100, after: $after, filter: %s) { nodes { identifier title description url state { name type } team { key } } "
+    def pages(self, flt, tag, kind, keep):
+        q = ("query($after: String) { issues(first: 100, after: $after, filter: %s) { nodes { identifier title description url state { name type } assignee { isMe } team { key } } "
              "pageInfo { hasNextPage endCursor } } }" % flt)
         out, after = [], None
         for page in range(10):
-            d = self.gql(q, {"after": after}, cache=f"linear triage {','.join(teams)} p{page} {after or ''}")
+            d = self.gql(q, {"after": after}, cache=f"linear {tag} p{page} {after or ''}")
             a = d["issues"]
             for i in a["nodes"]:
-                if (i.get("state") or {}).get("type") != "triage" or (teams and (i.get("team") or {}).get("key", "").upper() not in teams):
-                    FILTERED.append({"source": "linear", "reason": "not in triage"}); continue
-                out.append(self.norm(i))
+                if not keep(i):
+                    FILTERED.append({"source": "linear", "reason": "not " + kind}); continue
+                out.append(self.norm(i, kind))
             if not a["pageInfo"]["hasNextPage"]: break
             after = a["pageInfo"]["endCursor"]
             if not after: raise Fail("Linear: a next page without a cursor")
         else:
-            raise Fail("Linear: more than 1000 issues in triage")
+            raise Fail("Linear: more than 1000 issues (%s)" % tag)
+        return out
+
+    def list(self):
+        teams = [x.strip().upper() for x in cfg("LINEAR_TEAMS").split(",") if x.strip()]
+        tm = (', team: {key: {in: [%s]}}' % ", ".join(json.dumps(t) for t in teams)) if teams else ""
+        inteam = lambda i: not teams or (i.get("team") or {}).get("key", "").upper() in teams
+        # to decide: in triage and assigned to nobody
+        out = self.pages('{state: {type: {eq: "triage"}}, assignee: {null: true}' + tm + "}", f"triage {','.join(teams)}", "triage",
+                         lambda i: (i.get("state") or {}).get("type") == "triage" and not i.get("assignee") and inteam(i))
+        # the others: open and assigned to you (its own filter in the panel)
+        out += self.pages('{assignee: {isMe: {eq: true}}, state: {type: {in: ["backlog", "unstarted", "started"]}}' + tm + "}", f"mine {','.join(teams)}", "mine",
+                          lambda i: (i.get("state") or {}).get("type") in ("backlog", "unstarted", "started") and (i.get("assignee") or {}).get("isMe") and inteam(i))
         return out
 
     def fetch(self, ref):
@@ -243,6 +256,27 @@ class Linear:
         m = "mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }"
         d = self.gql(m, {"id": i["id"], "s": pick["id"]})
         if not d["issueUpdate"]["success"]: raise Fail("Linear refused the change")
+
+    PRIO = {"none": 0, "urgent": 1, "high": 2, "medium": 3, "low": 4}
+
+    def triage(self, ref, action, priority=""):
+        """Accept (optionally with a priority) moves the issue out of triage into the default state of its team; decline moves it to the team's canceled state."""
+        if action not in ("accept", "decline"): raise Fail("triage: accept or decline")
+        if priority and priority not in self.PRIO: raise Fail("priority: urgent, high, medium, low or none")
+        q = "query($id: String!) { issue(id: $id) { id state { type } team { defaultIssueState { id } states { nodes { id name type position } } } } }"
+        i = self.gql(q, {"id": ref}).get("issue")
+        if not i: raise NotChangeable("the issue is gone")
+        if (i.get("state") or {}).get("type") != "triage": raise NotChangeable("not in triage any more")
+        nodes = sorted(i["team"]["states"]["nodes"], key=lambda s: s.get("position", 0))
+        if action == "accept":
+            pick = (i["team"].get("defaultIssueState") or {}).get("id") or next((s["id"] for s in nodes if s["type"] in ("backlog", "unstarted")), None)
+        else:
+            pick = next((s["id"] for s in nodes if s["type"] == "canceled" and s["name"].lower() in ("canceled", "cancelled")), None) or next((s["id"] for s in nodes if s["type"] == "canceled"), None)
+        if not pick: raise NotChangeable("the team has no state for this")
+        inp = {"stateId": pick}
+        if action == "accept" and priority: inp["priority"] = self.PRIO[priority]
+        m = "mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }"
+        if not self.gql(m, {"id": i["id"], "in": inp})["issueUpdate"]["success"]: raise Fail("Linear refused the change")
 
 
 class Skip(Exception):
@@ -275,7 +309,7 @@ def main(argv):
     if not argv: print(__doc__); return 2
     cmd, rest = argv[0], argv[1:]
     global DRY
-    opts = {"--source": "", "--kind": "", "--id": ""}; pos = []   # (--kind is read and ignored: older callers pass it)
+    opts = {"--source": "", "--kind": "", "--id": "", "--priority": ""}; pos = []   # (--kind is read and ignored: older callers pass it)
     i = 0
     while i < len(rest):
         if rest[i] == "--dry-run": DRY = True; i += 1
@@ -288,6 +322,8 @@ def main(argv):
             print(json.dumps(ADAPTERS[opts["--source"]]().fetch(pos[0]))); return 0
         if cmd == "set-status":
             ADAPTERS[opts["--source"]]().set_status(pos[0], pos[1], opts["--id"]); print(json.dumps({"ok": True})); return 0
+        if cmd == "triage":      # triage <ref> accept|decline [--priority p]
+            ADAPTERS[opts["--source"] or "linear"]().triage(pos[0], pos[1], opts["--priority"]); print(json.dumps({"ok": True})); return 0
         if cmd == "open":
             if pos and re.match(r"^https?://", pos[0]): print(pos[0]); return 0
             return 1

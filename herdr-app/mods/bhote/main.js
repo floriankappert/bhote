@@ -56,6 +56,10 @@ function parseTopics(text) {
 // The sources of a task. One without a `source` line (made before sources existed) gets its source from what it is, without touching its file:
 // what an agent made (a waiting task of an agent, an automatic review card or a card made for an agent) is agent, the rest manual.
 const SOURCES = ["agent", "stash", "linear", "manual"];
+// The filter values: Linear has two: the issues in triage (to decide: the default view, the overview) and the open ones assigned to you (only in their own filter).
+const SRC_FILTERS = ["agent", "stash", "linear", "linear-mine", "manual"];
+const isMine = (x) => x.source === "linear" && x.sourceKind === "mine";
+const srcKey = (x) => (isMine(x) ? "linear-mine" : x.source);
 function sourceOf(v) {
   let source = SOURCES.includes(v.source) ? v.source : "";
   const legacy = !source && /^[a-z][a-z0-9_-]{0,15}$/.test(v.source || "") ? v.source : "";   // a source that no longer exists (ims): shown as plain text, never an error
@@ -63,7 +67,7 @@ function sourceOf(v) {
   return { source: source || legacy, ref: v.source_ref || "", url: /^https?:\/\//.test(v.source_url || "") ? v.source_url : "", kind: v.source_kind || "", parent: v.source_parent || "" };
 }
 // The chip text of a source: its name (a legacy value is shown as it is).
-function sourceLabel(x) { return x.source; }
+function sourceLabel(x) { return isMine(x) ? "linear · mine" : x.source; }
 
 // The deployments of the last days are kept on disk (the CI answers only with its latest runs, and deploys.list is gone with the next restart).
 const DEPLOY_HISTORY_DAYS = 14, DEPLOY_HISTORY_MAX = 400;
@@ -575,6 +579,7 @@ export default class Bhote extends View {
     this.startedAt = Date.now();  // (what is there in the first seconds is not "new")
     this.entered = {};            // by list: { seen, at } what has been seen and when something new came in (enterBegin, enterWrap)
     this.animUntil = 0;           // a card or row is coming in until then: the view looks again every 70 ms
+    this.agentDirty = {};         // by agent address: how many files have uncommitted changes in the folder its program works in
     this.agentHead = {};          // by agent address: the commit its work stands on (to find the pull request of a branch pushed under another name)
     this.agentDir = {};           // by agent address: { dir, at } where its program works
     this.jobLogSel = null;        // the headless agent whose log is open above the bar: { pk, job }
@@ -586,6 +591,7 @@ export default class Bhote extends View {
     this.finMin = 30;             // FINISHED_MINUTES: how long an agent counts as recently finished (0: until it works again)
     this.prevSt = {};             // an agent's address: its status at the last look
     this.topics = [];
+    this.mine = [];
     this.tests = [];
     this.localTests = [];
     this.remoteTests = {};   // by machine: the test runs its bhote collector lists (a run on Omarchy is not in this computer's list)
@@ -738,7 +744,9 @@ export default class Bhote extends View {
         const r = await exec("sh", ["-c", script], { timeout: 15000 });
         const [topics, rest = ""] = r.stdout.split("\x1fT\n");
         const [tests = "", deploys = ""] = rest.split("\x1fD\n");
-        this.topics = parseTopics(topics);
+        const parsed = parseTopics(topics);
+        this.topics = parsed.filter((x) => !isMine(x));   // (the overview and every count: Linear only with its triage)
+        this.mine = parsed.filter(isMine);
         this.prunePending();
         this.runQueue();
         this.localTests = parseMonitor(tests);
@@ -750,7 +758,9 @@ export default class Bhote extends View {
         // an agent of this computer in a space without a record gets one (the daemon only knows the agents of the classic herdr): then it has its name
         try {
           const have = new Set((agents() ?? []).map((a) => a.space));
-          const need = spaces().filter((s) => (s.machine ?? null) === null && have.has(s.id) && s.name && !this.ringMap.has(`${this.hostLabel}/${s.name}`.toLowerCase().replace(/[^a-z0-9]/g, "")) && !(this.ringAsked ??= new Set()).has(s.name)).map((s) => s.name);
+          const labelOf = (s) => ((s.machine ?? null) === null ? this.hostLabel : this.machineLabel(s.machine));   // (spaces of another machine too: "Omarchy|homeassistant")
+          const need = spaces().filter((s) => have.has(s.id) && s.name && !this.ringMap.has(`${labelOf(s)}/${s.name}`.toLowerCase().replace(/[^a-z0-9]/g, "")) && !(this.ringAsked ??= new Set()).has((s.machine ?? null) === null ? s.name : `${labelOf(s)}|${s.name}`))
+            .map((s) => ((s.machine ?? null) === null ? s.name : `${labelOf(s)}|${s.name}`));
           if (need.length) { need.forEach((n) => this.ringAsked.add(n)); exec("bhote", ["__act", "agentnum", ...need], { timeout: 30000 }).catch(() => need.forEach((n) => this.ringAsked.delete(n))); }
         } catch (_e) { /* the next load asks again */ }
         this.observeRows(this.tests, "t");
@@ -1057,7 +1067,7 @@ export default class Bhote extends View {
 
   // Title and description through the CLI (rename, desc), then the lists reload.
   saveEdit(cx) {
-    const x = this.topics.find((y) => y.id === this.showId());
+    const x = this.allTopics().find((y) => y.id === this.showId());
     if (!x) return;
     const title = this.titleIn.value().trim();
     const desc = this.descIn.value().trim().slice(0, 140);
@@ -1078,7 +1088,7 @@ export default class Bhote extends View {
     const t = theme();
     const id = this.showId();
     if (id !== this.shownId) { this.shownId = id; this.editing = false; this.confirmDelete = false; }
-    const x = this.topics.find((y) => y.id === id);
+    const x = this.allTopics().find((y) => y.id === id);
     const bar = h_flex().flex_none().px(8).pt(8).pb(6).gap(8).items_center().border_b(1).border_color(t.border)
       .child(div().id("show-back").w(30).h(28).flex_none().flex().items_center().justify_center().rounded(6).text_size(15).cursor_pointer()
         .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground)
@@ -1269,15 +1279,30 @@ export default class Bhote extends View {
     });
   }
 
+  // Linear issues in triage: accept (with a priority) or decline. They are decided in Linear; the task is done here.
+  triageItems(ids) {
+    const n = `${ids.length} issue${ids.length === 1 ? "" : "s"}`;
+    return [
+      { type: "bask", label: "Accept…", items: [{ type: "head", label: `Accept ${n}: priority` },
+        ...[["urgent", "Urgent"], ["high", "High"], ["medium", "Medium"], ["low", "Low"], ["none", "No priority"]].map(([p, l]) => ({ type: "btriage", ids, action: "accept", priority: p, label: l })),
+        { type: "noop", label: "Cancel" }] },
+      { type: "bask", label: "Decline…", danger: true, items: [{ type: "head", label: `Decline ${n} in Linear?` }, { type: "btriage", ids, action: "decline", label: "Yes, decline", danger: true }, { type: "noop", label: "Cancel" }] },
+    ];
+  }
+
   // The actions on everything ticked, as menu items.
   batchItems(kind, allKeys) {
     const s = this.sel();
     const common = [{ type: "bsel", kind, op: "all", keys: allKeys, label: "Select all" }, { type: "bsel", kind, op: "none", label: "Clear selection" }];
     if (kind === "topics") {
       const ids = [...s.topics];
+      const picked = this.allTopics().filter((x) => s.topics.has(x.id)), lin = picked.filter((x) => x.source === "linear"), allLin = lin.length > 0 && lin.length === picked.length;
+      const lids = lin.map((x) => x.id), urls = lin.filter((x) => x.sourceUrl).map((x) => x.sourceUrl);
       return [{ type: "head", label: `${ids.length} task${ids.length === 1 ? "" : "s"} selected` },
-        ...["now", "review", "next", "later", "done"].map((k) => ({ type: "bstatus", ids, status: k, label: `Move to ${k[0].toUpperCase()}${k.slice(1)}` })),
-        { type: "bask", label: "Delete…", danger: true, items: [{ type: "head", label: `Delete ${ids.length} task${ids.length === 1 ? "" : "s"}?` }, { type: "bdelete", ids, label: "Yes, delete", danger: true }, { type: "noop", label: "Cancel" }] },
+        ...(allLin ? [{ type: "burls", urls, label: urls.length > 1 ? `Open ${urls.length} in Linear` : "Open in Linear" }, ...(lin.some(isMine) ? [] : this.triageItems(lids))] : []),
+        ...["now", "review", "next", "later", "done"].filter((k) => !(allLin && k === "done")).map((k) => ({ type: "bstatus", ids, status: k, label: `Move to ${k[0].toUpperCase()}${k.slice(1)}` })),
+        ...(allLin ? [{ type: "btriage", ids: lids, action: "done", label: "Mark done in Linear" }] : []),
+        ...(lin.length ? [] : [{ type: "bask", label: "Delete…", danger: true, items: [{ type: "head", label: `Delete ${ids.length} task${ids.length === 1 ? "" : "s"}?` }, { type: "bdelete", ids, label: "Yes, delete", danger: true }, { type: "noop", label: "Cancel" }] }]),
         { type: "head", label: "Selection" }, ...common];
     }
     const keys = [...s.tests];
@@ -1447,6 +1472,7 @@ export default class Bhote extends View {
     const q = this.queueOf(x.id);
     return [{ type: "show", id: x.id, label: "Show task" }, ...(q ? [{ type: "unqueue", id: x.id, label: `Cancel the queue on ${q.name}` }] : []),
       ...(x.sourceUrl ? [{ type: "url", url: x.sourceUrl, label: `Open in ${x.source === "linear" ? "Linear" : x.source}${x.sourceRef ? ` (${x.sourceRef})` : ""}` }] : []),
+      ...(x.source === "linear" && x.group !== "done" ? [...(isMine(x) ? [] : this.triageItems([x.id])), { type: "btriage", ids: [x.id], action: "done", label: "Mark done in Linear" }] : []),
       ...this.statusItems(x), ...this.startItems(x)];
   }
 
@@ -1563,6 +1589,12 @@ export default class Bhote extends View {
     }
     else if (it.type === "newspace") run("space.new", { machine: it.machine, ...(it.name ? { name: it.name } : {}), ...(it.folder ? { folder: it.folder } : {}) });
     else if (it.type === "bstatus") { this.markPending(it.ids, { status: it.status }); for (const id of it.ids) exec("bhote", [it.status, id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
+    else if (it.type === "burls") { for (const u of it.urls) exec("open", [u]).catch(() => {}); }
+    else if (it.type === "btriage") {
+      this.markPending(it.ids, { status: "done" });
+      for (const id of it.ids) exec("bhote", ["task", "triage", id, it.action, ...(it.priority && it.priority !== "none" ? ["--priority", it.priority] : [])], { timeout: 90000 }).catch(() => {});
+      this.setSel([], this.sel().tests);
+    }
     else if (it.type === "bdelete") { this.markPending(it.ids, { deleted: true }); for (const id of it.ids) exec("bhote", ["rm", id], { timeout: 90000 }).catch(() => {}); this.setSel([], this.sel().tests); }
     else if (it.type === "bhide") {
       const h = shared("bhote.hidden") ?? { archived: [], discarded: [] };
@@ -1692,6 +1724,8 @@ export default class Bhote extends View {
         .child(h_flex().gap(8).items_center()
           .child(this.agentIcon(t, agent, active, tone, st.word))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
+          .when(!!agent && (o.dirty ?? 0) > 0, (el) => el.child(h_flex().flex_none().gap(2).items_center().text_color(t.ansi3)
+            .child(svg("mods/bhote/git-dirty.svg").size(13).flex_none().text_color(t.ansi3)).child(div().text_size(10.5).font_semibold().child(`${o.dirty}`))))   // (x uncommitted changes in its folder)
           .when(!!agent && !!o.listen?.key, (el) => el.child(this.ibtn(t, `ear-${id}`, o.listen.on ? "ear" : "ear-off", (cx) => o.onListen(cx),
             { w: 22, size: 14, color: o.listen.on ? (active ? t.muted : t.dim) : t.ansi3, hover: o.listen.on ? t.foreground : t.ansi3 })))
           .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(div().flex_none().px(5).h(15).flex().items_center().rounded(8).text_size(10).font_semibold().text_color(t.ansi3)
@@ -2880,6 +2914,8 @@ export default class Bhote extends View {
           const r = await this.srvExec(machine, "git", ["-C", d.dir, "rev-parse", "HEAD"], 10000);
           const sha = r.stdout.trim();
           if (sha && this.agentHead[a.address] !== sha) { this.agentHead[a.address] = sha; changed = true; }
+          const n = (await this.srvExec(machine, "git", ["-C", d.dir, "status", "--porcelain"], 10000)).stdout.split("\n").filter(Boolean).length;
+          if ((this.agentDirty[a.address] ?? 0) !== n) { this.agentDirty[a.address] = n; changed = true; }
         } catch (_e) { /* not a repository: no commit */ }
       }));
       this.headsLoading = false;
@@ -3149,7 +3185,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)) }), 84));
+          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0 }), 84));
         }
       }
       if (ins === ids.length) rows.push(dropLine());   // (to the end of the section)
@@ -3409,8 +3445,10 @@ export default class Bhote extends View {
   }
 
   // The filter by source of the Tasks section: "" = all.
-  srcFilter() { try { const v = shared("bhote.srcFilter"); return SOURCES.includes(v) ? v : ""; } catch (_e) { return ""; } }
-  srcOk(x) { const f = this.srcFilter(); return !f || x.source === f; }
+  srcFilter() { try { const v = shared("bhote.srcFilter"); return SRC_FILTERS.includes(v) ? v : ""; } catch (_e) { return ""; } }
+  srcOk(x) { const f = this.srcFilter(); return !f || srcKey(x) === f; }
+  allTopics() { return [...this.topics, ...this.mine]; }
+  taskPool() { return this.srcFilter() === "linear-mine" ? this.mine : this.topics; }   // what the Tasks tab lists
 
   line(t, x, cx, sub) {
     const st = this.plainState(t, x);
@@ -4777,12 +4815,12 @@ export default class Bhote extends View {
   // The Tasks section's head (in the Tasks tab): its caption on a divider with "select all" as a link, with a pick the Actions button, the total count at the
   // right end, the plus that adds a task and (on the overview) the button that folds the tiles above.
   topicsHead(t) {
-    const g = (k) => this.topics.filter((x) => x.group === k && !x.dismissed && this.srcOk(x)).length;
+    const g = (k) => this.taskPool().filter((x) => x.group === k && !x.dismissed && this.srcOk(x)).length;
     const open = ["review", "now", "testing", "deploying", "finished", "next", "waiting", "later"].reduce((a, k) => a + g(k), 0);
     const plus = div().id("add-topic").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer()
       .text_color(this.adding ? t.accent : t.dim).bg(this.adding ? t.selected : t.chrome).hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_click(this.guard((_e, cx) => { this.adding = !this.adding; if (this.adding) this.addIn.focus(); cx.notify(); })).child("＋");
-    const keys = this.topics.filter((x) => x.group !== "done" && !x.dismissed && this.srcOk(x)).map((x) => x.id);
+    const keys = this.taskPool().filter((x) => x.group !== "done" && !x.dismissed && this.srcOk(x)).map((x) => x.id);
     const sel = this.sel();
     // the filter by source: a small link in the head (a menu of the sources, with how many tasks each has)
     const cur = this.srcFilter();
@@ -4790,8 +4828,8 @@ export default class Bhote extends View {
       .hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
       .on_click(this.guard(() => this.openMenu([{ type: "head", label: "Show tasks from" },
-        ...["", ...SOURCES].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v || "all sources"} (${this.topics.filter((x) => x.group !== "done" && !x.dismissed && (!v || x.source === v)).length})` }))], this.anchor)))
-      .child(cur ? `source: ${cur}` : "all sources");
+        ...["", ...SRC_FILTERS].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v === "linear" ? "linear (triage)" : v === "linear-mine" ? "linear (assigned to me)" : v || "all sources"} (${this.allTopics().filter((x) => x.group !== "done" && !x.dismissed && (v ? srcKey(x) === v : !isMine(x))).length})` }))], this.anchor)))
+      .child(cur ? `source: ${cur === "linear-mine" ? "linear (mine)" : cur}` : "all sources");
     const picked = keys.filter((k) => sel.topics.has(k)).length;
     // "Tasks (select all)": the words in brackets are a link (with something picked: "clear")
     const link = div().id("topics-select-all").cursor_pointer().text_size(10.5).text_color(t.dim).hover((e) => e.text_color(t.foreground))
@@ -5093,10 +5131,11 @@ export default class Bhote extends View {
     const t = theme();
     const rows = [];
     if (this.error) rows.push(div().p(10).text_color(t.blocked).child(`bhote: ${this.error}`));
-    this.enterBegin("topics", this.topics.filter((x) => !x.dismissed).map((x) => x.id));
+    this.enterBegin("topics", this.taskPool().filter((x) => !x.dismissed).map((x) => x.id));
     // the tasks by status, in the order of the work; no agent is shown (a task meets one when it is started on it)
-    const of = (g) => this.topics.filter((x) => x.group === g && !x.dismissed && this.srcOk(x));
-    const sections = [["review", "Review"], ["now", "Now"], ["testing", "Testing"], ["deploying", "Waiting for deployment"], ["finished", "Finished"],
+    const isTri = (x) => x.source === "linear" && !isMine(x) && x.group === "next";   // Linear issues in triage: their own subsection, to decide
+    const of = (g) => this.taskPool().filter((x) => (g === "triage" ? isTri(x) : x.group === g && !(g === "next" && isTri(x))) && !x.dismissed && this.srcOk(x));
+    const sections = [["triage", "Triage"], ["review", "Review"], ["now", "Now"], ["testing", "Testing"], ["deploying", "Waiting for deployment"], ["finished", "Finished"],
       ["next", "Next"], ["waiting", "Waiting"], ["later", "Later"]].map(([k, label]) => [k, label, of(k)]);
     let shutMap = {};
     try { shutMap = shared("bhote.topicShut") ?? {}; } catch (_e) { shutMap = {}; }

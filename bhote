@@ -3878,11 +3878,11 @@ agent_code_set() {  # agent_code_set <var> <machine> <agent name>: MAC4 (the mac
     machine_code_set _c "$2" || _c=""; agentnum_set _n "$2" "$3"; printf -v "$1" '%s' "${_c:+$_c$_n}"
 }
 agentnum_assign() {  # this machine's agents without a number get the next free one (the collector calls it after collecting)
-    local m id st name task max=0 i s1 s2 f now; AN_AT=-999; agentnum_load; now=$(date +%s)
-    for (( i = 0; i < AN_N; i++ )); do case "${AN_KEY[$i]}" in "$HOST/"*) [ "${AN_NUM[$i]}" -gt "$max" ] && max=${AN_NUM[$i]} ;; esac; done
+    local m id st name task max=0 i s1 s2 f now host=${AN_HOST:-$HOST}; AN_AT=-999; agentnum_load; now=$(date +%s)   # (AN_HOST: the names of another machine's spaces, asked by the panel)
+    for (( i = 0; i < AN_N; i++ )); do case "${AN_KEY[$i]}" in "$host/"*) [ "${AN_NUM[$i]}" -gt "$max" ] && max=${AN_NUM[$i]} ;; esac; done
     [ -r "$AGENT_LOCAL" ] || return 0
     while IFS=$US read -r m id st name task; do
-        [ "$m" = "$HOST" ] && [ -n "$name" ] || continue; name=${name//[[:cntrl:]]/}
+        [ "$m" = "$host" ] && [ -n "$name" ] || continue; name=${name//[[:cntrl:]]/}
         agentnum_set s1 "$m" "$name" && continue
         s1=${m//[^A-Za-z0-9]/_}; s2=${name//[^A-Za-z0-9]/_}; f="$TOPIC_DIR/an-${s1:0:20}-${s2:0:60}.topic"
         [ -e "$f" ] && continue                                 # (another name with the same letters has it: no number rather than a wrong one)
@@ -6671,10 +6671,14 @@ act_slack() {                                                                   
     printf '%s' "$FLASH_MSG"
 }
 act_clamp() { panel_width_clamp "$@"; }                                                         # (the width of the panel pane is kept between the two settings)
-act_agentnum() {  # <space name> ...: the agents of the herdr-app (its spaces, not in agents.local) get their number, so their name from Middle-earth, too
-    local tmp n; tmp=$(mktemp) || return 1
-    for n in "$@"; do printf '%s\037\037\037%s\037\n' "$HOST" "$n"; done > "$tmp"
-    AGENT_LOCAL=$tmp; agentnum_assign; rm -f "$tmp"
+act_agentnum() {  # <space name | machine|space name> ...: the agents of the herdr-app (its spaces, not in agents.local) get their number, so their name from Middle-earth, too;
+    local tmp n m ms=" "                                                                     # "Omarchy|homeassistant": a space of another machine (its label), numbered here, the record replicates
+    tmp=$(mktemp) || return 1
+    for n in "$@"; do case "$n" in *"|"*) m=${n%%|*} ;; *) m=$HOST ;; esac; case "$ms" in *" $m "*) ;; *) ms="$ms$m " ;; esac; done
+    for m in $ms; do
+        for n in "$@"; do case "$n" in *"|"*) [ "${n%%|*}" = "$m" ] && printf '%s\037\037\037%s\037\n' "$m" "${n#*|}" ;; *) [ "$m" = "$HOST" ] && printf '%s\037\037\037%s\037\n' "$HOST" "$n" ;; esac; done > "$tmp"
+        AGENT_LOCAL=$tmp AN_HOST=$m agentnum_assign
+    done; rm -f "$tmp"
 }
 act_flash() { ui_load; agent_jump "$1" "$2" >/dev/null 2>&1; printf '%s' "$FLASH_MSG"; sleep 0.3; }   # <machine> <pane>: the note a jump to another machine leaves   # the collector looks at once instead of after its interval
 is_agent() {  # the caller is a coding agent: Claude Code says so (CLAUDECODE), or herdr reports an agent in HERDR_PANE_ID
@@ -7265,12 +7269,12 @@ tasks_py() {
 }
 task_srcname() { case "$1" in linear) printf Linear ;; *) printf '%s' "$1" ;; esac; }
 task_mirror_new() {  # task_mirror_new <source> <ref> <url> <title> <desc> <status> <source id> <raw status>: a mirrored task, in its deterministic id (two machines make the same file)
-    local src=$1 ref=$2 id now f wf="" since=""; now=$(date +%s)
+    local src=$1 ref=$2 id now f wf="" since="" kind=${9:-triage}; now=$(date +%s)
     id=$(printf '%s-%s' "$src" "$ref" | LC_ALL=C tr -c 'A-Za-z0-9_-' _); f=$(tfile "$id"); [ -e "$f" ] && return 1
     mkdir -p "$TOPIC_DIR"
     [ "$6" = waiting ] && { wf=$(task_srcname "$src"); since=$now; }
-    printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\nsource=%s\nsource_ref=%s\nsource_url=%s\nsource_id=%s\nsource_status=%s\nsource_status_raw=%s\n' \
-        "$id" "${4:0:500}" "$6" "$wf" "$since" "$now" "$now" "${5:0:$DESC_MAX}" "$src" "$ref" "$3" "${7:-}" "$6" "${8:-}" > "$f" || return 1
+    printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\nsource=%s\nsource_ref=%s\nsource_url=%s\nsource_id=%s\nsource_status=%s\nsource_status_raw=%s\nsource_kind=%s\n' \
+        "$id" "${4:0:500}" "$6" "$wf" "$since" "$now" "$now" "${5:0:$DESC_MAX}" "$src" "$ref" "$3" "${7:-}" "$6" "${8:-}" "$kind" > "$f" || return 1
     : > "$STORE_DIRTY"; rmf "$SHARED_DIR/topics.idx"; printf '%s' "$f"
 }
 task_status_set() {  # task_status_set <file> <status>: as the outside system says (a wait names the system)
@@ -7287,7 +7291,7 @@ task_sync_dry() {  # task_sync_dry <source> <list output>: what `task sync` woul
     errs=$(printf '%s' "$out" | jq -c '[.errors | to_entries[] | "\(.key): \(.value)"]' | tr -d '\000-\011\013-\037' | cut -c1-2000)
     skips=$(printf '%s' "$out" | jq -c '[.skipped | to_entries[] | "\(.key): \(.value)"]' | tr -d '\000-\011\013-\037' | cut -c1-2000)
     local seen=$'\n' nl=$'\n'
-    while IFS=$US read -r s ref url title desc st sid raw; do
+    while IFS=$US read -r s ref url title desc st sid raw _k; do
         [ -n "$s" ] && [ -n "$ref" ] || continue
         seen="$seen$s $ref"$'\n'; act=""; why=""
         if ! f=$(task_find "$s" "$ref"); then act=create
@@ -7303,7 +7307,7 @@ task_sync_dry() {  # task_sync_dry <source> <list output>: what `task sync` woul
             fi
         fi
         rows="$rows$act$US$s$US$why$US${title:0:80}$US$st$nl"
-    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // "")] | join("\u001f")')
+    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // ""), (.kind // "triage")] | join("\u001f")')
     local -a mf=(); topic_files_set mf                                   # a mirrored task whose item is gone from the list would be closed
     for f in ${mf[@]+"${mf[@]}"}; do
         s=$(topic_get "$f" source); case "$s" in linear) ;; *) continue ;; esac
@@ -7361,12 +7365,12 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
     local okset; okset=$(printf '%s' "$out" | jq -r '.ok[]' | tr '\n' ' ')
     while IFS= read -r line; do [ -n "$line" ] && errs[${#errs[@]}]=$line; done < <(printf '%s' "$out" | jq -r '.errors | to_entries[] | "\(.key): \(.value)"' | tr -d '\000-\011\013-\037' | cut -c1-200)
     while IFS= read -r line; do [ -n "$line" ] && skips[${#skips[@]}]=$line; done < <(printf '%s' "$out" | jq -r '.skipped | to_entries[] | "\(.key): \(.value)"' | tr -d '\000-\011\013-\037' | cut -c1-200)
-    local seen=$'\n' s ref url title desc st sid raw f ext last loc
-    while IFS=$US read -r s ref url title desc st sid raw; do
+    local seen=$'\n' s ref url title desc st sid raw kind f ext last loc
+    while IFS=$US read -r s ref url title desc st sid raw kind; do
         [ -n "$s" ] && [ -n "$ref" ] || continue
         seen="$seen$s $ref"$'\n'
         if ! f=$(task_find "$s" "$ref"); then
-            task_mirror_new "$s" "$ref" "$url" "$title" "$desc" "$st" "$sid" "$raw" >/dev/null && n_new=$(( n_new + 1 )); continue
+            task_mirror_new "$s" "$ref" "$url" "$title" "$desc" "$st" "$sid" "$raw" "$kind" >/dev/null && n_new=$(( n_new + 1 )); continue
         fi
         if [ "$(topic_get "$f" deleted 0)" = 1 ]; then
             [ "$(topic_get "$f" pruned)" = 1 ] || continue                 # removed by hand here: it does not come back
@@ -7380,6 +7384,7 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
         if [ "$cu" != "$url" ]; then if [ -n "$url" ]; then topic_set "$f" source_url "$url"; else case "$cu" in */api/*) topic_set "$f" source_url "" ;; esac; fi; fi
         [ "$(topic_get "$f" source_status_raw)" = "$raw" ] || [ -z "$raw" ] || topic_set "$f" source_status_raw "$raw"
         [ "$(topic_get "$f" source_id)" = "$sid" ] || [ -z "$sid" ] || topic_set "$f" source_id "$sid"
+        [ -z "$kind" ] || [ "$(topic_get "$f" source_kind)" = "$kind" ] || topic_set "$f" source_kind "$kind"
         if [ "$st" != "$last" ]; then                                      # the outside system moved: it wins
             task_status_set "$f" "$st"; topic_set "$f" source_status "$st"; topic_set "$f" source_note ""; n_upd=$(( n_upd + 1 ))
         elif [ "$loc" != "$st" ] && [ "$write" = on ]; then               # changed here, unchanged there: written back (TASK_WRITE=on only)
@@ -7390,7 +7395,7 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
                 esac ;;
             esac
         fi
-    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // "")] | join("\u001f")')
+    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // ""), (.kind // "triage")] | join("\u001f")')
     # a mirrored task whose item is gone from the open list (done, canceled, reassigned) is marked done here, never deleted (only for a source that answered)
     topic_files_set _mf2; local note
     for f in ${_mf2[@]+"${_mf2[@]}"}; do
@@ -7400,7 +7405,7 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
         [ "$(topic_get "$f" deleted 0)" = 1 ] && continue
         [ "$(topic_get "$f" status)" = done ] && continue
         ref=$(topic_get "$f" source_ref); case "$seen" in *$'\n'"$s $ref"$'\n'*) continue ;; esac
-        note="No longer in triage in $(task_srcname "$s")."                 # (accepted, moved, done, canceled, duplicate or deleted: it left the triage list)
+        if [ "$(topic_get "$f" source_kind triage)" = mine ]; then note="No longer open and assigned to you in $(task_srcname "$s")."; else note="No longer in triage in $(task_srcname "$s")."; fi                 # (accepted, moved, done, canceled, duplicate or deleted: it left the triage list)
         topic_set "$f" status done; topic_set "$f" source_status done; topic_set "$f" description "$note"; n_done=$(( n_done + 1 ))
     done
     rmdir "$lock" 2>/dev/null
@@ -7429,9 +7434,24 @@ task_mirror_changed() {  # task_mirror_changed <file>: why a mirrored task count
     wf=$(topic_get "$f" waiting_for); [ -z "$wf" ] || [ "$wf" = "$(task_srcname "$src")" ] || { printf 'waits for %s' "$wf"; return 0; }
     cr=$(topic_get "$f" created); up=$(topic_get "$f" updated); desc=$(topic_get "$f" description)
     if [ "$cr" != "$up" ]; then       # touched since it was made: by a later sync, or by hand; only a description of the mirrored kind passes
-        case "$desc" in ''|"Jira "*|"No longer open in "*|"No longer in triage in "*|"Canceled in Linear.") ;; *) printf 'changed after it was mirrored (description)'; return 0 ;; esac
+        case "$desc" in ''|"Jira "*|"No longer open in "*|"No longer in triage in "*|"No longer open and assigned to you in "*|"Canceled in Linear.") ;; *) printf 'changed after it was mirrored (description)'; return 0 ;; esac
     fi
     return 1
+}
+cli_task_triage() {  # bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none]: decides a Linear issue in triage (not tied to TASK_WRITE: you asked for it); the task is done here
+    local ref="" act="" prio="" f py s rc
+    while [ $# -gt 0 ]; do case "$1" in --priority|-p) prio=${2:-}; shift ;; accept|decline|done) act=$1 ;; -*) echo "bhote: unknown option '$1' for task triage" >&2; return 1 ;; *) ref=$1 ;; esac; shift; done
+    [ -n "$ref" ] && [ -n "$act" ] || { echo "usage: bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none]" >&2; return 1; }
+    [ "$act" = accept ] || [ -z "$prio" ] || { echo "bhote: a priority goes with accept" >&2; return 1; }
+    f=$(topic_ref "$ref") || return $?; s=$(task_source "$f")
+    [ "$s" = linear ] || { echo "bhote: only Linear tasks can be triaged" >&2; return 1; }
+    [ "$act" = done ] || [ "$(topic_get "$f" source_kind triage)" = triage ] || { echo "bhote: only issues in triage can be accepted or declined" >&2; return 1; }
+    py=$(tasks_py) || { echo "bhote: the task sources (herdr-app/mods/bhote/tasksources.py) are not here" >&2; return 1; }
+    if [ "$act" = done ]; then python3 "$py" set-status --source linear "$(task_source_ref "$f")" done >/dev/null; rc=$?
+    else python3 "$py" triage --source linear "$(task_source_ref "$f")" "$act" ${prio:+--priority "$prio"} >/dev/null; rc=$?; fi
+    case $rc in 0|3) ;; *) echo "bhote: Linear did not take it (exit $rc)" >&2; return 1 ;; esac    # 3: not in triage any more or gone: it is settled there too
+    task_status_set "$f" done; topic_set "$f" source_status done
+    [ $rc = 3 ] && echo "Linear: no longer in triage; marked done here" || echo "$act""ed in Linear${prio:+ (priority $prio)}; marked done here"
 }
 cli_task_prune() {  # bhote task prune --source linear [--dry-run] [--yes] [--json]: deletes the mirrored tasks of a source that were not changed here
     local srcs=" " dry="" yes="" f s n_del=0 n_keep=0 why plan="" lock
@@ -7738,6 +7758,7 @@ bhote — tasks and agents next to herdr.
   bhote rm <ref>                     delete
   bhote sync                         merge with the data location now
   bhote task <command>               the same commands under one name (bhote task add|list|show|now|done ...); bhote topic is the old name and stays
+  bhote task triage <task> accept|decline [--priority urgent|high|medium|low]   decide a Linear issue in triage
   bhote task sync [--source linear]   mirror the Linear issues in triage into tasks (key: bhote secret set LINEAR_API_KEY)
   bhote task prune --source linear [--dry-run] [--yes]   delete the mirrored tasks of a source that you did not change here (the deletion replicates)
   bhote task from-stash <id> [-s now|next|later]   a stash entry becomes a task (source stash) and leaves the stash
@@ -7782,7 +7803,7 @@ bhote_cli() {
     case "$cmd" in task|topic)                                       # bhote task <command>: the commands below (add, list, show, now, ...), and the ones only it has; bhote topic is the old name and stays
         [ "$cmd" = topic ] && [ -t 2 ] && echo "bhote: topics are tasks now: 'bhote task ...' (the old name keeps working)" >&2
         cmd=${1:-list}; [ $# -gt 0 ] && shift
-        case "$cmd" in sync) cmd=tasksync ;; from-stash) cmd=fromstash ;; prune) cmd=taskprune ;; esac ;;
+        case "$cmd" in sync) cmd=tasksync ;; from-stash) cmd=fromstash ;; prune) cmd=taskprune ;; triage) cmd=tasktriage ;; esac ;;
     esac
     AGENT_SEND_SYNC=1                                               # a command waits for herdr and says when a prompt failed
     harden_perms
@@ -7794,6 +7815,7 @@ bhote_cli() {
         env) cli_env "$@" ;;
         tasksync) bhote_info; cli_task_sync "$@" ;;
         taskprune) bhote_info; cli_task_prune "$@" ;;
+        tasktriage) bhote_info; cli_task_triage "$@" ;;
         migrate) bhote_info; cli_migrate "$@" ;;
         fromstash) bhote_info; cli_task_from_stash "$@" ;;
         agents) bhote_info; cli_agents ;;

@@ -84,6 +84,10 @@ Mirrors the Linear issues in triage into tasks (status `next`; one that leaves t
 Exit `1` when a source failed (the others still ran); a source without a key in the secret store is *skipped*, not an error.
 `--dry-run` (`-n`) fetches from Linear and decides exactly as the real sync, but **writes nothing**: no task file, no tombstone, no lock, no API cache entry. It prints, per source, how many tasks it would create, update, close or skip (with the reasons of the skipped ones: `not in triage`, removed here by hand), plus the candidates it would create or update (title cut to 80 characters, status). `--json`: `{"dry_run", "sources", "errors", "skipped", "totals", "by_source": {source: {would_create, would_update, unchanged, would_write_back, would_close, would_skip, skip_reasons}}, "candidates": [{action, source, title, status}]}`. Keys and tokens are never printed.
 
+#### `bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none]`
+
+Decides a mirrored Linear issue in triage: `accept` moves it to the default state of its team (and sets the priority), `decline` to the team's canceled state, `done` to its Done state. The task is marked done here. Works without `TASK_WRITE`.
+
 #### `bhote task prune --source linear [--dry-run] [--yes] [--json]`
 
 Deletes the mirrored tasks of that source that were not changed here (status moved by hand, own fields, an edited description stay; `--dry-run` lists why). Refuses without `--dry-run` or `--yes`. Deletion is `deleted=1` (a tombstone, as `bhote rm`), so it replicates through the store and kharka; the file also gets `pruned=1`, so a later sync can bring a task back whose item qualifies again. `--json`: `{"dry_run", "deleted", "kept"}`. Exit `1` for a missing or unknown `--source`.

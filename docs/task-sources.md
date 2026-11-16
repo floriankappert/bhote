@@ -47,8 +47,8 @@ an error keeps the last answer and backs off as the cache does.
 
 GraphQL at `https://api.linear.app/graphql`, `Authorization: <key>` (a personal key takes no `Bearer`).
 
-**Only issues in triage are mirrored**: issues whose workflow state is of type `triage`, in the teams of `LINEAR_TEAMS` (`ENG,OPS`; empty: every team the key sees), **assigned or not** (triage issues are usually unassigned).
-Nothing else from Linear comes over: no Todo, Backlog, In Progress or In Review, and no due-date or overdue rule.
+**Only issues in triage are mirrored**: issues whose workflow state is of type `triage`, in the teams of `LINEAR_TEAMS` (`ENG,OPS`; empty: every team the key sees), **assigned to nobody** (kind `triage`; you decide them: accept with a priority or decline). Besides these, your open issues assigned to you are mirrored as kind `mine` (started: now, review state: review, backlog: later, else next); the panel shows them only in the source filter *linear (assigned to me)*, never in the overview or *all sources*.
+Nothing else from Linear comes over (no due-date or overdue rule).
 
 | Linear | Task |
 |---|---|
