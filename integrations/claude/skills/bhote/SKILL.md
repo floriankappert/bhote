@@ -1,29 +1,32 @@
 ---
 name: bhote
-description: Keep the user's bhote topics in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no topic was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when the user answers your question or otherwise lets you go on after you handed work back (your topic is in review and you continue: put it back on now), when you finish or hand over a topic you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a topic.
+description: Keep the user's bhote tasks in step with your work. Use it whenever you end a turn that hands work back to the user (a result to check, a decision, a permission or an answer only they can give), even when no task was given; whenever you commit (with any commit skill or command, or plain git); when you reach a point where someone or something else has to act before you can go on (a deployment, a review, infrastructure, an answer), when the user answers your question or otherwise lets you go on after you handed work back (your task is in review and you continue: put it back on now), when you finish or hand over a task you were given, when you are told to hand your work over or the user asks to move work from one agent to another (Steal & Transfer), and when the user asks to pin a Slack channel, DM or thread to a task.
 ---
 
-# bhote: topics next to herdr
+# bhote: tasks next to herdr
 
-`bhote` is the user's list of topics (what is being worked on, who is waited for) in a herdr side panel. You work on
-it through its CLI; every command takes `--json`. A topic you create from your session belongs to you: bhote records
-your session and pane by itself.
+`bhote` is the user's list of tasks (what is being worked on, who is waited for) in a herdr side panel. You work on
+it through its CLI; every command takes `--json`. A task you create from your session belongs to you: bhote records
+your session and pane by itself, and marks its source as `agent` (the reference is your name): do not set `--source` yourself.
+Tasks also come from other sources (`stash`, `linear`, `ims`, `manual`; `bhote list --source <s>`): the ones from Linear and the IMS
+mirror an outside item, whose status is decided there (a change you make stays local unless the user switched `TASK_WRITE` on).
+`bhote task <command>` is the same as `bhote <command>`; `bhote topic ...` is the old name and keeps working.
 
-## First step of every turn: your topic back on `now`
+## First step of every turn: your task back on `now`
 
-A topic under review stays there until someone moves it, and the user does not: they just answer in your session. So when
-you handed work back (your topic is in `review`, or you asked a question) and the user's message lets you continue (an
-answer, a decision, a permission, "go on"), put the topic back on `now` **as the first thing you do in that turn**, before
+A task under review stays there until someone moves it, and the user does not: they just answer in your session. So when
+you handed work back (your task is in `review`, or you asked a question) and the user's message lets you continue (an
+answer, a decision, a permission, "go on"), put the task back on `now` **as the first thing you do in that turn**, before
 you read, think or work on anything:
 
 ```sh
-bhote current --json        # your topic (null: there is none, nothing to move)
+bhote current --json        # your task (null: there is none, nothing to move)
 bhote now <id>              # review → now: the panel shows you as working on it again
 ```
 
-The card's button only takes the user to your session and leaves the topic in `review`: when the user then writes to you,
-this step puts it back on `now`. It is not for a topic the user parked or closed (`bhote now` refuses those, leave them).
-When the answer shows that the topic is finished after all, use `bhote done <id>` instead. Without this step the panel
+The card's button only takes the user to your session and leaves the task in `review`: when the user then writes to you,
+this step puts it back on `now`. It is not for a task the user parked or closed (`bhote now` refuses those, leave them).
+When the answer shows that the task is finished after all, use `bhote done <id>` instead. Without this step the panel
 keeps showing "ready for review" while you are working, and the user cannot tell what is waiting for them.
 
 Without `bhote review`, an agent that stops without a question shows as *Recently finished* (a green card, gone by itself after a while): fine for
@@ -32,7 +35,7 @@ work that needs no look. Use `bhote review` whenever the user has to check, deci
 ## When you have to wait for someone or something
 
 When you cannot go on until someone else acts (a deployment has to finish, a reviewer has to approve, infrastructure has
-to be ready, a person has to answer), do not poll and do not stop silently. Create a waiting topic:
+to be ready, a person has to answer), do not poll and do not stop silently. Create a waiting task:
 
 ```sh
 bhote add "<what is needed, short>" -w "<who or what you wait for>" -d "<what you will check or do then, at most 140 characters>" --json
@@ -46,27 +49,27 @@ bhote add "Review of PR #1412" -w "Alex" -d "then merge and test the release not
 ```
 
 **A deployment of your own change** (you merged, CI deploys, the user has to check it live): do not write "DevOps" as the name, say
-`--deploy`. The topic goes to its own group *Waiting for deployment*, shows the progress of that deployment, and goes to
+`--deploy`. The task goes to its own group *Waiting for deployment*, shows the progress of that deployment, and goes to
 review by itself when it is over (done: check production, failed: look at it):
 
 ```sh
 bhote add "Payments Module live prüfen" --deploy -d "check the payment flow in production" --json     # --deploy=Backend: only that deployment
-bhote wait <id> --deploy                                                                              # on a topic you have already
+bhote wait <id> --deploy                                                                              # on a task you have already
 ```
 
 Keep the returned `id`. Tell the user in one sentence what you wait for, then stop or do other work. When the user marks
-the topic as `now` in bhote, you get a prompt "The wait is over …" with the description: continue from there.
+the task as `now` in bhote, you get a prompt "The wait is over …" with the description: continue from there.
 
-If `bhote add` creates nothing because agents may not create topics here (`AGENT_TOPICS=off`: it prints `null` and says
-so), go on without a topic and do not try again. This holds for every `bhote add` below.
+If `bhote add` creates nothing because agents may not create tasks here (`AGENT_TOPICS=off`: it prints `null` and says
+so), go on without a task and do not try again. This holds for every `bhote add` below.
 
 ## When you hand the work back to the user
 
 Whenever you end a turn and the next step is the user's (check a result, decide, grant a permission, answer a question),
-the work belongs under review, also when nobody gave you a topic. Before you write the final message:
+the work belongs under review, also when nobody gave you a task. Before you write the final message:
 
 ```sh
-bhote current --json                       # your topic, or null
+bhote current --json                       # your task, or null
 bhote add "<the work, short>" -d "<what the user has to check or decide, at most 140 characters>" --json   # only when null
 bhote review <id> --summary "<result, what is open, what only the user can do>" --look
 ```
@@ -109,28 +112,28 @@ message never disagree.
 | An open scope question | Eintrag hängt an drei Datensätzen, Löschen kaskadiert. Offen: ganz löschen oder nur ausblenden? |
 | You need a fact from the user | Ich brauche eine Information von dir: Läuft die Anwendung im Produktivmodus? Davon hängt der Test ab. |
 
-bhote also watches herdr: when you wait for an answer or end your turn with a question and have no topic, a review topic
-"Question from <you>" appears by itself and goes away when you work again. A topic you create yourself, with what the user has to check or decide in the description,
+bhote also watches herdr: when you wait for an answer or end your turn with a question and have no task, a review task
+"Question from <you>" appears by itself and goes away when you work again. A task you create yourself, with what the user has to check or decide in the description,
 is still better: it tells the user what the question is.
 
 When the work is accepted and nothing is left, `bhote done <id>`. Going on after an answer is the next section.
-A topic the user parked (`later`) or closed (`done`) stays that way: `bhote now` refuses it for you. Do not work on it or move it
+A task the user parked (`later`) or closed (`done`) stays that way: `bhote now` refuses it for you. Do not work on it or move it
 again unless the user asks you to; then `bhote take <ref>`.
 Do not use `-w` for the user: waiting is for other people and things.
 
 ## When you commit
 
-Whatever makes the commit (the user's own commit skill or slash command, or plain `git commit`), close the topics it
+Whatever makes the commit (the user's own commit skill or slash command, or plain `git commit`), close the tasks it
 finishes right after it:
 
 ```sh
-bhote list --status review --json      # the topics waiting for the user's check
+bhote list --status review --json      # the tasks waiting for the user's check
 bhote done <id>                        # each one this commit finishes
 ```
 
-A topic belongs to the commit when it is yours (`bhote current`), when its `agent.branch` is the feature branch you committed on (not `main`, which many share),
-or when its title or description names the work the commit contains. Leave a topic whose work the commit only starts
-or does not touch, and topics of other repositories. Say in one line which topics you closed.
+A task belongs to the commit when it is yours (`bhote current`), when its `agent.branch` is the feature branch you committed on (not `main`, which many share),
+or when its title or description names the work the commit contains. Leave a task whose work the commit only starts
+or does not touch, and tasks of other repositories. Say in one line which tasks you closed.
 
 ## When you run tests
 
@@ -144,13 +147,13 @@ bhote test run -n server -- npm run test:server
 
 ## Slack: pin a channel, DM or thread
 
-The user can pin Slack to a topic ("create a topic for X and pin Karen's Slack channel"). bhote then watches it while the
-topic waits: when someone else writes there, the topic goes to review with that message. Someone's "Slack channel" is
-the DM with them (`@Name`). Such a topic usually waits for that person:
+The user can pin Slack to a task ("create a task for X and pin Karen's Slack channel"). bhote then watches it while the
+task waits: when someone else writes there, the task goes to review with that message. Someone's "Slack channel" is
+the DM with them (`@Name`). Such a task usually waits for that person:
 
 ```sh
-bhote add "<title>" -w "Karen" --slack "@Karen" --json      # a new topic
-bhote slack <ref> "@Karen" --json                          # pin on an existing topic (bhote wait <ref> "Karen" if it does not wait yet)
+bhote add "<title>" -w "Karen" --slack "@Karen" --json      # a new task
+bhote slack <ref> "@Karen" --json                          # pin on an existing task (bhote wait <ref> "Karen" if it does not wait yet)
 bhote slack <ref> off --json                               # unpin
 ```
 
@@ -158,14 +161,14 @@ bhote slack <ref> off --json                               # unpin
 thread). `@` and `#` take a few seconds: bhote asks Claude Code to look them up. When bhote says SLACK_WATCH is off, tell
 the user that one machine needs it on (`bhote config set SLACK_WATCH on` where Claude Code has the Slack connector).
 
-## When you take over a topic
+## When you take over a task
 
-When the user asks you to work on an existing topic (by its title or number), run `bhote take <ref> --json` first: it
-becomes your topic (your session and pane), status `now`. Then report back as below (`review`, `done`, `wait`).
+When the user asks you to work on an existing task (by its title or number), run `bhote take <ref> --json` first: it
+becomes your task (your session and pane), status `now`. Then report back as below (`review`, `done`, `wait`).
 
-## When you were given a topic
+## When you were given a task
 
-A prompt from bhote ends with "(bhote topic <id>: when you are finished, run …)". When you are finished, run exactly what
+A prompt from bhote ends with "(bhote task <id>: when you are finished, run …)". When you are finished, run exactly what
 it says: `bhote review <id>` when the user should check the result, `bhote done <id>` when nothing needs checking (only
 when the prompt offers it). If you are blocked, use `bhote wait <id> "<who>"`.
 
@@ -173,9 +176,9 @@ when the prompt offers it). If you are blocked, use `bhote wait <id> "<who>"`.
 
 **Never start a transfer yourself.** `bhote transfer` (and `bhote handover` without a prompt that asks for it) is for when the user
 explicitly tells you to move work to another agent, by name. "Done", "good" or "thanks" is not that. bhote refuses a target in
-another project of the topic; do not add `--force` on your own, ask the user. Hand-overs interrupt the other agent's work.
+another project of the task; do not add `--force` on your own, ask the user. Hand-overs interrupt the other agent's work.
 
-When a prompt starts with "Steal & Transfer (bhote topic <id>…): stop here and hand this work over", do exactly its
+When a prompt starts with "Steal & Transfer (bhote task <id>…): stop here and hand this work over", do exactly its
 steps, in this order: commit everything on the **current** branch (no new branch; only on a detached HEAD create the one
 it names) with a handover in the commit message body (goal, what is done, what is open, next steps, how to test), push if
 there is a remote, note the branch and the commit, free the branch with `git switch --detach` if the other agent works in
@@ -189,11 +192,11 @@ over what it knew: check the handover for what it says is missing before you bui
 
 ```sh
 bhote agents --json                                           # machine, pane, status, free
-bhote add "<what moves>" -d "<from where to where>" --json    # the topic it travels with
-bhote transfer <machine/pane> <machine/pane> --topic <id>     # from, to
+bhote add "<what moves>" -d "<from where to where>" --json    # the task it travels with
+bhote transfer <machine/pane> <machine/pane> --task <id>      # from, to (--topic is the old name and works on every machine)
 ```
 
-- **Pass `--topic`.** Without it bhote takes the source's current topic, which is often unrelated.
+- **Pass `--task`** (or `--topic`: both work). Without it bhote takes the source's current task, which is often unrelated.
 - **The target must be free** (idle or done), checked live right before the prompt. If *you* are the target you are
   `working` while you run the command, so start it from a detached waiter and end your turn; the take-over prompt then
   arrives as your next turn:
@@ -218,7 +221,7 @@ profile run `bhote skills install` first.
 ## Useful
 
 ```sh
-bhote list --json          # the topics (review, now, waiting, later)
-bhote current --json       # your own topic, if you have one
+bhote list --json          # the tasks (review, now, waiting, later)
+bhote current --json       # your own task, if you have one
 bhote agents --json        # the herdr agents, free or busy
 ```

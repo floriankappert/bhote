@@ -1,6 +1,6 @@
 //! The follow-ups of the collector (step 4), ported one by one from the script: remind_waiting, finished_expire, agent_dedup,
 //! agent_cards, review_follow, now_idle_follow, agent_gone_follow, auto_question_follow, branch_sync, agentnum_assign.
-//! Each takes the same state the bash function reads (topics, the agent lists, the settings, small state files) and acts through a Sink.
+//! Each takes the same state the bash function reads (tasks, the agent lists, the settings, small state files) and acts through a Sink.
 use crate::store::{self, chars_prefix, first_value, nocntrl, now, num_or, topic_get, Env, Sink, Topic};
 use std::collections::HashMap;
 use std::fs;
@@ -107,7 +107,7 @@ pub fn agent_dedup(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
             _ => false });
         if dup { s.set(&t.file, "status", "later"); s.set(&t.file, "dismissed", "1"); }
     }
-    // "Waiting for New Work" is no work: an agent that says so is idle (it has its card in the group IDLE), whatever status it put the topic in
+    // "Waiting for New Work" is no work: an agent that says so is idle (it has its card in the group IDLE), whatever status it put the task in
     for t in ts {
         if matches!(t.status.as_str(), "now" | "testing" | "finished" | "review") && matches!(t.title.trim(), "Waiting for New Work" | "Waiting for new work" | "waiting for new work" | "Waiting For New Work") {
             s.set(&t.file, "status", "later"); s.set(&t.file, "dismissed", "1");
@@ -143,7 +143,7 @@ pub fn agent_cards(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
         if n.saturating_sub(num_or(&read_state(&cd, &key(&r.id)), n)) < 15 { continue; }
         let title = if r.task.is_empty() { &r.name } else { &r.task };
         let Some(f) = s.new_topic(title, "", "") else { continue };
-        s.set(&f, "auto_now", "1"); s.set(&f, "agent", &r.name); s.set(&f, "agent_machine", &c.host); s.set(&f, "agent_pane", &r.id);
+        s.set(&f, "auto_now", "1"); s.set(&f, "agent", &r.name); s.set(&f, "agent_machine", &c.host); s.set(&f, "agent_pane", &r.id); s.set(&f, "source", "agent"); s.set(&f, "source_ref", &r.name);
     }
 }
 
@@ -289,7 +289,7 @@ pub fn branch_sync(c: &Ctx, ts: &[Topic], s: &mut dyn Sink) {
 
 pub fn agentnum_assign(c: &Ctx, s: &mut dyn Sink) {
     let mut keys: Vec<(String, u64)> = Vec::new();
-    let mut files: Vec<PathBuf> = fs::read_dir(&c.env.topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("an-") && n.ends_with(".topic") })).collect()).unwrap_or_default();
+    let mut files: Vec<PathBuf> = fs::read_dir(&c.env.topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("an-") && crate::store::has_task_ext(&n) })).collect()).unwrap_or_default();
     files.sort();
     for f in &files {
         let t = crate::proc::read_cap(f).unwrap_or_default();
@@ -307,7 +307,7 @@ pub fn agentnum_assign(c: &Ctx, s: &mut dyn Sink) {
         let k = format!("{}/{}", r.m, name);
         if keys.iter().any(|(x, _)| *x == k) { continue; }
         let san = |x: &str| x.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
-        let f = c.env.topics.join(format!("an-{}-{}.topic", chars_prefix(&san(&r.m), 20), chars_prefix(&san(&name), 60)));
+        let f = crate::store::task_path(&c.env.topics, &format!("an-{}-{}", chars_prefix(&san(&r.m), 20), chars_prefix(&san(&name), 60)));
         if f.exists() { continue; }
         max += 1;
         let id = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
@@ -316,13 +316,13 @@ pub fn agentnum_assign(c: &Ctx, s: &mut dyn Sink) {
     }
 }
 
-// ── projects, the tests of a worktree, the deployments a topic waits for ─────────────────────────────────────
+// ── projects, the tests of a worktree, the deployments a task waits for ─────────────────────────────────────
 
 pub struct Proj { pub id: String, pub name: String, pub repos: String, pub ws: String }
 /// projects_load: by name, with the repositories and the workspaces (the last value of a key counts, as the script's read loop does)
 pub fn projects_full(topics: &Path) -> Vec<Proj> {
     let mut v = Vec::new();
-    let mut files: Vec<PathBuf> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("proj-") && n.ends_with(".topic") })).collect()).unwrap_or_default();
+    let mut files: Vec<PathBuf> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("proj-") && crate::store::has_task_ext(&n) })).collect()).unwrap_or_default();
     files.sort();
     for f in files {
         let (mut name, mut repos, mut ws, mut del, mut kd) = (String::new(), String::new(), String::new(), "0".to_string(), String::new());
@@ -485,9 +485,9 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
             let t = ts[i].clone();
             if !matches!(t.status.as_str(), "now" | "review" | "testing" | "finished") || t.ap.is_empty() || t.br.is_empty() { continue; }
             if t.status == "finished" && t.upd + 600 < at(0).parse::<u64>().unwrap_or(0) { continue; }
-            // one topic per agent: its newest (by its last change; at the same time the first one wins); the older ones of that agent are not what is deployed
+            // one task per agent: its newest (by its last change; at the same time the first one wins); the older ones of that agent are not what is deployed
             let am = |x: &Topic| if x.am.is_empty() { c.host.clone() } else { x.am.clone() };
-            if ts.iter().enumerate().any(|(j, o)| j != i && o.ap == t.ap && am(o) == am(&t) && (matches!(o.status.as_str(), "now" | "review" | "testing" | "finished") || (o.status == "waiting" && o.dep == "1")) && (o.upd > t.upd || (o.upd == t.upd && j < i))) { continue; }   // (finished long before this deployment began: an old topic of that agent, not its work)
+            if ts.iter().enumerate().any(|(j, o)| j != i && o.ap == t.ap && am(o) == am(&t) && (matches!(o.status.as_str(), "now" | "review" | "testing" | "finished") || (o.status == "waiting" && o.dep == "1")) && (o.upd > t.upd || (o.upd == t.upd && j < i))) { continue; }   // (finished long before this deployment began: an old task of that agent, not its work)
             let pn = if t.pj.is_empty() { String::new() } else { ps.iter().find(|x| x.id == t.pj).map(|x| x.name.clone()).unwrap_or_default() };
             if !pn.is_empty() && pn != p { continue; }
             if t.br != nt {
@@ -524,7 +524,7 @@ pub fn deploy_sync(c: &Ctx, s: &mut dyn Sink) {
 fn ps_names(ps: &[Proj]) -> HashMap<String, String> { ps.iter().map(|p| (p.id.clone(), p.name.clone())).collect() }
 
 /// One round of all of them, in the order of the collector (agentnum_assign first, then branch_sync, remind_waiting, agent_cards, agent_dedup,
-/// review_follow, now_idle_follow, agent_gone_follow, finished_expire, auto_question_follow); every function reads the topics anew.
+/// review_follow, now_idle_follow, agent_gone_follow, finished_expire, auto_question_follow); every function reads the tasks anew.
 pub fn round(c: &Ctx, s: &mut dyn Sink, only: Option<&str>) {
     let want = |n: &str| only.map_or(true, |o| o == n);
     let mut ts = store::load_fast(&c.env.topics, &c.env.shared); let mut seen = s.writes();

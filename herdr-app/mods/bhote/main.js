@@ -1,8 +1,8 @@
-// bhote for herdr-app: the topics and agents panels as a mod (bhote 0.9.3 split layout).
+// bhote for herdr-app: the tasks and agents panels as a mod (bhote 0.9.3 split layout).
 // props().side "left":  the workspaces, then the cards (review, now, testing, deploying, finished; an agent without
 //                       a card has one of its own: idle, working, needs you).
-// props().side "right": the lines of the topics (next, waiting, later), the last done ones, the deployments and tests.
-// Data: agents() / spaces() of herdr-app (live), the topic files and the monitor lists bhoted writes (files are the
+// props().side "right": the lines of the tasks (next, waiting, later), the last done ones, the deployments and tests.
+// Data: agents() / spaces() of herdr-app (live), the task files and the monitor lists bhoted writes (files are the
 // interface). Actions: the bhote CLI through exec(), herdr-app commands through run().
 
 import { View, div, svg, PathBuilder, Background } from "gpui-kit";
@@ -13,7 +13,7 @@ const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "revi
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-// The text of all topic files, each one after a record separator (0x1e) line, as topics. The first value of a key
+// The text of all task files, each one after a record separator (0x1e) line, as tasks. The first value of a key
 // counts (as in bhote's own index); deleted records and other kinds are skipped.
 function parseTopics(text) {
   const out = [];
@@ -25,12 +25,13 @@ function parseTopics(text) {
     }
     if (!v.id || v.deleted === "1" || v.kind) continue;
     const status = STATUSES.has(v.status) ? v.status : "now";
+    const src = sourceOf(v);
     out.push({
       id: v.id,
       title: v.title ?? "",
       desc: v.description ?? "",
       status,
-      // a waiting topic that follows a deployment is a card of its own ("deploying")
+      // a waiting task that follows a deployment is a card of its own ("deploying")
       group: status === "waiting" && v.deploy_wait === "1" ? "deploying" : status,
       waiting_for: v.waiting_for || null,
       updated: Number(v.updated) || 0,
@@ -41,11 +42,26 @@ function parseTopics(text) {
       machine: v.agent_machine || "",
       branch: v.agent_branch || "",
       project: v.project || "",
+      source: src.source, sourceRef: src.ref, sourceUrl: src.url, sourceKind: src.kind, sourceParent: src.parent,
       startMsg: v.start_msg || "", startAgent: v.start_agent || "", startMachine: v.start_machine || "", startPane: v.start_pane || "",   // (handed over as a message, not taken yet)
     });
   }
-  return out.sort((a, b) => b.updated - a.updated);
+  // dual-read (wave 1 of topics -> tasks): the same id as <id>.topic and <id>.task is one task, the newer one counts
+  const byId = new Map();
+  for (const x of out) { const o = byId.get(x.id); if (!o || x.updated > o.updated) byId.set(x.id, x); }
+  return [...byId.values()].sort((a, b) => b.updated - a.updated);
 }
+
+// The sources of a task. One without a `source` line (made before sources existed) gets its source from what it is, without touching its file:
+// what an agent made (a waiting task of an agent, an automatic review card or a card made for an agent) is agent, the rest manual.
+const SOURCES = ["agent", "stash", "linear", "ims", "manual"];
+function sourceOf(v) {
+  let source = SOURCES.includes(v.source) ? v.source : "";
+  if (!source) source = v.auto === "1" || v.auto_now === "1" || v.review_src || (v.agent && v.waiting_for) ? "agent" : "manual";
+  return { source, ref: v.source_ref || "", url: /^https?:\/\//.test(v.source_url || "") ? v.source_url : "", kind: v.source_kind || "", parent: v.source_parent || "" };
+}
+// The chip text of a source: IMS tells its two kinds apart (a personal task, a ticket = work item).
+function sourceLabel(x) { return x.source === "ims" ? (x.sourceKind === "work_item" ? "IMS ticket" : "IMS task") : x.source; }
 
 // The deployments of the last days are kept on disk (the CI answers only with its latest runs, and deploys.list is gone with the next restart).
 const DEPLOY_HISTORY_DAYS = 14, DEPLOY_HISTORY_MAX = 400;
@@ -147,7 +163,7 @@ const RING = [
   "Thorin", "Balin", "Dwalin", "Fili", "Kili", "Bofur", "Bombur", "Dori", "Nori", "Ori", "Oin", "Gloin", "Smaug", "Beorn", "Bard", "Tauriel", "Shelob", "Grima", "Isildur", "Elendil", "Rosie", "Tom",
   "Gwaihir", "Elladan", "Elrohir", "Azog", "Bolg", "Imrahil", "Hama", "Gamling", "Rohan", "Gondor", "Mordor", "Moria", "Lorien", "Erebor", "Bree", "Shire", "Dale", "Rumil",
 ];
-// The names of all agents seen in the topic records: normalised "machine/name" -> its name. Same order and same tie-break as ring_load in the bhote script.
+// The names of all agents seen in the task records: normalised "machine/name" -> its name. Same order and same tie-break as ring_load in the bhote script.
 function parseRing(text) {
   const recs = [];
   for (const block of text.split("\x1e\n")) {
@@ -335,7 +351,7 @@ async function apiGet(key, argv) {
 
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
 
-// This machine's name in bhote's topics: "Mac" on macOS (HOST), else the short hostname.
+// This machine's name in bhote's tasks: "Mac" on macOS (HOST), else the short hostname.
 // A checkbox. Off: an empty rounded square with a clear border. On: filled with the accent, with a drawn check mark. Mixed (some of
 // many are ticked): filled, with a dash.
 function checkbox(t, on, mixed, muted) {
@@ -444,20 +460,22 @@ function promptOf(screen) {
 // [key, group, section, name, description, unit, depends-on]. The order here is the order in the dialog. Names are short noun phrases,
 // descriptions one sentence ending in a full stop; a unit is drawn at the value. type and default come from the CLI, not from here.
 const SETTINGS = [
-  ["NOTIFY", "Topics", "", "Notifications", "Notify through herdr when a topic is ready, done or has waited too long."],
+  ["NOTIFY", "Tasks", "", "Notifications", "Notify through herdr when a task is ready, done or has waited too long."],
 
-  ["WAIT_REMIND", "Topics", "", "Remind waiting topics after", "A waiting topic is reminded once after this time (0 = never).", "h"],
-  ["FINISHED_MINUTES", "Topics", "", "Dismiss finished cards after", "An agent that finished without a question drops off the panel after this time (0 = never).", "min"],
+  ["WAIT_REMIND", "Tasks", "", "Remind waiting tasks after", "A waiting task is reminded once after this time (0 = never).", "h"],
+  ["TASK_SYNC", "Tasks", "", "Mirror Linear and IMS", "Mirror the tasks of Linear and the IMS into tasks now and then, through the API cache (a source without a key in the secret store is skipped)."],
+  ["TASK_WRITE", "Tasks", "", "Write status back", "A status change of a mirrored task goes back to Linear or the IMS. Off: the outside system alone decides."],
+  ["FINISHED_MINUTES", "Tasks", "", "Dismiss finished cards after", "An agent that finished without a question drops off the panel after this time (0 = never).", "min"],
 
-  ["AGENT_CARDS", "Agents", "", "Cards for agents without a topic", "A working agent without a topic gets a card on Now after 15 s of work."],
-  ["AUTO_REVIEW", "Agents", "", "Review topic for questions", "An agent that waits for an answer gets a review topic with its question."],
-  ["AGENT_CAN_CLOSE", "Agents", "", "Agents may close topics", "Off: agents can only hand a topic over for review."],
-  ["AGENT_TOPICS", "Agents", "", "Agents may create topics", "Off: bhote add run by an agent creates nothing."],
+  ["AGENT_CARDS", "Agents", "", "Cards for agents without a task", "A working agent without a task gets a card on Now after 15 s of work."],
+  ["AUTO_REVIEW", "Agents", "", "Review task for questions", "An agent that waits for an answer gets a review task with its question."],
+  ["AGENT_CAN_CLOSE", "Agents", "", "Agents may close tasks", "Off: agents can only hand a task over for review."],
+  ["AGENT_TOPICS", "Agents", "", "Agents may create tasks", "Off: bhote add run by an agent creates nothing."],
   ["STASH_LINK", "Agents", "", "Ctrl+S stashes into bhote", "Ctrl+S in an agent's terminal also keeps the text of its prompt in the bhote stash (and still stashes it in Claude Code). The app may have to be restarted once."],
   ["AGENT_LISTEN", "Agents", "", "Agents listen by default", "Whether agents accept messages from other agents. Each agent's card has its own switch (the ear)."],
-  ["AUTO_ASSIGN", "Agents", "", "Auto-assign running topics", "A running topic without an agent goes to the next free agent of its project after 20 s."],
+  ["AUTO_ASSIGN", "Agents", "", "Auto-assign running tasks", "A running task without an agent goes to the next free agent of its project after 20 s."],
   ["AUTO_ASSIGN_MACHINE", "Agents", "", "Prefer agents on", "Whose free agents come first: any (this machine first) or a machine name.", ""],
-  ["TESTS_BUSY", "Agents", "", "Running tests keep an agent busy", "An agent whose workspace runs tests is not free, and its topic stays out of review until they finish."],
+  ["TESTS_BUSY", "Agents", "", "Running tests keep an agent busy", "An agent whose workspace runs tests is not free, and its task stays out of review until they finish."],
   ["LOCAL_EVERY", "Agents", "", "Check local agents every", "How often the agents of this machine are queried.", "s"],
 
   ["API_CACHE_EVERY", "Monitors", "API cache", "Keep answers for", "How long answers of GitHub and CircleCI are reused while something runs (a quiet answer is kept 6 times as long, at most 120 s). bhote refresh asks again at once.", "s"],
@@ -474,15 +492,19 @@ const SETTINGS = [
   ["DEPLOY_GITHUB", "Integrations", "GitHub", "Deployments", "Include deployments from GitHub Actions (needs gh and its login).", ""],
   ["TEST_GITHUB", "Integrations", "GitHub", "Test jobs", "Include test jobs from GitHub Actions.", ""],
   ["PR_CHECKS_IGNORE", "Integrations", "GitHub", "Ignored checks", "Checks of pull requests that bhote leaves out (comma-separated, * as a wildcard, e.g. codecov/*). They are not shown, not counted and never turn a pull request red. Empty: none.", ""],
-  ["GITHUB_BRANCHES", "Integrations", "GitHub", "Agent branches", "Show the git branch each topic's agent works on."],
+  ["GITHUB_BRANCHES", "Integrations", "GitHub", "Agent branches", "Show the git branch each task's agent works on."],
+  ["LINEAR_TEAMS", "Integrations", "Linear", "Teams", "Only the issues of these Linear team keys become tasks (e.g. IMS,ENG); empty: all. The key is the secret LINEAR_API_KEY (bhote secret set LINEAR_API_KEY)."],
+  ["IMS_URL", "Integrations", "IMS", "Address", "The base URL of the IMS. The key is the secret IMS_API_KEY (bhote secret set IMS_API_KEY)."],
+  ["IMS_WEB_URL", "Integrations", "IMS", "Web address", "Where an IMS item opens in the browser (<address>/work-items/<id>, <address>/tasks/<id>); empty: its API address."],
+  ["IMS_STATUS_MAP", "Integrations", "IMS", "Status names", "IMS status name=bhote status pairs that replace the defaults, e.g. In Test=review,Parked=later."],
   ["CIRCLECI_TOKEN", "Integrations", "CircleCI", "API token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
   ["DEPLOY_CIRCLECI", "Integrations", "CircleCI", "Deployments", "Include deployments from CircleCI.", ""],
   ["DEPLOY_PIPELINES", "Integrations", "CircleCI", "Pipelines on other branches", "Also show CircleCI pipelines running on other branches, with branch and author.", ""],
   ["TEST_CIRCLECI", "Integrations", "CircleCI", "Test jobs", "Include test jobs from CircleCI.", ""],
-  ["SLACK_WATCH", "Integrations", "Slack", "Watch pinned channels", "Check the channels pinned to waiting topics and set a topic to review on a new message. One machine is enough."],
+  ["SLACK_WATCH", "Integrations", "Slack", "Watch pinned channels", "Check the channels pinned to waiting tasks and set a task to review on a new message. One machine is enough."],
   ["SLACK_EVERY", "Integrations", "Slack", "Check every", "How often the pinned channels are checked (one short Claude call each).", "s"],
-  ["CLAUDE_MOD", "Integrations", "Claude Code", "Show topic in Claude Code", "Show the agent's topic above the prompt and in the topic pane."],
-  ["FRIENDLY_REMINDER", "Integrations", "Claude Code", "Friendly reminder", "Now and then show a waiting, next or parked topic above the prompt.", ""],
+  ["CLAUDE_MOD", "Integrations", "Claude Code", "Show task in Claude Code", "Show the agent's task above the prompt and in the task pane."],
+  ["FRIENDLY_REMINDER", "Integrations", "Claude Code", "Friendly reminder", "Now and then show a waiting, next or parked task above the prompt.", ""],
   ["CLAUDE_CONFIG_DIR", "Integrations", "Claude Code", "Profile folder", "Profile the Slack watch runs in, e.g. ~/.claude2 (empty = default).", ""],
   ["SECRET_BACKEND", "Integrations", "Secrets", "Backend", "Where new secrets are kept: auto (macOS Keychain, else secret-tool, else an encrypted file) or one of them. A stored value stays where it is.", ""],
   ["SECRET_GUARD", "Integrations", "Secrets", "Chat guard", "The Claude Code hook secret-guard.sh: a prompt with a key in it is only reported (warn) or not sent (block). Off: no look."],
@@ -492,9 +514,9 @@ const SETTINGS = [
   ["KHARKA_WATCH_STALE", "Integrations", "kharka", "Restart watch after", "Restart herdr-kharka when its entry has not been written for this long.", "s"],
 
   ["HOST_LABEL", "Machines & sync", "This machine", "Name of this machine", "How this machine appears in agent lists."],
-  ["MACHINE_LABELS", "Machines & sync", "This machine", "Machine aliases", "name=Alias pairs, e.g. omarchy-flo=Omarchy: what the panels call a machine (Servers, agents, topics)."],
+  ["MACHINE_LABELS", "Machines & sync", "This machine", "Machine aliases", "name=Alias pairs, e.g. omarchy-flo=Omarchy: what the panels call a machine (Servers, agents, tasks)."],
   ["MACHINES_OFF", "Machines & sync", "This machine", "Hidden machines", "Comma-separated machines left out of the agent list."],
-  ["STORE", "Machines & sync", "Storage", "Topic storage", "Where topics live: local, a replica on the store machine, or kharka."],
+  ["STORE", "Machines & sync", "Storage", "Task storage", "Where tasks live: local, a replica on the store machine, or kharka."],
   ["STORE_MACHINE", "Machines & sync", "Storage", "Store machine", "The saved herdr machine that holds the replica."],
   ["SYNC_VIA", "Machines & sync", "Storage", "Sync through", "How replicas travel: herdr or plain ssh."],
   ["REMOTE_AGENTS", "Machines & sync", "Remote agents", "Show agents of other machines", "Also list the agents of the other machines."],
@@ -515,7 +537,7 @@ const SETTING_DEPS = {
   TEST_EVERY: { dep: ["TEST_MONITOR"] }, TEST_PROJECTS_OFF: { dep: ["TEST_MONITOR"] },
   TEST_MONITOR: { needs: ["TEST_LOCAL", "TEST_GITHUB", "TEST_CIRCLECI"] },
   TEST_LOCAL: { dep: ["TEST_MONITOR"] }, TEST_STATUS_DIR: { dep: ["TEST_MONITOR", "TEST_LOCAL"] },
-  TEST_GITHUB: { dep: ["TEST_MONITOR"] }, TEST_CIRCLECI: { dep: ["TEST_MONITOR"], needs: ["CIRCLECI_TOKEN"] },
+  TASK_WRITE: { dep: ["TASK_SYNC"] }, TEST_GITHUB: { dep: ["TEST_MONITOR"] }, TEST_CIRCLECI: { dep: ["TEST_MONITOR"], needs: ["CIRCLECI_TOKEN"] },
   SLACK_EVERY: { dep: ["SLACK_WATCH"] }, CLAUDE_CONFIG_DIR: { dep: ["SLACK_WATCH"] }, FRIENDLY_REMINDER: { dep: ["CLAUDE_MOD"] },
   AUTO_ASSIGN_MACHINE: { dep: ["AUTO_ASSIGN"] },
   STORE_MACHINE: { dep: ["STORE=remote"] }, SYNC_VIA: { dep: ["STORE=remote"] },
@@ -525,7 +547,7 @@ const SETTING_DEPS = {
 };
 const SETTING_INFO = new Map(SETTINGS.map((r, i) => [r[0], { order: i, group: r[1], sec: r[2], name: r[3], desc: r[4], unit: r[5] ?? "", dep: SETTING_DEPS[r[0]]?.dep ?? [], needs: SETTING_DEPS[r[0]]?.needs ?? [] }]));
 const SETTING_GROUPS = [...new Set(SETTINGS.map((r) => r[1]))];
-const GROUP_ORDER = ["Topics", "Agents", "Monitors", "Runbooks", "Servers", "Integrations", "Machines & sync"];
+const GROUP_ORDER = ["Tasks", "Agents", "Monitors", "Runbooks", "Servers", "Integrations", "Machines & sync"];
 function settingLabel(key) { const w = key.toLowerCase().replace(/_/g, " "); return w[0].toUpperCase() + w.slice(1); }
 
 export default class Bhote extends View {
@@ -538,7 +560,7 @@ export default class Bhote extends View {
     // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
     const TABS = ["home", "topics", "prs", "deploys", "tests", "runbooks", "servers", "env"];
     try { this.tab = TABS.includes(props()?.tab) ? props().tab : TABS.includes(shared("bhote.tab")) ? shared("bhote.tab") : "home"; } catch (_e) { this.tab = "home"; }   // (props.tab: a view that opens on a tab, for a check)
-    // How bhote names this machine and the others (HOST_LABEL, MACHINE_LABELS in its config): a topic is started on an agent by those names.
+    // How bhote names this machine and the others (HOST_LABEL, MACHINE_LABELS in its config): a task is started on an agent by those names.
     this.hostLabel = window()?.platform === "macos" ? "Mac" : "local";
     this.labels = "";
     this.deployOff = new Set();   // DEPLOY_PROJECTS_OFF: projects whose deployments are not shown (not deployed through CI, or not wanted)
@@ -582,14 +604,14 @@ export default class Bhote extends View {
     this.builds = [];
     this.prLoading = false;
     this.prAt = 0;
-    // the show view: which topic it showed last, edit mode with its fields, the delete confirmation
+    // the show view: which task it showed last, edit mode with its fields, the delete confirmation
     this.shownId = null;
     this.showArchived = false;
     this.editing = false;
     this.confirmDelete = false;
     if (this.side === "right") {
       this.adding = false;
-      this.addIn = InputState.new({ placeholder: "New topic: Title; description", value: "" });
+      this.addIn = InputState.new({ placeholder: "New task: Title; description", value: "" });
       // (its own placeholder is drawn over the field, italic and muted: the state's cannot be styled)
       this.stashIn = TextareaState.new({ placeholder: "", value: "", rows: 1 });
       this.stashIn.set_auto_grow(1, 4);
@@ -652,24 +674,27 @@ export default class Bhote extends View {
     // Ctrl+S in a terminal (the binding bhote:stash in keys.json, written by the setting STASH_LINK): the prompt goes into the stash, the key on to the program
     // (both panels listen, one handles it: whichever copy of the mod the app delivers it to)
     cx.spawn(async (cx) => { for (;;) { let c; try { c = await nextCommand(); } catch (_e) { return; } if (c === "stash") { try { if (Date.now() - Number(shared("bhote.stashKeyAt") ?? 0) < 800) continue; setShared("bhote.stashKeyAt", Date.now()); } catch (_e) { /* handle it */ } await this.stashKey(cx); } } });
+    // the open items of Linear and the IMS become tasks (a source without a key in the secret store is skipped by bhote; the answers go through the API cache)
+    if (this.side === "left") cx.timer.every(90000, () => { if (this.taskSync !== false) exec("bhote", ["task", "sync", "--quiet"], { timeout: 180000 }).catch(() => {}); });
+    if (this.side === "right") { this.mirrorStash(this.stashList()); cx.timer.every(2000, () => this.adoptStash()); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
     if (this.side === "left") { this.usage = []; this.loadUsage(cx); cx.timer.every(120000, (cx) => this.loadUsage(cx)); }
     if (this.side === "left") { this.loadHeads(cx); cx.timer.every(8000, (cx) => this.loadHeads(cx)); }
     if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); cx.timer.every(4000, (cx) => this.loadMessages(cx)); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
-    // Topics are plain files: reload when one changes.
+    // Tasks are plain files: reload when one changes.
     cx.spawn(async (cx) => {
       const dir = `${home()}/.local/share/bhote/topics`;
       try { for (;;) { await watchFolder(dir); this.load(cx); } } catch (_e) { /* no folder yet: the timer covers it */ }
     });
   }
 
-  // One sh call reads every topic file and the two monitor lists (`bhote list --json` is bash and jq: ~14 s for 140 topics).
+  // One sh call reads every task file and the two monitor lists (`bhote list --json` is bash and jq: ~14 s for 140 tasks).
   // The settings of bhote that the panel uses, from its config file. A setting that is not in the file has its default again, so one that was taken away works at once.
   loadConfig() {
     const list = (v) => new Set(v.split(",").map((x) => x.trim()).filter(Boolean));
     return Promise.resolve(readTextFile(`${home()}/.config/bhote/config`)).then((text) => {
-      let labels = "", host = window()?.platform === "macos" ? "Mac" : "local", deployOff = new Set(), testsOff = new Set(), kharka = "", listen = true, fin = 30, ignore = "codecov/*";
+      let labels = "", host = window()?.platform === "macos" ? "Mac" : "local", deployOff = new Set(), testsOff = new Set(), kharka = "", listen = true, fin = 30, ignore = "codecov/*", taskSync = true;
       for (const l of (text ?? "").split("\n")) {
         if (l.startsWith("MACHINE_LABELS=")) labels = l.slice(15).trim();
         else if (l.startsWith("HOST_LABEL=")) host = l.slice(11).trim() || host;
@@ -679,10 +704,11 @@ export default class Bhote extends View {
         else if (l.startsWith("PR_CHECKS_IGNORE=")) ignore = l.slice(17).trim();
         else if (l.startsWith("API_CACHE_EVERY=")) { const n = Number(l.slice(16).trim()); if (Number.isInteger(n) && n >= 1) apiBase = n; }
         else if (l.startsWith("AGENT_LISTEN=")) listen = l.slice(13).trim() !== "off";
+        else if (l.startsWith("TASK_SYNC=")) taskSync = l.slice(10).trim() !== "off";
         else if (l.startsWith("FINISHED_MINUTES=")) { const n = Number(l.slice(17).trim()); if (Number.isFinite(n)) fin = n; }
       }
       const prIgnore = ignore.split(",").map((x) => x.trim()).filter(Boolean).map((g) => new RegExp(`^${g.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "i"));
-      Object.assign(this, { prIgnore, labels, hostLabel: host, deployOff, testsOff, kharkaBin: kharka, listenDefault: listen, finMin: fin });
+      Object.assign(this, { prIgnore, labels, hostLabel: host, deployOff, testsOff, kharkaBin: kharka, listenDefault: listen, finMin: fin, taskSync });
     }).catch(() => { /* the values stay */ });
   }
 
@@ -707,7 +733,7 @@ export default class Bhote extends View {
     cx.spawn(async (cx) => {
       try {
         const script =
-          'd="${XDG_DATA_HOME:-$HOME/.local/share}/bhote/topics"; for f in "$d"/*.topic; do [ -f "$f" ] && { printf "\\036\\n"; cat "$f"; echo; }; done; ' +
+          'd="${XDG_DATA_HOME:-$HOME/.local/share}/bhote/topics"; for f in "$d"/*.topic "$d"/*.task; do [ -f "$f" ] && { printf "\\036\\n"; cat "$f"; echo; }; done; ' +
           SHARED_SH +
           'printf "\\037T\\n"; cat "$s/tests.list" 2>/dev/null; printf "\\037D\\n"; cat "$s/deploys.list" 2>/dev/null';
         const r = await exec("sh", ["-c", script], { timeout: 15000 });
@@ -901,8 +927,8 @@ export default class Bhote extends View {
 
   // --- changes shown at once -----------------------------------------------------------------------------------------------------
   // `bhote` is a bash script and takes seconds. A change is shown the moment it is made: it is noted as pending in the shared state (so
-  // that the menu popup can note it too), the lists read the topics with the pending changes applied, and a change is dropped when the
-  // topic files have caught up (or after 45 s, when the command did not do it).
+  // that the menu popup can note it too), the lists read the tasks with the pending changes applied, and a change is dropped when the
+  // task files have caught up (or after 45 s, when the command did not do it).
   get topics() { return this.withPending(this._topics ?? []); }
   set topics(v) { this._topics = v; }
 
@@ -934,7 +960,7 @@ export default class Bhote extends View {
       if (!e || !e.status || (x.status === e.status && !x.dismissed)) return x;
       return { ...x, status: e.status, group: e.status, dismissed: false, updated: now };
     });
-    for (const k of keys) {   // a topic that was just added: shown until its file is there
+    for (const k of keys) {   // a task that was just added: shown until its file is there
       const c = p[k].create;
       if (c && !list.some((x) => x.title === c.title && x.created * 1000 >= p[k].at - 5000)) {
         out.push({ id: k, title: c.title, desc: c.desc ?? "", status: c.status ?? "next", group: c.status ?? "next", waiting_for: null, updated: now, created: now, since: 0, dismissed: false, agent: null, machine: "", branch: "", project: "" });
@@ -977,12 +1003,12 @@ export default class Bhote extends View {
     if (url) exec("open", [url]).catch(() => {});
   }
 
-  // --- the show view: one topic in the right panel -----------------------------------------------------------------------
+  // --- the show view: one task in the right panel -----------------------------------------------------------------------
   showId() {
     try { return shared("bhote.show") ?? null; } catch (_e) { return null; }
   }
 
-  // Opens a topic in the right panel (from a card, a line or a done topic) and makes sure that panel is there.
+  // Opens a task in the right panel (from a card, a line or a done task) and makes sure that panel is there.
   openPage(id) {
     setShared("bhote.show", id);
     run("layout.show", { id: "panel" });
@@ -1042,7 +1068,7 @@ export default class Bhote extends View {
     });
   }
 
-  // The show view: a bar to go back, then the topic as blocks: what it is and how it moves, who works on it, its branch
+  // The show view: a bar to go back, then the task as blocks: what it is and how it moves, who works on it, its branch
   // and pull request, the tests and deployments that belong to it, its timeline.
   showView() {
     const t = theme();
@@ -1055,7 +1081,7 @@ export default class Bhote extends View {
         .hover((e) => e.bg(t.hover)).on_click(() => this.closePage()).child("‹"))
       .child(div().flex_1().truncate().text_size(11).text_color(t.dim).child(x ? x.id : ""))
       .when(!!x && !this.editing, (el) => el.child(this.btn(t, "show-edit", "Edit", (_e, cx) => { this.startEdit(x); cx.notify(); })));
-    if (!x) return v_flex().size_full().bg(t.chrome).child(bar).child(this.loading ? empty(t, "", "Loading", "", true) : empty(t, "∅", "This topic is gone", "It was deleted or merged into another one."));
+    if (!x) return v_flex().size_full().bg(t.chrome).child(bar).child(this.loading ? empty(t, "", "Loading", "", true) : empty(t, "∅", "This task is gone", "It was deleted or merged into another one."));
 
     const sp = spaces();
     const machineOf = (a) => sp.find((q) => q.id === a.space)?.machine ?? null;
@@ -1065,7 +1091,7 @@ export default class Bhote extends View {
     const project = this.projects.find((p) => p.id === x.project);
     const body = [];
 
-    // 1. the topic: title, state, description (or the fields while editing)
+    // 1. the task: title, state, description (or the fields while editing)
     if (this.editing) {
       body.push(this.block(t, "Edit",
         v_flex().gap(8).p(10).rounded(8).bg(t.surface).border(1).border_color(t.border)
@@ -1156,7 +1182,7 @@ export default class Bhote extends View {
 
     // 7. delete, in two steps
     body.push(h_flex().mx(10).mb(14).gap(8).items_center()
-      .when(!this.confirmDelete, (el) => el.child(this.btn(t, "show-delete", "Delete topic", (_e, cx) => { this.confirmDelete = true; cx.notify(); }, { danger: true })))
+      .when(!this.confirmDelete, (el) => el.child(this.btn(t, "show-delete", "Delete task", (_e, cx) => { this.confirmDelete = true; cx.notify(); }, { danger: true })))
       .when(this.confirmDelete, (el) => el.child(div().text_size(12).text_color(t.blocked).child("Delete for good?"))
         .child(this.btn(t, "show-delete-yes", "Yes, delete", (_e, cx) => { this.cli(cx, ["rm", x.id]); this.closePage(); }, { danger: true }))
         .child(this.btn(t, "show-delete-no", "Cancel", (_e, cx) => { this.confirmDelete = false; cx.notify(); }))));
@@ -1164,7 +1190,7 @@ export default class Bhote extends View {
     return v_flex().size_full().bg(t.chrome).text_size(13).child(bar).child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(body));
   }
 
-  // --- the multi-select of topics and test runs: the ticked ones, kept in the shared state -------------------------------------------
+  // --- the multi-select of tasks and test runs: the ticked ones, kept in the shared state -------------------------------------------
   sel() {
     try { const v = shared("bhote.sel"); return { topics: new Set(v?.topics ?? []), tests: new Set(v?.tests ?? []) }; } catch (_e) { return { topics: new Set(), tests: new Set() }; }
   }
@@ -1212,7 +1238,7 @@ export default class Bhote extends View {
         .child(div().child("Actions")).child(svg("mods/bhote/chevron-down.svg").size(12).text_color(t.dim)));
   }
 
-  // The row under the bar where a topic is typed: "Title" or "Title; description" (Enter or Add makes it, as the next topic).
+  // The row under the bar where a task is typed: "Title" or "Title; description" (Enter or Add makes it, as the next task).
   addRow(t) {
     return v_flex().flex_none().gap(8).px(12).py(9).bg(t.surface).border_b(1).border_color(t.border)
       .child(Input.new(this.addIn).h(34).px(10).rounded(7).border_1().border_color(t.accent).bg(t.background).text_size(13).text_color(t.foreground))
@@ -1245,9 +1271,9 @@ export default class Bhote extends View {
     const common = [{ type: "bsel", kind, op: "all", keys: allKeys, label: "Select all" }, { type: "bsel", kind, op: "none", label: "Clear selection" }];
     if (kind === "topics") {
       const ids = [...s.topics];
-      return [{ type: "head", label: `${ids.length} topic${ids.length === 1 ? "" : "s"} selected` },
+      return [{ type: "head", label: `${ids.length} task${ids.length === 1 ? "" : "s"} selected` },
         ...["now", "review", "next", "later", "done"].map((k) => ({ type: "bstatus", ids, status: k, label: `Move to ${k[0].toUpperCase()}${k.slice(1)}` })),
-        { type: "bask", label: "Delete…", danger: true, items: [{ type: "head", label: `Delete ${ids.length} topic${ids.length === 1 ? "" : "s"}?` }, { type: "bdelete", ids, label: "Yes, delete", danger: true }, { type: "noop", label: "Cancel" }] },
+        { type: "bask", label: "Delete…", danger: true, items: [{ type: "head", label: `Delete ${ids.length} task${ids.length === 1 ? "" : "s"}?` }, { type: "bdelete", ids, label: "Yes, delete", danger: true }, { type: "noop", label: "Cancel" }] },
         { type: "head", label: "Selection" }, ...common];
     }
     const keys = [...s.tests];
@@ -1340,12 +1366,12 @@ export default class Bhote extends View {
 
   // --- the Options menu of a card: a button at the bottom right, a popup with what can be done with it -------------------------
   statusItems(x) {
-    return [{ type: "head", label: "Move topic to" },
+    return [{ type: "head", label: "Move task to" },
       ...["now", "review", "next", "later", "done"].map((k) => ({ type: "status", status: k, id: x.id, label: `${k[0].toUpperCase()}${k.slice(1)}${x.status === k ? "   ✓" : ""}` }))];
   }
 
-  // --- the queue: a topic that waits on a busy agent, kept in the shared state --------------------------------------------------------
-  // An entry: { id (the topic), machineName (herdr-app's name of the machine, null: this one), machine (bhote's name), pane (the terminal), name }.
+  // --- the queue: a task that waits on a busy agent, kept in the shared state --------------------------------------------------------
+  // An entry: { id (the task), machineName (herdr-app's name of the machine, null: this one), machine (bhote's name), pane (the terminal), name }.
   queueNow() {
     try { const q = shared("bhote.queue"); return Array.isArray(q) ? q : []; } catch (_e) { return []; }
   }
@@ -1354,13 +1380,13 @@ export default class Bhote extends View {
     return this.queueNow().find((e) => e.id === id) ?? null;
   }
 
-  // The topic goes to that agent now: it is shown as started at once and bhote hands it over.
+  // The task goes to that agent now: it is shown as started at once and bhote hands it over.
   startTopic(id, machine, pane, name) {
     this.markPending([id], { status: "now" });
     exec("bhote", ["__act", "startmsg", id, machine, pane, name], { timeout: 60000 }).catch(() => {});   // (a message: the ear and a free agent decide when it is taken; the topic shows the wait)
   }
 
-  // Looked at on every reload: a queued topic whose agent is free is started there (one topic at a time per agent), one that is done or gone
+  // Looked at on every reload: a queued task whose agent is free is started there (one task at a time per agent), one that is done or gone
   // is dropped from the queue.
   runQueue() {
     const q = this.queueNow();
@@ -1371,7 +1397,7 @@ export default class Bhote extends View {
     const keep = [];
     for (const e of q) {
       const topic = (this._topics ?? []).find((x) => x.id === e.id);
-      if (!topic && Date.now() - (e.at ?? 0) < 60000) { keep.push(e); continue; }   // (a topic that was just made is not in the list yet)
+      if (!topic && Date.now() - (e.at ?? 0) < 60000) { keep.push(e); continue; }   // (a task that was just made is not in the list yet)
       if (!topic || topic.group === "done") continue;
       const a = live.find((l) => l.address.split("/").pop() === e.pane && (sp.find((z) => z.id === l.space)?.machine ?? null) === e.machineName);
       const key = `${e.machineName}|${e.pane}`;
@@ -1394,7 +1420,7 @@ export default class Bhote extends View {
     return hit?.[1]?.trim() || name;
   }
 
-  // A topic and an agent belong together only when the person starts the topic on one: the free agents, to pick from.
+  // A task and an agent belong together only when the person starts the task on one: the free agents, to pick from.
   startItems(x) {
     if (x.group === "done") return [];
     const sp = spaces();
@@ -1405,7 +1431,7 @@ export default class Bhote extends View {
     const where = (m) => this.machineLabel(m ?? null);   // (the alias: Mac, Omarchy)
     return [
       { type: "head", label: free.length ? "Start on agent" : "No free agent" },
-      // every agent of every machine is listed; only a free one can take the topic, the others show what they are doing
+      // every agent of every machine is listed; only a free one can take the task, the others show what they are doing
       ...free.map(({ a, m }) => ({ type: "pickstart", id: x.id, machine: this.machineLabel(m), pane: a.address.split("/").pop(), name: a.space_name, label: `${a.space_name}  ·  ${where(m)}` })),
       ...(busy.length ? [{ type: "head", label: "Busy: it is picked up when the agent is free" }] : []),
       ...busy.map(({ a, m }) => ({ type: "pickstart", id: x.id, machineName: m, machine: this.machineLabel(m), pane: a.address.split("/").pop(), name: a.space_name,
@@ -1415,7 +1441,8 @@ export default class Bhote extends View {
 
   topicItems(x) {
     const q = this.queueOf(x.id);
-    return [{ type: "show", id: x.id, label: "Show topic" }, ...(q ? [{ type: "unqueue", id: x.id, label: `Cancel the queue on ${q.name}` }] : []),
+    return [{ type: "show", id: x.id, label: "Show task" }, ...(q ? [{ type: "unqueue", id: x.id, label: `Cancel the queue on ${q.name}` }] : []),
+      ...(x.sourceUrl ? [{ type: "url", url: x.sourceUrl, label: `Open in ${x.source === "ims" ? "IMS" : x.source === "linear" ? "Linear" : x.source}${x.sourceRef ? ` (${x.sourceRef})` : ""}` }] : []),
       ...this.statusItems(x), ...this.startItems(x)];
   }
 
@@ -1508,7 +1535,8 @@ export default class Bhote extends View {
       if (cx) cx.notify();
       return;
     }
-    if (it.type === "url") exec("open", [it.url]).catch(() => {});
+    if (it.type === "srcfilter") { try { setShared("bhote.srcFilter", it.value); } catch (_e) { /* not remembered */ } }
+    else if (it.type === "url") exec("open", [it.url]).catch(() => {});
     else if (it.type === "status") { this.markPending([it.id], { status: it.status }); exec("bhote", [it.status, it.id], { timeout: 30000 }).catch(() => {}); }
     else if (it.type === "create") exec("bhote", ["add", it.title, "-d", it.desc, "-s", "next"], { timeout: 30000 }).catch(() => {});
     else if (it.type === "focus") run("agent.focus", { terminal: it.terminal });
@@ -1521,8 +1549,8 @@ export default class Bhote extends View {
           const cut = x.text.length > 80 ? x.text.lastIndexOf(" ", 80) : -1;
           const title = (cut > 20 ? x.text.slice(0, cut) : x.text.slice(0, 80)).trim(), rest = x.text.slice(title.length).trim().slice(0, 140);
           this.markPending([`new:${Date.now()}`], { create: { title, desc: rest, status: it.status } });   // (shown at once, where it was asked for; the file follows)
-          // a stash that came from an agent: the topic is queued on it (Now, Next), so "start on agent" is already chosen; it starts when that agent is free
-          exec("env", ["BHOTE_NO_SYNC=1", "bhote", "add", title, ...(rest ? ["-d", rest] : []), "-s", it.status], { timeout: 30000 }).then((r) => {   // (no merge with the other machines now: that is seven seconds over kharka, the daemon does it a moment later)
+          // a stash that came from an agent: the task is queued on it (Now, Next), so "start on agent" is already chosen; it starts when that agent is free
+          exec("env", ["BHOTE_NO_SYNC=1", "bhote", "add", title, ...(rest ? ["-d", rest] : []), "-s", it.status, "--source", "stash", "--source-ref", String(x.id)], { timeout: 30000 }).then((r) => {   // (no merge with the other machines now: that is seven seconds over kharka, the daemon does it a moment later)
             const id = /\bid:\s*(\S+)/.exec(r.stdout ?? "")?.[1], g = x.agent;
             if (id && g && it.status !== "later") setShared("bhote.queue", [...this.queueNow().filter((e) => e.id !== id), { id, machineName: g.machineName, machine: g.machine, pane: g.pane, name: g.space, at: Date.now() }]);
           }).catch(() => {});
@@ -1579,7 +1607,7 @@ export default class Bhote extends View {
       .when(!!right, (el) => el.child(right));
   }
 
-  // The live agent of a topic: its name is the space's name, its machine the space's machine.
+  // The live agent of a task: its name is the space's name, its machine the space's machine.
   agentOf(topic, list, machineOf) {
     if (!topic.agent) return null;
     return list.find((a) => {
@@ -2043,10 +2071,10 @@ export default class Bhote extends View {
     else this.fetchCfgMeta(cx, done);
   }
 
-  // The project records (the runbooks live there, not in the config file): read from the topic files, which is instant.
+  // The project records (the runbooks live there, not in the config file): read from the task files, which is instant.
   async projectRecords() {
     try {
-      const r = await exec("sh", ["-c", 'd="${XDG_DATA_HOME:-$HOME/.local/share}/bhote/topics"; for f in "$d"/proj-*.topic; do [ -f "$f" ] && { printf "\\036\\n"; cat "$f"; echo; }; done'], { timeout: 15000 });
+      const r = await exec("sh", ["-c", 'd="${XDG_DATA_HOME:-$HOME/.local/share}/bhote/topics"; for f in "$d"/proj-*.topic "$d"/proj-*.task; do [ -f "$f" ] && { printf "\\036\\n"; cat "$f"; echo; }; done'], { timeout: 15000 });
       return parseProjects(r.stdout).sort((a, b) => a.title.localeCompare(b.title));
     } catch (_e) { return []; }
   }
@@ -2104,7 +2132,7 @@ export default class Bhote extends View {
           offHint: ["deploy_branches", "deploy_names", "test_names"].includes(f) && !pr.raw.ci ? "Needs a CI source (set it above, or Detect)" : "" });
       });
       for (const [f, ph] of [["__detail", "detail"], ["__custom", "Name of the stage"], ["__repo", "host/owner/name"], ["__branch", "branch"], ["__env", "environment"]]) this.ensureInput(`${pr.id}:${f}`, "text", "", ph);
-      items.push({ key: `${pr.id}:__delete`, type: "action", default: null, group: "Runbooks", sec: pr.title, name: "Delete project", desc: "Its topics keep existing, without a project.", unit: "", dep: [], needs: [], order: 1000 + pi * 10 + 9,
+      items.push({ key: `${pr.id}:__delete`, type: "action", default: null, group: "Runbooks", sec: pr.title, name: "Delete project", desc: "Its tasks keep existing, without a project.", unit: "", dep: [], needs: [], order: 1000 + pi * 10 + 9,
         value: "", set: false, changed: false, source: "project", projId: pr.id, projTitle: pr.title, field: "__delete" });
     });
     // the servers: the services (servers.json) and the tunnel; drawn as cards, so one item stands for the group
@@ -3034,7 +3062,7 @@ export default class Bhote extends View {
     return [...this.commitDetail(t, f), v_flex().id("commit-inspector").flex_none().pt(4).pb(5).child(head).children(rows)];
   }
 
-  // Left: one list. The workspaces by machine; a workspace with an agent is its agent's cards (a card per topic of the agent, or
+  // Left: one list. The workspaces by machine; a workspace with an agent is its agent's cards (a card per task of the agent, or
   // one for the idle agent), a workspace without one a compact row.
   left() {
     const t = theme();
@@ -3074,7 +3102,7 @@ export default class Bhote extends View {
             st: { word: "shell", color: t.dim, bar: t.idle }, selected: s.active, dim: true, shell: true, onClick: () => run("space.select", { id: s.id }) }), 44));
           continue;
         }
-        // an agent is a card of its own: topics are not mixed in, a topic meets an agent when it is started on one
+        // an agent is a card of its own: tasks are not mixed in, a task meets an agent when it is started on one
         for (const a of mine) {
           const idle = a.status === "idle" && !this.isFinished(a);
           // the state is the colour of the card: working Claude orange, error (needs you) red, recently finished green, idle grey
@@ -3113,7 +3141,7 @@ export default class Bhote extends View {
     cx.notify();
   }
 
-  // A done topic: a muted ticked box in front (a click unticks it, the topic is open again: next), the title, the ... menu.
+  // A done task: a muted ticked box in front (a click unticks it, the task is open again: next), the title, the ... menu.
   doneCard(t, x) {
     return h_flex().id(`dn-${x.id}`).gap(6).items_center().bg(t.surface).border(1).border_color(t.border).rounded(8).mx(8).mb(5).pl(6).pr(6).py(5)
       .hover((e) => e.bg(t.raised)).on_click(this.guard(() => this.openPage(x.id)))
@@ -3124,15 +3152,33 @@ export default class Bhote extends View {
       .child(this.optionsBtn(t, `op-dn-${x.id}`, () => this.topicItems(x)));
   }
 
-  // The last three done topics: a bar that stays at the bottom of the panel under the list.
+  // The last three done tasks: a bar that stays at the bottom of the panel under the list.
   // --- the stash: texts kept for later (written, or dictated into the field with superwhisper) --------------------------------------------------
   // A stash is a text on a queue (the shared state, so that it survives a reload). From the queue it goes to a free agent as a prompt, or becomes
-  // a topic (Now, Next, Later), or is deleted. A dock at the bottom of the right panel: the head folds it, the field adds one (Enter), the list is the queue.
+  // a task (Now, Next, Later), or is deleted. A dock at the bottom of the right panel: the head folds it, the field adds one (Enter), the list is the queue.
   stashList() {
     try { const v = shared("bhote.stash"); return Array.isArray(v) ? v : []; } catch (_e) { return []; }
   }
 
-  setStash(list) { try { setShared("bhote.stash", list.slice(0, 200)); } catch (_e) { /* not remembered */ } }
+  setStash(list) { try { setShared("bhote.stash", list.slice(0, 200)); } catch (_e) { /* not remembered */ } this.mirrorStash(list.slice(0, 200)); }
+
+  // The stash is also a file, so that `bhote task from-stash <id>` (a command, outside the panel) finds an entry and takes it out: the panel writes the
+  // file whenever the stash changes, and takes over a change of the file that is not its own.
+  stashFile() { return `${home()}/.local/share/bhote/stash.json`; }
+  mirrorStash(list) {
+    const text = JSON.stringify(list);
+    this.stashMirror = text;
+    Promise.resolve(readTextFile(this.stashFile())).catch(() => null).then((raw) => writeTextFile(this.stashFile(), text, raw ?? null)).catch(() => { /* the next change writes it */ });
+  }
+  adoptStash() {
+    Promise.resolve(readTextFile(this.stashFile())).then((raw) => {
+      if (raw == null || raw === this.stashMirror) return;
+      let v; try { v = JSON.parse(raw); } catch (_e) { return; }
+      if (!Array.isArray(v)) return;
+      this.stashMirror = raw;
+      try { setShared("bhote.stash", v.slice(0, 200)); } catch (_e) { /* not remembered */ }
+    }).catch(() => { /* no file yet */ });
+  }
 
   addStash(cx) {
     const text = this.stashIn.value().replace(/\r/g, "").trim();
@@ -3154,7 +3200,7 @@ export default class Bhote extends View {
         const r = await exec("hc", ["read", a.address], { timeout: 8000 });
         const text = promptOf(r.stdout);
         if (text) {
-          // the agent it came from is kept with it (its name from Middle-earth for the badge; where it is, to queue a topic made of it on it)
+          // the agent it came from is kept with it (its name from Middle-earth for the badge; where it is, to queue a task made of it on it)
           const sp = spaces().find((q) => q.id === a.space), machineName = sp?.machine ?? null, label = this.machineLabel(machineName);
           const name = this.ringMap?.get(`${label}/${sp?.name ?? ""}`.toLowerCase().replace(/[^a-z0-9]/g, "")) ?? sp?.name ?? a.address;
           const agent = { name, space: a.space_name ?? sp?.name ?? "", machineName, machine: label, pane: a.address.split("/").pop() };
@@ -3165,14 +3211,14 @@ export default class Bhote extends View {
     try { await exec("hc", ["keys", a.address, "ctrl+s"], { timeout: 8000 }); } catch (_e) { /* nothing to pass on */ }
   }
 
-  // What the menu of a stash offers: send it to a free agent, make a topic of it, delete it.
+  // What the menu of a stash offers: send it to a free agent, make a task of it, delete it.
   stashItems(x) {
     const sp = spaces();
     const free = agents().filter((a) => a.status !== "working" && a.status !== "blocked");
     return [
       ...(free.length ? [{ type: "head", label: "Send to agent" }] : []),
       ...free.map((a) => { const s = sp.find((q) => q.id === a.space); return { type: "stash", op: "send", id: x.id, terminal: a.address, label: `${s?.name ?? a.address}${s?.machine ? ` · ${s.machine}` : ""}` }; }),
-      { type: "head", label: "Make a topic" },
+      { type: "head", label: "Make a task" },
       { type: "stash", op: "topic", status: "now", id: x.id, label: x.agent?.name ? `Now · queued on ${x.agent.name}` : "Now" },
       { type: "stash", op: "topic", status: "next", id: x.id, label: x.agent?.name ? `Next · queued on ${x.agent.name}` : "Next" },
       { type: "stash", op: "topic", status: "later", id: x.id, label: "Later" },
@@ -3278,7 +3324,7 @@ export default class Bhote extends View {
           })))));
   }
 
-  // The docks at the bottom of the topics: the done topics, then the stash.
+  // The docks at the bottom of the tasks: the done tasks, then the stash.
   docks(t) {
     const done = this.doneDock(t);
     return [...(done ? [done] : []), this.stashDock(t)];
@@ -3296,7 +3342,7 @@ export default class Bhote extends View {
       .children(shut ? [] : done.map((x) => this.enterWrap(t, "done", x.id, this.doneCard(t, x), 38)));
   }
 
-  // The state of a topic by itself (no agent): its word and colour.
+  // The state of a task by itself (no agent): its word and colour.
   plainState(t, x) {
     const g = x.group;
     if (g === "now") return { word: "now", color: t.working, icon: "now" };
@@ -3310,7 +3356,17 @@ export default class Bhote extends View {
     return { word: "done", color: t.done, icon: "done" };
   }
 
-  // A topic looks like a to-do: the icon of its state, a small title on one line, the ... menu; what it waits for under the title.
+  // A task looks like a to-do: the icon of its state, a small title on one line, the ... menu; what it waits for under the title.
+  // The small chip with the source of a task (agent, stash, linear, IMS task, IMS ticket, manual); a link of the source opens from its menu.
+  sourceChip(t, x) {
+    const col = { agent: t.ansi5 ?? t.accent, stash: t.ansi6 ?? t.accent, linear: t.ansi4 ?? t.accent, ims: t.ansi3 ?? t.accent }[x.source] ?? t.dim;
+    return div().flex_none().px(5).h(14).flex().items_center().rounded(7).border(1).border_color(t.border).text_size(9.5).text_color(col).child(sourceLabel(x));
+  }
+
+  // The filter by source of the Tasks section: "" = all.
+  srcFilter() { try { const v = shared("bhote.srcFilter"); return SOURCES.includes(v) ? v : ""; } catch (_e) { return ""; } }
+  srcOk(x) { const f = this.srcFilter(); return !f || x.source === f; }
+
   line(t, x, cx, sub) {
     const st = this.plainState(t, x);
     const queued = this.queueOf(x.id);
@@ -3320,7 +3376,9 @@ export default class Bhote extends View {
       .hover((s) => s.bg(t.raised)).on_click(this.guard(() => this.openPage(x.id)))
       .child(this.check(t, `ck-${x.id}`, "topics", x.id, picked))
       .child(v_flex().flex_1().min_w(0).gap(1)
-        .child(div().truncate().text_size(12.5).text_color(t.foreground).child(x.title))
+        .child(h_flex().items_center().gap(6).min_w(0)
+          .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(x.title))
+          .child(this.sourceChip(t, x)))
         .when(!!(sub || extra), (el) => el.child(div().truncate().text_size(11).text_color(t.muted).child(sub || extra))))
       .child(this.icon(t, st.icon, st.color, 16))
       .child(this.optionsBtn(t, `op-t-${x.id}`, () => this.topicItems(x)));
@@ -3446,7 +3504,7 @@ export default class Bhote extends View {
                 }
               } catch (_e) { /* no pipelines known on this branch */ }
             }
-            // branches of topics that work on this project and have no pull request yet
+            // branches of tasks that work on this project and have no pull request yet
             const branches = [...new Set(this.topics.filter((x) => cardStates.has(x.group) && x.branch && !x.dismissed && (x.project === p.id)).map((x) => x.branch))].filter((b) => !heads.has(b) && b !== "main" && b !== "develop");
             for (const b of branches.slice(0, 6)) {
               let runs = [];
@@ -3554,13 +3612,13 @@ export default class Bhote extends View {
     return [...seen.values()];
   }
 
-  // The open topic that is about this pull request ("PR #33: ..."), if any.
+  // The open task that is about this pull request ("PR #33: ..."), if any.
   topicOf(pr) {
     if (!(pr.number > 0)) return null;
     return this.topics.find((x) => x.group !== "done" && !x.dismissed && new RegExp(`\\bPR #${pr.number}\\b`).test(x.title)) ?? null;
   }
 
-  // A topic to fix a pull request's failing checks: next in line (not started by itself), the failing checks as its description.
+  // A task to fix a pull request's failing checks: next in line (not started by itself), the failing checks as its description.
   createFix(cx, pr) {
     const failed = pr.checks.filter((c) => c.state === "failed").map((c) => c.name);
     const desc = `${failed.join(", ")} fail on ${pr.branch}`.slice(0, 140);
@@ -3643,7 +3701,7 @@ export default class Bhote extends View {
       return [
         { type: "url", url: pr.url, label: pr.kind === "branch" ? "Open branch in GitHub" : "Open in GitHub" },
         ...(topic ? this.topicItems(topic) : []),
-        ...(!topic && pr.number > 0 && failedNames.length ? [{ type: "create", title: `PR #${pr.number}: fix the failing checks`, desc: `${failedNames.join(", ")} fail on ${pr.branch}`.slice(0, 140), label: "Create topic for the failing checks" }] : []),
+        ...(!topic && pr.number > 0 && failedNames.length ? [{ type: "create", title: `PR #${pr.number}: fix the failing checks`, desc: `${failedNames.join(", ")} fail on ${pr.branch}`.slice(0, 140), label: "Create task for the failing checks" }] : []),
       ];
     };
     return h_flex().id(id).bg(t.surface).border(1).border_color(failed.length && !pr.merged ? "#a8162e" : t.border).rounded(8).mx(8).mb(6)
@@ -3767,10 +3825,10 @@ export default class Bhote extends View {
     return rows;
   }
 
-  // The tab bar of the right panel: Topics, Deployments, Tests; a monitor's tab shows what runs (orange) and what failed (red).
+  // The tab bar of the right panel: Tasks, Deployments, Tests; a monitor's tab shows what runs (orange) and what failed (red).
   tabBar(t, cx) {
     const prList = this.prs.filter((x) => !x.merged).map((x) => ({ state: x.checks.some((c) => c.state === "failed") ? "failed" : x.checks.some((c) => c.state === "running") ? "running" : "ok" }));
-    const tabs = [["home", "Overview", null], ["topics", "Topics", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Env", null]];
+    const tabs = [["home", "Overview", null], ["topics", "Tasks", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Env", null]];
     return h_flex().flex_none().gap(2).px(8).pt(8).pb(6).items_center().border_b(1).border_color(t.border)
       .children(tabs.map(([id, label, list]) => {
         const on = this.tab === id;
@@ -3946,7 +4004,7 @@ export default class Bhote extends View {
   svcColor(t, st) { return st === "running" ? (t.ansi2 ?? t.done) : st === "failed" ? t.blocked : st === "stopped" ? t.dim : t.working; }
 
   // A start that did not work: its process is gone and the port does not answer (after 6 s: the process needs a moment to show), or the port did not
-  // answer within 2 minutes. The log says why; the card shows it in red, and a topic in review carries the short version, once per start.
+  // answer within 2 minutes. The log says why; the card shows it in red, and a task in review carries the short version, once per start.
   async checkSvcFailures() {
     for (const x of this.svcList) {
       const p = this.srvPending[`svc|${x.id}`];
@@ -3970,7 +4028,7 @@ export default class Bhote extends View {
     } catch (_e) { return []; }
   }
 
-  // The failure as a topic of the project (bhote add), the log's key line as its description (140 characters at most).
+  // The failure as a task of the project (bhote add), the log's key line as its description (140 characters at most).
   svcFailTopic(x, reason, lines) {
     const key = `${x.id}|${this.svcFail[x.id]?.at}`;
     if (this.svcTopicDone?.has(key)) return;
@@ -4041,7 +4099,7 @@ export default class Bhote extends View {
           .child(div().id(`svcfail-x-${x.id}`).w(20).h(20).flex_none().flex().items_center().justify_center().rounded(5).text_size(11).text_color(t.dim).cursor_pointer()
             .hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click((_e, cx) => this.svcDismiss(cx, x)).child("✕")))
         .children(this.svcFail[x.id].lines.slice(-3).map((l) => div().truncate().text_size(11.5).text_color(t.muted).child(l)))
-        .child(div().text_size(11).text_color(t.dim).child("A topic in review has the short version."))));
+        .child(div().text_size(11).text_color(t.dim).child("A task in review has the short version."))));
   }
 
   // A service as a chip (the overview) or the same with more room (the Servers tab).
@@ -4296,12 +4354,16 @@ export default class Bhote extends View {
     if (!this.envData && !this.envLoading && !this.envError) cx.timer.after(10, (cx2) => this.loadEnv(cx2, true));
     const d = this.envData;
     if (!d) return [this.envError ? empty(t, "!", "Secret store not readable", this.envError) : empty(t, "", "Reading the secret store", "bhote secret ls", true)];
-    const glyph = { present: "✓", different: "≠", missing: "–", unreachable: "?" };
     const mm = this.envMatrix;
-    const presence = (name) => {
+    // per machine a badge: green where the secret is kept, red where it is missing, amber where another value is kept, grey when the machine does not answer
+    const stateColor = { present: t.ansi2 ?? t.done, different: t.ansi3, missing: t.blocked, unreachable: t.dim };
+    const stateWord = { present: "kept", different: "other value", missing: "missing", unreachable: "no answer" };
+    const badges = (name) => {
       const row = mm?.secrets?.find((x) => x.name === name);
-      if (!row) return "";
-      return mm.machines.map((m) => `${m} ${glyph[row.machines[m]?.state] ?? "?"}`).join("   ");
+      if (!row) return [];
+      return mm.machines.map((m) => { const st = row.machines[m]?.state ?? "unreachable"; const c = stateColor[st] ?? t.dim;
+        return div().id(`env-b-${name}-${m}`).flex_none().flex().items_center().gap(4).px(7).h(16).rounded(8).text_size(10).font_semibold().text_color(c)
+          .bg(tint(c, "26", t.surface)).border(1).border_color(tint(c, "55", t.border)).tooltip(`${m}: ${stateWord[st] ?? st}`).child(m); });
     };
     const small = (id, label, onClick, color) => div().id(id).px(7).py(2).rounded(5).text_size(11).cursor_pointer().text_color(color ?? t.muted).hover((e) => e.bg(t.hover).text_color(t.foreground)).on_click(this.guard(onClick)).child(label);
     const add = div().id("env-add").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).text_color(t.dim).cursor_pointer()
@@ -4315,10 +4377,11 @@ export default class Bhote extends View {
       rows.push(v_flex().id(`env-${x.name}`).gap(1).mx(10).mb(4).px(12).py(7).rounded(8).bg(t.surface).border(1).border_color(t.border)
         .child(h_flex().gap(8).items_center()
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_size(12.5).text_color(t.foreground).child(x.name))
-          .child(div().flex_none().text_size(11.5).text_color(t.muted).child(x.masked))
+          .child(div().flex_none().px(5).py(1).rounded(4).bg(t.raised).border(1).border_color(t.border).font_family(settings()?.font_family ?? "Menlo").text_size(11).text_color(t.foreground).child(x.masked))   // (inline code: the masked key in the terminal font)
           .child(div().flex_none().px(6).rounded(8).text_size(10).bg(t.raised).text_color(t.dim).child(x.backend)))
         .child(h_flex().gap(4).items_center()
-          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child([x.fp ? `fp ${x.fp}` : "", presence(x.name)].filter(Boolean).join("   ·   ")))
+          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(x.fp ? `fp ${x.fp}` : ""))
+          .children(badges(x.name))
           .child(small(`env-reveal-${x.name}`, "Reveal", (_e, cx) => this.envDo(cx, ["secret", "get", x.name, "--clip"], "Copied to the clipboard (cleared soon)")))
           .child(small(`env-rename-${x.name}`, "Rename", () => this.openEnvForm("rename", x.name)))
           .child(asking
@@ -4644,6 +4707,17 @@ export default class Bhote extends View {
     return { mode, el: div().w_full().flex_none().h(Math.round(ease(st.S) * (HEAD + 2) + st.P)).mb(Math.round(8 * ease(st.S))).overflow_hidden().opacity(ease(st.S)).child(card) };
   }
 
+  // Nothing to show on the dashboard (no run, nothing red, nothing that waits): a line to smile about; it changes every half hour.
+  dashIdle(t) {
+    const lines = ["All quiet. Even the CI went home.", "Nothing building, nothing burning. Suspicious.", "No red, no running, no waiting. Enjoy it while it lasts.",
+      "The pipelines are asleep. Do not wake them.", "Zero fires. Someone should write that down.", "Tests: resting. Deploys: resting. And you?",
+      "Radio silence from every system. Probably fine.", "Nothing to do here. Go touch some grass."];
+    const line = lines[Math.floor(Date.now() / 1800000) % lines.length];
+    return div().id("dash-idle").w_full().flex_none().px(10).pt(4).pb(10)
+      .child(div().w_full().py(14).px(12).rounded(12).border(1).border_color(t.border).flex().items_center().justify_center()
+        .child(div().italic().font_family("Helvetica Neue").text_size(12.5).text_color(t.dim).child(line)));
+  }
+
   dashboardView(t) {
     const built = this.dashSpecs(t).map((s) => this.dashTile(t, s));
     const big = built.filter((b) => b.el);   // (a tile that is closed is not there: its tab is one click away in the tab bar)
@@ -4651,34 +4725,42 @@ export default class Bhote extends View {
     return v_flex().flex_none().px(10).pt(4).pb(2).children(big.map((b) => b.el));
   }
 
-  // The Topics section's head (in the Topics tab): its caption on a divider with "select all" as a link, with a pick the Actions button, the total count at the
-  // right end, the plus that adds a topic and (on the overview) the button that folds the tiles above.
+  // The Tasks section's head (in the Tasks tab): its caption on a divider with "select all" as a link, with a pick the Actions button, the total count at the
+  // right end, the plus that adds a task and (on the overview) the button that folds the tiles above.
   topicsHead(t) {
-    const g = (k) => this.topics.filter((x) => x.group === k && !x.dismissed).length;
+    const g = (k) => this.topics.filter((x) => x.group === k && !x.dismissed && this.srcOk(x)).length;
     const open = ["review", "now", "testing", "deploying", "finished", "next", "waiting", "later"].reduce((a, k) => a + g(k), 0);
     const plus = div().id("add-topic").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer()
       .text_color(this.adding ? t.accent : t.dim).bg(this.adding ? t.selected : t.chrome).hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_click(this.guard((_e, cx) => { this.adding = !this.adding; if (this.adding) this.addIn.focus(); cx.notify(); })).child("＋");
-    const keys = this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id);
+    const keys = this.topics.filter((x) => x.group !== "done" && !x.dismissed && this.srcOk(x)).map((x) => x.id);
     const sel = this.sel();
+    // the filter by source: a small link in the head (a menu of the sources, with how many tasks each has)
+    const cur = this.srcFilter();
+    const srcLink = div().id("tasks-source").flex_none().cursor_pointer().px(6).h(18).flex().items_center().rounded(5).text_size(10.5).text_color(cur ? t.accent : t.dim)
+      .hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
+      .on_click(this.guard(() => this.openMenu([{ type: "head", label: "Show tasks from" },
+        ...["", ...SOURCES].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v || "all sources"} (${this.topics.filter((x) => x.group !== "done" && !x.dismissed && (!v || x.source === v)).length})` }))], this.anchor)))
+      .child(cur ? `source: ${cur}` : "all sources");
     const picked = keys.filter((k) => sel.topics.has(k)).length;
-    // "Topics (select all)": the words in brackets are a link (with something picked: "clear")
+    // "Tasks (select all)": the words in brackets are a link (with something picked: "clear")
     const link = div().id("topics-select-all").cursor_pointer().text_size(10.5).text_color(t.dim).hover((e) => e.text_color(t.foreground))
       .on_click(this.guard((_e, cx) => { this.setSel(picked > 0 ? new Set() : new Set(keys), sel.tests); cx.notify(); }))
       .child(picked > 0 ? `clear ${picked}` : "select all");
-    // with a pick: the menu of what can be done with the picked topics
+    // with a pick: the menu of what can be done with the picked tasks
     const actions = div().id("topics-actions").flex_none().flex().items_center().gap(4).px(8).h(18).rounded(5).text_size(11).cursor_pointer()
       .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground).hover((e) => e.bg(t.hover))
       .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
       .on_click(this.guard(() => this.openMenu(this.batchItems("topics", keys), this.anchor)))
       .child(div().child("Actions")).child(svg("mods/bhote/chevron-down.svg").size(11).text_color(t.dim));
     const caption = h_flex().flex_none().items_center()
-      .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("TOPICS"))
+      .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("TASKS"))
       .child(div().ml(5).text_size(10.5).text_color(t.dim).child("("))
       .child(link)
       .child(div().text_size(10.5).text_color(t.dim).child(")"));
     return div().flex_none().pt(6).child(this.dividerCaption(t, caption, [
-      ...(picked > 0 ? [actions] : []), this.countTag(t, open), plus]));
+      ...(picked > 0 ? [actions] : []), srcLink, this.countTag(t, open), plus]));
   }
 
   // The deployments that run, for the left panel (which does not ask CI itself): the branch they are for, what they are, how far they are.
@@ -4790,7 +4872,7 @@ export default class Bhote extends View {
     const tiles = this.dashboardView(t);
     return v_flex().id("home-root").size_full().bg(t.chrome)
       .child(this.tabBar(t))   // (the tabs are there on the overview, too: its button is the lit one)
-      .children(tiles ? [dashHead] : []).children(tiles && !dashShut ? [tiles] : []).child(topicsHead).children(this.adding ? [this.addRow(t)] : [])
+      .child(dashHead).children(dashShut ? [] : [tiles ?? this.dashIdle(t)]).child(topicsHead).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
       .children([this.stashDock(t), ...(srvTile ? [srvTile] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
   }
@@ -4957,14 +5039,14 @@ export default class Bhote extends View {
           .child(div().min_w(0).truncate().child(`${archived ? "archived · " : ""}${outcome}`)))));
   }
 
-  // Right: next, waiting and parked topics as lines, the last done ones, then the deployments and tests.
+  // Right: next, waiting and parked tasks as lines, the last done ones, then the deployments and tests.
   right() {
     const t = theme();
     const rows = [];
     if (this.error) rows.push(div().p(10).text_color(t.blocked).child(`bhote: ${this.error}`));
     this.enterBegin("topics", this.topics.filter((x) => !x.dismissed).map((x) => x.id));
-    // the topics by status, in the order of the work; no agent is shown (a topic meets one when it is started on it)
-    const of = (g) => this.topics.filter((x) => x.group === g && !x.dismissed);
+    // the tasks by status, in the order of the work; no agent is shown (a task meets one when it is started on it)
+    const of = (g) => this.topics.filter((x) => x.group === g && !x.dismissed && this.srcOk(x));
     const sections = [["review", "Review"], ["now", "Now"], ["testing", "Testing"], ["deploying", "Waiting for deployment"], ["finished", "Finished"],
       ["next", "Next"], ["waiting", "Waiting"], ["later", "Later"]].map(([k, label]) => [k, label, of(k)]);
     let shutMap = {};
@@ -4977,7 +5059,7 @@ export default class Bhote extends View {
       if (shut) continue;
       for (const x of list) rows.push(this.enterWrap(t, "topics", x.id, this.line(t, x, null, ""), 46));
     }
-    if (!rows.length) rows.push(empty(t, "☰", "No topics yet", 'Add one with  bhote add "Fix the login redirect"'));
+    if (!rows.length) rows.push(this.srcFilter() ? empty(t, "☰", `No ${this.srcFilter()} tasks`, "Change the filter in the section head") : empty(t, "☰", "No tasks yet", 'Add one with  bhote add "Fix the login redirect"'));
     return rows;
   }
 

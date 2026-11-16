@@ -1,0 +1,420 @@
+#!/usr/bin/env python3
+"""bhote task sources: the adapters that mirror outside systems (Linear, the IMS) into tasks.
+
+Called by `bhote task sync` (the script reconciles the files; this module only talks to the outside and normalizes). Standard library only.
+
+    tasksources.py list [--source linear|ims|all]      {"tasks": [...], "ok": ["linear"], "errors": {"ims": "..."}, "skipped": {"linear": "no key"}}
+    tasksources.py fetch --source S <ref> [--kind K]    one normalized task (or null)
+    tasksources.py set-status --source S <ref> <status> [--kind K] [--id ID]   exit 0 done, 3 not changeable (nothing is retried), 1 error
+    tasksources.py open <url>                           prints the URL when it is http(s)
+
+One adapter per source: list() -> normalized tasks, fetch(ref), open(url), optional set_status(). A normalized task:
+    {source, source_ref, source_url, source_kind, source_parent, title, description, status, state}
+(status is bhote's vocabulary: now next waiting review later done; state is the name in the outside system).
+
+Secrets: the key comes from the secret store through secretstore.read_value (an internal call: `bhote secret get --reveal` is refused in Claude
+sessions on purpose), else from the environment. It goes to curl on stdin (-K -), never into an argument, a cache entry, a log or an error message.
+Reads go through the shared API cache (the format and file names of daemon/src/apicache.rs); writes never do.
+"""
+import json, os, re, subprocess, sys, tempfile, time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import secretstore as ss  # noqa: E402
+
+LINEAR_URL = "https://api.linear.app/graphql"
+IMS_DEFAULT = "https://ims-api.bilendo.de"
+DESC_MAX = 140
+DONE_SET = {"done", "closed", "archived", "completed", "erledigt"}
+IMS_MAP_DEFAULT = {"open": "next", "in progress": "now", "in bearbeitung": "now", "review": "review", "in review": "review",
+                   "blocked": "waiting", "waiting": "waiting", "wartend": "waiting", "backlog": "later"}
+IMS_BACK_DEFAULT = {"now": "In Progress", "next": "Open", "review": "Review", "waiting": "Blocked", "later": "Backlog", "done": "Done"}
+LINEAR_MAP = {"backlog": "later", "todo": "next", "in progress": "now", "in review": "review", "done": "done", "canceled": "done", "cancelled": "done"}
+LINEAR_TYPE = {"backlog": "later", "unstarted": "next", "started": "now", "completed": "done", "canceled": "done"}
+STATUSES = {"now", "next", "waiting", "review", "later", "done"}
+
+
+class Fail(Exception):
+    pass
+
+
+class NotChangeable(Exception):
+    pass
+
+
+# ── settings, secrets ─────────────────────────────────────────────────────────────────────────────────────────
+
+def cfg(key, default=""):
+    v = ss.cfg_get(key, default)
+    return v if v != "" else default
+
+
+def secret(name):
+    """The value of a secret: the environment (tests, CI), else the store. None without one."""
+    v = os.environ.get(name)
+    if v: return v.strip()
+    try:
+        return (ss.read_value(name) or "").strip() or None
+    except Exception:
+        return None
+
+
+def clean(s, n=500):
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(s or "")).strip()[:n]
+
+
+def short(s):
+    """A description is a short note: the first line, cut."""
+    t = clean(str(s or "").strip().split("\n", 1)[0] if s else "", DESC_MAX)
+    return t
+
+
+# ── the shared API cache (the same entries as bash api_cached and apicache.rs) ───────────────────────────────
+
+def cksum(b):
+    crc = 0
+    def feed(x):
+        nonlocal crc
+        crc ^= x << 24
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x04C11DB7) & 0xFFFFFFFF if crc & 0x80000000 else (crc << 1) & 0xFFFFFFFF
+    for x in b: feed(x)
+    n = len(b)
+    while n > 0:
+        feed(n & 0xFF); n >>= 8
+    return (~crc) & 0xFFFFFFFF, len(b)
+
+
+def cache_dir():
+    d = os.environ.get("BHOTE_API_CACHE")
+    if d: return d
+    base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    return os.path.join(base, "bhote", "api")
+
+
+def cache_file(key):
+    pre = re.sub(r"[^A-Za-z0-9]", "_", key)[:32]
+    crc, ln = cksum(key.encode())
+    return os.path.join(cache_dir(), f"{pre}-{crc}-{ln}.json")
+
+
+def cached(key, fetch):
+    """The body of fetch() (a str), through the API cache: fresh within its ttl, stale with backoff on an error. Raises Fail without any body."""
+    if os.environ.get("BHOTE_API_CACHE") == "off": return fetch()
+    try: base = max(1, int(cfg("API_CACHE_EVERY", "15")))
+    except ValueError: base = 15
+    f = cache_file(key); now = int(time.time()); ent = {}
+    try:
+        with open(f) as fh: ent = json.load(fh)
+    except (OSError, ValueError):
+        ent = {}
+    fresh = ent.get("fetched_at", 0) + ent.get("ttl", 0) > now and ent.get("status") != "error"
+    if (fresh or ent.get("retry_at", 0) > now) and ent.get("body"): return ent["body"]
+    if ent.get("retry_at", 0) > now and not ent.get("body"): raise Fail("backing off after an error")
+    try:
+        body = fetch()
+        ttl = min(base * 6, 120); ttl = max(ttl, base)
+        save(f, {"key": key, "fetched_at": now, "tried_at": now, "ttl": ttl, "status": "ok", "etag": "", "body": body, "error": "", "fails": 0, "retry_at": 0})
+        return body
+    except Fail as e:
+        fails = int(ent.get("fails", 0)); wait = min(base << min(fails, 10), 900)
+        last = ent.get("body", "")
+        save(f, {"key": key, "fetched_at": ent.get("fetched_at", 0), "tried_at": now, "ttl": ent.get("ttl", base), "status": "stale" if last else "error", "etag": "", "body": last, "error": "failed", "fails": fails + 1, "retry_at": now + wait})
+        if last: return last
+        raise e
+
+
+def save(path, obj):
+    try:
+        os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=os.path.dirname(path))
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as fh: json.dump(obj, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+
+
+# ── HTTP through curl: the key on stdin, never an argument ───────────────────────────────────────────────────
+
+def http(method, url, headers, body=None, timeout=15):
+    """Returns (status, text). The headers (with the key) go to curl as a config on stdin; a body goes through a private temp file."""
+    for v in headers.values():
+        if re.search(r'["\\\x00-\x1f]', v): raise Fail("a header value with a quote or control character")
+    cfgtxt = "".join(f'header = "{k}: {v}"\n' for k, v in headers.items())
+    args = ["curl", "-s", "--max-time", str(timeout), "-X", method, "-w", "\n%{http_code}", "-K", "-", url]
+    tmp = None
+    try:
+        if body is not None:
+            fd, tmp = tempfile.mkstemp(prefix="bhote-task-"); os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as fh: fh.write(body)
+            args[1:1] = ["--data-binary", "@" + tmp]
+        try:
+            r = subprocess.run(args, input=cfgtxt.encode(), capture_output=True, timeout=timeout + 5)
+        except (OSError, subprocess.TimeoutExpired):
+            raise Fail("curl failed")
+    finally:
+        if tmp:
+            try: os.unlink(tmp)
+            except OSError: pass
+    if r.returncode != 0: raise Fail("curl failed")
+    out = r.stdout.decode("utf-8", "replace")
+    text, _, code = out.rpartition("\n")
+    try: st = int(code.strip())
+    except ValueError: raise Fail("no HTTP status")
+    return st, text
+
+
+def ok_body(st, text, what):
+    if st in (429, 403) or st >= 500: raise Fail(f"{what}: HTTP {st}")
+    if st >= 400: raise Fail(f"{what}: HTTP {st}")
+    return text
+
+
+# ── Linear ───────────────────────────────────────────────────────────────────────────────────────────────────
+
+def linear_status(state):
+    n = (state or {}).get("name", "").strip().lower(); t = (state or {}).get("type", "")
+    return LINEAR_MAP.get(n) or LINEAR_TYPE.get(t) or "next"
+
+
+class Linear:
+    name = "linear"
+
+    def key(self):
+        k = secret("LINEAR_API_KEY")
+        if not k: raise Skip("no LINEAR_API_KEY in the secret store (bhote secret set LINEAR_API_KEY)")
+        return k
+
+    def gql(self, query, variables, cache=None):
+        k = self.key()
+        def go():
+            st, text = http("POST", LINEAR_URL, {"Authorization": k, "Content-Type": "application/json"}, json.dumps({"query": query, "variables": variables}))
+            ok_body(st, text, "Linear")
+            try: d = json.loads(text)
+            except ValueError: raise Fail("Linear: not JSON")
+            if d.get("errors"): raise Fail("Linear: " + clean((d["errors"][0] or {}).get("message", "error"), 120))
+            return text
+        text = cached(cache, go) if cache else go()
+        return json.loads(text)["data"]
+
+    def norm(self, i):
+        st = i.get("state") or {}
+        t = {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300), "source_kind": "", "source_parent": "",
+             "title": clean(i.get("title")), "description": short(i.get("description")), "status": linear_status(st), "state": clean(st.get("name"), 60)}
+        if (st.get("type") == "canceled") or st.get("name", "").lower() in ("canceled", "cancelled"):
+            t["description"] = "Canceled in Linear."
+        return t
+
+    def list(self):
+        teams = [x.strip().upper() for x in cfg("LINEAR_TEAMS").split(",") if x.strip()]
+        flt = '{state: {type: {nin: ["completed", "canceled"]}}' + (', team: {key: {in: [%s]}}' % ", ".join(json.dumps(t) for t in teams) if teams else "") + "}"
+        q = ("query($after: String) { viewer { assignedIssues(first: 100, after: $after, filter: %s) { nodes { identifier title description url priority updatedAt "
+             "state { name type } team { key } cycle { number name } } pageInfo { hasNextPage endCursor } } } }" % flt)
+        out, after = [], None
+        for page in range(10):
+            d = self.gql(q, {"after": after}, cache=f"linear my-issues {','.join(teams)} p{page} {after or ''}")
+            a = d["viewer"]["assignedIssues"]
+            for i in a["nodes"]:
+                if teams and (i.get("team") or {}).get("key", "").upper() not in teams: continue
+                out.append(self.norm(i))
+            if not a["pageInfo"]["hasNextPage"]: break
+            after = a["pageInfo"]["endCursor"]
+        else:
+            raise Fail("Linear: more than 1000 issues")
+        return out
+
+    def fetch(self, ref, kind=""):
+        q = "query($id: String!) { issue(id: $id) { identifier title description url priority updatedAt state { name type } team { key } cycle { number name } } }"
+        i = self.gql(q, {"id": ref}).get("issue")
+        return self.norm(i) if i else None
+
+    def open(self, url):
+        return url
+
+    def set_status(self, ref, status, kind="", ident=""):
+        if status not in STATUSES - {"waiting"}: raise NotChangeable("Linear has no state for " + status)
+        q = "query($id: String!) { issue(id: $id) { id team { states { nodes { id name type position } } } } }"
+        i = self.gql(q, {"id": ref}).get("issue")
+        if not i: raise NotChangeable("the issue is gone")
+        want = {"now": ("started", "in progress"), "next": ("unstarted", "todo"), "review": ("started", "in review"), "later": ("backlog", "backlog"), "done": ("completed", "done")}[status]
+        nodes = sorted(i["team"]["states"]["nodes"], key=lambda s: s.get("position", 0))
+        pick = next((s for s in nodes if s["name"].lower() == want[1]), None)
+        if not pick and status != "review": pick = next((s for s in nodes if s["type"] == want[0]), None)
+        if not pick: raise NotChangeable("no matching state in the team")
+        m = "mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }"
+        d = self.gql(m, {"id": i["id"], "s": pick["id"]})
+        if not d["issueUpdate"]["success"]: raise Fail("Linear refused the change")
+
+
+# ── IMS ──────────────────────────────────────────────────────────────────────────────────────────────────────
+
+def ims_map():
+    m = dict(IMS_MAP_DEFAULT)
+    for pair in cfg("IMS_STATUS_MAP").split(","):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            if v.strip() in STATUSES: m[k.strip().lower()] = v.strip()
+    return m
+
+
+def ims_status(name):
+    n = (name or "Open").strip().lower()
+    if n in DONE_SET: return "done"
+    return ims_map().get(n, "next")
+
+
+def rows(d):
+    if isinstance(d, list): return d
+    if isinstance(d, dict):
+        for k in ("data", "tasks", "items", "rows", "workItems", "work_items", "results"):
+            if isinstance(d.get(k), list): return d[k]
+    return []
+
+
+class IMS:
+    name = "ims"
+
+    def base(self):
+        return cfg("IMS_URL", IMS_DEFAULT).rstrip("/")
+
+    def key(self):
+        k = secret("IMS_API_KEY")
+        if not k: raise Skip("no IMS_API_KEY in the secret store (bhote secret set IMS_API_KEY)")
+        return k
+
+    def get(self, path, cache=None):
+        k = self.key(); url = self.base() + path
+        def go():
+            st, text = http("GET", url, {"Authorization": "Bearer " + k, "Accept": "application/json"})
+            return ok_body(st, text, "IMS")
+        text = cached(cache, go) if cache else go()
+        try: return json.loads(text)
+        except ValueError: raise Fail("IMS: not JSON")
+
+    def url_of(self, kind, rid):
+        web = cfg("IMS_WEB_URL").rstrip("/")
+        if web: return f"{web}/{'work-items' if kind == 'work_item' else 'tasks'}/{rid}"
+        return self.base() + (f"/api/company/work-items/{rid}" if kind == "work_item" else f"/api/tasks/{rid}")
+
+    def norm_item(self, w):
+        n = w.get("item_number")
+        ref = f"IMS-{n}" if n not in (None, "") else f"IMS-W{w.get('id')}"
+        desc = short(w.get("description"))
+        if w.get("remote_id"): desc = clean(f"Jira {w['remote_id']}" + (f": {desc}" if desc else ""), DESC_MAX)
+        return {"source": "ims", "source_ref": ref, "source_url": self.url_of("work_item", w.get("id")), "source_kind": "work_item", "source_parent": "",
+                "title": clean(w.get("title")), "description": desc, "status": ims_status(w.get("status")), "state": clean(w.get("status"), 60), "ims_id": str(w.get("id", ""))}
+
+    def norm_task(self, t, parents):
+        wid = t.get("work_item_id")
+        return {"source": "ims", "source_ref": f"IMS-T{t.get('id')}", "source_url": self.url_of("task", t.get("id")), "source_kind": "task",
+                "source_parent": parents.get(str(wid), "") if wid not in (None, "") else "",
+                "title": clean(t.get("title")), "description": short(t.get("description")), "status": ims_status(t.get("status")), "state": clean(t.get("status"), 60), "ims_id": str(t.get("id", ""))}
+
+    def list(self):
+        items = [w for w in rows(self.get("/api/tasks/my-work-items?includeDone=false", cache="ims my-work-items")) if not w.get("deleted_at")]
+        out = [self.norm_item(w) for w in items]
+        parents = {str(w.get("id")): f"IMS-{w.get('item_number')}" for w in items if w.get("item_number") not in (None, "")}
+        tasks = [t for t in rows(self.get("/api/tasks?limit=200", cache="ims tasks")) if not t.get("deleted_at")]
+        lookups = 0
+        for t in tasks:
+            wid = t.get("work_item_id")
+            if wid not in (None, "") and str(wid) not in parents and lookups < 20:   # the work item is not mine: its number, once
+                lookups += 1
+                try:
+                    w = self.get(f"/api/company/work-items/{wid}", cache=f"ims work-item {wid}")
+                    w = w.get("data", w) if isinstance(w, dict) else {}
+                    if w.get("item_number") not in (None, ""): parents[str(wid)] = f"IMS-{w['item_number']}"
+                except Fail:
+                    pass
+        out += [self.norm_task(t, parents) for t in tasks]
+        return [t for t in out if t["status"] != "done"]
+
+    def fetch(self, ref, kind=""):
+        if ref.startswith("IMS-T"): kind, rid = "task", ref[5:]
+        elif ref.startswith("IMS-"): kind, rid = "work_item", None
+        else: return None
+        if kind == "task":
+            d = self.get(f"/api/tasks/{rid}"); d = d.get("data", d) if isinstance(d, dict) else None
+            return self.norm_task(d, {}) if d else None
+        for w in rows(self.get(f"/api/company/work-items?search={ref[4:]}")):
+            if str(w.get("item_number")) == ref[4:]: return self.norm_item(w)
+        return None
+
+    def open(self, url):
+        return url
+
+    def back_name(self, status):
+        for pair in cfg("IMS_STATUS_MAP").split(","):
+            if "=" in pair and pair.split("=", 1)[1].strip() == status: return pair.split("=", 1)[0].strip()
+        return IMS_BACK_DEFAULT[status]
+
+    def set_status(self, ref, status, kind="", ident=""):
+        if status not in STATUSES: raise NotChangeable("unknown status")
+        k = self.key()
+        if not ident:
+            t = self.fetch(ref)
+            if not t: raise NotChangeable("the item is gone")
+            ident = t["ims_id"]
+        kind = kind or ("task" if ref.startswith("IMS-T") else "work_item")
+        body = json.dumps({"status": self.back_name(status)})
+        if kind == "task":
+            st, text = http("PUT", self.base() + f"/api/tasks/{ident}", {"Authorization": "Bearer " + k, "Content-Type": "application/json"}, body)
+        else:
+            st, text = http("PATCH", self.base() + f"/api/company/work-items/{ident}", {"Authorization": "Bearer " + k, "Content-Type": "application/json"}, body)
+        if st == 409: raise NotChangeable("IMS: the status of this item moves only through its workflow (409)")
+        if st in (400, 404, 422): raise NotChangeable(f"IMS refused the status (HTTP {st})")
+        ok_body(st, text, "IMS")
+
+
+class Skip(Exception):
+    pass
+
+
+ADAPTERS = {"linear": Linear, "ims": IMS}
+
+
+def cmd_list(src):
+    names = list(ADAPTERS) if src in ("", "all") else [src]
+    res = {"tasks": [], "ok": [], "errors": {}, "skipped": {}}
+    for n in names:
+        if n not in ADAPTERS: raise Fail("no source " + n)
+        try:
+            res["tasks"] += ADAPTERS[n]().list(); res["ok"].append(n)
+        except Skip as e:
+            res["skipped"][n] = str(e)
+        except Fail as e:
+            res["errors"][n] = str(e)
+        except (KeyError, TypeError, ValueError) as e:
+            res["errors"][n] = "unexpected answer (" + type(e).__name__ + ")"
+    return res
+
+
+def main(argv):
+    if not argv: print(__doc__); return 2
+    cmd, rest = argv[0], argv[1:]
+    opts = {"--source": "", "--kind": "", "--id": ""}; pos = []
+    i = 0
+    while i < len(rest):
+        if rest[i] in opts: opts[rest[i]] = rest[i + 1] if i + 1 < len(rest) else ""; i += 2
+        else: pos.append(rest[i]); i += 1
+    try:
+        if cmd == "list":
+            print(json.dumps(cmd_list(opts["--source"]))); return 0
+        if cmd == "fetch":
+            print(json.dumps(ADAPTERS[opts["--source"]]().fetch(pos[0], opts["--kind"]))); return 0
+        if cmd == "set-status":
+            ADAPTERS[opts["--source"]]().set_status(pos[0], pos[1], opts["--kind"], opts["--id"]); print(json.dumps({"ok": True})); return 0
+        if cmd == "open":
+            if pos and re.match(r"^https?://", pos[0]): print(pos[0]); return 0
+            return 1
+    except NotChangeable as e:
+        print(json.dumps({"ok": False, "not_changeable": str(e)})); return 3
+    except Skip as e:
+        print(f"bhote: {e}", file=sys.stderr); return 4
+    except (Fail, KeyError, IndexError) as e:
+        print(f"bhote: {type(e).__name__ if not isinstance(e, Fail) else e}", file=sys.stderr); return 1
+    print(__doc__, file=sys.stderr); return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

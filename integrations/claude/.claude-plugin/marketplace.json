@@ -5,7 +5,7 @@
     {
       "name": "bhote-topic",
       "source": "./mods/bhote-topic",
-      "description": "Claude Code mod: the agent's bhote topic above the prompt, and /topic"
+      "description": "Claude Code mod: the agent's bhote task above the prompt, and /task (/topic stays)"
     }
   ]
 }

@@ -1,6 +1,6 @@
 ---
 name: bhote-install
-description: Install and set up bhote (the topics and agents side panel for herdr) completely on this machine, through its CLI and the herdr API, without the interactive wizard: the program, jq/herdr, the herdr plugin, the Omarchy bar widget, the Claude Code hook and skills in every Claude profile, the settings, the connection to other machines, the monitors. Use it when the user asks to install, set up, repair, update or check bhote on a machine ("bhote-install", "install bhote here", "set up bhote on the Mac").
+description: Install and set up bhote (the tasks and agents side panel for herdr) completely on this machine, through its CLI and the herdr API, without the interactive wizard: the program, jq/herdr, the herdr plugin, the Omarchy bar widget, the Claude Code hook and skills in every Claude profile, the settings, the connection to other machines, the monitors. Use it when the user asks to install, set up, repair, update or check bhote on a machine ("bhote-install", "install bhote here", "set up bhote on the Mac").
 ---
 
 # bhote-install: set bhote up completely
@@ -43,7 +43,7 @@ For each profile directory `<dir>` (`${CLAUDE_CONFIG_DIR:-~/.claude}` and every 
   (`grep -q 'bhote current' <dir>/settings.json`). `settings.json` may be a symlink into a config repo: write THROUGH it
   (`cat new > file`), never replace it with `mv`.
 - the skills: copy or link `integrations/claude/skills/bhote` (and `bhote-install`) to `<dir>/skills/<name>/` (`bhote skills install` does it for every profile).
-- the mod (optional, Claude Code 2.1.287+): `bhote mod install` puts `bhote-topic` (the topic as a band above the prompt, `/topic`) into every profile; `bhote mod status` checks it. Tell the user to restart Claude Code or run `/reload-plugins`.
+- the mod (optional, Claude Code 2.1.287+): `bhote mod install` puts `bhote-topic` (the task as a band above the prompt, `/topic`) into every profile; `bhote mod status` checks it. Tell the user to restart Claude Code or run `/reload-plugins`.
 
 ## 5. Settings (all through `bhote config`, nothing by hand)
 

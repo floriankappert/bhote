@@ -77,17 +77,22 @@ fn gh(args: &[&str]) -> Option<String> {
 fn gh_json(args: &[&str]) -> Option<Value> { serde_json::from_str(&gh(args)?).ok() }
 fn gh_ok() -> bool { run("gh", &["auth", "status"], 15).is_some() }
 
+/// The bhote script: BHOTE_BIN, else ~/.local/bin/bhote, else the PATH.
+pub fn bhote_bin() -> String {
+    std::env::var("BHOTE_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        let own = format!("{}/.local/bin/bhote", home);
+        if Path::new(&own).exists() { own } else { "bhote".to_string() }
+    })
+}
+
 /// A secret of the store (`bhote secret`): asked from the bhote script (its own process, the value only in this memory), kept for 5 minutes.
 fn store_secret(name: &str) -> Option<String> {
     use std::sync::{Mutex, OnceLock};
     static MEMO: OnceLock<Mutex<HashMap<String, (Instant, Option<String>)>>> = OnceLock::new();
     let memo = MEMO.get_or_init(|| Mutex::new(HashMap::new()));
     if let Some((at, v)) = memo.lock().ok()?.get(name) { if at.elapsed() < Duration::from_secs(300) { return v.clone(); } }
-    let bin = std::env::var("BHOTE_BIN").ok().filter(|b| !b.is_empty()).unwrap_or_else(|| {
-        let home = std::env::var("HOME").unwrap_or_default();
-        let own = format!("{}/.local/bin/bhote", home);
-        if Path::new(&own).exists() { own } else { "bhote".to_string() }
-    });
+    let bin = bhote_bin();
     let v = Command::new(bin).args(["secret", "get", name, "--reveal"]).env("BHOTE_ALLOW_REVEAL", "1")
         .stdin(Stdio::null()).stderr(Stdio::null()).output().ok()
         .filter(|o| o.status.success()).and_then(|o| String::from_utf8(o.stdout).ok()).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
@@ -433,7 +438,7 @@ fn projects(c: &Ctx) -> Vec<Project> {
     let Ok(rd) = fs::read_dir(&c.topics) else { return v };
     for e in rd.flatten() {
         let p = e.path(); let n = e.file_name().to_string_lossy().into_owned();
-        if !(n.starts_with("proj-") && n.ends_with(".topic")) { continue; }
+        if !(n.starts_with("proj-") && crate::store::has_task_ext(&n)) { continue; }
         let txt = crate::proc::read_cap(&p).unwrap_or_default();
         let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
         for l in txt.lines() { if let Some(i) = l.find('=') { let (k, val) = (&l[..i], &l[i + 1..]); match k { "title" if name.is_empty() => name = val.to_string(), "deleted" => del = val.to_string(), "kind" => kd = val.to_string(), _ => {} } } }

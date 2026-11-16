@@ -11,8 +11,8 @@ The same script runs in four roles:
 | Role | Started by | Does |
 |---|---|---|
 | **Panel** | `bhote` in a pane (the herdr plugin types it into the pane it opens) | Reads keys and mouse reports, draws a frame whenever what is shown would change (`bhote_main`, `bhote_paint`). Starts the collector in the background. |
-| **Collector** | every panel, in the background; only the one holding `collector.lock` works | Asks herdr for the agents (this machine every `LOCAL_EVERY` s, the others every `REMOTE_EVERY` s), merges the topics with the data location, runs auto-assign, the branch sync, the monitors, the Slack watch and the update check, and ends the ssh masters herdr leaves behind (`herdr_mux_sweep`). Each round re-reads the settings. Ends when its panel ends. |
-| **Plugin hooks** | herdr, through `herdr-plugin/*.sh` | `open_panel.sh` opens the panel next to the agent pane; `on_event.sh` runs `bhote event` when an agent changes state (review topics, notifications, a poke for the panels); `dump.sh` hands the topics to another machine; `changed.sh` takes a pushed agent state; `focus.sh` jumps between agent and panel; `search.sh` runs `bhote find` in the popup. |
+| **Collector** | every panel, in the background; only the one holding `collector.lock` works | Asks herdr for the agents (this machine every `LOCAL_EVERY` s, the others every `REMOTE_EVERY` s), merges the tasks with the data location, runs auto-assign, the branch sync, the monitors, the Slack watch and the update check, and ends the ssh masters herdr leaves behind (`herdr_mux_sweep`). Each round re-reads the settings. Ends when its panel ends. |
+| **Plugin hooks** | herdr, through `herdr-plugin/*.sh` | `open_panel.sh` opens the panel next to the agent pane; `on_event.sh` runs `bhote event` when an agent changes state (review tasks, notifications, a poke for the panels); `dump.sh` hands the tasks to another machine; `changed.sh` takes a pushed agent state; `focus.sh` jumps between agent and panel; `search.sh` runs `bhote find` in the popup. |
 | **CLI** | you, scripts, agents (`bhote add …`) | Works on the same files with the same functions and merges with the data location right after a change. |
 
 Several panels can run on one machine (one per tab); they all read what the one collector writes. A panel never waits
@@ -23,7 +23,7 @@ for herdr or ssh: everything slow happens in the collector, and the panel only r
 | Where | What | Who writes |
 |---|---|---|
 | `~/.config/bhote/config` (`BHOTE_CONFIG`) | `KEY=value` settings, never sourced | panel, CLI, wizard (`cfg_set`, under `config.lock`) |
-| `~/.local/share/bhote/topics/*.topic` (`BHOTE_DATA`) | one file per topic, plus project, machine and agent-number records ([format](data-and-sync.md)) | panel, CLI, collector, `bhote event` |
+| `~/.local/share/bhote/topics/*.topic` (`BHOTE_DATA`) | one file per task, plus project, machine and agent-number records ([format](data-and-sync.md)) | panel, CLI, collector, `bhote event` |
 | `~/.local/share/bhote/testruns/` | runs of `bhote test run` | CLI |
 | the shared folder (`BHOTE_SHARED`, default `$XDG_RUNTIME_DIR` or `$TMPDIR` + `/bhote-$UID`, mode 0700) | the agent lists (`agents.local`, `agents.remote`, `agents.meta.*`), `collector.lock`, the revision that tells panels to redraw, the monitor lists, `machines.offline` | collector (the panels read) |
 | a private scratch folder per process (`RUN_DIR`, removed on exit) | the frame's click maps (`divrow`, `agmap`, `agrows`) | the panel |
@@ -38,13 +38,13 @@ The script is ordered top to bottom; every part starts with a `# ── name` li
 | Section | Contains |
 |---|---|
 | settings | the `SETTINGS` table (key, default, type, description) and `cfg_var`/`cfg_get`/`cfg_set`, number guards (`num_or`, `num_set`) |
-| topics | the topic store: `topics_load` (the `T_*` arrays), `topic_get`/`topic_set`, the replica and `store_sync` |
+| tasks | the task store: `topics_load` (the `T_*` arrays), `topic_get`/`topic_set`, the replica and `store_sync` |
 | themes | the colour roles for `THEME=terminal`, `THEME=catppuccin` and `THEME=dracula`, `COLOR_*` overrides |
 | the agents of every machine | `collect_one`, `collect_local`/`collect_remote`, the collector loop, auto-assign, `bhote event` effects |
-| the topic list | the main view: head, topics, done area, agents (`topics_block`, `done_block`, `agents_block`, `bhote_view`) |
+| the task list | the main view: head, tasks, done area, agents (`topics_block`, `done_block`, `agents_block`, `bhote_view`) |
 | the settings screen | the rows of every settings page and their keys |
 | the animation | the welcome-screen dog and the busy agents' star (a ticker that only decides the picture; the main loop draws) |
-| suggestions, the picker | `a` (topics from what agents work on), `s` (choose a free agent) |
+| suggestions, the picker | `a` (tasks from what agents work on), `s` (choose a free agent) |
 | projects, machine codes, agent names | project records and repository keys, `MAC`/`OMR` codes, agent names `w3:a1` from herdr's pane ids (`MAC4` numbers stay refs) |
 | talking to agents | the live state of a pane and prompts to it, through herdr (`--machine` for another machine) |
 | Steal & Transfer | hand-over prompts and their state ([how it works](steal-and-transfer.md)) |

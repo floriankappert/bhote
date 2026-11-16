@@ -28,7 +28,7 @@ fn build(topics: &Path) -> HashMap<String, String> {
     if let Ok(rd) = std::fs::read_dir(topics) {
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            if !(n.starts_with("an-") && n.ends_with(".topic")) { continue; }
+            if !(n.starts_with("an-") && crate::store::has_task_ext(&n)) { continue; }
             let txt = std::fs::read_to_string(e.path()).unwrap_or_default();
             let (mut title, mut created) = (String::new(), 0u64);
             for l in txt.lines() {

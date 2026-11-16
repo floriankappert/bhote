@@ -1,0 +1,704 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/floriankappert/bhote/blob/main/docs/schema/task.schema.json",
+  "title": "bhote task",
+  "description": "One task (until version 0.9.3 called a topic: topic.schema.json is the same schema under its old name) as printed by `bhote show --json`, `bhote list --json` (array items) and every changing command with --json. A value that is not set is null.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "n",
+    "title",
+    "description",
+    "status",
+    "waiting_for",
+    "waiting_since",
+    "agent",
+    "slack",
+    "project",
+    "review",
+    "source",
+    "source_ref",
+    "source_url",
+    "source_kind",
+    "source_parent",
+    "created",
+    "updated"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "description": "Stable id, <created epoch>-<random>. Never changes, also not across machines."
+    },
+    "n": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 1,
+      "description": "Position in `bhote list --all` at the moment of the call. Usable as <ref> right away; changes when tasks change."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 140
+    },
+    "status": {
+      "enum": [
+        "now",
+        "testing",
+        "next",
+        "waiting",
+        "review",
+        "later",
+        "done"
+      ]
+    },
+    "waiting_for": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Who the task waits for; only set while status is waiting."
+    },
+    "waiting_since": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Unix time (seconds) since when it waits; only set while status is waiting."
+    },
+    "agent": {
+      "description": "The herdr agent the task belongs to (handed over with s, or the agent that last changed it), or null.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "machine",
+            "pane",
+            "session",
+            "branch"
+          ],
+          "properties": {
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The agent's workspace name."
+            },
+            "machine": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Machine label (HOST_LABEL or a saved herdr machine)."
+            },
+            "pane": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "herdr pane id, e.g. w3:p2."
+            },
+            "session": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The agent's session id (herdr agent_session, = CLAUDE_CODE_SESSION_ID). Stable across herdr restarts."
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The git branch the agent works on (\"@1234abc\" when detached), read by the machine it runs on (GITHUB_BRANCHES)."
+            }
+          }
+        }
+      ]
+    },
+    "slack": {
+      "description": "A pinned Slack channel, DM or thread: watched while the task waits (SLACK_WATCH); a message from someone else sets it to review. null: none.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "channel",
+            "thread",
+            "label",
+            "message"
+          ],
+          "properties": {
+            "channel": {
+              "type": "string",
+              "pattern": "^[A-Z0-9]+$",
+              "description": "Channel id (C…, G…, D…) or a user id for the DM"
+            },
+            "thread": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "pattern": "^[0-9]+\\.[0-9]+$",
+              "description": "Thread ts, when a thread is watched"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "#channel, @person, channel, DM or thread"
+            },
+            "message": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The last message from someone else (who: text), while in review"
+            }
+          }
+        }
+      ]
+    },
+    "project": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The project's name (the task's own, set by bhote add --project, an agent's repository or the panel's tab); null: none."
+    },
+    "review": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "description": "The card an agent put under a review task: what it did and what is open, and the jump button *Review ansehen* (`bhote review <ref> --summary … --look`). Null when the task is not in review or has no card.",
+      "properties": {
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 240
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "label",
+              "reply",
+              "jump"
+            ],
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 24,
+                "description": "The button's label, e.g. \"Commit?\"."
+              },
+              "reply": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 400,
+                "description": "The text the agent gets when the button is pressed (default: the label without the question mark, in lower case). Null for the jump button."
+              },
+              "jump": {
+                "type": "boolean",
+                "description": "True for the generic button \"Review ansehen\" (--look): it focuses the agent and sends nothing; the task stays in review."
+              }
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "enum": [
+        "agent",
+        "stash",
+        "linear",
+        "ims",
+        "manual"
+      ],
+      "description": "Where the task comes from. A task made before sources existed has none stored: it is derived when read (what an agent made is agent, the rest manual)."
+    },
+    "source_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The reference in the source: IMS-123 (Linear, IMS work item), IMS-T<id> (IMS task), the agent's name, the stash id."
+    },
+    "source_url": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^https?://",
+      "description": "A link to the item in its system."
+    },
+    "source_kind": {
+      "enum": [
+        "task",
+        "work_item",
+        null
+      ],
+      "description": "IMS only: a personal task (task) or a ticket (work_item)."
+    },
+    "source_parent": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "IMS only: the work item (IMS-<n>) an IMS task belongs to."
+    },
+    "created": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Unix time (seconds)."
+    },
+    "updated": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Unix time (seconds) of the last change; the newer one wins when replicas are merged."
+    },
+    "progress": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only in `bhote current --json`, never in the other commands: what runs for the agent that asks. `tests`: the suites running in its worktree (live status files, three at most); `deploy`: the deployment its task waits for, or null.",
+      "required": [
+        "tests",
+        "deploy"
+      ],
+      "properties": {
+        "tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "suite",
+              "done",
+              "total"
+            ],
+            "properties": {
+              "suite": {
+                "type": "string"
+              },
+              "done": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "deploy": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "project",
+            "label",
+            "state",
+            "done",
+            "total",
+            "url"
+          ],
+          "properties": {
+            "project": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "running",
+                "queued",
+                "approval",
+                "ok",
+                "failed",
+                "canceled"
+              ]
+            },
+            "done": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "total": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Only in `bhote current --json --full`: the pull request of the agent's branch and the other open tasks of the same project (the Claude Code mod's pane shows them).",
+      "required": [
+        "pr",
+        "siblings"
+      ],
+      "properties": {
+        "pr": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "number",
+            "title",
+            "state",
+            "draft",
+            "url",
+            "checks"
+          ],
+          "properties": {
+            "number": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "open",
+                "closed",
+                "merged"
+              ]
+            },
+            "draft": {
+              "type": "boolean"
+            },
+            "url": {
+              "type": "string"
+            },
+            "checks": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "success",
+                "failed",
+                "pending"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "success": {
+                  "type": "integer"
+                },
+                "failed": {
+                  "type": "integer"
+                },
+                "pending": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "siblings": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "n",
+              "title",
+              "status"
+            ],
+            "properties": {
+              "n": {
+                "type": "integer"
+              },
+              "title": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "lists": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The cards of the panel: the other tasks of each status, newest first (at most 8 in review, 5 finished, 6 of the others), with the total of that status. deploying is a task that waits for a deployment; next, waiting, later, done and the archived ones are not part of it.",
+          "properties": {
+            "review": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "now": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "testing": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "deploying": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "finished": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "total",
+                "items"
+              ],
+              "properties": {
+                "total": {
+                  "type": "integer"
+                },
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "updated",
+                      "n",
+                      "title",
+                      "agent",
+                      "code"
+                    ],
+                    "properties": {
+                      "updated": {
+                        "type": "integer"
+                      },
+                      "n": {
+                        "type": "integer"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "code": {
+                        "type": "string",
+                        "description": "The agent's code on its machine (MAC4, OMR3), empty without one."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

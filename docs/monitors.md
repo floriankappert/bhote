@@ -1,6 +1,6 @@
 # Deployment and test monitor
 
-Two optional blocks between the done topics and the agents: the last **deployments** and the last **test runs** of your
+Two optional blocks between the done tasks and the agents: the last **deployments** and the last **test runs** of your
 projects, four each (`MONITOR_ROWS`, the rest is counted as “+3 more”; a running entry shows a progress bar). The setup wizard asks for both (step *Monitors*); settings › *Connections* switches
 them, their modules and their connections; settings › *Projects* › *name* › *CI* holds each project's CI.
 
@@ -17,7 +17,7 @@ them, their modules and their connections; settings › *Projects* › *name* �
 **Switching projects off.** Under each monitor in the settings (`,`, Connections) there is a switch for every project that has a CI. A project that is off has
 no entries in that block (the deployments and the tests are switched separately); the local test runs of its worktrees go with it (`IMS-wt1`,
 `ims-ai-finance` are IMS; with several projects the longest name that fits wins). The caption of the block has no checkboxes, only the ↕ for the small view.
-Everything is still fetched, so a waiting topic still follows its deployment. The settings are `DEPLOY_PROJECTS_OFF` and `TEST_PROJECTS_OFF`.
+Everything is still fetched, so a waiting task still follows its deployment. The settings are `DEPLOY_PROJECTS_OFF` and `TEST_PROJECTS_OFF`.
 
 Behind the name, in brackets, stands what the entry is about: for a deployment what went live (the branch of a merged pull request with its number,
 `chore/scoped-local-tests (#1525)`, else the commit title), for a test run the branch that was tested (a CI run: its branch; a local run: the branch of

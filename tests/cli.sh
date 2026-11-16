@@ -33,7 +33,7 @@ B show "${id:0:4}" >/dev/null 2>&1; [ "$?" = 2 ] && ok "an id start shared by se
 # ambiguity and misses
 B add "Kafka monitoring" >/dev/null
 B done kafka >/dev/null 2>"$T/err"; rc=$?
-[ "$rc" = 2 ] && grep -q "matches 2 topics" "$T/err" && ok "ambiguous reference: exit code 2 and the candidates" || bad "ambiguous: rc=$rc $(cat "$T/err")"
+[ "$rc" = 2 ] && grep -q "matches 2 tasks" "$T/err" && ok "ambiguous reference: exit code 2 and the candidates" || bad "ambiguous: rc=$rc $(cat "$T/err")"
 B done "no such thing" >/dev/null 2>&1; [ "$?" = 1 ] && ok "unknown reference: exit code 1" || bad "unknown reference exit code"
 B add >/dev/null 2>&1; [ "$?" = 1 ] && ok "add without title: exit code 1" || bad "add without title"
 
@@ -89,9 +89,10 @@ def ok(v, s):
     return True
 sys.exit(0 if ok(json.load(sys.stdin), load(sys.argv[2])) else 1)
 PY
-B list --all --json | python3 "$T/validate.py" docs/schema topic-list.schema.json && ok "schema: list --json matches topic-list.schema.json" || bad "list --json does not match the schema"
-B show 1 --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: show --json matches topic.schema.json" || bad "show --json does not match the schema"
-B wait 1 Robin --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: a changing command with --json matches too" || bad "wait --json does not match"
+B list --all --json | python3 "$T/validate.py" docs/schema task-list.schema.json && ok "schema: list --json matches task-list.schema.json" || bad "list --json does not match the schema"
+B show 1 --json | python3 "$T/validate.py" docs/schema task.schema.json && ok "schema: show --json matches task.schema.json" || bad "show --json does not match the schema"
+B wait 1 Robin --json | python3 "$T/validate.py" docs/schema task.schema.json && ok "schema: a changing command with --json matches too" || bad "wait --json does not match"
+B list --all --json | python3 "$T/validate.py" docs/schema topic-list.schema.json && B show 1 --json | python3 "$T/validate.py" docs/schema topic.schema.json && ok "schema: the old names topic.schema.json and topic-list.schema.json still validate" || bad "the old schema names do not validate"
 B version --json | python3 -c 'import json,sys; assert json.load(sys.stdin)["version"]' && ok "version --json" || bad "version --json"
 # settings over the API
 B config set DONE_MAX 3 >/dev/null && [ "$(B config get DONE_MAX)" = 3 ] && ok "config: set and get" || bad "config set/get"
@@ -222,7 +223,7 @@ mkdir -p "$T/shared"; printf '%s\n' "$(date +%s)${US}Web${US}Backend${US}running
 pr=$(CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -c .progress)
 [ "$(printf '%s' "$pr" | jq -c '[.tests, .deploy.label, .deploy.state, .deploy.done, .deploy.total]')" = '[[],"Backend","running",1,4]' ] \
     && ok "current --json: the deployment its topic waits for, with done and total" || bad "current progress deploy: $pr"
-CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -e 'del(.progress) | keys | length == 13' >/dev/null && ok "current --json: the topic object is unchanged next to progress" || bad "current --json keys"
+CLAUDECODE=1 HERDR_PANE_ID=w7:p7 B current --json | jq -e 'del(.progress) | keys | length == 18' >/dev/null && ok "current --json: the topic object is unchanged next to progress" || bad "current --json keys"
 
 # jump: shows an agent in herdr (a pane of this machine: herdr agent focus <pane>), by <machine> <pane> or by an agent's name
 : > "$FAKE_LOG"; B jump w1:a1 >/dev/null 2>&1; for _i in 1 2 3 4 5 6 7 8 9 10; do grep -q 'agent focus w1:p1' "$FAKE_LOG" && break; sleep 0.2; done

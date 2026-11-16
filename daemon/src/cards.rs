@@ -1,4 +1,4 @@
-//! The topic cards and lines of the frame (step 5): topics_block (cards | lists), with topics_plan, ti_card, topic_meta,
+//! The task cards and lines of the frame (step 5): topics_block (cards | lists), with topics_plan, ti_card, topic_meta,
 //! topic_line, more_row, bored_agents and the deployment card, from the script, byte for byte. The state of the screen that is not in a
 //! file (selection, hover, which groups are open, the dancing star) arrives in a small file written by the script for each frame.
 use crate::store::{self, Topic};
@@ -41,7 +41,7 @@ fn rows(p: &std::path::Path) -> Vec<Row> {
 fn sp(n: i64) -> String { " ".repeat(n.unsigned_abs() as usize) }
 fn pre(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 fn clean(s: &str) -> String { s.chars().filter(|c| !c.is_control()).collect() }
-/// "Waiting for New Work" is not a task: the agent is idle (the card shows the topic's title, an idle card says no more than idle)
+/// "Waiting for New Work" is not a task: the agent is idle (the card shows the task's title, an idle card says no more than idle)
 fn no_idle_task(t: &str) -> String { if t.trim().to_lowercase().starts_with("waiting for new work") { String::new() } else { t.to_string() } }
 fn digits(s: &str) -> bool { !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()) }
 
@@ -60,12 +60,12 @@ impl<'a> Cards<'a> {
     pub fn new(c: &'a Ctx, v: &'a View) -> Cards<'a> {
         let mut ts = store::load_fast(&c.topics, &c.shared);
         let shared = c.shared.clone();
-        // a topic that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows; without one it is a line in the Waiting list
+        // a task that waits for a deployment is a card in DEPLOYING only while there is a deployment it follows; without one it is a line in the Waiting list
         if ts.iter().any(|t| t.status == "waiting" && t.dep == "1") {
             let names: HashMap<String, String> = crate::ui::projects(c).into_iter().map(|p| (p.id, p.name)).collect();
             let mut pruned = vec![false; ts.len()];
             for (i, t) in ts.iter_mut().enumerate() { if t.status == "waiting" && t.dep == "1" && deploy_lookup_pub(&shared, &c.topics, &names, t).is_none() { t.dep = String::new(); pruned[i] = true; } }
-            if pruned.iter().any(|p| *p) {   // such a topic is a plain waiting line: it moves from the place of the deployment waits to the start of the waiting lines (else Waiting would stand twice)
+            if pruned.iter().any(|p| *p) {   // such a task is a plain waiting line: it moves from the place of the deployment waits to the start of the waiting lines (else Waiting would stand twice)
                 let (mut rest, mut moved) = (Vec::new(), Vec::new());
                 for (i, t) in ts.drain(..).enumerate() { if pruned[i] { moved.push(t); } else { rest.push(t); } }
                 let pos = rest.iter().position(|t| matches!(t.status.as_str(), "waiting" | "later" | "done")).unwrap_or(rest.len());
@@ -73,7 +73,7 @@ impl<'a> Cards<'a> {
             }
         }
         let mut ag = rows(&shared.join("agents.local")); ag.extend(rows(&shared.join("agents.remote")));
-        // topics_projects: a topic's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)
+        // topics_projects: a task's project, else its agent's (the pane meta lists: machine US pane US tab US a US repo US project US cwd)
         let mut metas = String::new();
         for f in ["agents.meta.local", "agents.meta.remote"] { metas.push_str(&crate::proc::read_cap(shared.join(f)).unwrap_or_default()); }
         let epj = ts.iter().map(|t| {
@@ -405,7 +405,7 @@ impl<'a> Cards<'a> {
         o
     }
 
-    /// deploy_lookup: the deployment of a waiting topic: (state, done, total, note, url, project, label)
+    /// deploy_lookup: the deployment of a waiting task: (state, done, total, note, url, project, label)
     fn deploy_lookup(&self, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {
         let list = crate::proc::read_cap(self.shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
         let get = |k: &str| store::topic_get(&t.file, k);
@@ -429,7 +429,7 @@ impl<'a> Cards<'a> {
     }
     fn projects_by_id(&self, id: &str) -> String {
         // project_name <id>: by record id (proj-<slug>): the name of the record
-        let f = self.c.topics.join(format!("{}.topic", id));
+        let f = crate::store::task_path(&self.c.topics, id);
         let _ = &self.projects;
         let txt = crate::proc::read_cap(f).unwrap_or_default();
         let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
@@ -522,7 +522,7 @@ impl<'a> Cards<'a> {
         let sel_idx = self.sel_index(); let plan = self.plan();
         let mut out = String::new();
         let open = (0..self.ts.len()).filter(|&i| Self::shows(&self.ts[i].status) && self.in_scope(i)).count();
-        if mode != "lists" && self.v.scope_project && !self.v.cur_proj.is_empty() { out.push_str(&format!("\n  {}{}{} {}· its topics{}\n", g("L"), self.projects_by_id(&self.v.cur_proj), x, g("D"), x)); }
+        if mode != "lists" && self.v.scope_project && !self.v.cur_proj.is_empty() { out.push_str(&format!("\n  {}{}{} {}· its tasks{}\n", g("L"), self.projects_by_id(&self.v.cur_proj), x, g("D"), x)); }
         if open == 0 && mode != "lists" { out.push_str(&self.bored()); }
         let mut prev = String::new();
         let grouped = self.c.cfg("CARD_GROUPING", "ungrouped") == "status";
@@ -605,7 +605,7 @@ impl<'a> Cards<'a> {
         out
     }
 
-    /// cards_sequence: what block goes through. Grouped: the topics in their order. Ungrouped: the cards in the order of the agents (as herdr lists them: the agent list),
+    /// cards_sequence: what block goes through. Grouped: the tasks in their order. Ungrouped: the cards in the order of the agents (as herdr lists them: the agent list),
     /// an agent's cards, or an idle agent without a card; then the cards that have no agent in that list; then (mode all) the lines.
     fn cards_sequence(&self, mode: &str, grouped: bool) -> Vec<Seq> {
         let n = self.ts.len();
@@ -666,7 +666,7 @@ enum Seq { Topic(usize), Idle(usize) }
 #[derive(Default)]
 struct Item { id: String, bar: String, prog: String, tbars: String, agm: String, agn: String, agic: String, agtask: String, now: String, spin: bool, dim: bool }
 
-/// deploy_lookup for the sync: the deployment a waiting topic is bound to or waits for
+/// deploy_lookup for the sync: the deployment a waiting task is bound to or waits for
 pub fn deploy_lookup_pub(shared: &std::path::Path, topics: &std::path::Path, names: &HashMap<String, String>, t: &Topic) -> Option<(String, String, String, String, String, String, String)> {
     let list = crate::proc::read_cap(shared.join("deploys.list")).ok().filter(|s| !s.is_empty())?;
     let get = |k: &str| store::topic_get(&t.file, k);
@@ -704,7 +704,7 @@ fn unused() { let _ = _abbr; }
 fn count_lines(t: &str) -> i64 { t.split('\n').count() as i64 }
 
 struct Parsed { line: String, ref_: String, spin: String }
-/// view_lines: the lines without their markers (the dancing star, the topic id of the line, the selected line) and the index of the selected one
+/// view_lines: the lines without their markers (the dancing star, the task id of the line, the selected line) and the index of the selected one
 fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
     let mut out = Vec::new(); let mut sel = -1i64;
     for (n, l0) in text.split('\n').enumerate() {
@@ -720,10 +720,10 @@ fn parse_lines(text: &str) -> (Vec<Parsed>, i64) {
 
 struct Vp { row: i64, map: String, spin: String }
 pub struct Out { pub frame: String, pub tmap: String, pub spin: String, pub divrow: i64, pub toff: Option<i64> }
-/// side: 0 one panel with everything, 1 the left panel (the agents' cards and the agent overview), 2 the right one (the lines of the topics, done, deployments and tests)
+/// side: 0 one panel with everything, 1 the left panel (the agents' cards and the agent overview), 2 the right one (the lines of the tasks, done, deployments and tests)
 pub struct Layout<'a> { pub cards: &'a Cards<'a>, pub rows: i64, pub head: String, pub bottom: String, pub run_dir: PathBuf, pub prev_toff: Option<i64>, pub side: u8 }
 impl<'a> Layout<'a> {
-    /// bhote_view: head on top, the topics below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
+    /// bhote_view: head on top, the tasks below it (scrolling with the selection), the agents and the keys at the bottom edge. The click maps go to
     /// the run folder (tmap, spinrows, divrow, toff), as the script writes them.
     /// The same, written to the run folder as the script does (tmap, spinrows, divrow, toff)
     pub fn view(&self) -> String {

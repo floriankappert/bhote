@@ -6,16 +6,16 @@ context, when another machine or worktree should continue, or when you need the 
 
 ## Start it
 
-- **In the panel:** select the topic, press `t` (or `→` › *Transfer to another agent …*), pick a free agent. The panel
-  asks before it starts, and warns when the target belongs to another project than the topic. A pending hand-over can be
-  cancelled from the topic's page.
+- **In the panel:** select the task, press `t` (or `→` › *Transfer to another agent …*), pick a free agent. The panel
+  asks before it starts, and warns when the target belongs to another project than the task. A pending hand-over can be
+  cancelled from the task's page.
 - **From the command line:** `bhote transfer <from> <to> [--topic <ref>] [--force]`. `<from>` and `<to>` are agents from
   `bhote agents`: a number or a name (`w3:a1`; `MAC/w3:a1` on another machine; the older code `MAC4` works, too), `machine/pane` (`Omarchy/w4:p1`), a pane id, or a part of the name. A target of
   another project is refused unless you add `--force`. Without `--topic` bhote
-  takes the topic of the source agent, or creates one from its current task.
+  takes the task of the source agent, or creates one from its current task.
 
 The target must be free (idle or done), and checked live right before anything is sent. A source agent that waits for an
-answer (a permission prompt) is refused: answer it first. When the prompt cannot be sent, nothing changes (a topic that
+answer (a permission prompt) is refused: answer it first. When the prompt cannot be sent, nothing changes (a task that
 `bhote transfer` created for it goes again).
 
 ## What happens
@@ -25,13 +25,13 @@ answer (a permission prompt) is refused: answer it first. When the prompt cannot
    steps, how to test); push if the repository has a remote; note the branch and the commit; if the target works in
    another worktree of the same repository, free the branch with `git switch --detach`; then run the `bhote handover …`
    command it is given, and stop. The list shows `source → target · handing over`.
-2. **`bhote handover <topic> --to <machine/pane> --branch <b> --commit <c>`** (run by the source agent) hands the topic to
+2. **`bhote handover <topic> --to <machine/pane> --branch <b> --commit <c>`** (run by the source agent) hands the task to
    the target: it now belongs to that agent, and you get a herdr notification. It works only while the transfer is
-   pending and only for the agent it was meant for; parking, closing or setting the topic to wait or review ends a
+   pending and only for the agent it was meant for; parking, closing or setting the task to wait or review ends a
    pending transfer.
 3. **The target agent** gets a prompt: fetch if there is a remote, `git switch <branch>` (no branch: the commit itself),
    read the handover with `git log -1 <commit>`, continue, and report back with `bhote review` / `bhote done` like any
-   delegated topic.
+   delegated task.
 
 Everything travels through herdr (`herdr agent prompt`, with `--machine` for agents on another machine), so a transfer can
 go from the Mac to a Linux box and back. The handover lives in git, where the code is.

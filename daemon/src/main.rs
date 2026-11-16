@@ -1,6 +1,6 @@
-//! bhoted prototype: the topic index of bhote (`topics.idx`), same format as `topics_index_build` in the bash script.
+//! bhoted prototype: the task index of bhote (`topics.idx`), same format as `topics_index_build` in the bash script.
 //!   bhoted index <topic dir> <out>      build once
-//!   bhoted run   <topic dir> <out>      keep it current: rebuild when a topic file is added, removed or changed
+//!   bhoted run   <topic dir> <out>      keep it current: rebuild when a task file is added, removed or changed
 mod agents;
 mod apicache;
 mod herdr_app;
@@ -29,8 +29,9 @@ const KEYS: &str = "title status waiting_for waiting_since updated deleted descr
 
 fn topic_files(dir: &Path) -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = fs::read_dir(dir)
-        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect())
+        .map(|rd| rd.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic" || x == "task")).collect())
         .unwrap_or_default();
+    v = store::dedupe_task_files(v);
     v.sort_by(|a, b| ui::coll(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy())); // the shell glob sorts by name, in the locale's collation
     v
 }
@@ -194,7 +195,7 @@ fn main() {
             if a[2] == "menu" || a[2] == "pick" {   // bhoted block menu|pick --file F | --title T --mode M --idx N [--flash S]: the page, with its markers (for the golden tests)
                 let idx: i64 = opt("--idx").and_then(|v| v.parse().ok()).unwrap_or(0);
                 let projects = ui::projects(&ctx);
-                let pname = |id: &str| -> Option<String> { let f = ctx.topics.join(format!("{}.topic", id)); let t = crate::proc::read_cap(f).ok()?; let mut name = String::new(); let (mut del, mut kd) = ("0".to_string(), String::new()); for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } } if kd == "project" && del != "1" { Some(name) } else { None } };
+                let pname = |id: &str| -> Option<String> { let f = store::task_path(&ctx.topics, id); let t = crate::proc::read_cap(f).ok()?; let mut name = String::new(); let (mut del, mut kd) = ("0".to_string(), String::new()); for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } } if kd == "project" && del != "1" { Some(name) } else { None } };
                 let out = if a[2] == "menu" {
                     let file = PathBuf::from(opt("--file").unwrap_or_default());
                     let items = menuui::menu_items(&file, &projects, &pname);
@@ -294,6 +295,8 @@ fn main() {
             let remote_duty = a.iter().any(|x| x == "--remote") && (cfg!(target_os = "linux") || herdr_app::enabled()) && !host.is_empty();
             let remote_running = Arc::new(AtomicBool::new(false));
             let mut next_remote = Instant::now();
+            let tasks_running = Arc::new(AtomicBool::new(false));   // the mirror of Linear and the IMS into tasks (`bhote task sync`), every API_CACHE_EVERY x 6 s at most 120
+            let mut next_tasks = Instant::now() + Duration::from_secs(20);
             // one daemon per shared folder: another one that is alive keeps the work (two would do every follow-up twice)
             if let Some(f) = &pid_file { if let Some(other) = fs::read_to_string(f).ok().and_then(|t| t.split_whitespace().next().and_then(|p| p.parse::<i32>().ok())) { if other != std::process::id() as i32 && alive(other) { eprintln!("bhoted: another daemon ({}) runs for this folder", other); std::process::exit(0); } } }
             let mut last = Vec::new();
@@ -345,6 +348,17 @@ fn main() {
                         let flag = sync_running.clone(); flag.store(true, Ordering::SeqCst);
                         std::thread::spawn(move || { let _g = proc::Flag(flag); let shd = sc.shared.clone(); if let Some(rc) = proc::guarded("merge with kharka", &shd, || sync::store_sync(&sc)) { if rc == 2 { let _ = fs::write(sc.shared.join("dirty"), ""); } } });
                     } else { next_sync = Instant::now() + Duration::from_secs(2); }
+                }
+                if monitors && Instant::now() >= next_tasks && !tasks_running.load(Ordering::SeqCst) {
+                    let cfg = config.as_deref().map(config_read).unwrap_or_default();
+                    let base: u64 = cfg.get("API_CACHE_EVERY").and_then(|v| v.parse().ok()).filter(|n| *n >= 1).unwrap_or(15);
+                    next_tasks = Instant::now() + Duration::from_secs((base * 6).min(120).max(base));
+                    // only with a key in the secret store (or the environment): a source without one is skipped anyway, and nothing is started for nothing
+                    let has_keys = config.as_deref().and_then(|c| Path::new(c).parent().map(|d| d.join("secrets.json").exists())).unwrap_or(false) || std::env::var_os("LINEAR_API_KEY").is_some() || std::env::var_os("IMS_API_KEY").is_some();
+                    if cfg.get("TASK_SYNC").map_or(true, |v| v != "off") && has_keys {
+                        let (flag, sh) = (tasks_running.clone(), shared.clone()); flag.store(true, Ordering::SeqCst);
+                        std::thread::spawn(move || { let _g = proc::Flag(flag); proc::guarded("task sync", &sh, || proc::run(&monitor::bhote_bin(), &["task", "sync", "--quiet"], 180, None)); });
+                    }
                 }
                 if monitors {
                     let cfg = config.as_deref().map(config_read).unwrap_or_default();

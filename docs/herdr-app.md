@@ -1,7 +1,7 @@
 # The herdr Mac app add-on
 
 Since 0.9.3 bhote is a **native add-on for the herdr Mac app**: a mod (`herdr-app/mods/bhote`) with a layout of its own (`herdr-app/layouts/bhote.json`). The app draws its panels, so it is not a terminal UI;
-the terminal UI of earlier versions is [deprecated](panel.md). The add-on asks the same CLI and reads the same files as everything else: the topics, the lists the collector writes, kharka.
+the terminal UI of earlier versions is [deprecated](panel.md). The add-on asks the same CLI and reads the same files as everything else: the tasks, the lists the collector writes, kharka.
 
 ## Install and update
 
@@ -17,8 +17,8 @@ herdr-app do layout.show --id bhote
 
 | | |
 |---|---|
-| **Overview** | Tiles for topics, pull requests, deployments, tests, servers and runbooks; a tab for each. |
-| **Topics** | Statuses, the topic's page, the stash. *Start on agent* hands a topic over as a message and waits (spinner) until the agent takes it; then the agent is fixed. |
+| **Overview** | Tiles for tasks, pull requests, deployments, tests, servers and runbooks; a tab for each. |
+| **Tasks** | Statuses, the task's page, the stash (*Make a task* on a stash row). Each row has a **source chip** (`agent`, `stash`, `linear`, `IMS task`, `IMS ticket`, `manual`); the head of the section filters by source and its row menu opens the item in Linear or the IMS ([task sources](task-sources.md)). *Start on agent* hands a task over as a message and waits (spinner) until the agent takes it; then the agent is fixed. |
 | **Agents** (left panel) | Cards under their machine (alias: `MACHINE_LABELS`, e.g. `omarchy-flo=Omarchy`), a name from Middle-earth per agent, state by colour, drag and drop for the order, the ear. |
 | **Commit inspector** | The last five commits of the focused agent's branch since it left the base branch; a click opens the message above it. |
 | **Headless agents** | Scheduled Claude jobs (systemd timers, on Linux machines), the machine of each, run now, pause, stop; the log as a small conversation; a form to start one more run. |
@@ -39,15 +39,15 @@ The ear is the record `listen/<node>/<name>` in kharka (`{"listening": false}`);
 
 A service is a name, a machine, a port and a start command run in your dev shell (`zsh -ic`), kept in `~/.config/bhote/servers.json` ([configuration](configuration.md#services-herdr-app)). It runs while its port answers.
 On Linux it starts as a systemd user unit, on macOS as a detached process group. A start that does not work (its process ends without the port answering, or no answer in two minutes) turns the card red with the last lines of its log
-and becomes a topic in review (`<name> did not start on <machine>`), in the project of the same name.
+and becomes a task in review (`<name> did not start on <machine>`), in the project of the same name.
 
 ## Where things are
 
 | | |
 |---|---|
-| `~/.config/herdr-app/mods/bhote/` | the mod (`main.js`, its icons, `servers.js`, `monitors.py`) |
+| `~/.config/herdr-app/mods/bhote/` | the mod (`main.js`, its icons, `servers.js`, `monitors.py`, `tasksources.py`) |
 | `~/.config/herdr-app/layouts/bhote.json` | the layout |
 | `~/.config/bhote/config`, `servers.json` | the settings, the dev servers |
 | `~/.cache/bhote/svc/`, `~/.cache/bhote/headless/` | logs of dev servers and of runs you started |
 
-Removing it: `rm -r ~/.config/herdr-app/mods/bhote ~/.config/herdr-app/layouts/bhote.json`. Your topics and settings stay.
+Removing it: `rm -r ~/.config/herdr-app/mods/bhote ~/.config/herdr-app/layouts/bhote.json`. Your tasks and settings stay.

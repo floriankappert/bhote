@@ -13,14 +13,14 @@ in place and changes nothing (it asks a machine over ssh only when herdr reaches
 | Step | |
 |---|---|
 | 1 Checks | jq, herdr and its server, `bhote` on the PATH, gzip/base64/perl, ssh into this machine, Tailscale (also the macOS app), the herdr plugin (can link it, also from a Homebrew or Arch package), the Claude Code `SessionStart` hook, the bhote skill and the [bhote-topic mod](claude-mod.md) (can add them). |
-| 2 This machine | Its name in the agent lists (`HOST_LABEL`); other machines must know it by the same name. A rename moves the agent links of the topics along; rename it in herdr on the other machines, too. |
+| 2 This machine | Its name in the agent lists (`HOST_LABEL`); other machines must know it by the same name. A rename moves the agent links of the tasks along; rename it in herdr on the other machines, too. |
 | 3 Other machines | The machines saved in herdr, with a reachability test; finds new ones (your own Tailscale devices, Bonjour/Avahi in the local network, `~/.ssh/config`) and adds them with `herdr machine add`. The scan does not remember any host key; only the machine you pick is. |
-| 4 The other way round | Makes the other machines know this one, so that they see its agents and topics travel both ways (below). |
-| 5 Topics | Only here, or in step with a machine through herdr (recommended) or ssh; sets up the other side (through herdr only when it knows this machine, step 4), then merges once. |
+| 4 The other way round | Makes the other machines know this one, so that they see its agents and tasks travel both ways (below). |
+| 5 Tasks | Only here, or in step with a machine through herdr (recommended) or ssh; sets up the other side (through herdr only when it knows this machine, step 4), then merges once. |
 | 6 Remote agents | Show the agents of the other machines. |
 | 7 Projects | Which agents belong to which project (by repository or workspace; the agent list and `AUTO_ASSIGN` go by it). |
 | 8 Monitors | The deployment and test monitor, their connections (GitHub, CircleCI) and each project's CI. |
-| 9 Agents and notifications | May an agent close its topic, herdr notifications, the waiting reminder, tests = busy, auto-assign, the Slack watch. |
+| 9 Agents and notifications | May an agent close its task, herdr notifications, the waiting reminder, tests = busy, auto-assign, the Slack watch. |
 | 10 The panel | Autostart with herdr, the find and jump keys. |
 | 11 Done | A summary. |
 
@@ -38,7 +38,7 @@ For each saved machine that does not know this one yet, and only when you confir
    (pick one or type it).
 3. **The other machine's ssh key** is read (or, if you agree, created) and shown with its fingerprint. Only when you say yes
    is it added to `~/.ssh/authorized_keys` here (once: a key that is there already is not added again). If you say no, the
-   wizard explains what you lose: that machine shows no agents of this one, and topics travel one way only.
+   wizard explains what you lose: that machine shows no agents of this one, and tasks travel one way only.
 4. A test login from there, then `herdr machine add` there.
 
 **Passwords:** the wizard never asks for one. When ssh needs a password (for example before the keys are in place), ssh asks

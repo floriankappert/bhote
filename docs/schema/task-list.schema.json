@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/floriankappert/bhote/blob/main/docs/schema/task-list.schema.json",
+  "title": "bhote task list",
+  "description": "Output of `bhote list --json`: the tasks in list order (now, waiting, later, done).",
+  "type": "array",
+  "items": {
+    "$ref": "task.schema.json"
+  }
+}

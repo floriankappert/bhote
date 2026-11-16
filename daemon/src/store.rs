@@ -1,4 +1,4 @@
-//! The topic store of the script in Rust (step 4): the arrays of `topics_load`, `topic_set` and `topic_new` with their side
+//! The task store of the script in Rust (step 4): the arrays of `topics_load`, `topic_set` and `topic_new` with their side
 //! effects, and the sink the follow-ups act through: `Live` writes the files and notifies, `Shadow` only records what it would do.
 use std::collections::HashMap;
 use std::fs;
@@ -12,6 +12,24 @@ pub fn nocntrl(s: &str) -> String { s.chars().filter(|c| !c.is_control()).collec
 /// num_or: digits only, no leading zeros ("08" would be octal), at most 18 digits
 pub fn num_or(s: &str, d: u64) -> u64 { if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) { return d; } let t = s.trim_start_matches('0'); if t.len() > 18 { d } else { t.parse().unwrap_or(0) } }
 pub fn chars_prefix(s: &str, n: usize) -> String { s.chars().take(n).collect() }
+
+/// Dual-read (wave 1 of tasks -> tasks): a task file is `<id>.topic` or `<id>.task` (wave 2 renames them); every writer still writes `.topic`.
+pub fn has_task_ext(name: &str) -> bool { name.ends_with(".topic") || name.ends_with(".task") }
+/// The file of a task: its `.topic`, else its `.task`, else the `.topic` a new one gets.
+pub fn task_path(dir: &Path, id: &str) -> PathBuf {
+    let t = dir.join(format!("{}.topic", id));
+    if t.exists() { return t; }
+    let k = dir.join(format!("{}.task", id));
+    if k.exists() { k } else { t }
+}
+/// One file per id (the `.topic` wins when both exist).
+pub fn dedupe_task_files(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let has_topic: std::collections::HashSet<PathBuf> = files.iter().filter(|p| p.extension().map_or(false, |x| x == "topic")).cloned().collect();
+    files.into_iter().filter(|p| p.extension().map_or(true, |x| x != "task") || !has_topic.contains(&p.with_extension("topic"))).collect()
+}
+pub fn task_files(dir: &Path) -> Vec<PathBuf> {
+    dedupe_task_files(fs::read_dir(dir).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic" || x == "task")).collect()).unwrap_or_default())
+}
 
 pub const ORDER: [&str; 9] = ["review", "now", "testing", "deploying", "finished", "next", "waiting", "later", "done"];
 
@@ -30,7 +48,7 @@ pub fn first_value(text: &str, key: &str) -> Option<String> {
 /// topic_get <file> <key> [default]: the first value, control characters removed
 pub fn topic_get(file: &Path, key: &str) -> String { crate::proc::read_cap(file).ok().and_then(|t| first_value(&t, key)).map(|v| nocntrl(&v)).unwrap_or_default() }
 
-/// topics_load: every topic, the order of the screen (review, now, testing, deploying, finished, next, waiting, later, done; in a group by file name).
+/// topics_load: every task, the order of the screen (review, now, testing, deploying, finished, next, waiting, later, done; in a group by file name).
 pub fn load(topics: &Path) -> Vec<Topic> { load_files(topics) }
 
 /// The same from the index of the daemon when it is current (shared/topics.idx), else from the files.
@@ -39,8 +57,8 @@ pub fn load_fast(topics: &Path, shared: &Path) -> Vec<Topic> {
     load_files(topics)
 }
 
-/// The topics from the index the daemon keeps (topics.idx next to the other shared files): one file instead of hundreds. Only when it
-/// is for this folder and no topic file is newer than it (a writer removes it, the daemon rebuilds it within moments).
+/// The tasks from the index the daemon keeps (topics.idx next to the other shared files): one file instead of hundreds. Only when it
+/// is for this folder and no task file is newer than it (a writer removes it, the daemon rebuilds it within moments).
 fn load_index(topics: &Path, shared: &Path) -> Option<Vec<Topic>> {
     let idx = shared.join("topics.idx");
     let text = crate::proc::read_cap(&idx).ok()?;
@@ -48,7 +66,7 @@ fn load_index(topics: &Path, shared: &Path) -> Option<Vec<Topic>> {
     let head = lines.next()?;
     if !head.starts_with('#') || !head.contains(&format!(" {} ", topics.display())) { return None; }
     let imt = fs::metadata(&idx).ok()?.modified().ok()?;
-    if let Ok(rd) = fs::read_dir(topics) { for e in rd.flatten() { if e.path().extension().map_or(false, |x| x == "topic") && e.metadata().ok()?.modified().ok()? >= imt { return None; } } }
+    if let Ok(rd) = fs::read_dir(topics) { for e in rd.flatten() { if e.path().extension().map_or(false, |x| x == "topic" || x == "task") && e.metadata().ok()?.modified().ok()? >= imt { return None; } } }
     const KEYS: [&str; 23] = ["title", "status", "waiting_for", "waiting_since", "updated", "deleted", "description", "agent", "agent_machine", "agent_pane", "agent_session", "delegated", "transfer_to_name", "slack_label", "slack_msg", "agent_branch", "project", "kind", "deploy_wait", "dismissed", "auto_now", "auto", "review_src"];
     let mut all = Vec::new();
     for l in lines {
@@ -61,7 +79,7 @@ fn load_index(topics: &Path, shared: &Path) -> Option<Vec<Topic>> {
 }
 
 fn load_files(topics: &Path) -> Vec<Topic> {
-    let mut files: Vec<PathBuf> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect()).unwrap_or_default();
+    let mut files: Vec<PathBuf> = task_files(topics);
     files.sort_by(|a, b| crate::ui::coll(&a.file_name().unwrap_or_default().to_string_lossy(), &b.file_name().unwrap_or_default().to_string_lossy()));   // (the shell's glob order: the locale's collation)
     let mut items: Vec<(PathBuf, Box<dyn Fn(&str) -> String>)> = Vec::new();
     for f in files {
@@ -105,7 +123,7 @@ pub trait Sink {
     /// a call of herdr that changes something (report-metadata)
     fn herdr(&mut self, args: &[String]);
     fn is_shadow(&self) -> bool;
-    /// how many writes were done so far (a round reloads the topics only after a write)
+    /// how many writes were done so far (a round reloads the tasks only after a write)
     fn writes(&self) -> usize;
 }
 
@@ -130,7 +148,7 @@ fn today() -> String {
     crate::proc::run("date", &["+%Y-%m-%d"], 5, None).map(|o| String::from_utf8_lossy(&o.1).trim().to_string()).unwrap_or_default()
 }
 
-/// The text of the description when a done topic is taken up again ("Reopened 2026-10-17. <the old one>").
+/// The text of the description when a done task is taken up again ("Reopened 2026-10-17. <the old one>").
 fn reopened(old: &str) -> String {
     let b = old.as_bytes();
     let mut dsc = old.to_string();
@@ -201,7 +219,7 @@ impl<'a> Sink for Shadow<'a> {
     fn set(&mut self, file: &Path, key: &str, value: &str) {
         let id = file.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
         let v = sanitize(key, value);
-        // the nested description set of a reopened topic is logged as the script's topic_set logs it (before the status)
+        // the nested description set of a reopened task is logged as the script's topic_set logs it (before the status)
         if key == "status" && v != "done" && topic_get(file, "status") == "done" { self.log.push(format!("set|{}|description|{}", id, reopened(&topic_get(file, "description")))); }
         self.log.push(format!("set|{}|{}|{}", id, key, v));
     }
@@ -218,3 +236,36 @@ impl<'a> Sink for Shadow<'a> {
 }
 
 pub fn ids(topics: &[Topic]) -> HashMap<String, usize> { topics.iter().enumerate().map(|(i, t)| (t.id.clone(), i)).collect() }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn tmp(n: &str) -> PathBuf { let d = std::env::temp_dir().join(format!("bhoted-store-{}-{}", n, std::process::id())); let _ = fs::remove_dir_all(&d); fs::create_dir_all(&d).unwrap(); d }
+
+    /// The rollout risk: a rewrite (the daemon's follow-ups) keeps the keys it does not know, in a .topic and in a .task file.
+    #[test]
+    fn a_rewrite_keeps_unknown_fields() {
+        let d = tmp("keep"); let shared = tmp("keep-shared");
+        let env = Env { topics: d.clone(), shared, data: d.clone() };
+        for name in ["a1.topic", "a2.task"] {
+            let f = d.join(name);
+            fs::write(&f, "id=a\ntitle=T\nstatus=next\nupdated=1\ndeleted=0\nfuture_field=stays\nv2_flag=1\nsource_ref=IMS-9\n").unwrap();
+            real_set(&env, &f, "status", "later");
+            let t = fs::read_to_string(&f).unwrap();
+            assert!(t.contains("future_field=stays\n") && t.contains("v2_flag=1\n") && t.contains("source_ref=IMS-9\n") && t.contains("status=later\n"), "{}: {}", name, t);
+            assert!(!d.join("a2.topic").exists());
+        }
+    }
+
+    #[test]
+    fn both_extensions_are_read_and_the_topic_wins() {
+        let d = tmp("dual");
+        fs::write(d.join("x.topic"), "id=x\ntitle=Topic\nupdated=1\n").unwrap();
+        fs::write(d.join("x.task"), "id=x\ntitle=Task\nupdated=9\n").unwrap();
+        fs::write(d.join("y.task"), "id=y\ntitle=Only task\nupdated=1\n").unwrap();
+        let ts = load(&d);
+        let ids: Vec<&str> = ts.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ts.len(), 2, "{:?}", ids);
+        assert!(task_path(&d, "x").ends_with("x.topic") && task_path(&d, "y").ends_with("y.task") && task_path(&d, "z").ends_with("z.topic"));
+    }
+}

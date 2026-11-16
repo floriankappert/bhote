@@ -63,7 +63,7 @@ pub struct Project { pub id: String, pub name: String }
 pub fn projects(c: &Ctx) -> Vec<Project> {
     let mut v = Vec::new();
     let Ok(rd) = fs::read_dir(&c.topics) else { return v };
-    let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("proj-") && n.ends_with(".topic") })).collect();
+    let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("proj-") && crate::store::has_task_ext(&n) })).collect();
     files.sort();
     for p in files {
         let txt = crate::proc::read_cap(&p).unwrap_or_default();

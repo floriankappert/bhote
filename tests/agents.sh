@@ -40,12 +40,12 @@ AG_N=3; AG_LINES=($'Mac\037w1:p1\037idle\037Project\037' $'Laptop\037w9:p2\037do
 pick_build
 [ "${#PICK_MAP[@]}" = 2 ] && ok "picker: only the two free agents are offered (the working one is not)" || bad "picker offers ${#PICK_MAP[@]} agents"
 pick_do 1; wait
-grep -q "^agent prompt w1:p1 Your bhote topic: Deploy fix. needs care (bhote topic $NEW_TOPIC_ID: when you are finished, run \`bhote review $NEW_TOPIC_ID\`" "$FAKE_LOG" && ok "delegate: a local agent gets the topic with its id and how to report back, no --machine" || bad "local delegate: $(cat "$FAKE_LOG")"
+grep -q "^agent prompt w1:p1 Your bhote task: Deploy fix. needs care (bhote task $NEW_TOPIC_ID: when you are finished, run \`bhote review $NEW_TOPIC_ID\`" "$FAKE_LOG" && ok "delegate: a local agent gets the topic with its id and how to report back, no --machine" || bad "local delegate: $(cat "$FAKE_LOG")"
 [ "$(topic_get "$TOPIC_DIR/$NEW_TOPIC_ID.topic" agent_pane)" = "w1:p1" ] && ok "delegate: the topic remembers the agent" || bad "agent not stored"
 topic_new "Second" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; pick_build
 [ "${#PICK_MAP[@]}" = 1 ] && ok "picker: an agent that holds a running topic is not offered again" || bad "taken agent still offered (${#PICK_MAP[@]})"
 pick_do 1; wait
-grep -q -e "^--machine Laptop agent prompt w9:p2 Your bhote topic: Second (bhote topic" "$FAKE_LOG" && ok "delegate: a remote agent is reached with --machine" || bad "remote delegate: $(cat "$FAKE_LOG")"
+grep -q -e "^--machine Laptop agent prompt w9:p2 Your bhote task: Second (bhote task" "$FAKE_LOG" && ok "delegate: a remote agent is reached with --machine" || bad "remote delegate: $(cat "$FAKE_LOG")"
 AG_LINES=($'Mac\037w1:p1\037working\037Project\037' $'Laptop\037w9:p2\037done\037server\037'); : > "$FAKE_LOG"
 topic_new "Third" "" ""; SEL_ID=$NEW_TOPIC_ID; topics_load; PICK_MAP=(0); pick_do 1; wait
 [ ! -s "$FAKE_LOG" ] && ok "delegate: an agent that became busy meanwhile gets nothing" || bad "sent to a busy agent: $(cat "$FAKE_LOG")"
@@ -69,20 +69,20 @@ HERDR_PLUGIN_EVENT_JSON='{"data":{"pane_id":"w6:p1","agent_status":"done"}}' cli
 cfg_set NOTIFY on
 # bhote current: the topic of the agent that asks
 topic_new "Mine" "" "my part"; mf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; topic_set "$mf" agent_session "sess-42"
-out=$(CLAUDE_CODE_SESSION_ID=sess-42 cli_current); case "$out" in *"Mine. my part (bhote topic $NEW_TOPIC_ID"*) ok "current: an agent gets its own topic and how to report back" ;; *) bad "current: $out" ;; esac
+out=$(CLAUDE_CODE_SESSION_ID=sess-42 cli_current); case "$out" in *"Mine. my part (bhote task $NEW_TOPIC_ID"*) ok "current: an agent gets its own topic and how to report back" ;; *) bad "current: $out" ;; esac
 out=$(CLAUDE_CODE_SESSION_ID=nobody HERDR_PANE_ID=zz:p9 cli_current); [ -z "$out" ] && ok "current: nothing for an agent without a topic" || bad "current for nobody: $out"
 
 # Steal & Transfer: the source agent is told to commit and hand over, the target takes the branch over
 unset CLAUDECODE; : > "$FAKE_LOG"; HOST=Mac
 topic_new "Big refactor" "" ""; tf="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; tid=$NEW_TOPIC_ID
 transfer_start "$tf" Mac w3:p1 busy Mac w2:p1 server; wait
-grep -q "^agent prompt w3:p1 Steal & Transfer (bhote topic $tid" "$FAKE_LOG" && ok "transfer: the source agent is told to stop, commit and hand over" || bad "no handover prompt: $(cat "$FAKE_LOG")"
+grep -q "^agent prompt w3:p1 Steal & Transfer (bhote task $tid" "$FAKE_LOG" && ok "transfer: the source agent is told to stop, commit and hand over" || bad "no handover prompt: $(cat "$FAKE_LOG")"
 grep -q "bhote handover $tid --to 'Mac/w2:p1' --branch" "$FAKE_LOG" && ok "transfer: it gets the exact handover command" || bad "handover command missing"
 grep -q "do not create a new branch" "$FAKE_LOG" && ok "transfer: the branch is kept (no new branch)" || bad "branch rule missing"
 [ "$(topic_get "$tf" transfer_to)" = "Mac/w2:p1" ] && ok "transfer: the topic remembers where it goes" || bad "transfer_to: $(topic_get "$tf" transfer_to)"
 topics_load; COLS=60; out=$(topics_block); case "$out" in *"handing over"*"busy → server"*) ok "transfer: the list says it is being handed over (the state on the right, where it goes under the task)" ;; *) bad "meta: $out" ;; esac
 : > "$FAKE_LOG"; transfer_finish "$tf" "Mac/w2:p1" "feat/x" "abc123def"; wait; sleep 0.3
-grep -q "^agent prompt w2:p1 Steal & Transfer: take over \"Big refactor\" (bhote topic $tid) from busy. The work is on branch feat/x" "$FAKE_LOG" && ok "handover: the target agent gets the branch and the handover" || bad "no takeover prompt: $(cat "$FAKE_LOG")"
+grep -q "^agent prompt w2:p1 Steal & Transfer: take over \"Big refactor\" (bhote task $tid) from busy. The work is on branch feat/x" "$FAKE_LOG" && ok "handover: the target agent gets the branch and the handover" || bad "no takeover prompt: $(cat "$FAKE_LOG")"
 [ "$(topic_get "$tf" agent_pane)" = w2:p1 ] && [ -z "$(topic_get "$tf" transfer_to)" ] && ok "handover: the topic now belongs to the target" || bad "topic not moved"
 grep -q "notification show Transferred" "$FAKE_LOG" && ok "handover: a notification says so" || bad "no notification"
 topic_new "Other" "" ""; of="$TOPIC_DIR/$NEW_TOPIC_ID.topic"; : > "$FAKE_LOG"

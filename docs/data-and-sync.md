@@ -1,8 +1,8 @@
 # Data and sync
 
-## Topic files
+## Task files
 
-Each topic is one small text file, `$BHOTE_DATA/topics/<id>.topic` (default `~/.local/share/bhote/topics`), readable and
+Each task is one small text file, `$BHOTE_DATA/topics/<id>.topic` (default `~/.local/share/bhote/topics`), readable and
 editable by hand:
 
 ```ini
@@ -26,11 +26,13 @@ agent_pane=wA:p1
 | `status` | `now`, `next`, `waiting`, `review`, `later` or `done`; anything else reads as `now`. |
 | `created`, `updated`, `waiting_since` | Unix seconds. `updated` grows with every change (also within the same second). |
 | `deleted` | `1` = a tombstone: hidden everywhere, kept so that the deletion reaches the replica. |
-| `agent`, `agent_machine`, `agent_pane`, `agent_session` | Set when the topic was handed to a herdr agent (or an agent created it). |
+| `agent`, `agent_machine`, `agent_pane`, `agent_session` | Set when the task was handed to a herdr agent (or an agent created it). |
 | `transfer_to`, `transfer_to_name`, `transfer_from` | Only while a [Steal & Transfer](steal-and-transfer.md) is pending; any status other than `now` clears them. |
+| `source`, `source_ref`, `source_url`, `source_kind`, `source_parent` | Where the task comes from (`agent`, `stash`, `linear`, `ims`, `manual`), its reference there, a link, the IMS kind (`task`, `work_item`) and the work item of an IMS task. Not there on a task made before sources existed: its source is derived when read (an agent's waiting task, an automatic review card or a card made for an agent: `agent`; the rest `manual`); the file is written only when the task is edited. |
+| `source_id`, `source_status`, `source_note` | Mirrored tasks only (Linear, IMS): the id in the outside system, the status as that system last had it (to tell a change there from a change here) and a note (`not changeable in IMS`). |
 | `handover_branch`, `handover_commit` | Where the last transfer left the work. |
 
-Records with a `kind` sit in the same folder and travel the same way, but are no topics: `proj-<slug>.topic`
+Records with a `kind` sit in the same folder and travel the same way, but are no tasks: `proj-<slug>.topic`
 (`kind=project`: `title`, `repos`, `workspaces`) and `mach-<slug>.topic` (`kind=machine`: `title` = the machine's name,
 `code` = its three capitals, set by hand).
 
@@ -43,31 +45,31 @@ With `STORE=remote` and `STORE_MACHINE=<label>`, the folder `~/.local/share/bhot
 `ssh <host>` from `herdr machine list`) holds a replica. The **local copy is always the working copy**: reading and writing
 never wait for the network.
 
-How the topics travel is `SYNC_VIA`:
+How the tasks travel is `SYNC_VIA`:
 
-- **`herdr`** (default): no ssh of bhote's own. bhote asks the herdr plugin on the other machine for its topics (the plugin
+- **`herdr`** (default): no ssh of bhote's own. bhote asks the herdr plugin on the other machine for its tasks (the plugin
   action `dump`) and takes the newer ones. Nothing is written to the other side: **it pulls from this machine by itself**, so
   both machines need `STORE=remote` with the other one as `STORE_MACHINE` (the setup wizard sets that up). herdr passes at
-  most 64 KB of plugin output; the dump is packed (gzip, base64) and carries the most recently changed topics first, up to
-  about 400 KB of topic files. Older ones beyond that wait until they change.
-- **`ssh`**: bhote reads the replica folder in one ssh call and writes newer local topics back (push and pull).
+  most 64 KB of plugin output; the dump is packed (gzip, base64) and carries the most recently changed tasks first, up to
+  about 400 KB of task files. Older ones beyond that wait until they change.
+- **`ssh`**: bhote reads the replica folder in one ssh call and writes newer local tasks back (push and pull).
 
 ## Through kharka
 
 With `STORE=kharka` the other side is [kharka](https://github.com/jakobbeyer/kharka), a local-first JSON store: its daemon
 runs on every machine, holds a replica of everything and syncs with the others through its hub. bhote merges with the
-daemon on its own machine, so a merge never waits for the network; kharka carries the topics to the other machines, also
+daemon on its own machine, so a merge never waits for the network; kharka carries the tasks to the other machines, also
 after they were offline. No `STORE_MACHINE`: every machine with `STORE=kharka` (each one needs it set) and a daemon on the
-same hub shares the topics.
+same hub shares the tasks.
 
-- Each topic file is one entry, its `KEY=value` lines as a JSON object of strings: `bhote.topics/<id>`, and the records
+- Each task file is one entry, its `KEY=value` lines as a JSON object of strings: `bhote.topics/<id>`, and the records
   `bhote.projects/proj-…`, `bhote.machines/mach-…`, `bhote.agentnums/an-…`. An entry counts only in the collection of its
   id (`bhote.topics/proj-x` is not taken); other entries are left alone.
 - The merge is the one below: kharka's entries are read like a replica's files (checked the same way), the newer
-  `updated` wins, and a topic is written to kharka only while its entry is still the version the merge read
+  `updated` wins, and a task is written to kharka only while its entry is still the version the merge read
   (`kharka put --if-hlc`). When the entry changed in between, the merge runs again at once instead of reporting
   "in sync".
-- A topic file comes back from kharka in one form: a final newline, only `KEY=value` lines, each key once, valid UTF-8,
+- A task file comes back from kharka in one form: a final newline, only `KEY=value` lines, each key once, valid UTF-8,
   no control characters. After a push the local file takes that form, so that it equals its entry and is not pushed
   again on every round.
 - The collector follows `kharka watch bhote.`: a change on another machine starts a merge and wakes the collector at once.
@@ -82,8 +84,8 @@ same hub shares the topics.
   default socket or `$KHARKA_SOCKET`. Without a daemon, bhote works locally and shows `offline`, as with a machine.
 
 **Who decides.** Between machines, kharka keeps the latest write. bhote does not rely on that: it decides by `updated`,
-as with a replica machine, and uses kharka only to carry the files. When two machines write the same topic at nearly the
-same time, kharka may keep the one with the older `updated`; the next merge on the machine whose topic is newer finds its
+as with a replica machine, and uses kharka only to carry the files. When two machines write the same task at nearly the
+same time, kharka may keep the one with the older `updated`; the next merge on the machine whose task is newer finds its
 local file newer than the entry and writes it again. Both end with the newer `updated`.
 
 **The hub's collections.** bhote writes under `bhote.`. A hub with `strict = true` refuses keys outside its collections, so
@@ -116,10 +118,10 @@ a change, and every minute instead of `REMOTE_EVERY`):
 1. Reads all replica files at once. The stream must end with an end marker; a cut-off stream (the connection died, more
    than 8 MB) is not merged at all and counts as offline.
 2. Accepts only plain file names (`[A-Za-z0-9][A-Za-z0-9_-]*.topic`) and only valid files: `KEY=value` lines, no key twice,
-   numeric times, nothing more than 5 minutes in the future, the `id` equal to the file name, small; at most 2000 topics.
+   numeric times, nothing more than 5 minutes in the future, the `id` equal to the file name, small; at most 2000 tasks.
    Everything else is not taken, with a warning on stderr.
-3. Per topic, the newer `updated` wins, in both directions. With the same `updated` and different contents, both sides pick
-   the same one (the larger checksum). A local change made while the merge ran is never overwritten; over ssh, a topic is
+3. Per task, the newer `updated` wins, in both directions. With the same `updated` and different contents, both sides pick
+   the same one (the larger checksum). A local change made while the merge ran is never overwritten; over ssh, a task is
    written to the other side only when it is still the version the merge read there.
 4. Deletions travel as tombstones; a tombstone older than 30 days is removed (both sides have it by then).
 
@@ -136,7 +138,7 @@ machines. [herdr-kharka](https://github.com/jakobbeyer/herdr-kharka) runs on eve
 `herdr/<node>`; the kharka daemon here holds every machine's entry, so a look never leaves this machine and no machine needs
 ssh to another. It works with any `STORE`.
 
-- **Names.** A machine is listed under its herdr-kharka label (`--label`, else its kharka node). Topics name the machine of
+- **Names.** A machine is listed under its herdr-kharka label (`--label`, else its kharka node). Tasks name the machine of
   their agent, and every machine reads them, so start herdr-kharka on each machine with `--label` set to the name bhote has
   there (`HOST_LABEL`, else `Mac` / the host name). An entry of this machine's node, or one labelled like this machine, is left
   out. The setup wizard checks the label of this machine's herdr-kharka.
@@ -157,3 +159,20 @@ All panels of one machine share `$BHOTE_SHARED` (private, owned by the user): th
 panel (the first one alive) asks herdr for the agents every `LOCAL_EVERY` / `REMOTE_EVERY` seconds and writes the lists; the
 others only read them. When that panel ends, another takes over. Agent list lines are
 `machine␟pane␟status␟workspace␟task` (␟ = the unit separator `0x1F`).
+
+## Unknown fields
+
+A task file may carry keys this version does not know (a newer version wrote them): **every rewrite keeps them** — a status change, a rename, the
+daemon's follow-ups, the push to kharka, the merge with a replica. Keys are lowercase letters, digits and `_`, one `KEY=value` per line. That is what lets
+machines of different versions work on the same tasks while a change rolls out.
+
+## Renaming topics to tasks
+
+Tasks were called topics until 0.9.4. The names on disk did not change with it (`*.topic`, kharka `bhote.topics/<id>`), in two waves, so that machines may run different
+versions in between:
+
+1. **Wave 1** (0.9.4): everything a person sees or types says *task*; the readers (the `bhote` script, `bhoted`, the herdr-app panel) accept `<id>.task` and `bhote.tasks/<id>` as well
+   as the old names (both for one id: the newer `updated` wins; a writer changes the file it finds); the writers still write the old names.
+2. **Wave 2** (later): `bhote migrate tasks --dry-run` shows what would be renamed, `bhote migrate tasks --yes` renames the files and the kharka entries. **Only after wave 1 is on every machine**:
+   an older version does not see a `.task` file. Run it on one machine (with kharka the entries travel), look at `bhote list`, then on the others when they keep local files.
+   Nothing runs it by itself, and the writers do not switch to the new names before a later release.

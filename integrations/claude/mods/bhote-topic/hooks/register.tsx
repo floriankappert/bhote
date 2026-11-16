@@ -7,10 +7,10 @@ const PANE = 'bhote-topic'
 
 const topic = atom({ plugin: 'bhote-topic', key: 'topic' } as const, null)
 const isHidden = atom({ plugin: 'bhote-topic', key: 'isHidden' } as const, false)
-// the friendly reminder above the prompt: a topic that waits, is next or is parked (random, now and then, for a short while)
+// the friendly reminder above the prompt: a task that waits, is next or is parked (random, now and then, for a short while)
 const reminder = atom({ plugin: 'bhote-topic', key: 'reminder' } as const, null)
 
-// /topic <sub>: the bhote status commands that act on the topic of this agent
+// /topic <sub>: the bhote status commands that act on the task of this agent
 const STATUS = ['now', 'testing', 'next', 'review', 'later', 'done', 'dismiss']
 
 // one theme colour per status, each its own (waiting overrides the status)
@@ -45,8 +45,8 @@ const SECTIONS: { key: string; title: string; color: string; mark: string }[] = 
   { key: 'deploying', title: 'Deploying', color: 'warning', mark: '●' },
   { key: 'finished', title: 'Recently finished', color: 'success', mark: '✓' },
 ]
-// the buttons of the pane: what makes sense for the status (bhote's own topic page offers the same first): a topic that runs goes to review or is done,
-// one that waits for you goes on again, is closed or done, a finished card is closed or goes on, a wait that is over goes on, a queued topic starts
+// the buttons of the pane: what makes sense for the status (bhote's own task page offers the same first): a task that runs goes to review or is done,
+// one that waits for you goes on again, is closed or done, a finished card is closed or goes on, a wait that is over goes on, a queued task starts
 type Action = { label: string; cmd: string; color: string }
 const RESUME: Action = { label: 'Resume', cmd: 'now', color: 'claude' }
 const REVIEW: Action = { label: 'Review', cmd: 'review', color: 'error' }
@@ -94,11 +94,11 @@ const parse = (stdout: string): Topic | null => {
   }
 }
 
-// a turn runs, or tests or a deployment: the topic is read every few seconds
+// a turn runs, or tests or a deployment: the task is read every few seconds
 let isWorking = false
 let isBusyNow = false
 let isOff = false // bhote says the mod is switched off (CLAUDE_MOD)
-let isPaneOpen = false // the pane is open: the whole picture (pull request, other topics) is read
+let isPaneOpen = false // the pane is open: the whole picture (pull request, other tasks) is read
 let tick = 0
 let reminderUntil = 0 // ms: how long the reminder on show stays
 let lastReminder = 0 // ms: when the last one came up
@@ -115,7 +115,7 @@ const parseReminder = (stdout: string): Reminder | null => {
   }
 }
 
-// a random topic from the bhote parking lot (waiting, next, later) goes up as a reminder; "hey, did you still have this on your screen?"
+// a random task from the bhote parking lot (waiting, next, later) goes up as a reminder; "hey, did you still have this on your screen?"
 async function remind($: EngineInterface) {
   try {
     const ran = await $.process.run(['bhote', 'reminder'], { timeoutMs: 5000 })
@@ -146,8 +146,12 @@ export const register: Register = (on, options) => {
 
   on('session.start', async ($, e, next) => {
     await $.command.register({
+      name: 'task',
+      description: 'Your bhote task: /task [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]',
+    })
+    await $.command.register({ // the old name stays for good
       name: 'topic',
-      description: 'Your bhote topic: /topic [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]',
+      description: 'The old name of /task',
     })
     lastReminder = (await $.clock.now()) - REMINDER_GAP + 2 * 60 * 1000 // the first one is possible after about two minutes
     await refresh($)
@@ -169,7 +173,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // the person closes the pane with the engine's mark (or ctrl+x x): the topic is read the light way again
+  // the person closes the pane with the engine's mark (or ctrl+x x): the task is read the light way again
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE) isPaneOpen = false
 
@@ -190,7 +194,7 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('command.run', { command: 'topic' }, async ($, e) => {
+  const runTask = async ($: any, e: any) => {
     const [sub = 'status', ...rest] = e.args.trim().split(/\s+/)
     const current = await read($, topic)
     if (sub === 'remind') { // the friendly reminder on demand (otherwise it comes up by itself, at random)
@@ -199,18 +203,18 @@ export const register: Register = (on, options) => {
       const shown = await read($, reminder)
       return { text: shown === null ? 'No reminder: nothing waits, is next or is parked, or Show Friendly Reminder is off in the bhote settings.' : 'Friendly reminder shown.' }
     }
-    if (isOff) return { text: 'The topic display is switched off in bhote (setting CLAUDE_MOD).' }
+    if (isOff) return { text: 'The task display is switched off in bhote (setting CLAUDE_MOD).' }
 
     if (sub === 'pane') {
       if (isPaneOpen) {
         await $.ui.close({ id: PANE })
         isPaneOpen = false
-        return { text: 'Topic pane closed.' }
+        return { text: 'Task pane closed.' }
       }
       isPaneOpen = true
       await refresh($)
       const opened = await $.ui.open({ id: PANE, title: 'bhote', columns: 46, closeOnEscape: true })
-      return { text: opened.isPlaced ? 'Topic pane opened (/topic pane closes it).' : 'Topic pane: it is drawn as soon as the terminal is 110 columns wide.' }
+      return { text: opened.isPlaced ? 'Task pane opened (/task pane closes it).' : 'Task pane: it is drawn as soon as the terminal is 110 columns wide.' }
     }
     if (sub === 'hide' || sub === 'show') {
       await update($, isHidden, () => sub === 'hide')
@@ -221,7 +225,7 @@ export const register: Register = (on, options) => {
       return { text: sub === 'hide' ? 'Friendly reminder and pane hidden.' : 'Friendly reminder shown.' }
     }
     if (current === null) {
-      return { text: 'No bhote topic for this agent.' }
+      return { text: 'No bhote task for this agent.' }
     }
     if (sub === '' || sub === 'status') {
       return { text: `#${current.n} ${current.title} (${current.status})` }
@@ -233,16 +237,21 @@ export const register: Register = (on, options) => {
     } else if (sub === 'wait' && rest.length > 0) {
       argv = ['bhote', 'wait', current.id, rest.join(' ')]
     } else {
-      return { text: 'Usage: /topic [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]' }
+      return { text: 'Usage: /task [pane|remind|review|done|now|next|later|testing|dismiss|wait <Name>|hide|show]' }
     }
 
     const ran = await $.process.run(argv, { timeoutMs: 10000 })
     await refresh($)
 
     return { text: ran.exitCode === 0 ? `#${current.n}: ${argv.slice(1, 2).join('')} ok` : `bhote failed: ${ran.stderr.trim()}` }
+  }
+  on('command.run', { command: 'task' }, runTask)
+  on('command.run', { command: 'topic' }, async ($, e) => { // the old name: the same, with a hint where it says something
+    const r: any = await runTask($, e)
+    return r && typeof r.text === 'string' ? { ...r, text: `${r.text} (/topic is /task now)` } : r
   })
 
-  // the friendly reminder: in orange, with the dog, a topic that waits, is next or is parked, its description under it (no status of the agent any more)
+  // the friendly reminder: in orange, with the dog, a task that waits, is next or is parked, its description under it (no status of the agent any more)
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const r = await read($, reminder)
 
@@ -282,7 +291,7 @@ export const register: Register = (on, options) => {
     if (current === null) {
       return (
         <Box>
-          <Text dimColor>{isOff ? 'Switched off in bhote (setting CLAUDE_MOD).' : 'No bhote topic for this agent.'}</Text>
+          <Text dimColor>{isOff ? 'Switched off in bhote (setting CLAUDE_MOD).' : 'No bhote task for this agent.'}</Text>
         </Box>
       )
     }

@@ -44,7 +44,7 @@ fn code_ok(c: &str) -> bool { c.chars().count() == 3 && c.chars().all(|x| x.is_a
 /// machine_codes_load: (name, code) for this machine, the machines of the agents and the machine records
 pub fn machine_codes(topics: &std::path::Path, host: &str, agent_machines: &[String]) -> Vec<(String, String)> {
     let mut recs: Vec<(String, String)> = Vec::new();
-    let mut files: Vec<_> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("mach-") && n.ends_with(".topic") })).collect()).unwrap_or_default();
+    let mut files: Vec<_> = fs::read_dir(topics).map(|rd| rd.flatten().map(|e| e.path()).filter(|p| p.file_name().map_or(false, |n| { let n = n.to_string_lossy(); n.starts_with("mach-") && crate::store::has_task_ext(&n) })).collect()).unwrap_or_default();
     files.sort();
     for f in files {
         let (mut t, mut cd, mut kd, mut del) = (String::new(), String::new(), String::new(), "0".to_string());

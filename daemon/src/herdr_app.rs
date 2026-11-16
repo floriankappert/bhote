@@ -83,7 +83,7 @@ pub fn local() -> Option<(Value, Value)> {
     snapshot()?.into_iter().find(|m| m.name.is_none()).map(|m| (m.panes, m.workspaces))
 }
 
-/// `MACHINE_LABELS=omarchy-flo=Omarchy,other=Other`: bhote's name of a machine (what its topics say in `agent_machine`).
+/// `MACHINE_LABELS=omarchy-flo=Omarchy,other=Other`: bhote's name of a machine (what its tasks say in `agent_machine`).
 pub fn label(labels: &str, name: &str) -> String {
     labels.split(',').filter_map(|p| p.split_once('=')).find(|(k, _)| k.trim() == name).map(|(_, v)| v.trim().to_string()).filter(|v| !v.is_empty()).unwrap_or_else(|| name.to_string())
 }

@@ -1,5 +1,5 @@
-//! The topic's page (menu) and the chooser of free agents in Rust (step 6b): bhote_menu, menu_build, bhote_pick, pick_build, with the
-//! same bytes as the script (the markers for the clicks and the selected line included). Topics with a Slack pin or answer stay with the script's view.
+//! The task's page (menu) and the chooser of free agents in Rust (step 6b): bhote_menu, menu_build, bhote_pick, pick_build, with the
+//! same bytes as the script (the markers for the clicks and the selected line included). Tasks with a Slack pin or answer stay with the script's view.
 use crate::cards::Row;
 use crate::store::{self, topic_get};
 use crate::ui::{clip, dw, Ctx, Project};
@@ -27,7 +27,7 @@ pub fn wrap_print(c: &Ctx, ind: i64, col: &str, text: &str) -> Vec<String> {
     out
 }
 
-/// What the menu can do with a topic (menu_build): (key, label)
+/// What the menu can do with a task (menu_build): (key, label)
 pub fn menu_items(file: &Path, projects: &[Project], project_name: &dyn Fn(&str) -> Option<String>) -> Vec<(String, String)> {
     let st = { let s = topic_get(file, "status"); if s.is_empty() { "now".to_string() } else { s } }; let ag = topic_get(file, "agent");
     let mut v: Vec<(String, String)> = Vec::new();
@@ -41,7 +41,7 @@ pub fn menu_items(file: &Path, projects: &[Project], project_name: &dyn Fn(&str)
     }
     let pane = topic_get(file, "agent_pane");
     if !topic_get(file, "transfer_to").is_empty() { add("cancelxfer", format!("Cancel the hand-over to {}", topic_get(file, "transfer_to_name"))); }
-    if !ag.is_empty() && !pane.is_empty() { add("jump", "Show topic".into()); }
+    if !ag.is_empty() && !pane.is_empty() { add("jump", "Show task".into()); }
     match st.as_str() {
         "review" => { add("now", "Back to now: work goes on".into()); add("dismiss", "Dismiss: close the card".into()); add("done", "Mark done".into()); }
         "finished" => { add("dismiss", "Dismiss: close the card".into()); add("done", "Mark done".into()); add("now", "Back to now: work goes on".into()); }
@@ -92,7 +92,7 @@ fn num_line(c: &Ctx, sel: bool, n: usize, text: &str) -> String {
 
 fn rule(c: &Ctx) -> String { format!("  {}{}{}\n", c.c.g("B"), "─".repeat((c.cols - 5).max(0) as usize), c.c.g("X")) }
 
-/// Does the script have to draw this topic's page (a Slack pin or answer)?
+/// Does the script have to draw this task's page (a Slack pin or answer)?
 pub fn needs_script(file: &Path) -> bool { !topic_get(file, "slack_channel").is_empty() || !topic_get(file, "slack_msg").is_empty() }
 
 pub struct MenuIn<'a> { pub c: &'a Ctx, pub file: &'a Path, pub idx: i64, pub items: &'a [(String, String)], pub project_name: &'a dyn Fn(&str) -> Option<String>, pub github: bool, pub flash: &'a str, pub now: u64 }
@@ -129,7 +129,7 @@ pub fn render_menu(m: &MenuIn) -> String {
     out
 }
 
-/// pick_build: the free agents (rows of the agent lists) a topic can go to
+/// pick_build: the free agents (rows of the agent lists) a task can go to
 pub fn pick_map<'a>(rows: &'a [Row], topics: &[store::Topic], mode: &str, source: Option<(&str, &str)>) -> Vec<&'a Row> {
     let mut v = Vec::new();
     for r in rows {

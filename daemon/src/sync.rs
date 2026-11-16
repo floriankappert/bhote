@@ -1,5 +1,5 @@
-//! The merge of the local topics with kharka (step 4b), `store_sync` and `store_sync_run` of the script for STORE=kharka: the newer
-//! `updated` wins per topic, in both directions, writes to kharka only while the entry is what the merge read (--if-hlc),
+//! The merge of the local tasks with kharka (step 4b), `store_sync` and `store_sync_run` of the script for STORE=kharka: the newer
+//! `updated` wins per task, in both directions, writes to kharka only while the entry is what the merge read (--if-hlc),
 //! tombstones go after 30 days, what is not valid is not taken.
 use crate::store::{self, num_or, topic_get};
 use serde_json::Value;
@@ -20,7 +20,7 @@ pub fn cksum(data: &[u8]) -> (u32, usize) {
 }
 
 fn key_of(file: &str) -> String {
-    let id = file.trim_end_matches(".topic");
+    let id = file.trim_end_matches(".topic").trim_end_matches(".task");
     if id.starts_with("proj-") { format!("bhote.projects/{}", id) } else if id.starts_with("mach-") { format!("bhote.machines/{}", id) } else if id.starts_with("an-") { format!("bhote.agentnums/{}", id) } else { format!("bhote.topics/{}", id) }
 }
 fn name_ok(n: &str) -> bool { let b = n.as_bytes(); !b.is_empty() && b[0].is_ascii_alphanumeric() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') }
@@ -32,7 +32,7 @@ pub fn topic_valid(text: &str, now: u64) -> bool {
     for l in text.lines() {
         nr += 1;
         let f: Vec<&str> = l.split('=').collect();
-        if f.len() < 2 || f[0].is_empty() || !f[0].chars().all(|c| c.is_ascii_lowercase() || c == '_') { return false; }
+        if f.len() < 2 || f[0].is_empty() || !f[0].starts_with(|c: char| c.is_ascii_lowercase() || c == '_') || !f[0].chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') { return false; }
         if seen.contains(&f[0]) { return false; } seen.push(f[0]);
         if matches!(f[0], "updated" | "created" | "waiting_since") {
             if !f[1].bytes().all(|b| b.is_ascii_digit()) { return false; }
@@ -62,35 +62,37 @@ fn note(cfg: &Cfg, state: &str, extra: &str) {
     if fs::write(&tmp, body).is_ok() { let _ = fs::rename(&tmp, &f); }
 }
 
-struct Remote { files: HashMap<String, String>, hlc: HashMap<String, String> }
+struct Remote { files: HashMap<String, String>, hlc: HashMap<String, String>, keys: HashMap<String, String> }
 
-/// kharka_dump: every bhote entry as the lines of a topic file
+/// kharka_dump: every bhote entry as the lines of a task file
 fn dump(cfg: &Cfg) -> Result<Remote, String> {
     let (rc, out, err) = kharka(&cfg.kharka, &["ls", "bhote.", "--entries"], None);
     if rc != 0 { return Err(err_line(&err)); }
     if out.len() > 8_000_000 { return Err(String::new()); }
-    let (mut files, mut hlc) = (HashMap::new(), HashMap::new());
+    let (mut files, mut hlc, mut keys): (HashMap<String, String>, HashMap<String, String>, HashMap<String, String>) = (HashMap::new(), HashMap::new(), HashMap::new());
     for l in String::from_utf8_lossy(&out).lines() {
         let Ok(e) = serde_json::from_str::<Value>(l) else { continue };
         let key = e["key"].as_str().unwrap_or(""); let Some(v) = e["value"].as_object() else { continue };
         let Some((coll, id)) = key.split_once('/') else { continue };
-        if !["bhote.topics", "bhote.projects", "bhote.machines", "bhote.agentnums"].contains(&coll) || !name_ok(id) { continue; }
+        if !["bhote.topics", "bhote.tasks", "bhote.projects", "bhote.machines", "bhote.agentnums"].contains(&coll) || !name_ok(id) { continue; }
         let want = if id.starts_with("proj-") { "bhote.projects" } else if id.starts_with("mach-") { "bhote.machines" } else if id.starts_with("an-") { "bhote.agentnums" } else { "bhote.topics" };
-        if coll != want { continue; }
+        if coll != want && !(want == "bhote.topics" && coll == "bhote.tasks") { continue; }   // (dual-read: bhote.tasks, wave 2, counts like bhote.topics)
         let file = format!("{}.topic", id);
         let mut text = String::new();
         for (k, x) in v { if let Some(s) = x.as_str() { let line = format!("{}={}", k, nocntrl01(s)); if !line.is_empty() { text.push_str(&line); text.push('\n'); } } }
-        files.insert(file.clone(), text); hlc.insert(file, e["hlc"].as_str().unwrap_or("").to_string());
+        // both collections for one id: the newer `updated` wins, a tie goes to bhote.tasks
+        if let Some(old) = files.get(&file) { let (o, n) = (updated_of(old), updated_of(&text)); if o > n || (o == n && coll != "bhote.tasks") { continue; } }
+        files.insert(file.clone(), text); hlc.insert(file.clone(), e["hlc"].as_str().unwrap_or("").to_string()); keys.insert(file, key.to_string());
     }
-    Ok(Remote { files, hlc })
+    Ok(Remote { files, hlc, keys })
 }
 
-/// The value of a topic file as kharka gets it (the first value of each lowercase key; the line form it comes back in)
+/// The value of a task file as kharka gets it (the first value of each lowercase key; the line form it comes back in)
 fn value_of(text: &str) -> (serde_json::Map<String, Value>, String) {
     let mut m = serde_json::Map::new();
     for l in text.lines() {
         let Some(i) = l.find('=') else { continue };
-        let k = &l[..i]; if k.is_empty() || !k.chars().all(|c| c.is_ascii_lowercase() || c == '_') { continue; }
+        let k = &l[..i]; if k.is_empty() || !k.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') || !k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') { continue; }
         if !m.contains_key(k) { m.insert(k.to_string(), Value::String(l[i + 1..].to_string())); }
     }
     let lines: String = m.iter().filter_map(|(k, v)| v.as_str().map(|s| format!("{}={}\n", k, nocntrl01(s)))).collect();
@@ -98,13 +100,13 @@ fn value_of(text: &str) -> (serde_json::Map<String, Value>, String) {
 }
 
 /// kharka_push: 0 ok, 4 the entry changed since the merge read it, else an error (and its text)
-fn push(cfg: &Cfg, file: &Path, stamp: &str, remote_lines: Option<&str>) -> (i32, String) {
+fn push(cfg: &Cfg, file: &Path, stamp: &str, remote_lines: Option<&str>, key: Option<&str>) -> (i32, String) {
     let Ok(was) = crate::proc::read_cap(file) else { return (1, String::new()) };
     let (m, lines) = value_of(&was);
     let mut rc = 0; let mut err = String::new();
     if remote_lines.map_or(false, |r| r == lines) { /* kharka has it already: only the local file was not in its form */ }
     else {
-        let key = key_of(&file.file_name().unwrap_or_default().to_string_lossy());
+        let key = key.map(|k| k.to_string()).unwrap_or_else(|| key_of(&file.file_name().unwrap_or_default().to_string_lossy()));
         let body = serde_json::to_vec(&Value::Object(m)).unwrap_or_default();
         let mut args = vec!["put", key.as_str(), "-"]; if !stamp.is_empty() { args.push("--if-hlc"); args.push(stamp); }
         let (r, _, e) = kharka(&cfg.kharka, &args, Some(&body)); rc = r; err = err_line(&e);
@@ -144,7 +146,7 @@ fn run(cfg: &Cfg) -> i32 {
     }
     let rejected: Vec<&String> = remote.files.keys().filter(|f| !rfiles.contains_key(*f)).collect();
     let mut local: HashMap<String, String> = HashMap::new();
-    if let Ok(rd) = fs::read_dir(&cfg.topics) { for e in rd.flatten() { let n = e.file_name().to_string_lossy().to_string(); if n.ends_with(".topic") && name_ok(n.trim_end_matches(".topic")) { local.insert(n, crate::proc::read_cap(e.path()).unwrap_or_default()); } } }
+    for p in store::task_files(&cfg.topics) { let n = p.file_name().unwrap_or_default().to_string_lossy().to_string(); let id = n.trim_end_matches(".topic").trim_end_matches(".task").to_string(); if name_ok(&id) { local.insert(format!("{}.topic", id), crate::proc::read_cap(&p).unwrap_or_default()); } }
     let mut ids: Vec<String> = rfiles.keys().chain(local.keys()).cloned().collect(); ids.sort(); ids.dedup();
     let (mut ok, mut again, mut err) = (true, false, String::new());
     for f in ids {
@@ -154,7 +156,7 @@ fn run(cfg: &Cfg) -> i32 {
         let (l0, r0) = (local.get(&f).map(|t| updated_of(t)).unwrap_or(0), rfiles.get(&f).map(|t| updated_of(t)).unwrap_or(0));
         let differ = if !hl || !hr || l0 != r0 { true } else if l0 != 0 { cksum(local[&f].as_bytes()) != cksum(rfiles[&f].as_bytes()) } else { false };
         if !differ { continue; }
-        let path = cfg.topics.join(&f);
+        let path = store::task_path(&cfg.topics, f.trim_end_matches(".topic"));
         let l = if hl { num_or(&topic_get(&path, "updated"), 0) } else { 0 }; let r = rfiles.get(&f).map(|t| num_or(&store::first_value(t, "updated").map(|v| store::nocntrl(&v)).unwrap_or_default(), 0)).unwrap_or(0);
         if r > l {
             let pt = cfg.topics.join(format!(".pull.{}{}", std::process::id(), n)); n += 1;
@@ -163,24 +165,25 @@ fn run(cfg: &Cfg) -> i32 {
             let _ = fs::rename(&pt, &path);
         } else if l > r {
             if l < old && topic_get(&path, "deleted") == "1" { continue; }
-            let (rc, e) = push(cfg, &path, remote.hlc.get(&f).map(|s| s.as_str()).unwrap_or(""), None);
+            let (rc, e) = push(cfg, &path, remote.hlc.get(&f).map(|s| s.as_str()).unwrap_or(""), None, remote.keys.get(&f).map(|s| s.as_str()));
             match rc { 0 => {} 4 => again = true, _ => { ok = false; err = e; } }
         } else if l == r && l != 0 && hr && fs::read(&path).ok().as_deref() != Some(rfiles[&f].as_bytes()) {
             let (cl, cr) = (cksum(&fs::read(&path).unwrap_or_default()).0, cksum(rfiles[&f].as_bytes()).0);
-            if cr > cl { let tf = cfg.topics.join(format!("{}.{}y", f, std::process::id())); if fs::write(&tf, &rfiles[&f]).is_ok() { let _ = fs::rename(&tf, &path); } }
-            else { let (rc, e) = push(cfg, &path, remote.hlc.get(&f).map(|s| s.as_str()).unwrap_or(""), Some(&rfiles[&f])); match rc { 0 => {} 4 => again = true, _ => { ok = false; err = e; } } }
+            if cr > cl { let tf = PathBuf::from(format!("{}.{}y", path.display(), std::process::id())); if fs::write(&tf, &rfiles[&f]).is_ok() { let _ = fs::rename(&tf, &path); } }
+            else { let (rc, e) = push(cfg, &path, remote.hlc.get(&f).map(|s| s.as_str()).unwrap_or(""), Some(&rfiles[&f]), remote.keys.get(&f).map(|s| s.as_str())); match rc { 0 => {} 4 => again = true, _ => { ok = false; err = e; } } }
         }
     }
     // the tombstones that are old enough go, from kharka too (only while the entry is what the merge read)
     if let Ok(rd) = fs::read_dir(&cfg.topics) {
-        let mut tombs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map_or(false, |x| x == "topic")).collect(); tombs.sort();
+        let _ = rd; let mut tombs: Vec<PathBuf> = store::task_files(&cfg.topics); tombs.sort();
         for t in tombs {
             let Ok(text) = crate::proc::read_cap(&t) else { continue };
             if !text.lines().any(|l| l.starts_with("deleted=1")) { continue; }
             if num_or(&topic_get(&t, "updated"), 0) >= old { continue; }
-            let name = t.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let name = format!("{}.topic", t.file_name().unwrap_or_default().to_string_lossy().trim_end_matches(".topic").trim_end_matches(".task"));
             if let Some(st) = remote.hlc.get(&name).filter(|s| !s.is_empty()) {
-                let (rc, _, e) = kharka(&cfg.kharka, &["del", &key_of(&name), "--if-hlc", st], None);
+                let dk = remote.keys.get(&name).cloned().unwrap_or_else(|| key_of(&name));
+                let (rc, _, e) = kharka(&cfg.kharka, &["del", &dk, "--if-hlc", st], None);
                 match rc { 0 => {} 4 => { again = true; continue; } _ => { ok = false; err = err_line(&e); continue; } }
             }
             let _ = fs::remove_file(&t);
@@ -206,4 +209,19 @@ pub fn store_sync(cfg: &Cfg) -> i32 {
     if fs::read_link(&lock).ok().map(|p| p.to_string_lossy().to_string()).as_deref() == Some(&me.to_string()) { let _ = fs::remove_file(&lock); }
     if rc == 3 { let _ = fs::write(cfg.shared.join("dirty"), ""); let _ = fs::write(cfg.shared.join("poke"), ""); rc = 2; }
     rc
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn unknown_fields_survive_the_value_and_validity() {
+        let t = "id=a\ntitle=T\nupdated=5\nv2_flag=1\nfuture_field=x\nsource_ref=IMS-9\n";
+        assert!(topic_valid(t, 100));
+        let (m, lines) = value_of(t);
+        assert_eq!(m.get("v2_flag").and_then(|v| v.as_str()), Some("1"));
+        assert!(lines.contains("future_field=x\n") && lines.contains("source_ref=IMS-9\n"));
+        assert_eq!(key_of("a.task"), "bhote.topics/a");
+        assert_eq!(key_of("proj-x.task"), "bhote.projects/proj-x");
+    }
 }

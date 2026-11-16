@@ -1,5 +1,5 @@
 //! The panel in Rust (step 6): the terminal, the keys and the mouse, the main view, and the actions on it. The views that are not ported yet
-//! (the topic's menu, settings, the wizard, the choosers) run as the script's own view in a child on the same terminal, then this takes over again.
+//! (the task's menu, settings, the wizard, the choosers) run as the script's own view in a child on the same terminal, then this takes over again.
 use crate::agentsui;
 use crate::cards::{Cards, Layout, View};
 use crate::store::{self, Env, Live, Sink};
@@ -140,7 +140,7 @@ impl Panel {
     }
     fn ctx(&self) -> Ctx { Ctx { cols: self.cols as i64, now: store::now(), shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(self.theme.vars.clone()) } }
     fn project_name(&self, id: &str) -> Option<String> {
-        let t = crate::proc::read_cap(self.topics.join(format!("{}.topic", id))).ok()?; let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
+        let t = crate::proc::read_cap(crate::store::task_path(&self.topics, id)).ok()?; let (mut name, mut del, mut kd) = (String::new(), "0".to_string(), String::new());
         for l in t.lines() { if let Some(v) = l.strip_prefix("title=") { if name.is_empty() { name = v.to_string(); } } else if let Some(v) = l.strip_prefix("deleted=") { del = v.to_string(); } else if let Some(v) = l.strip_prefix("kind=") { kd = v.to_string(); } }
         if kd == "project" && del != "1" { Some(name) } else { None }
     }
@@ -148,7 +148,7 @@ impl Panel {
         ["agents.local", "agents.remote"].iter().flat_map(|f| crate::proc::read_cap(self.shared.join(f)).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|l| { let mut p = l.split(US).map(|x| x.to_string()); crate::cards::Row { m: p.next().unwrap_or_default(), id: p.next().unwrap_or_default(), st: p.next().unwrap_or_default(), name: p.next().unwrap_or_default(), task: p.next().unwrap_or_default() } }).collect::<Vec<_>>()).collect()
     }
     fn menu_list(&self, file: &std::path::Path) -> Vec<(String, String)> { let ctx = self.ctx(); let ps = ui::projects(&ctx); crate::menuui::menu_items(file, &ps, &|id| self.project_name(id)) }
-    /// The topic's page or the chooser: the text with its markers made into a screen; the map of the clickable rows is kept
+    /// The task's page or the chooser: the text with its markers made into a screen; the map of the clickable rows is kept
     fn other_frame(&mut self) -> Option<String> {
         if self.real_cols < MIN_COLS || self.real_rows < MIN_ROWS { return Some(format!("\u{1b}[H\u{1b}[J{}", ui::clip(&format!("Too small (min {}x{})", MIN_COLS, MIN_ROWS), self.real_cols as i64 - 1))); }
         let ctx = self.ctx();
@@ -187,12 +187,12 @@ impl Panel {
         let ctx = Ctx { cols: self.cols as i64, now: store::now(), shared: self.shared.clone(), topics: self.topics.clone(), cfg: self.cfg.clone(), c: Colors::from_map(self.theme.vars.clone()) };
         let view = self.view(Vec::new()); let cards = Cards::new(&ctx, &view); f(&cards)
     }
-    /// The selected topic: (id, file, status, agent pane, title), None for a "+N more" row or an empty list
+    /// The selected task: (id, file, status, agent pane, title), None for a "+N more" row or an empty list
     fn sel_topic(&self) -> Option<(String, PathBuf, String, String, String)> {
         if self.sel_id.starts_with("more:") { return None; }
         self.with_cards(|c| { let i = c.sel_index(); if i < 0 { return None; } let t = c.ts().get(i as usize)?; Some((t.id.clone(), t.file.clone(), t.status.clone(), t.ap.clone(), t.title.clone())) })
     }
-    /// sel_leave: the selection goes to the next one of the section the selected topic leaves
+    /// sel_leave: the selection goes to the next one of the section the selected task leaves
     fn sel_leave(&mut self) {
         let (list, groups): (Vec<String>, HashMap<String, String>) = self.with_cards(|c| { let p = c.plan(); let g = c.ts().iter().map(|t| (t.id.clone(), t.status.clone())).collect(); (p.sel_list, g) });
         let id = if self.sel_id.is_empty() { match self.sel_topic() { Some(t) => t.0, None => return } } else { self.sel_id.clone() };
@@ -328,7 +328,7 @@ impl Panel {
             return;
         }
         if !press { return; }
-        if b == 2 {   // the right button: the topic's menu
+        if b == 2 {   // the right button: the task's menu
             if let Some(t) = self.ref_at(y).cloned() { let id = t.split('!').next().unwrap_or("").to_string(); if !(id.is_empty() || id.starts_with("more:") || id.starts_with("cap:") || id.starts_with("agent:") || id.starts_with("ws:")) { self.sel_id = id; self.open_menu(term); } }
             return;
         }
@@ -340,7 +340,7 @@ impl Panel {
                 if !ag.is_empty() { let mut p = ag.split(US); let (m, pane) = (p.next().unwrap_or("").to_string(), p.next().unwrap_or("").to_string()); self.agent_jump(&m, &pane); return; }
             } }
         }
-        if div == 0 || y < div {   // above it: a topic?
+        if div == 0 || y < div {   // above it: a task?
             if let Some(t) = self.ref_at(y).cloned() {
                 let id = t.clone();
                 if let Some(wid) = id.strip_prefix("ws:") { self.focus_workspace(wid); return; }   // (a workspace of the left panel: show it)
@@ -349,7 +349,7 @@ impl Panel {
                     self.redraw = true; return;
                 }
                 let twice = self.click_twice(&id);
-                if twice { // a double click: the topic's page
+                if twice { // a double click: the task's page
                     if !(id.starts_with("cap:")) { self.sel_id = id.clone(); }
                     if !(id.starts_with("more:") || id.starts_with("cap:")) { self.open_menu(term); }
                     self.redraw = true; return;
@@ -405,7 +405,7 @@ impl Panel {
             'c' | 'C' => { if let Some((id, _, st, ..)) = self.sel_topic() { if st == "review" || st == "finished" { self.sel_leave(); self.act(&["dismiss", &id], "dismiss", false); } } self.redraw = true; }
             'e' | 'E' => { if let Some((_, f, _, _, title)) = self.sel_topic() { if let Some(a) = self.ask(term, "Title: ", &title, 500) { if !a.is_empty() { let env = self.env(); Live { env: &env, notify_on: false, n: 0 }.set(&f, "title", &a); } } } self.redraw = true; }
             'd' | 'D' => { if let Some((_, f, ..)) = self.sel_topic() { let cur = store::topic_get(&f, "description"); if let Some(a) = self.ask(term, "Description: ", &cur, 140) { let env = self.env(); Live { env: &env, notify_on: false, n: 0 }.set(&f, "description", &a); } } self.redraw = true; }
-            'n' | 'N' => { if let Some(a) = self.ask(term, "Topic: ", "", 500) { self.new_topic_from(&a); } self.redraw = true; }
+            'n' | 'N' => { if let Some(a) = self.ask(term, "Task: ", "", 500) { self.new_topic_from(&a); } self.redraw = true; }
             'y' | 'Y' | '1' | '2' | '3' => { if let Some((id, ..)) = self.sel_topic() { let n = if c == 'y' || c == 'Y' { '1' } else { c }; self.act(&["review", &id, &n.to_string()], "review", false); } self.redraw = true; }
             _ => {}
         }
@@ -474,11 +474,11 @@ impl Panel {
             self.check_focus();
             if let Some((_, u)) = &self.flash { if Instant::now() >= *u { self.flash = None; self.redraw = true; } }
             if sec >= self.last_chk + 2 { self.last_chk = sec; let s = self.sig(); if s != self.files_sig { self.files_sig = s; if self.tab_visible { self.redraw = true; self.reload_cfg(); } else { self.dirty = true; } } }
-            // bhote find / a jump chose a topic: select it here
+            // bhote find / a jump chose a task: select it here
             if let Ok(t) = crate::proc::read_cap(self.shared.join("select")) {
                 let t = t.trim().to_string();
                 if self.select_seen.as_deref() != Some(&t) {
-                    if self.select_seen.is_some() { let mut p = t.split_whitespace(); let id = p.next().unwrap_or("").to_string(); if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && self.topics.join(format!("{}.topic", id)).exists() { self.sel_id = id; self.redraw = true; } }
+                    if self.select_seen.is_some() { let mut p = t.split_whitespace(); let id = p.next().unwrap_or("").to_string(); if !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && crate::store::task_path(&self.topics, &id).exists() { self.sel_id = id; self.redraw = true; } }
                     self.select_seen = Some(t);
                 }
             } else if self.select_seen.is_none() { self.select_seen = Some(String::new()); }
@@ -524,12 +524,12 @@ pub fn run() -> i32 {
     0
 }
 
-// ── the topic's page and the chooser ─────────────────────────────────────────────────────────────────────────
+// ── the task's page and the chooser ─────────────────────────────────────────────────────────────────────────
 impl Panel {
     fn live(&self) -> Live<'static> { let env: &'static Env = Box::leak(Box::new(self.env())); Live { env, notify_on: false, n: 0 } }
     fn set(&self, f: &std::path::Path, k: &str, v: &str) { self.live().set(f, k, v); }
     fn poke(&self) { let _ = fs::write(self.shared.join("poke"), ""); }
-    /// The page of the selected topic (the script draws it when a Slack pin or answer is on it)
+    /// The page of the selected task (the script draws it when a Slack pin or answer is on it)
     fn open_menu(&mut self, term: &mut Term) {
         let Some((_, f, ..)) = self.sel_topic() else { return };
         if crate::menuui::needs_script(&f) { self.delegate(term, "menu", ""); } else { self.screen = Screen::Menu(0); self.menu_flash = None; self.redraw = true; }
@@ -636,7 +636,7 @@ impl Panel {
             if !tpj.is_empty() {
                 let metas = crate::proc::read_cap(self.shared.join("agents.meta.local")).unwrap_or_default() + &crate::proc::read_cap(self.shared.join("agents.meta.remote")).unwrap_or_default();
                 let proj = metas.lines().find_map(|l| { let p: Vec<&str> = l.split(US).collect(); if p.len() >= 6 && p[0] == a.m && p[1] == a.id { Some(p[5].to_string()) } else { None } }).unwrap_or_default();
-                if proj != tpj { warn = " (NOT an agent of this topic's project!)".into(); }
+                if proj != tpj { warn = " (NOT an agent of this task's project!)".into(); }
             }
             let from = { let g = store::topic_get(&f, "agent"); if g.is_empty() { "agent".to_string() } else { g } };
             let label = format!("Hand \"{}\" over from {} to {}{}? The source agent commits and stops. y/N: ", store::topic_get(&f, "title"), from, a.name, warn);
