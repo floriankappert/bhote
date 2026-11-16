@@ -580,6 +580,7 @@ export default class Bhote extends View {
     // (both panels listen, one handles it: whichever copy of the mod the app delivers it to)
     cx.spawn(async (cx) => { for (;;) { let c; try { c = await nextCommand(); } catch (_e) { return; } if (c === "stash") { try { if (Date.now() - Number(shared("bhote.stashKeyAt") ?? 0) < 800) continue; setShared("bhote.stashKeyAt", Date.now()); } catch (_e) { /* handle it */ } await this.stashKey(cx); } } });
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
+    if (this.side === "left") { this.usage = []; this.loadUsage(cx); cx.timer.every(120000, (cx) => this.loadUsage(cx)); }
     if (this.side === "left") { this.loadHeads(cx); cx.timer.every(8000, (cx) => this.loadHeads(cx)); }
     if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); cx.timer.every(4000, (cx) => this.loadMessages(cx)); }
     if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
@@ -1841,6 +1842,38 @@ export default class Bhote extends View {
         await exec(`${home()}/.local/bin/nvim-window`, [file], { timeout: 15000 });
       } catch (_e) { /* no log yet */ }
     });
+  }
+
+  // The usage of the Claude accounts of this machine (usage.py: 5-hour window and weekly limit, one row per profile), every two minutes.
+  loadUsage(cx) {
+    if (this.usageLoading) return;
+    this.usageLoading = true;
+    cx.spawn(async (cx) => {
+      try { this.usage = JSON.parse((await exec("python3", [`${home()}/.config/herdr-app/mods/bhote/usage.py`], { timeout: 45000 })).stdout); }
+      catch (_e) { /* the last answer stays */ }
+      this.usageLoading = false;
+      cx.notify();
+    });
+  }
+
+  usageBar(t) {
+    const list = this.usage ?? [];
+    if (!list.length) return [];
+    const reset = (iso) => { const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return ""; return s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`; };
+    const colorOf = (u) => u >= 90 ? t.blocked : u >= 70 ? t.ansi3 : t.working;
+    // the thin bar as before, its figure above it at the right end
+    const cell = (w) => { const u = w?.used ?? 0;
+      return v_flex().flex_1().min_w(0).gap(2)
+        .child(h_flex().items_center().gap(4)
+          .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(w ? reset(w.resets) : ""))
+          .child(div().flex_none().text_size(10.5).text_color(t.foreground).child(w ? `${Math.round(u)}%` : "–")))
+        .child(progress(t, u / 100, colorOf(u), "100%")); };
+    const name = (a) => a.profile === "claude" ? "Main" : "Alternative";
+    return [v_flex().flex_none().pt(4).pb(3)
+      .child(this.dividerCaption(t, "Claude usage"))
+      .children(list.map((a) => h_flex().id(`usage-${a.profile}`).px(15).py(3).gap(8).items_center()
+        .child(div().w(72).flex_none().truncate().text_size(12).text_color(t.foreground).child(name(a)))
+        .child(a.error ? div().text_size(10.5).text_color(t.blocked).child(a.error) : h_flex().flex_1().min_w(0).gap(6).child(cell(a.five_hour)).child(cell(a.seven_day)))))];
   }
 
   jobsBar(t) {
@@ -4616,6 +4649,7 @@ export default class Bhote extends View {
       .children(this.commitBar(t))
       .children(this.jobLogBox(t))
       .children(this.jobsBar(t))
+      .children(this.usageBar(t))
       .child(this.newSpaceBar(t));
     let body;
     if (this.tab === "servers") body = this.serversPage(t);
