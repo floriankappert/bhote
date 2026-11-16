@@ -273,6 +273,60 @@ function runOf(r) {
 const DEFAULT_IGNORE = [/^codecov\/.*$/i];   // (until the settings are read: PR_CHECKS_IGNORE defaults to codecov/*)
 const PR_FIELDS = "number,title,headRefName,headRefOid,baseRefName,url,isDraft,state,mergedAt,reviewDecision,statusCheckRollup,updatedAt";
 
+// --- the shared API cache ----------------------------------------------------------------------------------------------------------
+// Every gh call for pull requests and CI goes through cachedGh: one file per request in ~/.cache/bhote/api, the same names and format as
+// the daemon (daemon/src/apicache.rs) and the bhote script write, so that the panels, the daemon and the CLI share their answers.
+// Entry: {key, fetched_at, tried_at, ttl, status ok|stale|error, etag, body, error, fails, retry_at}. A fresh entry (age < ttl) makes no call;
+// requests of one key at the same time are one call. The ttl is API_CACHE_EVERY (15 s) while the answer shows work in progress, else 6 times
+// that (at most 120 s). An error keeps the last good body (stale) and backs off 15 s, 30 s ... 15 min; the panel keeps working with stale data.
+// (No ETags: gh does not hand out the headers of its answers.)
+const API_ACTIVE = /in_progress|IN_PROGRESS|queued|QUEUED|PENDING|pending|WAITING|waiting|"running"|"failing"|on_hold/;
+let apiBase = 15, apiDirMade = false;
+const apiInflight = new Map();
+function apiCksum(key) {   // POSIX cksum (CRC-32 + length) of the UTF-8 key, as `cksum` prints it: the file names are the same everywhere
+  const b = Array.from(unescape(encodeURIComponent(key)), (c) => c.charCodeAt(0));
+  let crc = 0;
+  const feed = (x) => { crc = (crc ^ (x << 24)) >>> 0; for (let i = 0; i < 8; i++) crc = ((crc & 0x80000000 ? (crc << 1) ^ 0x04c11db7 : crc << 1) >>> 0); };
+  for (const x of b) feed(x);
+  for (let n = b.length; n > 0; n = Math.floor(n / 256)) feed(n & 255);
+  return `${(~crc) >>> 0}-${b.length}`;
+}
+function cachedGh(argv) {   // like exec("gh", argv): { stdout } of the cached answer; throws without any answer
+  const key = `gh ${argv.join(" ")}`;
+  if (!apiInflight.has(key)) apiInflight.set(key, apiGet(key, argv).finally(() => apiInflight.delete(key)));
+  return apiInflight.get(key);
+}
+async function apiGet(key, argv) {
+  const dir = `${home()}/.cache/bhote/api`;
+  const path = `${dir}/${[...key].map((c) => (/[A-Za-z0-9]/.test(c) ? c : "_")).slice(0, 32).join("")}-${apiCksum(key)}.json`;
+  const now = Math.floor(Date.now() / 1000);
+  let raw = null, old = null;
+  try { raw = await readTextFile(path); old = raw ? JSON.parse(raw) : null; } catch (_e) { raw = null; old = null; }
+  const body = old?.body || "";
+  if (old && ((old.fetched_at > 0 && now < old.fetched_at + old.ttl && old.status !== "error") || now < old.retry_at)) {
+    if (body) return { stdout: body };
+    throw new Error(old.error || "no data");
+  }
+  let r = null, fail = "";
+  try { r = await exec("gh", argv, { timeout: 40000 }); } catch (e) { fail = String(e?.message ?? e); }
+  let entry;
+  if (r && r.code === 0) {
+    const ttl = API_ACTIVE.test(r.stdout) ? apiBase : Math.max(apiBase, Math.min(apiBase * 6, 120));
+    entry = { key, fetched_at: now, tried_at: now, ttl, status: "ok", etag: "", body: r.stdout, error: "", fails: 0, retry_at: 0 };
+  } else {
+    if (r) { const l = (r.stderr ?? "").toLowerCase(); fail = /rate limit|http 429|http 403/.test(l) ? "rate limit" : ((r.stderr ?? "").split("\n")[0] || "gh failed").slice(0, 200); }
+    const fails = old?.fails ?? 0;
+    entry = { key, fetched_at: old?.fetched_at ?? 0, tried_at: now, ttl: old?.ttl ?? apiBase, status: body ? "stale" : "error", etag: old?.etag ?? "", body, error: fail, fails: fails + 1,
+      retry_at: now + Math.min(apiBase * 2 ** Math.min(fails, 10), 900) };
+  }
+  try {
+    if (!apiDirMade) { await exec("mkdir", ["-p", "-m", "700", dir]); apiDirMade = true; }
+    await writeTextFile(path, JSON.stringify(entry), raw);
+  } catch (_e) { /* another consumer wrote first, or no cache folder: the answer is still good */ }
+  if (entry.body) return { stdout: entry.body };
+  throw new Error(entry.error || "no data");
+}
+
 const secOf = (iso) => { const n = Date.parse(iso ?? ""); return Number.isFinite(n) ? Math.floor(n / 1000) : 0; };
 
 // This machine's name in bhote's topics: "Mac" on macOS (HOST), else the short hostname.
@@ -397,6 +451,7 @@ const SETTINGS = [
   ["TESTS_BUSY", "Agents", "", "Running tests keep an agent busy", "An agent whose workspace runs tests is not free, and its topic stays out of review until they finish."],
   ["LOCAL_EVERY", "Agents", "", "Check local agents every", "How often the agents of this machine are queried.", "s"],
 
+  ["API_CACHE_EVERY", "Monitors", "API cache", "Keep answers for", "How long answers of GitHub and CircleCI are reused while something runs (a quiet answer is kept 6 times as long, at most 120 s). bhote refresh asks again at once.", "s"],
   ["DEPLOY_MONITOR", "Monitors", "Deployments", "Deployment monitor", "Show the latest deployments above the agents."],
   ["DEPLOY_EVERY", "Monitors", "Deployments", "Check every", "How often deployments are checked.", "s"],
   ["DEPLOY_PROJECTS_OFF", "Monitors", "Deployments", "Hidden projects", "Comma-separated projects left out of the deployment monitor.", ""],
@@ -604,6 +659,7 @@ export default class Bhote extends View {
         else if (l.startsWith("TEST_PROJECTS_OFF=")) testsOff = list(l.slice(18));
         else if (l.startsWith("KHARKA=")) kharka = l.slice(7).trim();
         else if (l.startsWith("PR_CHECKS_IGNORE=")) ignore = l.slice(17).trim();
+        else if (l.startsWith("API_CACHE_EVERY=")) { const n = Number(l.slice(16).trim()); if (Number.isInteger(n) && n >= 1) apiBase = n; }
         else if (l.startsWith("AGENT_LISTEN=")) listen = l.slice(13).trim() !== "off";
         else if (l.startsWith("FINISHED_MINUTES=")) { const n = Number(l.slice(17).trim()); if (Number.isFinite(n)) fin = n; }
       }
@@ -3260,7 +3316,7 @@ export default class Bhote extends View {
         if (!baseCache.has(k)) {
           let runs = [];
           try {
-            const r = await exec("gh", ["run", "list", "-R", slug, "--branch", base, "--limit", "30", "--json", "workflowName,conclusion,createdAt"], { timeout: 40000 });
+            const r = await cachedGh(["run", "list", "-R", slug, "--branch", base, "--limit", "30", "--json", "workflowName,conclusion,createdAt"]);
             runs = JSON.parse(r.stdout).map((x) => ({ wf: x.workflowName, ok: x.conclusion === "success", bad: x.conclusion === "failure", t: secOf(x.createdAt) }));
           } catch (_e) { /* no runs known */ }
           baseCache.set(k, runs);
@@ -3277,7 +3333,7 @@ export default class Bhote extends View {
             const slug = m[1];
             let list = [];
             try {
-              const r = await exec("gh", ["pr", "list", "-R", slug, "--author", "@me", "--state", "all", "--limit", "20", "--json", PR_FIELDS], { timeout: 40000 });
+              const r = await cachedGh(["pr", "list", "-R", slug, "--author", "@me", "--state", "all", "--limit", "20", "--json", PR_FIELDS]);
               list = JSON.parse(r.stdout);
             } catch (_e) { /* gh missing, not signed in or offline: this repo shows nothing */ }
             const heads = new Set();
@@ -3304,7 +3360,7 @@ export default class Bhote extends View {
             const deploys = !this.deployOff.has(p.title);   // a project that is not deployed through CI has no builds and pipelines to show here
             // the builds that run now on any open pull request (also those of other people): they are what a deployment hangs on
             if (deploys) try {
-              const r = await exec("gh", ["pr", "list", "-R", slug, "--state", "open", "--limit", "40", "--json", "number,title,headRefName,url,author,statusCheckRollup"], { timeout: 40000 });
+              const r = await cachedGh(["pr", "list", "-R", slug, "--state", "open", "--limit", "40", "--json", "number,title,headRefName,url,author,statusCheckRollup"]);
               for (const q of JSON.parse(r.stdout)) {
                 const cks = (q.statusCheckRollup ?? []).map(checkOf).filter((c) => this.checkKept(c));
                 const live = cks.filter((c) => c.state === "running");
@@ -3321,7 +3377,7 @@ export default class Bhote extends View {
             // runs (Actions) of the newest commit. What runs is shown, and what failed in the last three hours.
             if (deploys) for (const b of (p.deployBranches.length ? p.deployBranches : ["main"])) {
               try {
-                const sh = async (path, jq) => JSON.parse((await exec("gh", ["api", path, "--jq", jq], { timeout: 40000 })).stdout);
+                const sh = async (path, jq) => JSON.parse((await cachedGh(["api", path, "--jq", jq])).stdout);
                 const [cm, sts, runs] = await Promise.all([
                   sh(`repos/${slug}/commits/${b}`, '{sha: .sha, msg: (.commit.message | split("\n") | .[0]), author: .author.login, date: .commit.committer.date, url: .html_url}'),
                   sh(`repos/${slug}/commits/${b}/status`, '[.statuses[] | {context, state, target_url, created_at, updated_at}]').catch(() => []),
@@ -3364,7 +3420,7 @@ export default class Bhote extends View {
             for (const b of branches.slice(0, 6)) {
               let runs = [];
               try {
-                const r = await exec("gh", ["run", "list", "-R", slug, "--branch", b, "--limit", "8", "--json", "name,workflowName,status,conclusion,url,createdAt"], { timeout: 40000 });
+                const r = await cachedGh(["run", "list", "-R", slug, "--branch", b, "--limit", "8", "--json", "name,workflowName,status,conclusion,url,createdAt"]);
                 runs = JSON.parse(r.stdout);
               } catch (_e) { /* no runs known */ }
               const seen = new Set();

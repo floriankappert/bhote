@@ -39,6 +39,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `SLACK_WATCH` | `off` | Watch Slack pins (Claude) | This machine watches the Slack channels pinned to waiting topics (`bhote slack`) through Claude Code and its Slack connector, and sets a topic to review when someone else writes. One machine is enough. |
 | `SLACK_EVERY` | `120` | Slack interval (s) | Seconds between two Slack checks; each is one short Claude call (Haiku), and only while a waiting topic (or one Slack put under review) has a pin. |
 | `CLAUDE_CONFIG_DIR` | | Claude profile | The Claude Code profile the Slack watch (and the wizard) runs in: its folder, e.g. `~/.claude2`. Empty: the one of this process, else `~/.claude`. Set it when the Slack connector lives in a second profile. |
+| `API_CACHE_EVERY` | `15` | API cache (s) | Seconds an answer of GitHub or CircleCI is reused while something runs (a quiet answer: 6 times as long, at most 120 s); `bhote refresh` asks again at once ([API cache](monitors.md#api-cache)). |
 | `DEPLOY_MONITOR` | `off` | Deployment monitor | The last deployments of the projects above the agents ([monitors](monitors.md)). |
 | `DEPLOY_EVERY` | `60` | Deploy interval (s) | Seconds between two deployment checks. |
 | `DEPLOY_GITHUB` · `DEPLOY_CIRCLECI` | `on` | GitHub Actions · CircleCI | The deployment monitor's modules. |

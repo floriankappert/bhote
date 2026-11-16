@@ -87,6 +87,23 @@ A deployment pipeline with a manual approval (a CircleCI `type: approval` job, a
   `tree`, `suite` and `startedAt` are required. `tree` and `suite` name the entry, `done`/`total` give the progress, `startedAt`/`updatedAt` are in milliseconds, and
   `ok` is `true` or `false` once the run is over (`null` while it runs).
 
+## API cache
+
+Everything that asks GitHub (`gh`) or CircleCI goes through one shared cache, so the daemon, the `bhote` script and the herdr-app
+panels (every window, every `gh pr list`, `gh run list`, `gh api`, CircleCI v2 call) do not ask the same thing twice. One file per request
+in `~/.cache/bhote/api` (`BHOTE_API_CACHE` moves it, `off` turns the cache off), written by all three with the same names and format
+(`{key, fetched_at, ttl, status, etag, body, error, fails, retry_at}`; the CircleCI token is never part of a key or an entry).
+
+- **Fresh** (age below the ttl): the answer comes from the file, no call. The ttl is `API_CACHE_EVERY` (15 s) while the answer shows
+  something in progress (running, queued, pending); a quiet answer is kept 6 times as long (at most 120 s). A failure alone is not "in
+  progress": it stays red until someone acts. The consumers keep their own rhythm (`DEPLOY_EVERY`, the panel's 90 s); the cache only makes
+  sure that two of them within the ttl are one request.
+- **Errors**: the last good body stays (`status: stale`) and is what everybody gets; the next try waits 15 s, 30 s ... up to 15 minutes,
+  or until the reset time of a rate limit when the daemon knows it (CircleCI `Retry-After`).
+- **ETag**: the daemon sends `If-None-Match` to CircleCI and a 304 renews the entry. `gh` does not show its headers, so its calls go without.
+- Requests of one key in one process are one request (daemon, mod); separate processes may still race once.
+- `bhote refresh` makes every entry due again (bodies stay for the case the next try fails) and lifts back-offs.
+
 ## How it runs
 
 The collector of a machine with a monitor on fetches in the background every `DEPLOY_EVERY` / `TEST_EVERY` seconds

@@ -50,20 +50,30 @@ fn iso(t: &str) -> Option<u64> {
 }
 
 // ── the commands: gh (with a time limit) and the CircleCI API ──────────────────────────────────────────────
-fn run(cmd: &str, args: &[&str], secs: u64) -> Option<String> {
-    let mut child = Command::new(cmd).args(args).stdout(Stdio::piped()).stderr(Stdio::null()).stdin(Stdio::null()).spawn().ok()?;
-    let mut out = child.stdout.take()?;
+fn run_full(cmd: &str, args: &[&str], secs: u64) -> Option<(bool, String, String)> {
+    let mut child = Command::new(cmd).args(args).stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null()).spawn().ok()?;
+    let mut out = child.stdout.take()?; let mut err = child.stderr.take()?;
     let reader = std::thread::spawn(move || { let mut b = Vec::new(); let _ = out.read_to_end(&mut b); String::from_utf8_lossy(&b).into_owned() });
+    let ereader = std::thread::spawn(move || { let mut b = Vec::new(); let _ = err.read_to_end(&mut b); String::from_utf8_lossy(&b).into_owned() });
     let t0 = Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(st)) => { let o = reader.join().ok()?; return if st.success() { Some(o) } else { None }; }
+            Ok(Some(st)) => { return Some((st.success(), reader.join().ok()?, ereader.join().ok()?)); }
             Ok(None) if t0.elapsed() < Duration::from_secs(secs) => std::thread::sleep(Duration::from_millis(10)),
             _ => { let _ = child.kill(); let _ = child.wait(); return None; }
         }
     }
 }
-fn gh(args: &[&str]) -> Option<String> { run("gh", args, 25) }
+fn run(cmd: &str, args: &[&str], secs: u64) -> Option<String> { let (ok, o, _) = run_full(cmd, args, secs)?; if ok { Some(o) } else { None } }
+/// gh through the shared API cache (key: the arguments). A rate limit in its message backs the key off.
+fn gh(args: &[&str]) -> Option<String> {
+    use crate::apicache::{cached, Fail, Got};
+    cached(&format!("gh {}", args.join(" ")), |_| match run_full("gh", args, 25) {
+        Some((true, o, _)) => Ok(Got::Body(o, String::new())),
+        Some((false, _, e)) => { let l = e.to_lowercase(); if l.contains("rate limit") || l.contains("http 429") || l.contains("http 403") { Err(Fail::Rate(None)) } else { Err(Fail::Other(e.lines().next().unwrap_or("gh failed").chars().take(200).collect())) } }
+        None => Err(Fail::Other("gh timed out".into())),
+    })
+}
 fn gh_json(args: &[&str]) -> Option<Value> { serde_json::from_str(&gh(args)?).ok() }
 fn gh_ok() -> bool { run("gh", &["auth", "status"], 15).is_some() }
 
@@ -74,17 +84,28 @@ fn token(c: &Ctx) -> String {
     t.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-').collect()
 }
 fn circleci_get(c: &Ctx, path: &str) -> Option<Value> {
+    use crate::apicache::{cached, Fail, Got};
     let t = token(c); if t.is_empty() { return None; }
     if !path.chars().all(|x| x.is_ascii_alphanumeric() || "/_.?=&-".contains(x)) { return None; }
-    if std::env::var("BHOTED_HTTP").map_or(false, |v| v == "curl") {   // the tests: the same fake curl the script's tests use (the token on stdin, never an argument)
-        let url = format!("https://circleci.com/api/v2/{}", path);
-        let mut ch = Command::new("curl").args(["-sf", "--max-time", "8", "-K", "-", &url]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
-        { use std::io::Write; ch.stdin.take()?.write_all(format!("header = \"Circle-Token: {}\"\n", t).as_bytes()).ok()?; }
-        let o = ch.wait_with_output().ok()?; if !o.status.success() { return None; }
-        return serde_json::from_slice(&o.stdout).ok();
-    }
-    let r = ureq::get(&format!("https://circleci.com/api/v2/{}", path)).set("Circle-Token", &t).timeout(Duration::from_secs(8)).call().ok()?;
-    serde_json::from_reader(r.into_reader()).ok()
+    let url = format!("https://circleci.com/api/v2/{}", path);
+    // the key is the path only: neither the token nor a header is ever part of the cache
+    let body = cached(&format!("circleci {}", path), |etag| {
+        if std::env::var("BHOTED_HTTP").map_or(false, |v| v == "curl") {   // the tests: the same fake curl the script's tests use (the token on stdin, never an argument)
+            let mut ch = Command::new("curl").args(["-sf", "--max-time", "8", "-K", "-", &url]).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| Fail::Other(e.to_string()))?;
+            { use std::io::Write; ch.stdin.take().ok_or(Fail::Other("no stdin".into()))?.write_all(format!("header = \"Circle-Token: {}\"\n", t).as_bytes()).map_err(|e| Fail::Other(e.to_string()))?; }
+            let o = ch.wait_with_output().map_err(|e| Fail::Other(e.to_string()))?;
+            return if o.status.success() { Ok(Got::Body(String::from_utf8_lossy(&o.stdout).into_owned(), String::new())) } else { Err(Fail::Other("curl failed".into())) };
+        }
+        let mut rq = ureq::get(&url).set("Circle-Token", &t).timeout(Duration::from_secs(8));
+        if let Some(e) = etag { rq = rq.set("If-None-Match", e); }   // (a 304 renews the entry without a body)
+        match rq.call() {
+            Ok(r) if r.status() == 304 => Ok(Got::NotModified),
+            Ok(r) => { let tag = r.header("ETag").unwrap_or("").to_string(); let mut b = String::new(); r.into_reader().read_to_string(&mut b).map_err(|e| Fail::Other(e.to_string()))?; Ok(Got::Body(b, tag)) }
+            Err(ureq::Error::Status(code, r)) if code == 429 || code == 403 => Err(Fail::Rate(r.header("Retry-After").and_then(|v| v.parse::<u64>().ok()).map(|n| crate::apicache::now() + n))),
+            Err(e) => Err(Fail::Other(e.to_string())),
+        }
+    })?;
+    serde_json::from_str(&body).ok()
 }
 
 // ── small helpers of the bash script ───────────────────────────────────────────────────────────────────────
@@ -408,6 +429,7 @@ fn first(file: &Path, key: &str) -> String {
 
 /// monitor_fetch deploys|tests
 pub fn fetch(c: &Ctx, kind: &str) {
+    crate::apicache::set_base(&c.get("API_CACHE_EVERY", "15"));
     let mut lines: Vec<String> = Vec::new();
     let ghok = std::sync::OnceLock::new();
     let ghok = || *ghok.get_or_init(gh_ok);

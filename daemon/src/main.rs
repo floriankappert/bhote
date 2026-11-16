@@ -2,6 +2,7 @@
 //!   bhoted index <topic dir> <out>      build once
 //!   bhoted run   <topic dir> <out>      keep it current: rebuild when a topic file is added, removed or changed
 mod agents;
+mod apicache;
 mod herdr_app;
 mod monitor;
 mod store;

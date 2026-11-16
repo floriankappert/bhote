@@ -272,6 +272,11 @@ The entries of the [deployment and test monitor](monitors.md), newest first (`--
 Runs the command as it is (output and exit code unchanged) and records the run for the test monitor, with the result line
 of Minitest, Vitest, RSpec, pytest or bhote's own tests.
 
+### `bhote refresh`
+
+Makes every entry of the shared API cache due again, so the next cycle of the daemon, the CLI and the panels asks GitHub and
+CircleCI at once ([API cache](monitors.md#api-cache)).
+
 ### `bhote monitor detect [<project>]` · `bhote monitor check`
 
 `detect` finds each project's CI from its repository on GitHub (GitHub Actions deploy workflows, or CircleCI deploy jobs and

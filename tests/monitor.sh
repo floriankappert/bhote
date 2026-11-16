@@ -5,7 +5,7 @@
 cd "$(dirname "$0")/.." || exit 1
 unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID CIRCLECI_TOKEN CIRCLE_TOKEN
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_CONFIG=$T/config BHOTE_DATA=$T/data TMPDIR=$T BHOTE_SHARED=$T/shared HOME=$T/home
-export FAKE_LOG=$T/fake.log FAKE_DIR=$T/fake
+export FAKE_LOG=$T/fake.log FAKE_DIR=$T/fake BHOTE_API_CACHE=off   # (the API cache is tested on its own below)
 mkdir -p "$T/bin" "$FAKE_DIR" "$HOME"; echo NOTIFY=off > "$T/config"
 cat > "$T/bin/gh" <<'SH'
 #!/bin/sh
@@ -448,6 +448,25 @@ rm -f "$rf"
 # the token is a secret: bhote config never prints it
 B config list | grep -q tok123 && bad "config list prints the token" || ok "config: the token is never printed"
 [ "$(B config get CIRCLECI_TOKEN)" = "(set)" ] && ok "config get: (set)" || bad "config get: $(B config get CIRCLECI_TOKEN)"
+
+# the API cache: a fresh answer makes no call, an expired one asks again, an error keeps the last body, refresh makes everything due
+cp "$FAKE_DIR/runs.json" "$T/runs.keep" 2>/dev/null
+( BHOTE_API_CACHE=; API_CACHE_DIR=$T/apic; : > "$FAKE_LOG"; echo '[{"status":"completed"}]' > "$FAKE_DIR/runs.json"
+  a=$(gh_c run list -R cache/one); b=$(gh_c run list -R cache/one); n=$(grep -c "gh run list -R cache/one" "$FAKE_LOG")
+  [ "$a" = "$b" ] && [ -n "$a" ] && [ "$n" = 1 ] ) && ok "api cache: a fresh answer makes no second call" || bad "api cache: fresh hit"
+( BHOTE_API_CACHE=; API_CACHE_DIR=$T/apic; : > "$FAKE_LOG"; f=$(api_cache_file "gh run list -R cache/one")
+  jq '.fetched_at = 1' "$f" > "$f.t" && mv "$f.t" "$f"; echo '[{"status":"completed","x":2}]' > "$FAKE_DIR/runs.json"
+  a=$(gh_c run list -R cache/one); [ "$(grep -c "gh run list -R cache/one" "$FAKE_LOG")" = 1 ] && printf '%s' "$a" | grep -q '"x":2' ) && ok "api cache: an expired entry is fetched again" || bad "api cache: ttl expiry"
+( BHOTE_API_CACHE=; API_CACHE_DIR=$T/apic; : > "$FAKE_LOG"; f=$(api_cache_file "gh run list -R cache/one"); mv "$FAKE_DIR/runs.json" "$FAKE_DIR/runs.off"
+  jq '.fetched_at = 1' "$f" > "$f.t" && mv "$f.t" "$f"
+  a=$(gh_c run list -R cache/one); rc=$?; a2=$(gh_c run list -R cache/one); mv "$FAKE_DIR/runs.off" "$FAKE_DIR/runs.json"
+  [ "$rc" = 0 ] && printf '%s' "$a" | grep -q '"x":2' && [ "$(jq -r .status "$f")" = stale ] && [ "$(grep -c "gh run list -R cache/one" "$FAKE_LOG")" = 1 ] && [ "$a" = "$a2" ] ) \
+    && ok "api cache: on an error the last body is kept (stale) and no retry within the back-off" || bad "api cache: stale on error"
+( BHOTE_API_CACHE=; API_CACHE_DIR=$T/apic; : > "$FAKE_LOG"; n=$(api_cache_refresh); gh_c run list -R cache/one >/dev/null
+  [ "$n" -ge 1 ] && [ "$(grep -c "gh run list -R cache/one" "$FAKE_LOG")" = 1 ] && [ "$(jq -r .status "$(api_cache_file "gh run list -R cache/one")")" = ok ] ) && ok "api cache: refresh makes the next request go out at once" || bad "api cache: refresh"
+( BHOTE_API_CACHE=; API_CACHE_DIR=$T/apic; : > "$FAKE_LOG"; c1=$(circleci_get "pipeline/p1/workflow"); circleci_get "pipeline/p1/workflow" >/dev/null
+  [ -n "$c1" ] && [ "$(grep -c 'curl' "$FAKE_LOG")" = 1 ] && ! grep -rq tok123 "$T/apic" ) && ok "api cache: CircleCI is cached too, and the token is in no cache file" || bad "api cache: circleci"
+[ -f "$T/runs.keep" ] && cp "$T/runs.keep" "$FAKE_DIR/runs.json"
 
 # the Rust daemon fetches the same lists as monitor_fetch (the same fakes: gh, curl; skipped without the binary)
 BD=""; bhoted_bin_set BD
