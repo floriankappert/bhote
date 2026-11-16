@@ -592,6 +592,7 @@ export default class Bhote extends View {
     this.agDrag = null;           // an agent card being moved: { id (its space), mk (its machine), over (the space under the pointer) }
     this.agMoved = false;         // (a press that moved a card is not a click that shows the agent)
     this.msgDone = new Set();     // messages (msg/… in kharka) that are handed over or not for us
+    this.msgBlocked = new Set();  // `${node}/${name}`: a message could not be typed into its agent (hc send waits for the unfinished draft of a person)
     this.msgWaiting = {};         // `${node}/${name}`: how many messages wait for that agent
     this.finMin = 30;             // FINISHED_MINUTES: how long an agent counts as recently finished (0: until it works again)
     this.prevSt = {};             // an agent's address: its status at the last look
@@ -1740,7 +1741,7 @@ export default class Bhote extends View {
             return el.child(this.chip(t, ec, `ear-${id}`).w(26).px(0).cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.listen.on ? t.accent : t.foreground))
               .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
               .on_click(this.guard((_e, cx) => o.onListen(cx))).child(svg(`mods/bhote/${o.listen.on ? "ear" : "ear-off"}.svg`).size(13).flex_none())); })
-          .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(this.chip(t, t.ansi3).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
+          .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(this.chip(t, o.listen.blocked ? t.blocked : t.ansi3).child(`${o.listen.waiting}${o.listen.blocked ? " · draft" : ""}`)))   // (messages that wait: ear off, or the agent at work; red "draft": it could not be typed in, a person has an unfinished text in that prompt)
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(t.accent).bg(tint(t.accent, "22", t.surface)).border(1).border_color(tint(t.accent, "55", t.border))
             .child((o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h").replace(" seconds", "s").replace(" second", "s")}`).toUpperCase())))
           .when(mini && !!ident, (el) => el.child(this.chip(t, active ? t.muted : t.dim).child(ident)))
@@ -2803,7 +2804,7 @@ export default class Bhote extends View {
       try {
         if (!this.localNode) this.localNode = (await this.kharka(["whoami"])).stdout.trim();
         const keys = (await this.kharka(["ls", "msg"])).stdout.split("\n").map((x) => x.trim()).filter(Boolean);
-        const waiting = {}, busy = new Set(), marks = new Set();
+        const waiting = {}, busy = new Set(), marks = new Set(), blocked = new Set();
         const nowS = Math.floor(Date.now() / 1000);
         for (const k of keys) {
           if (this.msgDone.has(k)) continue;
@@ -2833,9 +2834,10 @@ export default class Bhote extends View {
             await this.kharka(["put", k, JSON.stringify({ ...rec, state: "delivered", deliveredAt: Math.floor(Date.now() / 1000) })]);
             if (rec.topic) exec("bhote", ["__act", "startdone", rec.topic], { timeout: 30000 }).catch(() => {});   // (a topic handed over: that agent is its agent now)
             this.msgDone.add(k); waiting[lk] -= 1; changed = true;
-          } catch (_e) { /* the next round tries again */ }
+          } catch (_e) { blocked.add(lk); /* the next round tries again */ }
         }
         this.markInbox(marks);
+        if ([...blocked].sort().join() !== [...this.msgBlocked].sort().join()) { this.msgBlocked = blocked; changed = true; }
         if (JSON.stringify(waiting) !== JSON.stringify(this.msgWaiting)) { this.msgWaiting = waiting; changed = true; }
       } catch (_e) { /* no kharka here: nothing to hand over */ }
       this.msgLoading = false;
@@ -2957,7 +2959,7 @@ export default class Bhote extends View {
   listensTo(sp) {
     const key = this.listenKey(sp);
     const rec = key ? this.listenMap[key] : null;
-    return { key, on: rec ? rec.listening !== false : this.listenDefault, waiting: key ? (this.msgWaiting[key] ?? 0) : 0 };
+    return { key, on: rec ? rec.listening !== false : this.listenDefault, waiting: key ? (this.msgWaiting[key] ?? 0) : 0, blocked: !!key && this.msgBlocked.has(key) };
   }
 
   loadListen(cx) {
@@ -2991,7 +2993,7 @@ export default class Bhote extends View {
     if (rec) this.listenMap[key] = rec; else delete this.listenMap[key];
     cx.notify();
     const args = rec ? ["put", `listen/${key}`, JSON.stringify({ ...rec, at: Math.floor(Date.now() / 1000), by: "herdr-app" })] : ["del", `listen/${key}`];
-    this.kharka(args).then(() => { if (next) this.loadMessages(cx, true); }).catch(() => { delete this.listenPend[key]; this.listenLoading = false; this.loadListen(cx); });   // (an ear that goes on: what waited for it is handed over at once)
+    this.kharka(args).then(() => { if (next) { this.msgBlocked.delete(key); this.loadMessages(cx, true); } }).catch(() => { delete this.listenPend[key]; this.listenLoading = false; this.loadListen(cx); });   // (an ear that goes on: what waited for it is handed over at once)
   }
 
   // --- Commit-Inspector: the git commits of the agent that has the focus ----------------------------------------------------------
