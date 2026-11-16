@@ -7,7 +7,7 @@
 
 import { View, div, svg, PathBuilder, Background } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
-import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay, machines, settings, readTextFile, window, focused, nextCommand } from "herdr";
+import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, setShared, openOverlay, closeOverlay, machines, settings, readTextFile, writeTextFile, window, focused, nextCommand } from "herdr";
 
 const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "review", "later", "done"]);
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
@@ -1167,6 +1167,7 @@ export default class Bhote extends View {
     const s = this.sel();
     const set = kind === "topics" ? s.topics : s.tests;
     const n = allKeys.filter((k) => set.has(k)).length;
+    if (kind === "topics" && n === 0) return null;   // (nothing picked: no bar; "select all" is in the Topics caption, a pick makes the bar appear)
     const all = n === allKeys.length;
     const toggleAll = () => {
       const next = n > 0 ? new Set() : new Set(allKeys);
@@ -1177,10 +1178,6 @@ export default class Bhote extends View {
         .on_click(this.guard((_e, cx) => { toggleAll(); cx.notify(); })).child(checkbox(t, n > 0 && all, n > 0 && !all)))
       .child(div().flex_1().text_size(12).text_color(n > 0 ? t.foreground : t.muted).child(n > 0 ? `${n} selected` : "Select all"))
       .when(!!extra, (el) => el.child(extra))
-      .when(kind === "topics", (el) => el.child(div().id("add-topic").flex_none().flex().items_center().gap(5).px(10).py(4).rounded(6).text_size(12).cursor_pointer()
-        .bg(this.adding ? t.selected : t.raised).border(1).border_color(this.adding ? t.accent : t.border).text_color(t.foreground).hover((e) => e.bg(t.hover))
-        .on_click(this.guard((_e, cx) => { this.adding = !this.adding; if (this.adding) this.addIn.focus(); cx.notify(); }))
-        .child(svg("mods/bhote/plus.svg").size(12).text_color(t.muted)).child(div().child("Add topic"))))
       .child(div().id(`batch-menu-${kind}`).flex_none().flex().items_center().gap(5).px(10).py(4).rounded(6).text_size(12)
         .bg(t.raised).border(1).border_color(t.border).text_color(t.foreground).opacity(n > 0 ? 1 : 0.45).hover((e) => e.bg(n > 0 ? t.hover : t.raised))
         .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
@@ -2573,9 +2570,10 @@ export default class Bhote extends View {
   }
 
   // A divider line with its caption on it (like the legend of a frame): CAPTION ───────── what belongs to it at the right.
-  dividerCaption(t, text, right = []) {
+  dividerCaption(t, text, right = [], lead = 0) {   // lead: a short stroke before the caption (a subsection: about 25 px)
     return h_flex().flex_none().gap(8).px(10).h(22).items_center()
-      .child(div().text_size(10.5).font_semibold().text_color(t.dim).child(text.toUpperCase()))
+      .when(lead > 0, (el) => el.child(div().w(lead).flex_none().h(1).bg(t.border)))
+      .child(typeof text === "string" ? div().text_size(10.5).font_semibold().text_color(t.dim).child(text.toUpperCase()) : text)
       .child(div().flex_1().h(1).bg(t.border))
       .children(right);
   }
@@ -2584,9 +2582,9 @@ export default class Bhote extends View {
   countTag(t, n) { return div().flex_none().text_size(10.5).text_color(t.dim).child(String(n)); }
 
   // The head of a foldable section at the foot, as on the left: the divider runs through the caption's row, the chevron at its end.
-  sectionHead(t, id, text, shut, onClick, extra = []) {
+  sectionHead(t, id, text, shut, onClick, extra = [], lead = 0) {
     return div().flex_none().pt(6)
-      .child(this.dividerCaption(t, text, [...extra, svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).flex_none().text_color(t.muted)])
+      .child(this.dividerCaption(t, text, [...extra, svg(shut ? "mods/bhote/chevron-up.svg" : "mods/bhote/chevron-down.svg").size(14).flex_none().text_color(t.muted)], lead)
         .id(id).cursor_pointer().on_click(onClick));
   }
 
@@ -4101,13 +4099,13 @@ export default class Bhote extends View {
     const head = this.sectionHead(t, "srv-head", "Servers", shut, this.guard(toggle), tunBtn);
     if (shut) {
       // one line under the caption: a dot per system (green: runs, amber: partly, grey: stopped), per machine
-      const dots = ({ m, d, svcs }) => h_flex().gap(4).items_center()
-        .child(div().text_size(11.5).font_semibold().text_color(t.foreground).child(m.label))
+      const dots = ({ m, d, svcs }) => h_flex().gap(4).items_center().px(15).py(3)
+        .child(div().w(72).flex_none().truncate().text_size(12).text_color(t.foreground).child(m.label))   // (one machine per row, its name in the column of the usage rows)
         .children((d?.systems ?? []).map((sys) => div().w(8).h(8).rounded(4).flex_none().bg(this.slotColor(t, this.slotState(this.srvKey(m.name), sys)))))
         .children(svcs.length && d?.systems?.length ? [div().w(1).h(10).mx(2).flex_none().bg(t.border)] : [])   // (the services after the IMS systems of the machine)
         .children(svcs.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(svcColor(x))));
       return v_flex().id("tile-servers").flex_none().pb(8).bg(t.chrome).child(head)
-        .child(h_flex().flex_none().gap(10).items_center().px(12).pt(2).children(machines.map((g) => dots(g))));
+        .child(v_flex().flex_none().children(machines.map((g) => dots(g))));
     }
     return v_flex().id("tile-servers").flex_none().gap(8).pb(10).bg(t.chrome).child(head)
       .children(machines.map(({ m, d, svcs }) => v_flex().gap(6).px(12)
@@ -4167,47 +4165,15 @@ export default class Bhote extends View {
     let shut = true;
     try { shut = shared("bhote.rbShut") !== false; } catch (_e) { shut = true; }
     const toggle = (_e, cx) => { setShared("bhote.rbShut", !shut); cx.notify(); };
-    const busy = items.some((x) => x.stages.some((y) => y.state === "running" || y.state === "approval")), bad = items.some((x) => x.stages.some((y) => y.state === "failed"));
-    const mark = bad ? t.blocked : busy ? "#f08a24" : (t.ansi2 ?? t.done);
-    const chev = svg(shut ? "mods/bhote/chevron-down.svg" : "mods/bhote/chevron-up.svg").size(14).text_color(t.muted);
-    if (shut) {
-      // one line: only the latest run, its project, what it is and the circles of its stages
-      const latest = [...items].sort((a, b) => b.at - a.at)[0];
-      const ref = latest.ref.length > 34 ? `${latest.ref.slice(0, 33)}…` : latest.ref;
-      return h_flex().id("tile-runbooks").flex_none().gap(12).items_center().px(12).py(8).rounded(12).cursor_pointer().bg(t.surface).border(1).border_color(t.border).overflow_hidden()
-        .hover((e) => e.bg(t.raised)).on_click(this.guard(toggle))
-        .child(div().flex_none().text_size(11).font_semibold().text_color(t.dim).child("RUNBOOKS"))
-        .child(div().flex_none().text_size(11.5).font_semibold().text_color(t.foreground).child(latest.project))
-        .child(h_flex().gap(3).items_center().flex_none().children(latest.stages.map((y) => this.stageCircle(t, y.state, 9))))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(ref))
-        .child(chev);
-    }
-    return v_flex().id("tile-runbooks").flex_none().gap(10).p(12).rounded(12).bg(t.surface).border(1).border_color(t.border)
-      .child(h_flex().id("rb-head").gap(8).items_center().cursor_pointer().on_click(this.guard(toggle))
-        .child(div().w(8).h(8).rounded(4).flex_none().bg(mark))
-        .child(div().flex_1().text_size(11).font_semibold().text_color(t.dim).child("RUNBOOKS"))
-        .child(chev))
-      .children(items.map((x, k) => v_flex().gap(8).pt(k ? 10 : 0).when(k > 0, (el) => el.border_t(1).border_color(t.border))
-        .child(h_flex().gap(8).items_baseline().child(div().flex_none().font_semibold().text_size(12.5).text_color(t.foreground).child(x.project))
-          .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(x.ref)))
-        // a stepper from edge to edge: the first circle at the left end, the last at the right end, the others evenly between (the columns at the ends are
-        // narrower by half a step: their circle sits at the edge); the name is under its circle, the first one flush left, the last one flush right
-        .child(h_flex().w_full().items_start().children(x.stages.map((y, i) => {
-          const n = x.stages.length, first = i === 0, last = i === n - 1;
-          const done = (z) => z && z.state === "ok";
-          const line = (on) => div().flex_1().h(2).rounded(1).bg(on ? (t.ansi2 ?? t.done) : t.border);
-          const base = y.name, sub = y.note;
-          const active = y.state === "running" || y.state === "approval" || y.state === "failed";
-          const weight = first || last ? 0.5 + (6 * Math.max(1, n - 1)) / 370 : 1;
-          const place = (el) => (first ? el.justify_start() : last ? el.justify_end() : el.justify_center());
-          return v_flex().flex_grow(weight).flex_basis(0).min_w(0).gap(4).when(first, (c) => c.items_start()).when(last, (c) => c.items_end()).when(!first && !last, (c) => c.items_center())
-            .child(h_flex().w_full().items_center()
-              .children(first ? [] : [line(done(x.stages[i - 1]))])
-              .child(this.stageCircle(t, y.state, 12))
-              .children(last ? [] : [line(done(y))]))
-            .child(place(div().w_full().flex()).child(div().truncate().text_size(10).font_semibold().text_color(active || y.state === "ok" ? t.foreground : t.dim).child(base)))
-            .when(!!sub, (e) => e.child(place(div().w_full().flex()).child(div().truncate().text_size(9).text_color(t.dim).child(sub))));
-        })))));
+    const head = this.sectionHead(t, "rb-head", "Runbooks", shut, this.guard(toggle));
+    // a row as in the Servers section: the project in its column, then the stages as circles, then what it is about
+    const row = (x) => h_flex().id(`rb-${x.project}-${x.ref}`).gap(4).items_center().px(15).py(3)
+      .child(div().w(104).flex_none().truncate().text_size(12).text_color(t.foreground).child(x.project))
+      .child(h_flex().gap(4).items_center().flex_none().children(x.stages.map((y) => this.stageCircle(t, y.state, 9))))
+      .child(div().flex_1().min_w(0).truncate().pl(8).text_size(11).text_color(t.dim).child(x.ref.length > 34 ? `${x.ref.slice(0, 33)}…` : x.ref));
+    // folded: only the latest run
+    const shown = shut ? [[...items].sort((a, b) => b.at - a.at)[0]] : items;
+    return v_flex().id("tile-runbooks").flex_none().pb(6).child(head).children(shown.map(row));
   }
 
   // The status page (the Servers tab): the machines with their load, the systems with their apps, the tunnel.
@@ -4283,11 +4249,35 @@ export default class Bhote extends View {
         .when(!!v, (e) => e.child(div().text_size(11).text_color(t.dim).child(v))));
   }
 
+  // The Topics section's head: its caption on a divider, what the old tile said (the figures) and the count at the right end, the plus that adds a topic, and
+  // (on the overview) the button that folds the tiles above.
+  topicsHead(t, withTiles) {
+    const g = (k) => this.topics.filter((x) => x.group === k && !x.dismissed).length;
+    const open = ["review", "now", "testing", "deploying", "finished", "next", "waiting", "later"].reduce((a, k) => a + g(k), 0);
+    const plus = div().id("add-topic").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).text_size(14).cursor_pointer()
+      .text_color(this.adding ? t.accent : t.dim).bg(this.adding ? t.selected : t.chrome).hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_click(this.guard((_e, cx) => { this.adding = !this.adding; if (this.adding) this.addIn.focus(); cx.notify(); })).child("＋");
+    const keys = this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id);
+    const sel = this.sel();
+    const picked = keys.filter((k) => sel.topics.has(k)).length;
+    // "Topics (select all)": the words in brackets are a link (with something picked: "clear")
+    const link = div().id("topics-select-all").cursor_pointer().text_size(10.5).text_color(t.dim).hover((e) => e.text_color(t.foreground))
+      .on_click(this.guard((_e, cx) => { this.setSel(picked > 0 ? new Set() : new Set(keys), sel.tests); cx.notify(); }))
+      .child(picked > 0 ? `clear ${picked}` : "select all");
+    const caption = h_flex().flex_none().items_center()
+      .child(div().text_size(10.5).font_semibold().text_color(t.dim).child("TOPICS"))
+      .child(div().ml(5).text_size(10.5).text_color(t.dim).child("("))
+      .child(link)
+      .child(div().text_size(10.5).text_color(t.dim).child(")"));
+    return div().flex_none().pt(6).child(this.dividerCaption(t, caption, [
+      div().flex_none().text_size(10.5).text_color(t.dim).child(`${g("review") + g("now") + g("testing") + g("deploying") + g("finished")} active · ${g("next")} next · ${g("waiting")} waiting`),
+      this.countTag(t, open), plus, ...(withTiles ? [this.tilesToggle(t)] : [])]));
+  }
+
   tilesToggle(t) {
     const small = this.compactTiles();
-    return div().id("tiles-toggle").w(28).h(26).flex_none().flex().items_center().justify_center().rounded(6).cursor_pointer()
-      .bg(t.raised).border(1).border_color(t.border).hover((e) => e.bg(t.hover))
-      .on_click(this.guard(() => setShared("bhote.compact", !small)))
+    return div().id("tiles-toggle").w(22).h(18).flex_none().flex().items_center().justify_center().rounded(5).cursor_pointer()
+      .hover((e) => e.bg(t.hover)).on_click(this.guard(() => setShared("bhote.compact", !small)))
       .child(svg(small ? "mods/bhote/chevron-down.svg" : "mods/bhote/chevron-up.svg").size(14).text_color(t.muted));
   }
 
@@ -4421,9 +4411,6 @@ export default class Bhote extends View {
     const count = (g) => this.topics.filter((x) => x.group === g && !x.dismissed).length;
     const n = { review: count("review"), now: count("now"), testing: count("testing"), deploying: count("deploying"), finished: count("finished"), next: count("next"), waiting: count("waiting"), later: count("later") };
     const open = Object.values(n).reduce((a, b) => a + b, 0);
-    const topicRows = [["review", "Review", t.ansi4], ["now", "At work", t.working], ["testing", "Testing", t.ansi6], ["deploying", "Waiting for deployment", t.ansi3],
-      ["finished", "Finished", t.done], ["next", "Next", t.ansi3], ["waiting", "Waiting", t.ansi3], ["later", "Later", t.dim]]
-      .filter(([k]) => n[k] > 0).map(([k, label, color]) => ({ text: label, color, right: String(n[k]), rightColor: t.muted }));
 
     const prs = this.prs.filter((p) => !p.merged);
     const failing = (p) => p.checks.filter((c) => c.state === "failed").length;
@@ -4458,11 +4445,9 @@ export default class Bhote extends View {
 
     // four tiles of one size stay at the top; under them the topics scroll
     const srvTile = this.serverTile(t);
+    const rbTile = this.runbookTile(t);   // (a section like the servers: its own width, not inside the padding of the tiles)
     const tiles = v_flex().flex_none().p(10).gap(10).border_b(1).border_color(t.border)
-      .children(this.runbookTile(t) ? [this.runbookTile(t)] : [])
       .child(h_flex().flex_none().gap(10)
-        .child(this.tile(t, "topics", { title: "Topics", accent: n.review ? t.ansi4 : t.ansi3, big: open, label: open === 1 ? "open topic" : "open topics",
-          sub: `${n.review + n.now + n.testing + n.deploying + n.finished} active · ${n.next} next · ${n.waiting} waiting`, rows: topicRows, empty: "no topics yet" }))
         .child(this.tile(t, "prs", { title: "Pull requests", accent: prsFailed ? t.blocked : t.done, badge: prsFailed || null, big: prs.length, bigColor: prsFailed ? t.blocked : t.foreground,
           label: pfWhat || (prs.length === 1 ? "open pull request" : "open pull requests"), bar: this.prsBar(prs),
           sub: !this.prAt ? "asking GitHub..." : prsFailed ? `failing: ${pf.checks.filter((c) => c.state === "failed").map((c) => c.name).slice(0, 2).join(", ")}` : prs.length ? "all checks fine" : "nothing open",
@@ -4480,10 +4465,11 @@ export default class Bhote extends View {
           big: tFailed.length || tRunning || tPassed.length, bigColor: tFailed.length ? t.blocked : tRunning ? t.working : t.done, label: tFailed.length ? `failed: ${tfWhat}` : tRunning ? "running" : "passed",
           bar: this.runsBar(shown, "t"), sub: `${tPassed.length} passed · ${tRunning} running`, rows: tRows, empty: "no test runs seen", red: tFailed.length > 0, border: tFailed.length ? "#a8162e" : undefined })));
     const list = this.right();
-    const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id), this.tilesToggle(t));
+    const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id));
+    const topicsHead = this.topicsHead(t, true);
     return v_flex().id("home-root").size_full().bg(t.chrome)
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
-      .child(tiles).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
+      .children(rbTile ? [rbTile] : []).child(tiles).child(topicsHead).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
       .children([...this.docks(t), ...(srvTile ? [srvTile] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
   }
@@ -4659,9 +4645,14 @@ export default class Bhote extends View {
     const of = (g) => this.topics.filter((x) => x.group === g && !x.dismissed);
     const sections = [["review", "Review"], ["now", "Now"], ["testing", "Testing"], ["deploying", "Waiting for deployment"], ["finished", "Finished"],
       ["next", "Next"], ["waiting", "Waiting"], ["later", "Later"]].map(([k, label]) => [k, label, of(k)]);
-    for (const [, label, list] of sections) {
+    let shutMap = {};
+    try { shutMap = shared("bhote.topicShut") ?? {}; } catch (_e) { shutMap = {}; }
+    for (const [k, label, list] of sections) {
       if (!list.length) continue;
-      rows.push(this.head(t, `${label} · ${list.length}`));
+      const shut = shutMap[k] === true;
+      // the caption on a divider, the count and the chevron at its end (as the sections at the foot); a click folds the section
+      rows.push(this.sectionHead(t, `th-${k}`, label, shut, this.guard((_e, cx) => { setShared("bhote.topicShut", { ...shutMap, [k]: !shut }); cx.notify(); }), [this.countTag(t, list.length)], 25));   // (the topics' categories are subsections: a stroke before the caption)
+      if (shut) continue;
       for (const x of list) rows.push(this.enterWrap(t, "topics", x.id, this.line(t, x, null, ""), 46));
     }
     if (!rows.length) rows.push(empty(t, "☰", "No topics yet", 'Add one with  bhote add "Fix the login redirect"'));
@@ -4700,6 +4691,7 @@ export default class Bhote extends View {
       const bar = this.batchBar(t, "topics", this.topics.filter((x) => x.group !== "done" && !x.dismissed).map((x) => x.id));
       if (this.adding) body.unshift(this.addRow(t));
       if (bar) body.unshift(bar);
+      body.unshift(this.topicsHead(t, false));
     }
     return v_flex().size_full().bg(t.chrome).text_size(13)
       .child(this.tabBar(t))
