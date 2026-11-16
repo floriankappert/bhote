@@ -4424,7 +4424,6 @@ export default class Bhote extends View {
     // four tiles of one size stay at the top; under them the topics scroll
     const srvTile = this.serverTile(t);
     const tiles = v_flex().flex_none().p(10).gap(10).border_b(1).border_color(t.border)
-      .children(srvTile ? [srvTile] : [])
       .children(this.runbookTile(t) ? [this.runbookTile(t)] : [])
       .child(h_flex().flex_none().gap(10)
         .child(this.tile(t, "topics", { title: "Topics", accent: n.review ? t.ansi4 : t.ansi3, big: open, label: open === 1 ? "open topic" : "open topics",
@@ -4451,7 +4450,7 @@ export default class Bhote extends View {
       .on_size_change((size, cx) => { const small = size.height < 1000; if (small !== !!this.compactHome) { this.compactHome = small; cx.notify(); } })
       .child(tiles).children(bar ? [bar] : []).children(this.adding ? [this.addRow(t)] : [])
       .child(v_flex().flex_1().min_h(0).overflow_y_scrollbar().children(list))
-      .children([...this.docks(t), this.settingsDock(t)]);
+      .children([...this.docks(t), ...(srvTile ? [div().flex_none().p(10).border_t(1).border_color(t.border).child(srvTile)] : []), this.settingsDock(t)]);   // (the servers' mini panel: at the foot, above Settings)
   }
 
   setTab(cx, id) {
