@@ -7439,9 +7439,9 @@ task_mirror_changed() {  # task_mirror_changed <file>: why a mirrored task count
     fi
     return 1
 }
-cli_task_triage() {  # bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none]: decides a Linear issue in triage (not tied to TASK_WRITE: you asked for it); the task is done here
-    local ref="" act="" prio="" f py s rc
-    while [ $# -gt 0 ]; do case "$1" in --priority|-p) prio=${2:-}; shift ;; accept|decline|done) act=$1 ;; -*) echo "bhote: unknown option '$1' for task triage" >&2; return 1 ;; *) ref=$1 ;; esac; shift; done
+cli_task_triage() {  # bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none] [--no-assign]: decides (accept assigns the issue to you) a Linear issue in triage (not tied to TASK_WRITE: you asked for it); the task is done here
+    local ref="" act="" prio="" noas="" f py s rc
+    while [ $# -gt 0 ]; do case "$1" in --priority|-p) prio=${2:-}; shift ;; accept|decline|done) act=$1 ;; --no-assign) noas=--no-assign ;; -*) echo "bhote: unknown option '$1' for task triage" >&2; return 1 ;; *) ref=$1 ;; esac; shift; done
     [ -n "$ref" ] && [ -n "$act" ] || { echo "usage: bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none]" >&2; return 1; }
     [ "$act" = accept ] || [ -z "$prio" ] || { echo "bhote: a priority goes with accept" >&2; return 1; }
     f=$(topic_ref "$ref") || return $?; s=$(task_source "$f")
@@ -7449,9 +7449,10 @@ cli_task_triage() {  # bhote task triage <task> accept|decline|done [--priority 
     [ "$act" = done ] || [ "$(topic_get "$f" source_kind triage)" = triage ] || { echo "bhote: only issues in triage can be accepted or declined" >&2; return 1; }
     py=$(tasks_py) || { echo "bhote: the task sources (herdr-app/mods/bhote/tasksources.py) are not here" >&2; return 1; }
     if [ "$act" = done ]; then python3 "$py" set-status --source linear "$(task_source_ref "$f")" done >/dev/null; rc=$?
-    else python3 "$py" triage --source linear "$(task_source_ref "$f")" "$act" ${prio:+--priority "$prio"} >/dev/null; rc=$?; fi
+    else python3 "$py" triage --source linear "$(task_source_ref "$f")" "$act" ${prio:+--priority "$prio"} ${noas:+--no-assign} >/dev/null; rc=$?; fi
     case $rc in 0|3) ;; *) echo "bhote: Linear did not take it (exit $rc)" >&2; return 1 ;; esac    # 3: not in triage any more or gone: it is settled there too
     task_status_set "$f" done; topic_set "$f" source_status done
+    [ "$act" = accept ] && [ -z "$noas" ] && BHOTE_API_CACHE=off cli_task_sync --source linear --quiet >/dev/null 2>&1   # (now it is one of yours: the task comes back as such, not after the next sync)
     [ $rc = 3 ] && echo "Linear: no longer in triage; marked done here" || echo "$act""ed in Linear${prio:+ (priority $prio)}; marked done here"
 }
 cli_task_prune() {  # bhote task prune --source linear [--dry-run] [--yes] [--json]: deletes the mirrored tasks of a source that were not changed here

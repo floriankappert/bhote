@@ -86,7 +86,7 @@ Exit `1` when a source failed (the others still ran); a source without a key in 
 
 #### `bhote task triage <task> accept|decline|done [--priority urgent|high|medium|low|none]`
 
-Decides a mirrored Linear issue in triage: `accept` moves it to the default state of its team (and sets the priority), `decline` to the team's canceled state, `done` to its Done state. The task is marked done here. Works without `TASK_WRITE`.
+Decides a mirrored Linear issue in triage: `accept` assigns it to you (`--no-assign`: not), moves it to the default state of its team (and sets the priority), `decline` to the team's canceled state, `done` to its Done state. The task is marked done here. Works without `TASK_WRITE`.
 
 #### `bhote task prune --source linear [--dry-run] [--yes] [--json]`
 

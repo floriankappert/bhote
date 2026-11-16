@@ -265,7 +265,7 @@ class Linear:
 
     PRIO = {"none": 0, "urgent": 1, "high": 2, "medium": 3, "low": 4}
 
-    def triage(self, ref, action, priority=""):
+    def triage(self, ref, action, priority="", assign=True):
         """Accept (optionally with a priority) moves the issue out of triage into the default state of its team; decline moves it to the team's canceled state."""
         if action not in ("accept", "decline"): raise Fail("triage: accept or decline")
         if priority and priority not in self.PRIO: raise Fail("priority: urgent, high, medium, low or none")
@@ -281,6 +281,10 @@ class Linear:
         if not pick: raise NotChangeable("the team has no state for this")
         inp = {"stateId": pick}
         if action == "accept" and priority: inp["priority"] = self.PRIO[priority]
+        if action == "accept" and assign:      # assigned to you, so that it does not vanish (it is then one of the issues assigned to you)
+            me = (self.gql("query { viewer { id } }", {}).get("viewer") or {}).get("id")
+            if not me: raise Fail("Linear: no user for the key")
+            inp["assigneeId"] = me
         m = "mutation($id: String!, $in: IssueUpdateInput!) { issueUpdate(id: $id, input: $in) { success } }"
         if not self.gql(m, {"id": i["id"], "in": inp})["issueUpdate"]["success"]: raise Fail("Linear refused the change")
 
@@ -329,7 +333,7 @@ def main(argv):
         if cmd == "set-status":
             ADAPTERS[opts["--source"]]().set_status(pos[0], pos[1], opts["--id"]); print(json.dumps({"ok": True})); return 0
         if cmd == "triage":      # triage <ref> accept|decline [--priority p]
-            ADAPTERS[opts["--source"] or "linear"]().triage(pos[0], pos[1], opts["--priority"]); print(json.dumps({"ok": True})); return 0
+            ADAPTERS[opts["--source"] or "linear"]().triage(pos[0], pos[1], opts["--priority"], "--no-assign" not in argv); print(json.dumps({"ok": True})); return 0
         if cmd == "open":
             if pos and re.match(r"^https?://", pos[0]): print(pos[0]); return 0
             return 1

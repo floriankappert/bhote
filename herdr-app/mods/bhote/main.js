@@ -57,7 +57,7 @@ function parseTopics(text) {
 // what an agent made (a waiting task of an agent, an automatic review card or a card made for an agent) is agent, the rest manual.
 const SOURCES = ["agent", "stash", "linear", "manual"];
 // The filter values: Linear has two: the issues in triage (to decide: the default view, the overview) and the open ones assigned to you (only in their own filter).
-const SRC_FILTERS = ["agent", "stash", "linear", "linear-mine", "manual"];
+const SRC_FILTERS = ["agent", "stash", "linear", "linear-mine", "manual"];   // (+ "all": every task, also the ones assigned to you; "" is the overview)
 const isMine = (x) => x.source === "linear" && x.sourceKind === "mine";
 const srcKey = (x) => (isMine(x) ? "linear-mine" : x.source);
 function sourceOf(v) {
@@ -3445,10 +3445,10 @@ export default class Bhote extends View {
   }
 
   // The filter by source of the Tasks section: "" = all.
-  srcFilter() { try { const v = shared("bhote.srcFilter"); return SRC_FILTERS.includes(v) ? v : ""; } catch (_e) { return ""; } }
-  srcOk(x) { const f = this.srcFilter(); return !f || srcKey(x) === f; }
+  srcFilter() { try { const v = shared("bhote.srcFilter"); return v === "all" || SRC_FILTERS.includes(v) ? v : ""; } catch (_e) { return ""; } }
+  srcOk(x) { const f = this.srcFilter(); return !f || f === "all" || srcKey(x) === f; }
   allTopics() { return [...this.topics, ...this.mine]; }
-  taskPool() { return this.srcFilter() === "linear-mine" ? this.mine : this.topics; }   // what the Tasks tab lists
+  taskPool() { const f = this.srcFilter(); return f === "linear-mine" ? this.mine : f === "all" ? this.allTopics() : this.topics; }   // what the Tasks tab lists
 
   line(t, x, cx, sub) {
     const st = this.plainState(t, x);
@@ -4828,8 +4828,8 @@ export default class Bhote extends View {
       .hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
       .on_click(this.guard(() => this.openMenu([{ type: "head", label: "Show tasks from" },
-        ...["", ...SRC_FILTERS].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v === "linear" ? "linear (triage)" : v === "linear-mine" ? "linear (assigned to me)" : v || "all sources"} (${this.allTopics().filter((x) => x.group !== "done" && !x.dismissed && (v ? srcKey(x) === v : !isMine(x))).length})` }))], this.anchor)))
-      .child(cur ? `source: ${cur === "linear-mine" ? "linear (mine)" : cur}` : "all sources");
+        ...["", "all", ...SRC_FILTERS].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v === "linear" ? "linear (triage)" : v === "linear-mine" ? "linear (assigned to me)" : v === "all" ? "all sources" : v || "overview"} (${this.allTopics().filter((x) => x.group !== "done" && !x.dismissed && (v === "all" ? true : v ? srcKey(x) === v : !isMine(x))).length})` }))], this.anchor)))
+      .child(cur ? (cur === "all" ? "all sources" : `source: ${cur === "linear-mine" ? "linear (mine)" : cur}`) : "overview");
     const picked = keys.filter((k) => sel.topics.has(k)).length;
     // "Tasks (select all)": the words in brackets are a link (with something picked: "clear")
     const link = div().id("topics-select-all").cursor_pointer().text_size(10.5).text_color(t.dim).hover((e) => e.text_color(t.foreground))
