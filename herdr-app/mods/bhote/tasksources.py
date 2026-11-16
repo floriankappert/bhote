@@ -174,6 +174,12 @@ def ok_body(st, text, what):
 
 # ── Linear ───────────────────────────────────────────────────────────────────────────────────────────────────
 
+def iso_epoch(v):
+    """Linear's createdAt (2026-11-16T09:30:00.000Z) as epoch seconds; "" when it does not parse."""
+    try: return str(int(__import__("calendar").timegm(__import__("time").strptime(str(v)[:19], "%Y-%m-%dT%H:%M:%S"))))
+    except (ValueError, TypeError): return ""
+
+
 class Linear:
     name = "linear"
 
@@ -203,11 +209,11 @@ class Linear:
         status = "next"
         if kind == "mine":      # the workflow state decides: started is now (a review state: review), backlog is later, the rest next
             status = "review" if "review" in (st.get("name") or "").lower() else {"started": "now", "backlog": "later"}.get(st.get("type"), "next")
-        return {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300), "kind": kind,
+        return {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300), "kind": kind, "created": iso_epoch(i.get("createdAt")),
                 "title": clean(i.get("title")), "description": short(i.get("description")), "status": status, "state": clean(st.get("name"), 60)}
 
     def pages(self, flt, tag, kind, keep):
-        q = ("query($after: String) { issues(first: 100, after: $after, filter: %s) { nodes { identifier title description url state { name type } assignee { isMe } team { key } } "
+        q = ("query($after: String) { issues(first: 100, after: $after, filter: %s) { nodes { identifier title description url createdAt state { name type } assignee { isMe } team { key } } "
              "pageInfo { hasNextPage endCursor } } }" % flt)
         out, after = [], None
         for page in range(10):

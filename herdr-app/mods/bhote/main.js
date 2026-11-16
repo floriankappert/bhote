@@ -42,7 +42,7 @@ function parseTopics(text) {
       machine: v.agent_machine || "",
       branch: v.agent_branch || "",
       project: v.project || "",
-      source: src.source, sourceRef: src.ref, sourceUrl: src.url, sourceKind: src.kind, sourceParent: src.parent,
+      source: src.source, sourceRef: src.ref, sourceUrl: src.url, sourceKind: src.kind, sourceParent: src.parent, sourceCreated: Number(v.source_created) || 0,
       startMsg: v.start_msg || "", startAgent: v.start_agent || "", startMachine: v.start_machine || "", startPane: v.start_pane || "",   // (handed over as a message, not taken yet)
     });
   }
@@ -5141,6 +5141,7 @@ export default class Bhote extends View {
     try { shutMap = shared("bhote.topicShut") ?? {}; } catch (_e) { shutMap = {}; }
     for (const [k, label, list] of sections) {
       if (!list.length) continue;
+      if (k === "triage") list.sort((p, q) => q.sourceCreated - p.sourceCreated || (p.sourceRef < q.sourceRef ? 1 : -1));   // (newest on top: when it was made in Linear)
       const shut = shutMap[k] === true;
       // the caption on a divider, the count and the chevron at its end (as the sections at the foot); a click folds the section
       rows.push(this.sectionHead(t, `th-${k}`, label, shut, this.guard((_e, cx) => { setShared("bhote.topicShut", { ...shutMap, [k]: !shut }); cx.notify(); }), [this.countTag(t, list.length)], 25));   // (the topics' categories are subsections: a stroke before the caption)

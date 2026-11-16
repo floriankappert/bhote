@@ -7273,8 +7273,8 @@ task_mirror_new() {  # task_mirror_new <source> <ref> <url> <title> <desc> <stat
     id=$(printf '%s-%s' "$src" "$ref" | LC_ALL=C tr -c 'A-Za-z0-9_-' _); f=$(tfile "$id"); [ -e "$f" ] && return 1
     mkdir -p "$TOPIC_DIR"
     [ "$6" = waiting ] && { wf=$(task_srcname "$src"); since=$now; }
-    printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\nsource=%s\nsource_ref=%s\nsource_url=%s\nsource_id=%s\nsource_status=%s\nsource_status_raw=%s\nsource_kind=%s\n' \
-        "$id" "${4:0:500}" "$6" "$wf" "$since" "$now" "$now" "${5:0:$DESC_MAX}" "$src" "$ref" "$3" "${7:-}" "$6" "${8:-}" "$kind" > "$f" || return 1
+    printf 'id=%s\ntitle=%s\nstatus=%s\nwaiting_for=%s\nwaiting_since=%s\ncreated=%s\nupdated=%s\ndeleted=0\ndescription=%s\nsource=%s\nsource_ref=%s\nsource_url=%s\nsource_id=%s\nsource_status=%s\nsource_status_raw=%s\nsource_kind=%s\nsource_created=%s\n' \
+        "$id" "${4:0:500}" "$6" "$wf" "$since" "$now" "$now" "${5:0:$DESC_MAX}" "$src" "$ref" "$3" "${7:-}" "$6" "${8:-}" "$kind" "${10:-}" > "$f" || return 1
     : > "$STORE_DIRTY"; rmf "$SHARED_DIR/topics.idx"; printf '%s' "$f"
 }
 task_status_set() {  # task_status_set <file> <status>: as the outside system says (a wait names the system)
@@ -7307,7 +7307,7 @@ task_sync_dry() {  # task_sync_dry <source> <list output>: what `task sync` woul
             fi
         fi
         rows="$rows$act$US$s$US$why$US${title:0:80}$US$st$nl"
-    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // ""), (.kind // "triage")] | join("\u001f")')
+    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // ""), (.kind // "triage"), (.created // "")] | join("\u001f")')
     local -a mf=(); topic_files_set mf                                   # a mirrored task whose item is gone from the list would be closed
     for f in ${mf[@]+"${mf[@]}"}; do
         s=$(topic_get "$f" source); case "$s" in linear) ;; *) continue ;; esac
@@ -7366,11 +7366,11 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
     while IFS= read -r line; do [ -n "$line" ] && errs[${#errs[@]}]=$line; done < <(printf '%s' "$out" | jq -r '.errors | to_entries[] | "\(.key): \(.value)"' | tr -d '\000-\011\013-\037' | cut -c1-200)
     while IFS= read -r line; do [ -n "$line" ] && skips[${#skips[@]}]=$line; done < <(printf '%s' "$out" | jq -r '.skipped | to_entries[] | "\(.key): \(.value)"' | tr -d '\000-\011\013-\037' | cut -c1-200)
     local seen=$'\n' s ref url title desc st sid raw kind f ext last loc
-    while IFS=$US read -r s ref url title desc st sid raw kind; do
+    while IFS=$US read -r s ref url title desc st sid raw kind cat; do
         [ -n "$s" ] && [ -n "$ref" ] || continue
         seen="$seen$s $ref"$'\n'
         if ! f=$(task_find "$s" "$ref"); then
-            task_mirror_new "$s" "$ref" "$url" "$title" "$desc" "$st" "$sid" "$raw" "$kind" >/dev/null && n_new=$(( n_new + 1 )); continue
+            task_mirror_new "$s" "$ref" "$url" "$title" "$desc" "$st" "$sid" "$raw" "$kind" "$cat" >/dev/null && n_new=$(( n_new + 1 )); continue
         fi
         if [ "$(topic_get "$f" deleted 0)" = 1 ]; then
             [ "$(topic_get "$f" pruned)" = 1 ] || continue                 # removed by hand here: it does not come back
@@ -7385,6 +7385,7 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
         [ "$(topic_get "$f" source_status_raw)" = "$raw" ] || [ -z "$raw" ] || topic_set "$f" source_status_raw "$raw"
         [ "$(topic_get "$f" source_id)" = "$sid" ] || [ -z "$sid" ] || topic_set "$f" source_id "$sid"
         [ -z "$kind" ] || [ "$(topic_get "$f" source_kind)" = "$kind" ] || topic_set "$f" source_kind "$kind"
+        [ -z "$cat" ] || [ "$(topic_get "$f" source_created)" = "$cat" ] || topic_set "$f" source_created "$cat"
         if [ "$st" != "$last" ]; then                                      # the outside system moved: it wins
             task_status_set "$f" "$st"; topic_set "$f" source_status "$st"; topic_set "$f" source_note ""; n_upd=$(( n_upd + 1 ))
         elif [ "$loc" != "$st" ] && [ "$write" = on ]; then               # changed here, unchanged there: written back (TASK_WRITE=on only)
@@ -7395,7 +7396,7 @@ cli_task_sync() {  # bhote task sync [--source linear] [--dry-run|-n] [--json] [
                 esac ;;
             esac
         fi
-    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // ""), (.kind // "triage")] | join("\u001f")')
+    done < <(printf '%s' "$out" | jq -r '.tasks[] | [.source, .source_ref, .source_url, .title, .description, .status, "", (.state // ""), (.kind // "triage"), (.created // "")] | join("\u001f")')
     # a mirrored task whose item is gone from the open list (done, canceled, reassigned) is marked done here, never deleted (only for a source that answered)
     topic_files_set _mf2; local note
     for f in ${_mf2[@]+"${_mf2[@]}"}; do
@@ -7426,7 +7427,7 @@ task_mirror_changed() {  # task_mirror_changed <file>: why a mirrored task count
     local f=$1 line k v st ss wf src desc cr up
     while IFS= read -r line; do
         k=${line%%=*}; v=${line#*=}; [ -n "$v" ] || continue
-        case "$k" in id|title|status|waiting_for|waiting_since|created|updated|deleted|description|source|source_ref|source_url|source_kind|source_parent|source_id|source_status|source_status_raw|source_due|source_note) ;;
+        case "$k" in id|title|status|waiting_for|waiting_since|created|updated|deleted|description|source|source_ref|source_url|source_kind|source_parent|source_id|source_status|source_status_raw|source_due|source_note|source_created) ;;
             *) printf 'has its own field %s' "$k"; return 0 ;; esac
     done < "$f"
     st=$(topic_get "$f" status); ss=$(topic_get "$f" source_status); src=$(topic_get "$f" source)
