@@ -419,6 +419,9 @@ const LIVE_TESTS_SH = 'ps -Ao pid=,ppid=,etime=,command= | awk -v re="(rails|rak
 
 // What the commit inspector asks the repository: the commits of this branch since it left the base branch (origin/HEAD, else main or master), newest first, the
 // base commit it left from, and the uncommitted files. On the base branch itself (nothing of its own) the last 5 commits. Never more than the last 5 of a branch; the base line then says how many come before. Plain sh: it runs on every machine.
+// The progress of a dynamic workflow of a Claude session in a folder: "results started" from its journal (the newest one, touched within 3 minutes), else nothing.
+const WF_SH = 'p=$(printf %s "$1" | sed "s|[^A-Za-z0-9]|-|g"); j=$(ls -t "$HOME"/.claude*/projects/"$p"/*/subagents/workflows/*/journal.jsonl 2>/dev/null | head -1); '
+  + '[ -n "$j" ] && [ -n "$(find "$j" -mmin -3 2>/dev/null)" ] || exit 0; printf "%s %s\\n" "$(grep -c \'"type":"result"\' "$j")" "$(grep -c \'"type":"started"\' "$j")"';
 const COMMITS_SH = 'd="$1"; f="%h%x1f%s%x1f%ct%x1f%an"; b=$(git -C "$d" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null); '
   + '[ -n "$b" ] || for c in origin/main origin/master main master; do git -C "$d" rev-parse -q --verify "$c" >/dev/null 2>&1 && { b=$c; break; }; done; '
   + 'mb=""; [ -n "$b" ] && mb=$(git -C "$d" merge-base HEAD "$b" 2>/dev/null); h=$(git -C "$d" rev-parse HEAD 2>/dev/null); '
@@ -580,6 +583,7 @@ export default class Bhote extends View {
     this.entered = {};            // by list: { seen, at } what has been seen and when something new came in (enterBegin, enterWrap)
     this.animUntil = 0;           // a card or row is coming in until then: the view looks again every 70 ms
     this.agentCtx = {};           // by agent address: how full the context of its session is (percent; the statusline writes it per terminal)
+    this.agentWf = {};            // by agent address: a dynamic workflow of its session that is at work: { done, total } (results of the journal / agents started)
     this.agentDirty = {};         // by agent address: how many files have uncommitted changes in the folder its program works in
     this.agentHead = {};          // by agent address: the commit its work stands on (to find the pull request of a branch pushed under another name)
     this.agentDir = {};           // by agent address: { dir, at } where its program works
@@ -1728,9 +1732,12 @@ export default class Bhote extends View {
           .when(!!agent && o.ctx != null, (el) => { const c = o.ctx, col = c >= 85 ? t.blocked : c >= 60 ? t.ansi3 : t.done ?? t.accent;   // (the context of the session: an upright bar that fills from below; yellow from 60 %, red from 85 %)
             return el.child(this.chip(t, col, `ctx-${id}`).px(5).child(v_flex().w(3).h(10).rounded(2).bg(tint(col, "40", t.border)).overflow_hidden().justify_end()
               .child(div().w(3).h(Math.max(1, Math.round(10 * c / 100))).rounded(2).bg(col)))); })
+          .when(!!agent && !!o.wf, (el) => { const f = Math.max(0, Math.min(1, o.wf.total ? o.wf.done / o.wf.total : 0));   // a workflow of the session at work: its icon and an upright bar (results / agents started so far)
+            return el.child(this.chip(t, t.accent, `wf-${id}`).gap(4).child(svg("mods/bhote/workflow.svg").size(12).flex_none().text_color(t.accent))
+              .child(v_flex().w(3).h(10).rounded(2).bg(tint(t.accent, "40", t.border)).overflow_hidden().justify_end().child(div().w(3).h(Math.max(1, Math.round(10 * f))).rounded(2).bg(t.accent)))); })
           .when(!!agent && (o.dirty ?? 0) > 0, (el) => el.child(this.chip(t, t.ansi3).child(svg("mods/bhote/git-dirty.svg").size(12).flex_none().text_color(t.ansi3)).child(`${o.dirty}`)))   // (x uncommitted changes in its folder)
-          .when(!!agent && !!o.listen?.key, (el) => { const ec = o.listen.on ? (active ? t.muted : t.dim) : t.ansi3;
-            return el.child(this.chip(t, ec, `ear-${id}`).w(26).px(0).cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.listen.on ? t.foreground : t.ansi3))
+          .when(!!agent && !!o.listen?.key, (el) => { const ec = o.listen.on ? t.accent : (active ? t.muted : t.dim);   // (listening: blue; the ear off, and its other icon: grey)
+            return el.child(this.chip(t, ec, `ear-${id}`).w(26).px(0).cursor_pointer().hover((e) => e.bg(t.hover).text_color(o.listen.on ? t.accent : t.foreground))
               .on_mouse_down("left", (e, cx) => { this.anchor = this.anchorOf(e); cx.stop_propagation(); })
               .on_click(this.guard((_e, cx) => o.onListen(cx))).child(svg(`mods/bhote/${o.listen.on ? "ear" : "ear-off"}.svg`).size(13).flex_none())); })
           .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(this.chip(t, t.ansi3).child(`${o.listen.waiting}`)))   // (messages that wait: ear off, or the agent at work)
@@ -2922,6 +2929,11 @@ export default class Bhote extends View {
           const r = await this.srvExec(machine, "git", ["-C", d.dir, "rev-parse", "HEAD"], 10000);
           const sha = r.stdout.trim();
           if (sha && this.agentHead[a.address] !== sha) { this.agentHead[a.address] = sha; changed = true; }
+          try {   // a workflow of this session (its journal in the project folder of the Claude profile; written to within the last 3 minutes = at work)
+            const w = (await this.srvExec(machine, "sh", ["-c", WF_SH, "_", d.dir], 8000)).stdout.trim().split(" ").map(Number);
+            const nw = w.length === 2 && w[1] > 0 ? { done: w[0], total: w[1] } : null;
+            if (JSON.stringify(this.agentWf[a.address] ?? null) !== JSON.stringify(nw)) { this.agentWf[a.address] = nw; changed = true; }
+          } catch (_e) { /* none */ }
           const n = (await this.srvExec(machine, "git", ["-C", d.dir, "status", "--porcelain"], 10000)).stdout.split("\n").filter(Boolean).length;
           if ((this.agentDirty[a.address] ?? 0) !== n) { this.agentDirty[a.address] = n; changed = true; }
         } catch (_e) { /* not a repository: no commit */ }
@@ -3193,7 +3205,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0, ctx: this.agentCtx[a.address] ?? null }), 84));
+          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0, ctx: this.agentCtx[a.address] ?? null, wf: this.agentWf[a.address] ?? null }), 84));
         }
       }
       if (ins === ids.length) rows.push(dropLine());   // (to the end of the section)
