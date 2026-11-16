@@ -49,19 +49,21 @@ function parseTopics(text) {
   // dual-read (wave 1 of topics -> tasks): the same id as <id>.topic and <id>.task is one task, the newer one counts
   const byId = new Map();
   for (const x of out) { const o = byId.get(x.id); if (!o || x.updated > o.updated) byId.set(x.id, x); }
+  // the most recently changed first; a group keeps this order
   return [...byId.values()].sort((a, b) => b.updated - a.updated);
 }
 
 // The sources of a task. One without a `source` line (made before sources existed) gets its source from what it is, without touching its file:
 // what an agent made (a waiting task of an agent, an automatic review card or a card made for an agent) is agent, the rest manual.
-const SOURCES = ["agent", "stash", "linear", "ims", "manual"];
+const SOURCES = ["agent", "stash", "linear", "manual"];
 function sourceOf(v) {
   let source = SOURCES.includes(v.source) ? v.source : "";
-  if (!source) source = v.auto === "1" || v.auto_now === "1" || v.review_src || (v.agent && v.waiting_for) ? "agent" : "manual";
-  return { source, ref: v.source_ref || "", url: /^https?:\/\//.test(v.source_url || "") ? v.source_url : "", kind: v.source_kind || "", parent: v.source_parent || "" };
+  const legacy = !source && /^[a-z][a-z0-9_-]{0,15}$/.test(v.source || "") ? v.source : "";   // a source that no longer exists (ims): shown as plain text, never an error
+  if (!source && !legacy) source = v.auto === "1" || v.auto_now === "1" || v.review_src || (v.agent && v.waiting_for) ? "agent" : "manual";
+  return { source: source || legacy, ref: v.source_ref || "", url: /^https?:\/\//.test(v.source_url || "") ? v.source_url : "", kind: v.source_kind || "", parent: v.source_parent || "" };
 }
-// The chip text of a source: IMS tells its two kinds apart (a personal task, a ticket = work item).
-function sourceLabel(x) { return x.source === "ims" ? (x.sourceKind === "work_item" ? "IMS ticket" : "IMS task") : x.source; }
+// The chip text of a source: its name (a legacy value is shown as it is).
+function sourceLabel(x) { return x.source; }
 
 // The deployments of the last days are kept on disk (the CI answers only with its latest runs, and deploys.list is gone with the next restart).
 const DEPLOY_HISTORY_DAYS = 14, DEPLOY_HISTORY_MAX = 400;
@@ -463,8 +465,8 @@ const SETTINGS = [
   ["NOTIFY", "Tasks", "", "Notifications", "Notify through herdr when a task is ready, done or has waited too long."],
 
   ["WAIT_REMIND", "Tasks", "", "Remind waiting tasks after", "A waiting task is reminded once after this time (0 = never).", "h"],
-  ["TASK_SYNC", "Tasks", "", "Mirror Linear and IMS", "Mirror the tasks of Linear and the IMS into tasks now and then, through the API cache (a source without a key in the secret store is skipped)."],
-  ["TASK_WRITE", "Tasks", "", "Write status back", "A status change of a mirrored task goes back to Linear or the IMS. Off: the outside system alone decides."],
+  ["TASK_SYNC", "Tasks", "", "Mirror Linear triage", "Mirror the Linear issues in triage into tasks now and then, through the API cache (a source without a key in the secret store is skipped)."],
+  ["TASK_WRITE", "Tasks", "", "Write status back", "Marking a mirrored task done moves the Linear issue to the Done state of its team; other status changes stay local. Off: Linear alone decides."],
   ["FINISHED_MINUTES", "Tasks", "", "Dismiss finished cards after", "An agent that finished without a question drops off the panel after this time (0 = never).", "min"],
 
   ["AGENT_CARDS", "Agents", "", "Cards for agents without a task", "A working agent without a task gets a card on Now after 15 s of work."],
@@ -493,10 +495,7 @@ const SETTINGS = [
   ["TEST_GITHUB", "Integrations", "GitHub", "Test jobs", "Include test jobs from GitHub Actions.", ""],
   ["PR_CHECKS_IGNORE", "Integrations", "GitHub", "Ignored checks", "Checks of pull requests that bhote leaves out (comma-separated, * as a wildcard, e.g. codecov/*). They are not shown, not counted and never turn a pull request red. Empty: none.", ""],
   ["GITHUB_BRANCHES", "Integrations", "GitHub", "Agent branches", "Show the git branch each task's agent works on."],
-  ["LINEAR_TEAMS", "Integrations", "Linear", "Teams", "Only the issues of these Linear team keys become tasks (e.g. IMS,ENG); empty: all. The key is the secret LINEAR_API_KEY (bhote secret set LINEAR_API_KEY)."],
-  ["IMS_URL", "Integrations", "IMS", "Address", "The base URL of the IMS. The key is the secret IMS_API_KEY (bhote secret set IMS_API_KEY)."],
-  ["IMS_WEB_URL", "Integrations", "IMS", "Web address", "Where an IMS item opens in the browser (<address>/work-items/<id>, <address>/tasks/<id>); empty: its API address."],
-  ["IMS_STATUS_MAP", "Integrations", "IMS", "Status names", "IMS status name=bhote status pairs that replace the defaults, e.g. In Test=review,Parked=later."],
+  ["LINEAR_TEAMS", "Integrations", "Linear", "Teams", "Only the issues in triage of these Linear team keys become tasks (e.g. ENG,OPS); empty: all teams the key sees. The key is the secret LINEAR_API_KEY (bhote secret set LINEAR_API_KEY)."],
   ["CIRCLECI_TOKEN", "Integrations", "CircleCI", "API token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
   ["DEPLOY_CIRCLECI", "Integrations", "CircleCI", "Deployments", "Include deployments from CircleCI.", ""],
   ["DEPLOY_PIPELINES", "Integrations", "CircleCI", "Pipelines on other branches", "Also show CircleCI pipelines running on other branches, with branch and author.", ""],
@@ -674,7 +673,7 @@ export default class Bhote extends View {
     // Ctrl+S in a terminal (the binding bhote:stash in keys.json, written by the setting STASH_LINK): the prompt goes into the stash, the key on to the program
     // (both panels listen, one handles it: whichever copy of the mod the app delivers it to)
     cx.spawn(async (cx) => { for (;;) { let c; try { c = await nextCommand(); } catch (_e) { return; } if (c === "stash") { try { if (Date.now() - Number(shared("bhote.stashKeyAt") ?? 0) < 800) continue; setShared("bhote.stashKeyAt", Date.now()); } catch (_e) { /* handle it */ } await this.stashKey(cx); } } });
-    // the open items of Linear and the IMS become tasks (a source without a key in the secret store is skipped by bhote; the answers go through the API cache)
+    // the Linear issues in triage become tasks (a source without a key in the secret store is skipped by bhote; the answers go through the API cache)
     if (this.side === "left") cx.timer.every(90000, () => { if (this.taskSync !== false) exec("bhote", ["task", "sync", "--quiet"], { timeout: 180000 }).catch(() => {}); });
     if (this.side === "right") { this.mirrorStash(this.stashList()); cx.timer.every(2000, () => this.adoptStash()); }
     if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
@@ -1447,7 +1446,7 @@ export default class Bhote extends View {
   topicItems(x) {
     const q = this.queueOf(x.id);
     return [{ type: "show", id: x.id, label: "Show task" }, ...(q ? [{ type: "unqueue", id: x.id, label: `Cancel the queue on ${q.name}` }] : []),
-      ...(x.sourceUrl ? [{ type: "url", url: x.sourceUrl, label: `Open in ${x.source === "ims" ? "IMS" : x.source === "linear" ? "Linear" : x.source}${x.sourceRef ? ` (${x.sourceRef})` : ""}` }] : []),
+      ...(x.sourceUrl ? [{ type: "url", url: x.sourceUrl, label: `Open in ${x.source === "linear" ? "Linear" : x.source}${x.sourceRef ? ` (${x.sourceRef})` : ""}` }] : []),
       ...this.statusItems(x), ...this.startItems(x)];
   }
 
@@ -3398,10 +3397,15 @@ export default class Bhote extends View {
   }
 
   // A task looks like a to-do: the icon of its state, a small title on one line, the ... menu; what it waits for under the title.
-  // The small chip with the source of a task (agent, stash, linear, IMS task, IMS ticket, manual); a link of the source opens from its menu.
+  // The small chip with the source of a task (agent, stash, linear, manual); a link of the source opens from its menu.
   sourceChip(t, x) {
-    const col = { agent: t.ansi5 ?? t.accent, stash: t.ansi6 ?? t.accent, linear: t.ansi4 ?? t.accent, ims: t.ansi3 ?? t.accent }[x.source] ?? t.dim;
+    const col = { agent: t.ansi5 ?? t.accent, stash: t.ansi6 ?? t.accent, linear: t.ansi4 ?? t.accent }[x.source] ?? t.dim;
     return div().flex_none().px(5).h(14).flex().items_center().rounded(7).border(1).border_color(t.border).text_size(9.5).text_color(col).child(sourceLabel(x));
+  }
+
+  // The ticket number of a Linear issue (IMS-123) as a badge before the title.
+  refBadge(t, x) {
+    return div().flex_none().px(5).h(14).flex().items_center().rounded(4).bg(t.raised).text_size(10).text_color(t.ansi4 ?? t.accent).child(x.sourceRef);
   }
 
   // The filter by source of the Tasks section: "" = all.
@@ -3418,6 +3422,7 @@ export default class Bhote extends View {
       .child(this.check(t, `ck-${x.id}`, "topics", x.id, picked))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(h_flex().items_center().gap(6).min_w(0)
+          .when(x.source === "linear" && !!x.sourceRef, (el) => el.child(this.refBadge(t, x)))
           .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(x.title))
           .child(this.sourceChip(t, x)))
         .when(!!(sub || extra), (el) => el.child(div().truncate().text_size(11).text_color(t.muted).child(sub || extra))))

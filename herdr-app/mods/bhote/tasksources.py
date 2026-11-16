@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
-"""bhote task sources: the adapters that mirror outside systems (Linear, the IMS) into tasks.
+"""bhote task sources: the adapters that mirror outside systems (Linear) into tasks.
 
 Called by `bhote task sync` (the script reconciles the files; this module only talks to the outside and normalizes). Standard library only.
 
-    tasksources.py list [--source linear|ims|all]      {"tasks": [...], "ok": ["linear"], "errors": {"ims": "..."}, "skipped": {"linear": "no key"}}
-    tasksources.py fetch --source S <ref> [--kind K]    one normalized task (or null)
-    tasksources.py set-status --source S <ref> <status> [--kind K] [--id ID]   exit 0 done, 3 not changeable (nothing is retried), 1 error
+    tasksources.py list [--source linear|all] [--dry-run]   {"tasks": [...], "ok": ["linear"], "errors": {"linear": "..."}, "skipped": {"linear": "no key"},
+                                                             "filtered": [{"source", "reason"}, ...]}  (--dry-run: also no API cache entry is written)
+    tasksources.py fetch --source S <ref>               one normalized task (or null)
+    tasksources.py set-status --source S <ref> <status> [--id ID]   exit 0 done, 3 not changeable (nothing is retried), 1 error
     tasksources.py open <url>                           prints the URL when it is http(s)
 
 One adapter per source: list() -> normalized tasks, fetch(ref), open(url), optional set_status(). A normalized task:
-    {source, source_ref, source_url, source_kind, source_parent, title, description, status, state}
+    {source, source_ref, source_url, title, description, status, state}
 (status is bhote's vocabulary: now next waiting review later done; state is the name in the outside system).
+
+Linear mirrors ONLY the issues in triage (workflow state of type `triage`) of the teams in LINEAR_TEAMS (all teams the key sees when unset), assigned or not.
+Each is status next. An issue that leaves triage drops out of the list; the caller then marks its task done.
 
 Secrets: the key comes from the secret store through secretstore.read_value (an internal call: `bhote secret get --reveal` is refused in Claude
 sessions on purpose), else from the environment. It goes to curl on stdin (-K -), never into an argument, a cache entry, a log or an error message.
@@ -22,19 +26,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import secretstore as ss  # noqa: E402
 
 LINEAR_URL = "https://api.linear.app/graphql"
-IMS_DEFAULT = "https://ims-api.bilendo.de"
 DESC_MAX = 140
-DONE_SET = {"done", "closed", "archived", "completed", "erledigt"}
-IMS_MAP_DEFAULT = {"open": "next", "in progress": "now", "in bearbeitung": "now", "review": "review", "in review": "review",
-                   "blocked": "waiting", "waiting": "waiting", "wartend": "waiting", "backlog": "later"}
-IMS_BACK_DEFAULT = {"now": "In Progress", "next": "Open", "review": "Review", "waiting": "Blocked", "later": "Backlog", "done": "Done"}
-LINEAR_MAP = {"backlog": "later", "todo": "next", "in progress": "now", "in review": "review", "done": "done", "canceled": "done", "cancelled": "done"}
-LINEAR_TYPE = {"backlog": "later", "unstarted": "next", "started": "now", "completed": "done", "canceled": "done"}
 STATUSES = {"now", "next", "waiting", "review", "later", "done"}
+DRY = False                                 # --dry-run: nothing is written, not even the API cache
+FILTERED = []                               # what the list rules left out: {source, reason} (never a title, never an id)
 
 
 class Fail(Exception):
-    pass
+    code = 0
 
 
 class NotChangeable(Exception):
@@ -124,6 +123,7 @@ def cached(key, fetch):
 
 
 def save(path, obj):
+    if DRY: return
     try:
         os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
         fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=os.path.dirname(path))
@@ -165,17 +165,14 @@ def http(method, url, headers, body=None, timeout=15):
 
 
 def ok_body(st, text, what):
-    if st in (429, 403) or st >= 500: raise Fail(f"{what}: HTTP {st}")
-    if st >= 400: raise Fail(f"{what}: HTTP {st}")
+    if st >= 400:
+        e = Fail(f"{what}: the key is not accepted (HTTP {st})" if st == 401 else f"{what}: HTTP {st}")
+        e.code = st
+        raise e
     return text
 
 
 # ── Linear ───────────────────────────────────────────────────────────────────────────────────────────────────
-
-def linear_status(state):
-    n = (state or {}).get("name", "").strip().lower(); t = (state or {}).get("type", "")
-    return LINEAR_MAP.get(n) or LINEAR_TYPE.get(t) or "next"
-
 
 class Linear:
     name = "linear"
@@ -189,193 +186,75 @@ class Linear:
         k = self.key()
         def go():
             st, text = http("POST", LINEAR_URL, {"Authorization": k, "Content-Type": "application/json"}, json.dumps({"query": query, "variables": variables}))
+            if st in (400, 401, 403) and (st == 401 or "authentication" in text.lower()):
+                e = Fail("Linear: the key is not accepted (HTTP %d)" % st); e.code = st; raise e
             ok_body(st, text, "Linear")
             try: d = json.loads(text)
             except ValueError: raise Fail("Linear: not JSON")
             if d.get("errors"): raise Fail("Linear: " + clean((d["errors"][0] or {}).get("message", "error"), 120))
             return text
         text = cached(cache, go) if cache else go()
-        return json.loads(text)["data"]
+        data = json.loads(text).get("data")
+        if not isinstance(data, dict): raise Fail("Linear: no data in the answer")
+        return data
 
     def norm(self, i):
         st = i.get("state") or {}
-        t = {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300), "source_kind": "", "source_parent": "",
-             "title": clean(i.get("title")), "description": short(i.get("description")), "status": linear_status(st), "state": clean(st.get("name"), 60)}
-        if (st.get("type") == "canceled") or st.get("name", "").lower() in ("canceled", "cancelled"):
-            t["description"] = "Canceled in Linear."
-        return t
+        return {"source": "linear", "source_ref": clean(i.get("identifier")), "source_url": clean(i.get("url"), 300),
+                "title": clean(i.get("title")), "description": short(i.get("description")), "status": "next", "state": clean(st.get("name"), 60)}
 
     def list(self):
         teams = [x.strip().upper() for x in cfg("LINEAR_TEAMS").split(",") if x.strip()]
-        flt = '{state: {type: {nin: ["completed", "canceled"]}}' + (', team: {key: {in: [%s]}}' % ", ".join(json.dumps(t) for t in teams) if teams else "") + "}"
-        q = ("query($after: String) { viewer { assignedIssues(first: 100, after: $after, filter: %s) { nodes { identifier title description url priority updatedAt "
-             "state { name type } team { key } cycle { number name } } pageInfo { hasNextPage endCursor } } } }" % flt)
+        flt = '{state: {type: {eq: "triage"}}' + (', team: {key: {in: [%s]}}' % ", ".join(json.dumps(t) for t in teams) if teams else "") + "}"
+        q = ("query($after: String) { issues(first: 100, after: $after, filter: %s) { nodes { identifier title description url state { name type } team { key } } "
+             "pageInfo { hasNextPage endCursor } } }" % flt)
         out, after = [], None
         for page in range(10):
-            d = self.gql(q, {"after": after}, cache=f"linear my-issues {','.join(teams)} p{page} {after or ''}")
-            a = d["viewer"]["assignedIssues"]
+            d = self.gql(q, {"after": after}, cache=f"linear triage {','.join(teams)} p{page} {after or ''}")
+            a = d["issues"]
             for i in a["nodes"]:
-                if teams and (i.get("team") or {}).get("key", "").upper() not in teams: continue
+                if (i.get("state") or {}).get("type") != "triage" or (teams and (i.get("team") or {}).get("key", "").upper() not in teams):
+                    FILTERED.append({"source": "linear", "reason": "not in triage"}); continue
                 out.append(self.norm(i))
             if not a["pageInfo"]["hasNextPage"]: break
             after = a["pageInfo"]["endCursor"]
+            if not after: raise Fail("Linear: a next page without a cursor")
         else:
-            raise Fail("Linear: more than 1000 issues")
+            raise Fail("Linear: more than 1000 issues in triage")
         return out
 
-    def fetch(self, ref, kind=""):
-        q = "query($id: String!) { issue(id: $id) { identifier title description url priority updatedAt state { name type } team { key } cycle { number name } } }"
+    def fetch(self, ref):
+        q = "query($id: String!) { issue(id: $id) { identifier title description url state { name type } team { key } } }"
         i = self.gql(q, {"id": ref}).get("issue")
         return self.norm(i) if i else None
 
     def open(self, url):
         return url
 
-    def set_status(self, ref, status, kind="", ident=""):
-        if status not in STATUSES - {"waiting"}: raise NotChangeable("Linear has no state for " + status)
+    def set_status(self, ref, status, ident=""):
+        """Only `done` is written back: the issue moves to the Done state of its team. Every other status stays local."""
+        if status != "done": raise NotChangeable("only done is written back to Linear")
         q = "query($id: String!) { issue(id: $id) { id team { states { nodes { id name type position } } } } }"
         i = self.gql(q, {"id": ref}).get("issue")
         if not i: raise NotChangeable("the issue is gone")
-        want = {"now": ("started", "in progress"), "next": ("unstarted", "todo"), "review": ("started", "in review"), "later": ("backlog", "backlog"), "done": ("completed", "done")}[status]
         nodes = sorted(i["team"]["states"]["nodes"], key=lambda s: s.get("position", 0))
-        pick = next((s for s in nodes if s["name"].lower() == want[1]), None)
-        if not pick and status != "review": pick = next((s for s in nodes if s["type"] == want[0]), None)
-        if not pick: raise NotChangeable("no matching state in the team")
+        pick = next((s for s in nodes if s["name"].lower() == "done" and s["type"] == "completed"), None) or next((s for s in nodes if s["type"] == "completed"), None)
+        if not pick: raise NotChangeable("no Done state in the team")
         m = "mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }"
         d = self.gql(m, {"id": i["id"], "s": pick["id"]})
         if not d["issueUpdate"]["success"]: raise Fail("Linear refused the change")
-
-
-# ── IMS ──────────────────────────────────────────────────────────────────────────────────────────────────────
-
-def ims_map():
-    m = dict(IMS_MAP_DEFAULT)
-    for pair in cfg("IMS_STATUS_MAP").split(","):
-        if "=" in pair:
-            k, v = pair.split("=", 1)
-            if v.strip() in STATUSES: m[k.strip().lower()] = v.strip()
-    return m
-
-
-def ims_status(name):
-    n = (name or "Open").strip().lower()
-    if n in DONE_SET: return "done"
-    return ims_map().get(n, "next")
-
-
-def rows(d):
-    if isinstance(d, list): return d
-    if isinstance(d, dict):
-        for k in ("data", "tasks", "items", "rows", "workItems", "work_items", "results"):
-            if isinstance(d.get(k), list): return d[k]
-    return []
-
-
-class IMS:
-    name = "ims"
-
-    def base(self):
-        return cfg("IMS_URL", IMS_DEFAULT).rstrip("/")
-
-    def key(self):
-        k = secret("IMS_API_KEY")
-        if not k: raise Skip("no IMS_API_KEY in the secret store (bhote secret set IMS_API_KEY)")
-        return k
-
-    def get(self, path, cache=None):
-        k = self.key(); url = self.base() + path
-        def go():
-            st, text = http("GET", url, {"Authorization": "Bearer " + k, "Accept": "application/json"})
-            return ok_body(st, text, "IMS")
-        text = cached(cache, go) if cache else go()
-        try: return json.loads(text)
-        except ValueError: raise Fail("IMS: not JSON")
-
-    def url_of(self, kind, rid):
-        web = cfg("IMS_WEB_URL").rstrip("/")
-        if web: return f"{web}/{'work-items' if kind == 'work_item' else 'tasks'}/{rid}"
-        return self.base() + (f"/api/company/work-items/{rid}" if kind == "work_item" else f"/api/tasks/{rid}")
-
-    def norm_item(self, w):
-        n = w.get("item_number")
-        ref = f"IMS-{n}" if n not in (None, "") else f"IMS-W{w.get('id')}"
-        desc = short(w.get("description"))
-        if w.get("remote_id"): desc = clean(f"Jira {w['remote_id']}" + (f": {desc}" if desc else ""), DESC_MAX)
-        return {"source": "ims", "source_ref": ref, "source_url": self.url_of("work_item", w.get("id")), "source_kind": "work_item", "source_parent": "",
-                "title": clean(w.get("title")), "description": desc, "status": ims_status(w.get("status")), "state": clean(w.get("status"), 60), "ims_id": str(w.get("id", ""))}
-
-    def norm_task(self, t, parents):
-        wid = t.get("work_item_id")
-        return {"source": "ims", "source_ref": f"IMS-T{t.get('id')}", "source_url": self.url_of("task", t.get("id")), "source_kind": "task",
-                "source_parent": parents.get(str(wid), "") if wid not in (None, "") else "",
-                "title": clean(t.get("title")), "description": short(t.get("description")), "status": ims_status(t.get("status")), "state": clean(t.get("status"), 60), "ims_id": str(t.get("id", ""))}
-
-    def list(self):
-        items = [w for w in rows(self.get("/api/tasks/my-work-items?includeDone=false", cache="ims my-work-items")) if not w.get("deleted_at")]
-        out = [self.norm_item(w) for w in items]
-        parents = {str(w.get("id")): f"IMS-{w.get('item_number')}" for w in items if w.get("item_number") not in (None, "")}
-        tasks = [t for t in rows(self.get("/api/tasks?limit=200", cache="ims tasks")) if not t.get("deleted_at")]
-        lookups = 0
-        for t in tasks:
-            wid = t.get("work_item_id")
-            if wid not in (None, "") and str(wid) not in parents and lookups < 20:   # the work item is not mine: its number, once
-                lookups += 1
-                try:
-                    w = self.get(f"/api/company/work-items/{wid}", cache=f"ims work-item {wid}")
-                    w = w.get("data", w) if isinstance(w, dict) else {}
-                    if w.get("item_number") not in (None, ""): parents[str(wid)] = f"IMS-{w['item_number']}"
-                except Fail:
-                    pass
-        out += [self.norm_task(t, parents) for t in tasks]
-        return [t for t in out if t["status"] != "done"]
-
-    def fetch(self, ref, kind=""):
-        if ref.startswith("IMS-T"): kind, rid = "task", ref[5:]
-        elif ref.startswith("IMS-"): kind, rid = "work_item", None
-        else: return None
-        if kind == "task":
-            d = self.get(f"/api/tasks/{rid}"); d = d.get("data", d) if isinstance(d, dict) else None
-            return self.norm_task(d, {}) if d else None
-        for w in rows(self.get(f"/api/company/work-items?search={ref[4:]}")):
-            if str(w.get("item_number")) == ref[4:]: return self.norm_item(w)
-        return None
-
-    def open(self, url):
-        return url
-
-    def back_name(self, status):
-        for pair in cfg("IMS_STATUS_MAP").split(","):
-            if "=" in pair and pair.split("=", 1)[1].strip() == status: return pair.split("=", 1)[0].strip()
-        return IMS_BACK_DEFAULT[status]
-
-    def set_status(self, ref, status, kind="", ident=""):
-        if status not in STATUSES: raise NotChangeable("unknown status")
-        k = self.key()
-        if not ident:
-            t = self.fetch(ref)
-            if not t: raise NotChangeable("the item is gone")
-            ident = t["ims_id"]
-        kind = kind or ("task" if ref.startswith("IMS-T") else "work_item")
-        body = json.dumps({"status": self.back_name(status)})
-        if kind == "task":
-            st, text = http("PUT", self.base() + f"/api/tasks/{ident}", {"Authorization": "Bearer " + k, "Content-Type": "application/json"}, body)
-        else:
-            st, text = http("PATCH", self.base() + f"/api/company/work-items/{ident}", {"Authorization": "Bearer " + k, "Content-Type": "application/json"}, body)
-        if st == 409: raise NotChangeable("IMS: the status of this item moves only through its workflow (409)")
-        if st in (400, 404, 422): raise NotChangeable(f"IMS refused the status (HTTP {st})")
-        ok_body(st, text, "IMS")
 
 
 class Skip(Exception):
     pass
 
 
-ADAPTERS = {"linear": Linear, "ims": IMS}
+ADAPTERS = {"linear": Linear}
 
 
 def cmd_list(src):
     names = list(ADAPTERS) if src in ("", "all") else [src]
-    res = {"tasks": [], "ok": [], "errors": {}, "skipped": {}}
+    res = {"tasks": [], "ok": [], "errors": {}, "skipped": {}, "filtered": []}
     for n in names:
         if n not in ADAPTERS: raise Fail("no source " + n)
         try:
@@ -384,26 +263,31 @@ def cmd_list(src):
             res["skipped"][n] = str(e)
         except Fail as e:
             res["errors"][n] = str(e)
+            FILTERED[:] = [f for f in FILTERED if f["source"] != n]    # (a failed source counts nothing)
         except (KeyError, TypeError, ValueError) as e:
             res["errors"][n] = "unexpected answer (" + type(e).__name__ + ")"
+            FILTERED[:] = [f for f in FILTERED if f["source"] != n]
+    res["filtered"] = FILTERED
     return res
 
 
 def main(argv):
     if not argv: print(__doc__); return 2
     cmd, rest = argv[0], argv[1:]
-    opts = {"--source": "", "--kind": "", "--id": ""}; pos = []
+    global DRY
+    opts = {"--source": "", "--kind": "", "--id": ""}; pos = []   # (--kind is read and ignored: older callers pass it)
     i = 0
     while i < len(rest):
-        if rest[i] in opts: opts[rest[i]] = rest[i + 1] if i + 1 < len(rest) else ""; i += 2
+        if rest[i] == "--dry-run": DRY = True; i += 1
+        elif rest[i] in opts: opts[rest[i]] = rest[i + 1] if i + 1 < len(rest) else ""; i += 2
         else: pos.append(rest[i]); i += 1
     try:
         if cmd == "list":
             print(json.dumps(cmd_list(opts["--source"]))); return 0
         if cmd == "fetch":
-            print(json.dumps(ADAPTERS[opts["--source"]]().fetch(pos[0], opts["--kind"]))); return 0
+            print(json.dumps(ADAPTERS[opts["--source"]]().fetch(pos[0]))); return 0
         if cmd == "set-status":
-            ADAPTERS[opts["--source"]]().set_status(pos[0], pos[1], opts["--kind"], opts["--id"]); print(json.dumps({"ok": True})); return 0
+            ADAPTERS[opts["--source"]]().set_status(pos[0], pos[1], opts["--id"]); print(json.dumps({"ok": True})); return 0
         if cmd == "open":
             if pos and re.match(r"^https?://", pos[0]): print(pos[0]); return 0
             return 1

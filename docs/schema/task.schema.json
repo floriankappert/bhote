@@ -150,7 +150,7 @@
             "channel": {
               "type": "string",
               "pattern": "^[A-Z0-9]+$",
-              "description": "Channel id (C…, G…, D…) or a user id for the DM"
+              "description": "Channel id (C\u2026, G\u2026, D\u2026) or a user id for the DM"
             },
             "thread": {
               "type": [
@@ -191,7 +191,7 @@
         "null"
       ],
       "additionalProperties": false,
-      "description": "The card an agent put under a review task: what it did and what is open, and the jump button *Review ansehen* (`bhote review <ref> --summary … --look`). Null when the task is not in review or has no card.",
+      "description": "The card an agent put under a review task: what it did and what is open, and the jump button *Review ansehen* (`bhote review <ref> --summary \u2026 --look`). Null when the task is not in review or has no card.",
       "properties": {
         "summary": {
           "type": [
@@ -239,17 +239,16 @@
         "agent",
         "stash",
         "linear",
-        "ims",
         "manual"
       ],
-      "description": "Where the task comes from. A task made before sources existed has none stored: it is derived when read (what an agent made is agent, the rest manual)."
+      "description": "Where the task comes from. A task made before sources existed has none stored: it is derived when read (what an agent made is agent, the rest manual). A legacy value of a source that no longer exists (ims) is read as derived."
     },
     "source_ref": {
       "type": [
         "string",
         "null"
       ],
-      "description": "The reference in the source: IMS-123 (Linear, IMS work item), IMS-T<id> (IMS task), the agent's name, the stash id."
+      "description": "The reference in the source: ABC-123 (the Linear identifier), the agent's name, the stash id."
     },
     "source_url": {
       "type": [
@@ -265,14 +264,14 @@
         "work_item",
         null
       ],
-      "description": "IMS only: a personal task (task) or a ticket (work_item)."
+      "description": "Legacy (the removed IMS source): a personal task (task) or a ticket (work_item). Not written any more; still read."
     },
     "source_parent": {
       "type": [
         "string",
         "null"
       ],
-      "description": "IMS only: the work item (IMS-<n>) an IMS task belongs to."
+      "description": "Legacy (the removed IMS source): the work item an IMS task belonged to. Not written any more; still read."
     },
     "created": {
       "type": [

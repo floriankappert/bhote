@@ -295,7 +295,7 @@ fn main() {
             let remote_duty = a.iter().any(|x| x == "--remote") && (cfg!(target_os = "linux") || herdr_app::enabled()) && !host.is_empty();
             let remote_running = Arc::new(AtomicBool::new(false));
             let mut next_remote = Instant::now();
-            let tasks_running = Arc::new(AtomicBool::new(false));   // the mirror of Linear and the IMS into tasks (`bhote task sync`), every API_CACHE_EVERY x 6 s at most 120
+            let tasks_running = Arc::new(AtomicBool::new(false));   // the mirror of the Linear triage issues into tasks (`bhote task sync`), every API_CACHE_EVERY x 6 s at most 120
             let mut next_tasks = Instant::now() + Duration::from_secs(20);
             // one daemon per shared folder: another one that is alive keeps the work (two would do every follow-up twice)
             if let Some(f) = &pid_file { if let Some(other) = fs::read_to_string(f).ok().and_then(|t| t.split_whitespace().next().and_then(|p| p.parse::<i32>().ok())) { if other != std::process::id() as i32 && alive(other) { eprintln!("bhoted: another daemon ({}) runs for this folder", other); std::process::exit(0); } } }
@@ -354,7 +354,7 @@ fn main() {
                     let base: u64 = cfg.get("API_CACHE_EVERY").and_then(|v| v.parse().ok()).filter(|n| *n >= 1).unwrap_or(15);
                     next_tasks = Instant::now() + Duration::from_secs((base * 6).min(120).max(base));
                     // only with a key in the secret store (or the environment): a source without one is skipped anyway, and nothing is started for nothing
-                    let has_keys = config.as_deref().and_then(|c| Path::new(c).parent().map(|d| d.join("secrets.json").exists())).unwrap_or(false) || std::env::var_os("LINEAR_API_KEY").is_some() || std::env::var_os("IMS_API_KEY").is_some();
+                    let has_keys = config.as_deref().and_then(|c| Path::new(c).parent().map(|d| d.join("secrets.json").exists())).unwrap_or(false) || std::env::var_os("LINEAR_API_KEY").is_some();
                     if cfg.get("TASK_SYNC").map_or(true, |v| v != "off") && has_keys {
                         let (flag, sh) = (tasks_running.clone(), shared.clone()); flag.store(true, Ordering::SeqCst);
                         std::thread::spawn(move || { let _g = proc::Flag(flag); proc::guarded("task sync", &sh, || proc::run(&monitor::bhote_bin(), &["task", "sync", "--quiet"], 180, None)); });

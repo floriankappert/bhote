@@ -59,8 +59,8 @@ Creates a task. Words without a leading dash form the title; a title that starts
 | `-d`, `--desc <text>` | Description, at most 140 characters (longer text is cut, with a warning). |
 | `@Name`, `-w`, `--waiting <Name>` | The task waits for Name; `waiting_since` is now. |
 | `-s`, `--status <now\|testing\|next\|waiting\|review\|later\|done>` | Initial status (default `now`, or `waiting` with a name; `waiting` needs a name). Another value is exit `1`. |
-| `--source <agent\|stash\|linear\|ims\|manual>` | Where the task comes from (default `manual`; a task an agent makes is `agent`, with its name as the reference). Another value is exit `1`. |
-| `--source-ref <ref>`, `--source-url <link>`, `--source-kind <kind>`, `--source-parent <ref>` | The reference in that system (`IMS-123`), a link (http or https only), the IMS kind (`task`, `work_item`) and the parent work item of an IMS task. |
+| `--source <agent\|stash\|linear\|manual>` | Where the task comes from (default `manual`; a task an agent makes is `agent`, with its name as the reference). Another value is exit `1`. |
+| `--source-ref <ref>`, `--source-url <link>`, `--source-kind <kind>`, `--source-parent <ref>` | The reference in that system (`ABC-123`), a link (http or https only); kind and parent are legacy fields of the removed IMS source (still accepted, not used). |
 
 ```console
 $ bhote add Price list approval @Alex
@@ -76,12 +76,17 @@ Exit `1` without a title.
 
 The commands of this page under one name: `bhote task add ...`, `bhote task list`, `bhote task now <ref>` and so on are `bhote add ...`, `bhote list`, `bhote now <ref>`.
 `bhote topic <command>` is the old name (before 0.9.4 tasks were called topics) and **stays for good**; on a terminal it adds a one-line hint on stderr.
-Only `bhote task` has `sync` and `from-stash`:
+Only `bhote task` has `sync`, `prune` and `from-stash`:
 
-#### `bhote task sync [--source linear|ims] [--json] [--quiet]`
+#### `bhote task sync [--source linear] [--dry-run|-n] [--json] [--quiet]`
 
-Mirrors your open items of Linear and the IMS into tasks (see [task sources](task-sources.md)). `--json`: `{"created", "updated", "done", "written_back", "not_changeable", "sources", "errors", "skipped"}`.
+Mirrors the Linear issues in triage into tasks (status `next`; one that leaves triage becomes `done`) (see [task sources](task-sources.md)). `--json`: `{"created", "updated", "done", "written_back", "not_changeable", "sources", "errors", "skipped"}`.
 Exit `1` when a source failed (the others still ran); a source without a key in the secret store is *skipped*, not an error.
+`--dry-run` (`-n`) fetches from Linear and decides exactly as the real sync, but **writes nothing**: no task file, no tombstone, no lock, no API cache entry. It prints, per source, how many tasks it would create, update, close or skip (with the reasons of the skipped ones: `not in triage`, removed here by hand), plus the candidates it would create or update (title cut to 80 characters, status). `--json`: `{"dry_run", "sources", "errors", "skipped", "totals", "by_source": {source: {would_create, would_update, unchanged, would_write_back, would_close, would_skip, skip_reasons}}, "candidates": [{action, source, title, status}]}`. Keys and tokens are never printed.
+
+#### `bhote task prune --source linear [--dry-run] [--yes] [--json]`
+
+Deletes the mirrored tasks of that source that were not changed here (status moved by hand, own fields, an edited description stay; `--dry-run` lists why). Refuses without `--dry-run` or `--yes`. Deletion is `deleted=1` (a tombstone, as `bhote rm`), so it replicates through the store and kharka; the file also gets `pruned=1`, so a later sync can bring a task back whose item qualifies again. `--json`: `{"dry_run", "deleted", "kept"}`. Exit `1` for a missing or unknown `--source`.
 
 #### `bhote task from-stash <stash id> [-s now|next|later]`
 
@@ -407,11 +412,11 @@ is not set is `null`, never `""` or `0`. Times are Unix seconds.
 | `waiting_since` | integer \| null | Only while `status` is `waiting`. |
 | `agent` | object \| null | The agent of the task: `{"name", "machine", "pane", "session", "branch"}` (each may be null; `branch`: the git branch it works on, `@1234abc` when detached). |
 | `project` | string \| null | The task's project (its name). |
-| `source` | `"agent"` \| `"stash"` \| `"linear"` \| `"ims"` \| `"manual"` | Where the task comes from. Derived (not stored) for tasks made before sources existed. |
-| `source_ref` | string \| null | The reference there: `IMS-123`, `IMS-T<id>` (an IMS task), the agent's name, the stash id. |
+| `source` | `"agent"` \| `"stash"` \| `"linear"` \| `"manual"` | Where the task comes from. Derived (not stored) for tasks made before sources existed or with a legacy value (`ims`). |
+| `source_ref` | string \| null | The reference there: `ABC-123`, the agent's name, the stash id. |
 | `source_url` | string \| null | A link to the item (http or https). |
-| `source_kind` | `"task"` \| `"work_item"` \| null | IMS only: a personal task or a ticket. |
-| `source_parent` | string \| null | IMS only: the work item (`IMS-<n>`) an IMS task belongs to. |
+| `source_kind` | `"task"` \| `"work_item"` \| null | Legacy (removed IMS source), still read. |
+| `source_parent` | string \| null | Legacy (removed IMS source), still read. |
 | `slack` | object \| null | A Slack pin: `{"channel", "thread", "label", "message"}`; `message` is what came from others (senders: text), while in review. |
 | `created` | integer \| null | |
 | `updated` | integer \| null | Last change; the newer one wins in a merge. |

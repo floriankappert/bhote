@@ -18,7 +18,7 @@ herdr-app do layout.show --id bhote
 | | |
 |---|---|
 | **Overview** | Tiles for tasks, pull requests, deployments, tests, servers and runbooks; a tab for each. |
-| **Tasks** | Statuses, the task's page, the stash (*Make a task* on a stash row). Each row has a **source chip** (`agent`, `stash`, `linear`, `IMS task`, `IMS ticket`, `manual`); the head of the section filters by source and its row menu opens the item in Linear or the IMS ([task sources](task-sources.md)). *Start on agent* hands a task over as a message and waits (spinner) until the agent takes it; then the agent is fixed. |
+| **Tasks** | Statuses, the task's page, the stash (*Make a task* on a stash row). Each row has a **source chip** (`agent`, `stash`, `linear`, `manual`); the head of the section filters by source and its row menu opens the item in Linear ([task sources](task-sources.md)). *Start on agent* hands a task over as a message and waits (spinner) until the agent takes it; then the agent is fixed. |
 | **Agents** (left panel) | Cards under their machine (alias: `MACHINE_LABELS`, e.g. `omarchy-flo=Omarchy`), a name from Middle-earth per agent, state by colour, drag and drop for the order, the ear. |
 | **Commit inspector** | The last five commits of the focused agent's branch since it left the base branch; a click opens the message above it. |
 | **Headless agents** | Scheduled Claude jobs (systemd timers, on Linux machines), the machine of each, run now, pause, stop; the log as a small conversation; a form to start one more run. |

@@ -28,8 +28,8 @@ agent_pane=wA:p1
 | `deleted` | `1` = a tombstone: hidden everywhere, kept so that the deletion reaches the replica. |
 | `agent`, `agent_machine`, `agent_pane`, `agent_session` | Set when the task was handed to a herdr agent (or an agent created it). |
 | `transfer_to`, `transfer_to_name`, `transfer_from` | Only while a [Steal & Transfer](steal-and-transfer.md) is pending; any status other than `now` clears them. |
-| `source`, `source_ref`, `source_url`, `source_kind`, `source_parent` | Where the task comes from (`agent`, `stash`, `linear`, `ims`, `manual`), its reference there, a link, the IMS kind (`task`, `work_item`) and the work item of an IMS task. Not there on a task made before sources existed: its source is derived when read (an agent's waiting task, an automatic review card or a card made for an agent: `agent`; the rest `manual`); the file is written only when the task is edited. |
-| `source_id`, `source_status`, `source_note` | Mirrored tasks only (Linear, IMS): the id in the outside system, the status as that system last had it (to tell a change there from a change here) and a note (`not changeable in IMS`). |
+| `source`, `source_ref`, `source_url`, `source_kind`, `source_parent` | Where the task comes from (`agent`, `stash`, `linear`, `manual`), its reference there and a link; `source_kind` and `source_parent` are legacy fields of the removed IMS source (still read). A file of that source (`source=ims`) reads as derived. Not there on a task made before sources existed: its source is derived when read (an agent's waiting task, an automatic review card or a card made for an agent: `agent`; the rest `manual`); the file is written only when the task is edited. |
+| `source_id`, `source_status`, `source_note` | Mirrored tasks only (Linear): the id in the outside system, the status as that system last had it (to tell a change there from a change here) and a note (`not changeable in Linear`). |
 | `handover_branch`, `handover_commit` | Where the last transfer left the work. |
 
 Records with a `kind` sit in the same folder and travel the same way, but are no tasks: `proj-<slug>.topic`

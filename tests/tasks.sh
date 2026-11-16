@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Tests of tasks: the rename (bhote task, bhote topic, /task), dual-read of *.topic and *.task, unknown fields that survive every rewrite, the source of a task
-# (derived at read time, chips, filter, CLI flags), the adapters (Linear and IMS against a fake curl; no key leaves the process, no real API is called),
+# (derived at read time, chips, filter, CLI flags), the Linear adapter (triage only, against a fake curl; no key leaves the process, no real API is called),
 # from-stash, and bhote migrate tasks (a fake kharka). Throw-away config and data. Usage: bash tests/tasks.sh
 cd "$(dirname "$0")/.." || exit 1
-unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID LINEAR_API_KEY IMS_API_KEY
+unset CLAUDECODE CLAUDE_CODE_SESSION_ID HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID LINEAR_API_KEY
 T=$(mktemp -d); export NO_COLOR=1 BHOTE_CONFIG=$T/cfg/config BHOTE_DATA=$T/data TMPDIR=$T BHOTE_SHARED=$T/shared HOME=$T/home PYTHONDONTWRITEBYTECODE=1 BHOTE_API_CACHE=off
 mkdir -p "$T/bin" "$T/cfg" "$T/home" "$T/fake" "$T/data/topics"; export FAKE_DIR=$T/fake FAKE_LOG=$T/fake.log PATH="$T/bin:$PATH"; echo NOTIFY=off > "$BHOTE_CONFIG"
 trap 'rm -rf "${T:?}"' EXIT
@@ -11,7 +11,7 @@ B() { bash ./bhote "$@"; }
 fail=0; ok() { echo "ok   $1"; }; bad() { echo "FAIL $1"; fail=1; }
 D=$T/data/topics
 clear_d() { rm -f "${D:?}"/* "${D:?}"/.pull.* 2>/dev/null; }
-LKEY=lin_api_FAKEFAKEFAKE0123456789; IKEY=ims_FAKEFAKEFAKE0123456789
+LKEY=lin_api_FAKEFAKEFAKE0123456789
 cat > "$T/bin/herdr" <<'SH'
 #!/bin/sh
 exit 1
@@ -31,7 +31,7 @@ while i < len(a):
 cfgin = sys.stdin.read() if "-K" in a else ""
 auth = re.search(r'header = "Authorization: ([^"]*)"', cfgin); auth = auth.group(1) if auth else ""
 d = os.environ["FAKE_DIR"]
-ok = "none" if not auth else ("ok" if auth in (os.environ.get("EXPECT_LINEAR", "-"), "Bearer " + os.environ.get("EXPECT_IMS", "-")) else "bad")
+ok = "none" if not auth else ("ok" if auth == os.environ.get("EXPECT_LINEAR", "-") else "bad")
 open(os.environ["FAKE_LOG"], "a").write(json.dumps({"argv": a, "method": method, "url": url, "auth": ok, "body": body}) + "\n")
 def out(code, text): sys.stdout.write(text + "\n" + str(code)); sys.exit(0)
 def f(n):
@@ -43,26 +43,13 @@ if "api.linear.app" in url:
     q = json.loads(body); qs = q["query"]
     if "issueUpdate" in qs: out(200, f("linear.update.json") or '{"data":{"issueUpdate":{"success":true}}}')
     if "states" in qs: out(200, f("linear.states.json"))
-    if "assignedIssues" in qs:
+    if "issues(first" in qs:
         after = (q.get("variables") or {}).get("after")
-        t = f("linear.assigned.%s.json" % after) if after else f("linear.assigned.json")
+        t = f("linear.triage.%s.json" % after) if after else f("linear.triage.json")
         out(200, t)
     if "issue(id" in qs:
         t = f("linear.issue.%s.json" % q["variables"]["id"]); out(200, t or '{"data":{"issue":null}}')
     out(400, "{}")
-if "ims-api.test" in url:
-    path = url.split("ims-api.test", 1)[1]
-    if method == "PATCH": out(int(f("ims.patch.status") or 200), "{}")
-    if method == "PUT": out(int(f("ims.put.status") or 200), "{}")
-    if path.startswith("/api/tasks/my-work-items"): out(200, f("ims.my-work-items.json") or "[]")
-    if path.startswith("/api/tasks?"): out(200, f("ims.tasks.json") or "[]")
-    m = re.match(r"/api/company/work-items/(\w+)$", path)
-    if m:
-        t = f("ims.work-item.%s.json" % m.group(1)); out(200 if t else 404, t or "{}")
-    if path.startswith("/api/company/work-items?"): out(200, f("ims.search.json") or "[]")
-    m = re.match(r"/api/tasks/(\w+)$", path)
-    if m:
-        t = f("ims.task.%s.json" % m.group(1)); out(200 if t else 404, t or "{}")
 out(404, "{}")
 PY
 chmod +x "$T/bin/curl"
@@ -149,14 +136,14 @@ cmp -s "$T/man.before" "$D/s-man.topic" && ok "deriving does not write the file"
 B list --source agent | grep -q "Agent waiting topic" && ! B list --source agent | grep -q "A plain one" && ok "list --source agent" || bad "list --source: $(B list --source agent)"
 B list --source manual --json | jq -e 'length == 2' >/dev/null && ok "list --source manual --json" || bad "list --source manual"
 B list --source nope >/dev/null 2>&1; [ $? = 1 ] && ok "list --source with an unknown source is exit 1" || bad "unknown source accepted"
-out=$(B add "From a flag" --source linear --source-ref IMS-5 --source-url https://linear.app/x/IMS-5 --json); echo "$out" | jq -e '.source == "linear" and .source_ref == "IMS-5" and .source_url == "https://linear.app/x/IMS-5" and .source_kind == null and .source_parent == null' >/dev/null && ok "add --source/--source-ref/--source-url, shown by --json" || bad "add source: $out"
+out=$(B add "From a flag" --source linear --source-ref ABC-5 --source-url https://linear.app/x/ABC-5 --json); echo "$out" | jq -e '.source == "linear" and .source_ref == "ABC-5" and .source_url == "https://linear.app/x/ABC-5" and .source_kind == null and .source_parent == null' >/dev/null && ok "add --source/--source-ref/--source-url, shown by --json" || bad "add source: $out"
 B add "Bad source" --source jira >/dev/null 2>&1; [ $? = 1 ] && ok "add with an unknown source is exit 1 (nothing made)" || bad "bad source accepted"
 B add "Bad url" --source linear --source-url "javascript:x" >/dev/null 2>&1; [ $? = 1 ] && ok "a source URL must be http(s)" || bad "bad url accepted"
-B show "From a flag" | grep -q "source: linear IMS-5 https://linear.app/x/IMS-5" && ok "show names the source" || bad "show: $(B show 'From a flag')"
+B show "From a flag" | grep -q "source: linear ABC-5 https://linear.app/x/ABC-5" && ok "show names the source" || bad "show: $(B show 'From a flag')"
 out=$(B add "By hand" --json); [ "$(echo "$out" | jq -r .source)" = manual ] && ok "a task made by hand is manual" || bad "manual: $out"
 out=$(CLAUDECODE=1 HERDR_PANE_ID=w1:p1 B add "Agent made" --json 2>/dev/null); echo "$out" | jq -e '.source == "agent"' >/dev/null && ok "a task an agent makes via bhote add is agent" || bad "agent add: $out"
 mk s-hand "Hand written source" next 100 "source=ims" "source_ref=IMS-77" "source_kind=work_item"
-[ "$(B show s-hand --json | jq -r .source_kind)" = work_item ] && ok "stored source fields are shown" || bad "stored fields"
+[ "$(B show s-hand --json | jq -r .source_kind)" = work_item ] && [ "$(B show s-hand --json | jq -r .source)" = manual ] && B list --all --json >/dev/null && ok "a legacy source (ims) is read without an error (derived as manual); source_kind stays readable" || bad "legacy source: $(B show s-hand --json)"
 jq . docs/schema/task.schema.json >/dev/null 2>&1 && ok "docs/schema/task.schema.json is valid JSON" || bad "task schema"
 jq -e '."$ref" // .allOf' docs/schema/topic.schema.json >/dev/null 2>&1 && ok "docs/schema/topic.schema.json stays (the old name points to the new schema)" || bad "old schema name"
 
@@ -167,118 +154,111 @@ out=$(B task from-stash 1700000000000-1 -s next --json); echo "$out" | jq -e '.s
 [ "$(jq length "$T/data/stash.json")" = 1 ] && [ "$(jq -r '.[0].id' "$T/data/stash.json")" = "1700000000000-2" ] && ok "from-stash removes the entry from the stash" || bad "stash entry stayed: $(cat "$T/data/stash.json")"
 B task from-stash nope >/dev/null 2>&1; [ $? = 1 ] && ok "from-stash with an unknown id is exit 1" || bad "unknown stash id"
 
-# ── 6. the adapters (a fake curl): Linear
+# ── 6. the Linear adapter (a fake curl): only the issues in triage are mirrored
 clear_d; : > "$FAKE_LOG"
-export EXPECT_LINEAR=$LKEY EXPECT_IMS=$IKEY
-cat > "$FAKE_DIR/linear.assigned.json" <<'J'
-{"data":{"viewer":{"assignedIssues":{"nodes":[
- {"identifier":"IMS-101","title":"Fix login","description":"Line one\nline two","url":"https://linear.app/acme/issue/IMS-101","priority":2,"updatedAt":"2026-11-01T10:00:00Z","state":{"name":"In Progress","type":"started"},"team":{"key":"IMS"},"cycle":{"number":5,"name":"C5"}},
- {"identifier":"IMS-102","title":"Backlog thing","description":null,"url":"https://linear.app/acme/issue/IMS-102","state":{"name":"Backlog","type":"backlog"},"team":{"key":"IMS"},"cycle":null},
- {"identifier":"ENG-7","title":"Other team","url":"https://linear.app/acme/issue/ENG-7","state":{"name":"Todo","type":"unstarted"},"team":{"key":"ENG"}},
- {"identifier":"IMS-103","title":"Weird state","url":"https://linear.app/acme/issue/IMS-103","state":{"name":"Triage","type":"unstarted"},"team":{"key":"IMS"}},
- {"identifier":"IMS-104","title":"In review one","url":"https://linear.app/acme/issue/IMS-104","state":{"name":"In Review","type":"started"},"team":{"key":"IMS"}},
- {"identifier":"IMS-105","title":"Todo one","url":"https://linear.app/acme/issue/IMS-105","state":{"name":"Todo","type":"unstarted"},"team":{"key":"IMS"}}
-],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}}
+export EXPECT_LINEAR=$LKEY
+chk() { local f=$D/$1.topic; [ "$(grep "^$2=" "$f" 2>/dev/null | cut -d= -f2-)" = "$3" ] && ok "$4" || bad "$4: $(cat "$f" 2>&1 | tr '\n' ' ')"; }
+cat > "$FAKE_DIR/linear.triage.json" <<'J'
+{"data":{"issues":{"nodes":[
+ {"identifier":"ABC-101","title":"Fix login","description":"Line one\nline two","url":"https://linear.app/acme/issue/ABC-101","state":{"name":"Triage","type":"triage"},"team":{"key":"ABC"}},
+ {"identifier":"ABC-102","title":"Unassigned bug","description":null,"url":"https://linear.app/acme/issue/ABC-102","state":{"name":"Triage","type":"triage"},"team":{"key":"ABC"}},
+ {"identifier":"ENG-7","title":"Other team","url":"https://linear.app/acme/issue/ENG-7","state":{"name":"Triage","type":"triage"},"team":{"key":"ENG"}},
+ {"identifier":"ABC-103","title":"A server that ignores the filter","url":"https://linear.app/acme/issue/ABC-103","state":{"name":"In Progress","type":"started"},"team":{"key":"ABC"}}
+],"pageInfo":{"hasNextPage":false,"endCursor":null}}}}
 J
 out=$(B task sync --source linear 2>&1); echo "$out" | grep -q "skipped linear: no LINEAR_API_KEY" && [ ! -s "$FAKE_LOG" ] && ok "no key in the store: the source is skipped, nothing is asked" || bad "no key: $out / $(cat "$FAKE_LOG")"
 export LINEAR_API_KEY=$LKEY
-out=$(B task sync --source linear --json); echo "$out" | jq -e '.created == 6 and (.errors | length) == 0' >/dev/null && ok "linear sync: six issues become six tasks" || bad "linear sync: $out"
-for p in 'IMS-101 now' 'IMS-102 later' 'ENG-7 next' 'IMS-103 next' 'IMS-104 review' 'IMS-105 next'; do set -- $p; f=$(grep -l "^source_ref=$1\$" "$D"/*.topic | head -1); [ "$(grep '^status=' "$f" | cut -d= -f2)" = "$2" ] && ok "linear state of $1 -> $2" || bad "linear status of $1: $(cat "$f")"; done
-f=$D/linear-IMS-101.topic; [ -f "$f" ] && grep -q '^source=linear$' "$f" && grep -q '^source_url=https://linear.app/acme/issue/IMS-101$' "$f" && grep -q '^title=Fix login$' "$f" && grep -q '^description=Line one$' "$f" && ok "a mirrored task: deterministic id, source fields, title, first line of the description" || bad "mirror file: $(cat "$f")"
+out=$(B task sync --source linear --json); echo "$out" | jq -e '.created == 3 and (.errors | length) == 0' >/dev/null && [ -f "$D/linear-ABC-101.topic" ] && [ -f "$D/linear-ENG-7.topic" ] && [ ! -e "$D/linear-ABC-103.topic" ] && ok "linear: the issues in triage become tasks (assigned or not); an issue that is not in triage is not" || bad "linear sync: $out / $(ls "$D")"
+jq -e 'select(.body != null) | .body | fromjson | .query | select(contains("triage") and (contains("assignedIssues") | not) and (contains("dueDate") | not))' "$FAKE_LOG" >/dev/null && ok "the query asks for the triage state type, not for your assigned issues, and not for due dates" || bad "linear query: $(cut -c1-300 "$FAKE_LOG")"
+for r in ABC-101 ABC-102 ENG-7; do chk linear-$r status next "linear $r: status next"; done
+chk linear-ABC-101 source linear "source is linear"
+chk linear-ABC-101 source_url https://linear.app/acme/issue/ABC-101 "the link of the issue is kept"
+chk linear-ABC-101 title "Fix login" "the title is kept"
+chk linear-ABC-101 description "Line one" "the first line of the description"
+chk linear-ABC-101 source_status_raw Triage "the raw state name is kept (source_status_raw)"
+grep -q '^source_due=\|^source_kind=\|^source_parent=' "$D/linear-ABC-101.topic" && bad "a mirrored task carries a due date or kind: $(cat "$D/linear-ABC-101.topic")" || ok "a mirrored task has no due date, kind or parent"
 n=$(ls "$D" | wc -l); B task sync --source linear >/dev/null; [ "$(ls "$D" | wc -l)" = "$n" ] && ok "sync twice: deduped by source and reference" || bad "duplicates after a second sync"
-cp "$f" "$T/lin.before"; B task sync --source linear >/dev/null; cmp -s "$f" "$T/lin.before" && ok "a sync with no change writes nothing" || bad "idle sync rewrote the file"
-B list --source linear --json | jq -e 'length == 6' >/dev/null && ok "list --source linear" || bad "list linear"
-echo "LINEAR_TEAMS=ims" >> "$BHOTE_CONFIG"; clear_d; B task sync --source linear --json | jq -e '.created == 5' >/dev/null && [ ! -e "$D/linear-ENG-7.topic" ] && ok "LINEAR_TEAMS filters by team key" || bad "team filter"
+f=$D/linear-ABC-101.topic; cp "$f" "$T/lin.before"; B task sync --source linear >/dev/null; cmp -s "$f" "$T/lin.before" && ok "a sync with no change writes nothing" || bad "idle sync rewrote the file"
+B list --source linear --json | jq -e 'length == 3' >/dev/null && ok "list --source linear" || bad "list linear"
+B task sync --source ims >/dev/null 2>&1; [ $? = 1 ] && ok "task sync --source ims is refused (the IMS source is gone)" || bad "ims accepted"
+# LINEAR_TEAMS: only those teams; the query names them
+echo "LINEAR_TEAMS=abc" >> "$BHOTE_CONFIG"; clear_d; : > "$FAKE_LOG"; B task sync --source linear --json | jq -e '.created == 2' >/dev/null && [ ! -e "$D/linear-ENG-7.topic" ] && jq -e 'select(.body != null) | .body | fromjson | .query | select(contains("team: {key: {in: [\"ABC\"]"))' "$FAKE_LOG" >/dev/null && ok "LINEAR_TEAMS filters by team key (in the query and again on the answer)" || bad "team filter: $(ls "$D") $(cut -c1-300 "$FAKE_LOG")"
 sed -i.bak '/^LINEAR_TEAMS=/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"; B task sync --source linear >/dev/null
-# the outside system is authoritative: a change there wins; an issue that is gone (or done) there is done here, never deleted
-sed 's/"In Progress","type":"started"/"In Review","type":"started"/; s/Fix login/Fix the login/' "$FAKE_DIR/linear.assigned.json" | jq 'del(.data.viewer.assignedIssues.nodes[1])' > "$FAKE_DIR/linear.assigned.json.new"; mv "$FAKE_DIR/linear.assigned.json.new" "$FAKE_DIR/linear.assigned.json"
-echo '{"data":{"issue":{"identifier":"IMS-102","title":"Backlog thing","description":null,"url":"https://linear.app/acme/issue/IMS-102","state":{"name":"Canceled","type":"canceled"},"team":{"key":"IMS"}}}}' > "$FAKE_DIR/linear.issue.IMS-102.json"
-B task sync --source linear >/dev/null
-[ "$(grep '^status=' "$D/linear-IMS-101.topic")" = "status=review" ] && grep -q '^title=Fix the login$' "$D/linear-IMS-101.topic" && ok "the outside system wins for status and title" || bad "outside change not taken: $(cat "$D/linear-IMS-101.topic")"
-[ -f "$D/linear-IMS-102.topic" ] && [ "$(grep '^status=' "$D/linear-IMS-102.topic")" = "status=done" ] && grep -q '^description=Canceled in Linear\.$' "$D/linear-IMS-102.topic" && ok "an issue that is gone: marked done (a cancel says so), the file stays" || bad "vanished issue: $(cat "$D/linear-IMS-102.topic" 2>&1)"
-# a local status change is kept while the outside is unchanged, and written back only with TASK_WRITE=on
-: > "$FAKE_LOG"; B done linear-IMS-105 >/dev/null; B task sync --source linear >/dev/null
-[ "$(grep '^status=' "$D/linear-IMS-105.topic")" = "status=done" ] && ! grep -q issueUpdate "$FAKE_LOG" && ok "TASK_WRITE off: a local change stays local and is not written back" || bad "write-back with TASK_WRITE off: $(grep -c issueUpdate "$FAKE_LOG")"
-echo '{"data":{"issue":{"id":"uuid-105","team":{"states":{"nodes":[{"id":"st-todo","name":"Todo","type":"unstarted","position":1},{"id":"st-prog","name":"In Progress","type":"started","position":2},{"id":"st-done","name":"Done","type":"completed","position":4}]}}}}}' > "$FAKE_DIR/linear.states.json"
-echo "TASK_WRITE=on" >> "$BHOTE_CONFIG"; : > "$FAKE_LOG"; B task sync --source linear >/dev/null
-jq -e 'select(.body != null) | .body | select(contains("issueUpdate")) | fromjson | .variables.s == "st-done"' "$FAKE_LOG" >/dev/null && ok "TASK_WRITE=on: the state moves through issueUpdate (Done state)" || bad "no write-back: $(cut -c1-300 "$FAKE_LOG")"
-jq 'del(.data.viewer.assignedIssues.nodes[] | select(.identifier == "IMS-105"))' "$FAKE_DIR/linear.assigned.json" > "$FAKE_DIR/x" && mv "$FAKE_DIR/x" "$FAKE_DIR/linear.assigned.json"   # (Linear now has it done: it leaves the open list)
-: > "$FAKE_LOG"; B task sync --source linear >/dev/null; ! grep -q issueUpdate "$FAKE_LOG" && [ "$(grep '^status=' "$D/linear-IMS-105.topic")" = "status=done" ] && ok "a written-back change is not written again" || bad "write-back repeated"
-B wait linear-IMS-104 Anna >/dev/null; : > "$FAKE_LOG"; B task sync --source linear --json | jq -e '.not_changeable == 1' >/dev/null && ok "a status Linear has no state for (waiting): not changeable, no error" || bad "waiting write-back"
-: > "$FAKE_LOG"; B task sync --source linear >/dev/null; ! grep -q issueUpdate "$FAKE_LOG" && ok "not changeable is not retried (no error loop)" || bad "retry loop"
+# the outside system decides: a change of the title wins; an issue that leaves triage (any way) is done here, never deleted
+jq 'del(.data.issues.nodes[1]) | (.data.issues.nodes[0].title) = "Fix the login"' "$FAKE_DIR/linear.triage.json" > "$FAKE_DIR/x" && mv "$FAKE_DIR/x" "$FAKE_DIR/linear.triage.json"
+: > "$FAKE_LOG"; out=$(B task sync --source linear --json)
+grep -q '^title=Fix the login$' "$D/linear-ABC-101.topic" && ok "the outside system wins for the title" || bad "outside change not taken: $(cat "$D/linear-ABC-101.topic")"
+[ -f "$D/linear-ABC-102.topic" ] && [ "$(grep '^status=' "$D/linear-ABC-102.topic")" = "status=done" ] && grep -q '^description=No longer in triage in Linear\.$' "$D/linear-ABC-102.topic" && echo "$out" | jq -e '.done == 1' >/dev/null && ok "an issue that left triage: marked done here, the file stays" || bad "left triage: $(cat "$D/linear-ABC-102.topic" 2>&1) $out"
+! grep -q "issue(id" "$FAKE_LOG" && ok "no extra lookup per vanished issue" || bad "fetch per issue"
+# it comes back to triage: the outside state wins again
+jq '.data.issues.nodes += [{"identifier":"ABC-102","title":"Unassigned bug","url":"https://linear.app/acme/issue/ABC-102","state":{"name":"Triage","type":"triage"},"team":{"key":"ABC"}}]' "$FAKE_DIR/linear.triage.json" > "$FAKE_DIR/x" && mv "$FAKE_DIR/x" "$FAKE_DIR/linear.triage.json"
+B task sync --source linear >/dev/null; [ "$(grep '^status=' "$D/linear-ABC-102.topic")" = "status=next" ] && ok "back in triage: the task is next again" || bad "back in triage: $(cat "$D/linear-ABC-102.topic")"
+# a local change is kept while Linear is unchanged; written back only with TASK_WRITE=on, and only done
+: > "$FAKE_LOG"; B done linear-ABC-101 >/dev/null; B now linear-ENG-7 >/dev/null; B task sync --source linear >/dev/null
+[ "$(grep '^status=' "$D/linear-ABC-101.topic")" = "status=done" ] && ! grep -q issueUpdate "$FAKE_LOG" && ok "TASK_WRITE off: a local change stays local and is not written back" || bad "write-back with TASK_WRITE off"
+echo '{"data":{"issue":{"id":"uuid-101","team":{"states":{"nodes":[{"id":"st-triage","name":"Triage","type":"triage","position":0},{"id":"st-todo","name":"Todo","type":"unstarted","position":1},{"id":"st-prog","name":"In Progress","type":"started","position":2},{"id":"st-done","name":"Done","type":"completed","position":4},{"id":"st-cancel","name":"Canceled","type":"canceled","position":5}]}}}}}' > "$FAKE_DIR/linear.states.json"
+echo "TASK_WRITE=on" >> "$BHOTE_CONFIG"; : > "$FAKE_LOG"; out=$(B task sync --source linear --json)
+jq -e 'select(.body != null) | .body | select(contains("issueUpdate")) | fromjson | .variables.s == "st-done"' "$FAKE_LOG" >/dev/null && ok "TASK_WRITE=on: done moves the issue to the Done state of its team" || bad "no write-back: $(cut -c1-300 "$FAKE_LOG")"
+[ "$(grep -c issueUpdate "$FAKE_LOG")" = 1 ] && echo "$out" | jq -e '.written_back == 1 and .not_changeable == 0' >/dev/null && ! grep -q '^source_note=' "$D/linear-ENG-7.topic" && ok "other statuses (now) are not written back and are no error or note" || bad "non-done write-back: $out $(grep -c issueUpdate "$FAKE_LOG")"
+: > "$FAKE_LOG"; B task sync --source linear >/dev/null; ! grep -q issueUpdate "$FAKE_LOG" && ok "a written-back change is not written again" || bad "write-back repeated"
 sed -i.bak '/^TASK_WRITE=/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"
+# errors: nothing is marked done because of them
 touch "$FAKE_DIR/down"; out=$(B task sync --source linear 2>&1); rc=$?; rm "$FAKE_DIR/down"; [ "$rc" = 1 ] && echo "$out" | grep -q "linear:" && ok "an unreachable Linear: exit 1, the tasks stay as they were" || bad "down: rc=$rc $out"
-[ "$(grep '^status=' "$D/linear-IMS-105.topic")" = "status=done" ] && [ "$(grep '^status=' "$D/linear-IMS-101.topic")" != "status=done" ] && ok "(and nothing was marked done because of the error)" || bad "tasks changed on error"
+n=$(ls "$D" | wc -l); cp "$D/linear-ABC-101.topic" "$T/lin101"; out=$(EXPECT_LINEAR=other B task sync --source linear 2>&1); rc=$?
+[ "$rc" = 1 ] && echo "$out" | grep -q "linear: Linear: the key is not accepted (HTTP 401)" && [ "$(ls "$D" | wc -l)" = "$n" ] && cmp -s "$T/lin101" "$D/linear-ABC-101.topic" && ok "Linear 401: a clear error, exit 1, no task written or changed" || bad "linear 401: rc=$rc $out"
+: > "$FAKE_LOG"; jq '.data.issues.pageInfo = {"hasNextPage":true,"endCursor":"c1"}' "$FAKE_DIR/linear.triage.json" > "$FAKE_DIR/x" && cp "$FAKE_DIR/linear.triage.json" "$T/lin.keep" && mv "$FAKE_DIR/x" "$FAKE_DIR/linear.triage.json"
+jq '.data.issues.nodes = []' "$FAKE_DIR/linear.triage.json" > "$FAKE_DIR/linear.triage.c1.json.tmp"; rm "$FAKE_DIR/linear.triage.c1.json.tmp"
+st=$(grep -h '^status=' "$D"/*.topic | sort | tr '\n' ' '); out=$(B task sync --source linear 2>&1); rc=$?; [ "$rc" = 1 ] && [ "$(grep -h '^status=' "$D"/*.topic | sort | tr '\n' ' ')" = "$st" ] && ok "Linear: a failing second page: error, no partial writes, nothing marked done" || bad "linear page 2: rc=$rc $out"
+cp "$T/lin.keep" "$FAKE_DIR/linear.triage.json"
+# a task file of the removed IMS source (tombstone or not) is read without trouble and is never touched by a sync
+mk ims-IMS-9 "Legacy IMS task" next 100 "source=ims" "source_ref=IMS-9" "source_kind=work_item" "source_due=2026-01-01" "deleted=0"; cp "$D/ims-IMS-9.topic" "$T/ims9"
+B list --all --json | jq -e '.[] | select(.id == "ims-IMS-9") | .title == "Legacy IMS task"' >/dev/null && B show ims-IMS-9 >/dev/null && B task sync --source linear >/dev/null && cmp -s "$T/ims9" "$D/ims-IMS-9.topic" && ok "a legacy task with source=ims still reads and is left alone by the sync" || bad "legacy ims task: $(B show ims-IMS-9 2>&1)"
+rm -f "$D/ims-IMS-9.topic"
 
-# ── 7. the IMS: tasks and work items
-clear_d; : > "$FAKE_LOG"; unset LINEAR_API_KEY; export IMS_API_KEY=$IKEY; echo "IMS_URL=https://ims-api.test" >> "$BHOTE_CONFIG"
-cat > "$FAKE_DIR/ims.my-work-items.json" <<'J'
-{"data":[
- {"id":901,"item_number":42,"title":"Credits for invoices","description":"A ticket","status":"In Progress","type":"Story","remote_id":"BIL-7","deleted_at":null},
- {"id":902,"item_number":43,"title":"An insight","description":"","status":"Open","type":"Insight","deleted_at":null},
- {"id":903,"item_number":44,"title":"Blocked ticket","status":"Blocked","deleted_at":null},
- {"id":904,"item_number":45,"title":"Deleted ticket","status":"Open","deleted_at":"2026-01-01T00:00:00Z"},
- {"id":905,"item_number":46,"title":"Finished ticket","status":"Erledigt","deleted_at":null},
- {"id":906,"item_number":47,"title":"Unusual status","status":"Zur Abnahme","deleted_at":null}
-]}
-J
-cat > "$FAKE_DIR/ims.tasks.json" <<'J'
-[
- {"id":11,"title":"Call Anna","description":"personal","status":"Open","work_item_id":901,"deleted_at":null},
- {"id":12,"title":"Prepare the demo","status":"In Bearbeitung","work_item_id":777,"deleted_at":null},
- {"id":13,"title":"Done task","status":"Closed","deleted_at":null},
- {"id":14,"title":"Review the PR","status":"Review","deleted_at":null}
-]
-J
-echo '{"data":{"id":777,"item_number":9,"title":"Parent not mine","status":"Open"}}' > "$FAKE_DIR/ims.work-item.777.json"
-out=$(B task sync --source ims --json); echo "$out" | jq -e '.created == 7 and (.errors | length) == 0' >/dev/null && ok "ims sync: work items and tasks become tasks (deleted and done ones do not)" || bad "ims sync: $out"
-chk() { local f=$D/$1.topic; [ "$(grep "^$2=" "$f" 2>/dev/null | cut -d= -f2-)" = "$3" ] && ok "$4" || bad "$4: $(cat "$f" 2>&1 | tr '\n' ' ')"; }
-chk ims-IMS-42 status now "IMS work item 'In Progress' -> now"
-chk ims-IMS-42 source_kind work_item "IMS-42 is a work item (chip: IMS ticket)"
-chk ims-IMS-42 description "Jira BIL-7: A ticket" "a Jira link shows its key in the description"
-chk ims-IMS-43 status next "IMS 'Open' -> next"
-chk ims-IMS-44 status waiting "IMS 'Blocked' -> waiting"
-chk ims-IMS-47 status next "an unknown IMS status -> next"
-chk ims-IMS-T11 source_kind task "an IMS task has kind task (chip: IMS task)"
-chk ims-IMS-T11 source_parent IMS-42 "tasks.work_item_id becomes source_parent (IMS-42), the item is not listed twice"
-chk ims-IMS-T12 source_parent IMS-9 "a parent that is not mine is looked up once for its number"
-chk ims-IMS-T12 status now "IMS 'In Bearbeitung' -> now"
-chk ims-IMS-T14 status review "IMS 'Review' -> review"
-[ ! -e "$D/ims-IMS-45.topic" ] && [ ! -e "$D/ims-IMS-46.topic" ] && [ ! -e "$D/ims-IMS-T13.topic" ] && ok "soft-deleted and done IMS items are not mirrored" || bad "deleted/done mirrored: $(ls "$D")"
-[ "$(B show ims-IMS-T11 --json | jq -r '.source_url')" = "https://ims-api.test/api/tasks/11" ] && ok "without IMS_WEB_URL the link is the item's API address" || bad "ims url"
-echo "IMS_STATUS_MAP=Zur Abnahme=review,Open=later" >> "$BHOTE_CONFIG"; B task sync --source ims >/dev/null
-[ "$(grep '^status=' "$D/ims-IMS-47.topic")" = "status=review" ] && [ "$(grep '^status=' "$D/ims-IMS-43.topic")" = "status=later" ] && ok "IMS_STATUS_MAP replaces the defaults (Zur Abnahme -> review, Open -> later): the new mapping is the outside's word" || bad "status map: $(cat "$D/ims-IMS-47.topic")"
-sed -i.bak '/^IMS_STATUS_MAP=/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"; clear_d; B task sync --source ims >/dev/null
-# write-back: PATCH for work items (a 409 for an Insight: not changeable, never an error loop), PUT for tasks
-echo "TASK_WRITE=on" >> "$BHOTE_CONFIG"
-B done ims-IMS-42 >/dev/null; : > "$FAKE_LOG"; B task sync --source ims >/dev/null
-jq -e 'select(.method == "PATCH") | (.url | endswith("/api/company/work-items/901")) and (.body | fromjson | .status == "Done")' "$FAKE_LOG" >/dev/null && ok "TASK_WRITE=on: a work item is PATCHed with its status" || bad "no PATCH: $(cut -c1-250 "$FAKE_LOG")"
-echo 409 > "$FAKE_DIR/ims.patch.status"; B done ims-IMS-43 >/dev/null; : > "$FAKE_LOG"; B task sync --source ims --json | jq -e '.not_changeable >= 1' >/dev/null && ok "a 409 (Insight, moves by workflow) is 'not changeable', not an error" || bad "409 handling"
-grep -q '^source_note=not changeable in IMS$' "$D/ims-IMS-43.topic" && ok "the note says so" || bad "no note: $(cat "$D/ims-IMS-43.topic")"
-: > "$FAKE_LOG"; B task sync --source ims >/dev/null; ! grep -q '"PATCH"' "$FAKE_LOG" && ok "and it is not tried again" || bad "409 retried"
-rm "$FAKE_DIR/ims.patch.status"; B done ims-IMS-T14 >/dev/null; : > "$FAKE_LOG"; B task sync --source ims >/dev/null
-jq -e 'select(.method == "PUT") | (.url | endswith("/api/tasks/14"))' "$FAKE_LOG" >/dev/null && ok "an IMS task is written back with PUT" || bad "no PUT: $(cut -c1-200 "$FAKE_LOG")"
-sed -i.bak '/^TASK_WRITE=/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"
-# an item that disappeared
-jq 'del(.data[0])' "$FAKE_DIR/ims.my-work-items.json" > "$FAKE_DIR/x" && mv "$FAKE_DIR/x" "$FAKE_DIR/ims.my-work-items.json"; B task sync --source ims >/dev/null
-[ -f "$D/ims-IMS-42.topic" ] && [ "$(grep '^status=' "$D/ims-IMS-42.topic")" = "status=done" ] && grep -q '^description=No longer open in IMS\.$' "$D/ims-IMS-42.topic" && ok "an IMS item that disappeared: done here, not deleted" || bad "disappeared item"
-# both sources at once
-export LINEAR_API_KEY=$LKEY
-out=$(B task sync --json); echo "$out" | jq -e '(.sources | index("ims")) != null and (.sources | index("linear")) != null' >/dev/null && ok "task sync without --source runs every source with a key" || bad "both: $out"
+# ── 7. bhote task prune: deletes the mirrored tasks of a source that were not changed here; replicates like bhote rm
+clear_d; unset LINEAR_API_KEY
+for n in 1 2 3; do mk lin-$n "Mirrored $n" next 100 "source=linear" "source_ref=ABC-$n" "source_id=w$n" "source_status=next"; done
+mk lin-4 "Moved by hand" now 100 "source=linear" "source_ref=ABC-4" "source_status=next"
+mk lin-5 "With an own field" next 100 "source=linear" "source_ref=ABC-5" "source_status=next" "project=bhote"
+mk lin-6 "Edited note" next 150 "source=linear" "source_ref=ABC-6" "source_status=next" "description=My own note"
+mk man-1 "A manual one" next 100
+mk agt-1 "An agent one" waiting 100 "agent=x" "waiting_for=Anna"
+mk stash-1 "From stash" next 100 "source=stash" "source_ref=17"
+B task prune --source linear >/dev/null 2>&1; [ $? = 1 ] && [ "$(ls "$D" | wc -l | tr -d ' ')" = 9 ] && ok "prune without --dry-run or --yes refuses" || bad "prune ran without --yes"
+B task prune >/dev/null 2>&1; [ $? = 1 ] && ok "prune needs --source" || bad "prune without source"
+B task prune --source ims --yes >/dev/null 2>&1; [ $? = 1 ] && ok "prune accepts only linear" || bad "prune other source"
+cat "$D"/*.topic | cksum > "$T/p.before"; out=$(B task prune --source linear --dry-run); [ "$(cat "$D"/*.topic | cksum)" = "$(cat "$T/p.before")" ] && echo "$out" | grep -q "3 would be deleted, 3 kept" && ok "prune --dry-run: counts, changes nothing" || bad "dry run: $out"
+echo "$out" | grep -q "lin-4: status moved by hand" && echo "$out" | grep -q "lin-5: has its own field project" && echo "$out" | grep -q "lin-6: changed after" && ok "dry run names why a task stays" || bad "reasons: $out"
+out=$(B task prune --source linear --yes --json); echo "$out" | jq -e '.deleted == 3 and .kept == 3' >/dev/null && ok "prune --yes --json counts" || bad "prune: $out"
+for n in 1 2 3; do grep -q '^deleted=1$' "$D/lin-$n.topic" && grep -q '^pruned=1$' "$D/lin-$n.topic" || bad "lin-$n not a tombstone"; done
+B list --all --json | jq -e '[.[].id] | (index("lin-1") == null) and (index("lin-4") != null) and (index("lin-5") != null) and (index("lin-6") != null) and (index("man-1") != null) and (index("agt-1") != null) and (index("stash-1") != null)' >/dev/null && ok "the pruned are gone from the list, the others stay" || bad "list after prune"
+! grep -q '^deleted=1' "$D/man-1.topic" "$D/agt-1.topic" "$D/stash-1.topic" "$D/lin-4.topic" && ok "nothing else was touched" || bad "something else deleted"
+out=$(B task prune --source linear --yes --json); echo "$out" | jq -e '.deleted == 0' >/dev/null && ok "prune again: nothing left to do" || bad "second prune: $out"
+# the tombstone replicates like bhote rm: pushed to kharka with deleted=1
+rm -f "$FAKE_KHARKA"; echo STORE=kharka >> "$BHOTE_CONFIG"; export KHARKA=$T/bin/kharka
+mk lin-7 "Mirrored 7" next 100 "source=linear" "source_ref=ABC-7" "source_status=next"; B sync >/dev/null 2>&1
+jq -e 'select(.key == "bhote.topics/lin-7") | .value.deleted == "0"' "$FAKE_KHARKA" >/dev/null || bad "setup: not in kharka"
+B task prune --source linear --yes >/dev/null 2>&1; jq -e 'select(.key == "bhote.topics/lin-7") | .value | (.deleted == "1" and .pruned == "1")' "$FAKE_KHARKA" >/dev/null && ok "kharka: the pruned task is pushed as a tombstone (deleted=1), like bhote rm" || bad "tombstone not pushed"
+sed -i.bak '/^STORE=kharka$/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"; unset KHARKA
+# a pruned task whose issue is in triage again comes back with the next sync; one deleted by hand does not
+clear_d; export LINEAR_API_KEY=$LKEY
+B task sync --source linear >/dev/null; B rm linear-ABC-101 >/dev/null 2>&1; B task prune --source linear --yes >/dev/null
+B task sync --source linear >/dev/null
+[ "$(grep '^deleted=' "$D/linear-ABC-102.topic")" = "deleted=0" ] && ! grep -q '^pruned=1' "$D/linear-ABC-102.topic" && [ "$(grep '^deleted=' "$D/linear-ABC-101.topic")" = "deleted=1" ] && ok "a pruned task that qualifies again is back; one deleted by hand stays deleted" || bad "prune/back: $(cat "$D/linear-ABC-102.topic" "$D/linear-ABC-101.topic")"
 
 # ── 8. secrets stay secret: never in an argument of curl, a cache entry, a task file, the output, or the docs; the store module is used internally
 cat "$FAKE_LOG" > "$T/all.log"
-! grep -q "$LKEY\|$IKEY" "$T/all.log" && ok "no key in any argument of curl (it goes to curl on stdin)" || bad "a key was on a command line"
+! grep -q "$LKEY" "$T/all.log" && ok "no key in any argument of curl (it goes to curl on stdin)" || bad "a key was on a command line"
 jq -e 'select(.auth == "bad")' "$T/all.log" >/dev/null 2>&1 && bad "curl got a wrong key" || ok "curl always got the right key on stdin"
-! grep -rq "$LKEY\|$IKEY" "$D" "$T/shared" 2>/dev/null && ok "no key in a task file or the shared folder" || bad "a key leaked into the data"
+! grep -rq "$LKEY" "$D" "$T/shared" 2>/dev/null && ok "no key in a task file or the shared folder" || bad "a key leaked into the data"
 # the API cache: bodies are cached, the key is not (BHOTE_API_CACHE on, a throw-away folder)
-CD=$T/apicache; : > "$FAKE_LOG"; BHOTE_API_CACHE=$CD B task sync --source ims >/dev/null; n1=$(wc -l < "$FAKE_LOG"); BHOTE_API_CACHE=$CD B task sync --source ims >/dev/null; n2=$(wc -l < "$FAKE_LOG")
+CD=$T/apicache; : > "$FAKE_LOG"; BHOTE_API_CACHE=$CD B task sync --source linear >/dev/null; n1=$(wc -l < "$FAKE_LOG"); BHOTE_API_CACHE=$CD B task sync --source linear >/dev/null; n2=$(wc -l < "$FAKE_LOG")
 [ "$n1" -gt 0 ] && [ "$n2" = "$n1" ] && ok "the second sync is answered by the shared API cache (no new request)" || bad "api cache: $n1 then $n2"
-! grep -rq "$LKEY\|$IKEY\|Bearer" "$CD" 2>/dev/null && ok "no key and no header in the API cache" || bad "key in cache"
-touch "$FAKE_DIR/down"; BHOTE_API_CACHE=$CD B task sync --source ims --json | jq -e '(.errors | length) == 0' >/dev/null && ok "a fresh cache entry covers an unreachable system" || bad "cache not used when down"
+! grep -rq "$LKEY\|Bearer" "$CD" 2>/dev/null && ok "no key and no header in the API cache" || bad "key in cache"
+touch "$FAKE_DIR/down"; BHOTE_API_CACHE=$CD B task sync --source linear --json | jq -e '(.errors | length) == 0' >/dev/null && ok "a fresh cache entry covers an unreachable system" || bad "cache not used when down"
 rm "$FAKE_DIR/down"
 # the secret store, internally: a key stored with bhote secret set is used (no environment variable), the guard of --reveal stays
-unset LINEAR_API_KEY IMS_API_KEY
+unset LINEAR_API_KEY
 mkdir -p "$T/kc"; cat > "$T/bin/security" <<'PY'
 #!/usr/bin/env python3
 import os, shlex, sys
@@ -301,11 +281,35 @@ PY
 chmod +x "$T/bin/security"; export FAKE_KC=$T/kc
 if [ "$(uname)" = Darwin ]; then
     clear_d
-    printf '%s\n' "$IKEY" | B secret set IMS_API_KEY --stdin >/dev/null 2>&1 && B task sync --source ims --json | jq -e '.created > 0' >/dev/null && ok "the key is taken from the secret store (internal call, no env variable)" || bad "store key not used"
-    CLAUDECODE=1 B secret get IMS_API_KEY --reveal >/dev/null 2>&1; [ $? != 0 ] && ok "bhote secret get --reveal is still refused inside Claude sessions" || bad "reveal guard gone"
-    ! grep -rq "$IKEY" "$D" "$T/shared" 2>/dev/null && ok "(and the key from the store is in no file either)" || bad "store key leaked"
+    printf '%s\n' "$LKEY" | B secret set LINEAR_API_KEY --stdin >/dev/null 2>&1 && B task sync --source linear --json | jq -e '.created > 0' >/dev/null && ok "the key is taken from the secret store (internal call, no env variable)" || bad "store key not used"
+    CLAUDECODE=1 B secret get LINEAR_API_KEY --reveal >/dev/null 2>&1; [ $? != 0 ] && ok "bhote secret get --reveal is still refused inside Claude sessions" || bad "reveal guard gone"
+    ! grep -rq "$LKEY" "$D" "$T/shared" 2>/dev/null && ok "(and the key from the store is in no file either)" || bad "store key leaked"
 else ok "(the secret store test needs the macOS Keychain stub: skipped on this system)"; fi
-if grep -rEq "lin_api_[A-Za-z0-9]{20,}|ims_[A-Za-z0-9]{24,}" docs README.md CHANGELOG.md herdr-app/mods/bhote/tasksources.py; then bad "a key-like value in docs, README or the adapters"; else ok "no key-like value in docs, README, the adapters"; fi
+if grep -rEq "lin_api_[A-Za-z0-9]{20,}" docs README.md CHANGELOG.md herdr-app/mods/bhote/tasksources.py; then bad "a key-like value in docs, README or the adapters"; else ok "no key-like value in docs, README, the adapters"; fi
+
+# ── 8b. bhote task sync --dry-run: the same fetch and decisions, nothing written (no task file, tombstone, lock, API cache entry)
+export LINEAR_API_KEY=$LKEY
+sed -i.bak '/^TASK_/d;/^LINEAR_TEAMS=/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"
+clear_d; rm -rf "$T/shared" "$T/dryc"; : > "$FAKE_LOG"
+snap() { { ls -la "$D" "$T/dryc" 2>&1; find "$T/shared" -type f 2>/dev/null | sort; cat "$D"/* 2>/dev/null; } | grep -v '^total' | cksum; }
+s0=$(snap); dry=$(BHOTE_API_CACHE=$T/dryc B task sync --source linear --dry-run --json); s1=$(snap)
+[ -z "$(ls -A "$D")" ] && [ "$s0" = "$s1" ] && [ ! -e "$T/dryc" ] && [ ! -e "$T/shared/tasksync.lock" ] && ok "dry-run: no task file, no lock, no API cache entry, no change in the data or shared folder" || bad "dry-run wrote something: $(ls -A "$D") $(ls "$T/dryc" 2>&1)"
+echo "$dry" | jq -e '.dry_run == true and (.errors | length) == 0 and .totals.would_create == 3 and .totals.would_update == 0 and (.candidates | length) == 3' >/dev/null && ok "dry-run --json: counts and one candidate per would-be task" || bad "dry json: $dry"
+echo "$dry" | jq -e '.by_source.linear.would_create == 3 and .by_source.linear.would_skip == 1 and .by_source.linear.skip_reasons["not in triage"] == 1 and (.by_source.linear | has("task") | not)' >/dev/null && ok "dry-run: grouped by source only; the skip reason is 'not in triage'" || bad "dry by source: $(echo "$dry" | jq -c .by_source)"
+echo "$dry" | jq -e '(.candidates | map(.status) | unique) == ["next"] and (.candidates[0] | has("due") | not) and (.candidates[0] | has("kind") | not)' >/dev/null && ok "dry-run: candidates are status next, without kind or due date" || bad "candidates: $(echo "$dry" | jq -c .candidates)"
+! echo "$dry" | grep -q "$LKEY" && ! grep -q "$LKEY" <(B task sync --source linear --dry-run 2>&1) && ok "dry-run output holds no key" || bad "key in the dry-run output"
+out=$(B task sync --source linear -n); echo "$out" | grep -q "^dry run: nothing is written" && echo "$out" | grep -q "^linear: 3 would create" && echo "$out" | grep -q "would skip (1 not in triage)" && echo "$out" | grep -q "^create  linear  \[next\]" && ok "dry-run text: counts per source, the skip reason, the candidates" || bad "dry text: $out"
+real=$(B task sync --source linear --json)
+echo "$real" | jq -e --argjson d "$dry" '.created == $d.totals.would_create and .updated == $d.totals.would_update and .done == $d.totals.would_close' >/dev/null && [ "$(ls "$D" | wc -l)" -eq "$(echo "$dry" | jq .totals.would_create)" ] && ok "the real sync then does what the dry run said" || bad "real vs dry: $real"
+dry2=$(B task sync --source linear --dry-run --json); echo "$dry2" | jq -e '.totals.would_create == 0 and .totals.would_update == 0 and .totals.would_close == 0 and .by_source.linear.unchanged == 3' >/dev/null && ok "after the sync: nothing to create, update or close" || bad "dry after sync: $dry2"
+# update, close, hand-deleted, write-back: announced, not done
+f1=$D/linear-ABC-101.topic; sed -i.bak 's/^title=.*/title=Renamed here/' "$f1"; rm -f "$f1.bak"; B rm linear-ABC-102 >/dev/null 2>&1
+jq 'del(.data.issues.nodes[1])' "$FAKE_DIR/linear.triage.json" > "$FAKE_DIR/x" && mv "$FAKE_DIR/x" "$FAKE_DIR/linear.triage.json"
+cp "$f1" "$T/f1.before"; s0=$(snap); dry3=$(B task sync --source linear --dry-run --json); s1=$(snap)
+echo "$dry3" | jq -e '.by_source.linear.would_update == 1 and .by_source.linear.would_close == 1 and .by_source.linear.would_skip == 2' >/dev/null && [ "$s0" = "$s1" ] && cmp -s "$f1" "$T/f1.before" && ok "dry-run: a changed title is a would-update, an issue that left triage a would-close, a hand-deleted one a skip; nothing written" || bad "dry update/close: $(echo "$dry3" | jq -c .by_source)"
+B task sync --source linear --json | jq -e --argjson d "$dry3" '.updated == $d.totals.would_update and .done == $d.totals.would_close' >/dev/null && ok "update and close counts match the real sync, too" || bad "update/close mismatch"
+touch "$FAKE_DIR/down"; B task sync --source linear --dry-run >/dev/null 2>&1; rc=$?; rm "$FAKE_DIR/down"; [ "$rc" = 1 ] && ok "dry-run with an unreachable system: exit 1" || bad "dry down rc=$rc"
+B task sync --dry-run --bogus >/dev/null 2>&1; [ $? = 1 ] && ok "dry-run: unknown option still refused" || bad "bogus option"
 
 # ── 9. bhote migrate tasks (wave 2): prepared and tested with fixtures only
 rm -rf "${D:?}"; mkdir -p "$D"; rm -f "$FAKE_KHARKA"; sed -i.bak '/^STORE=/d' "$BHOTE_CONFIG"; rm -f "$BHOTE_CONFIG.bak"

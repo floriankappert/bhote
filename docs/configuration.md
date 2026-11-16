@@ -40,12 +40,9 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `SLACK_EVERY` | `120` | Slack interval (s) | Seconds between two Slack checks; each is one short Claude call (Haiku), and only while a waiting task (or one Slack put under review) has a pin. |
 | `CLAUDE_CONFIG_DIR` | | Claude profile | The Claude Code profile the Slack watch (and the wizard) runs in: its folder, e.g. `~/.claude2`. Empty: the one of this process, else `~/.claude`. Set it when the Slack connector lives in a second profile. |
 | `API_CACHE_EVERY` | `15` | API cache (s) | Seconds an answer of GitHub or CircleCI is reused while something runs (a quiet answer: 6 times as long, at most 120 s); `bhote refresh` asks again at once ([API cache](monitors.md#api-cache)). |
-| `TASK_SYNC` | `on` | Mirror Linear and IMS | The daemon and the panel run `bhote task sync` now and then (every `API_CACHE_EVERY` x 6 seconds, at most 120; the answers come from the API cache). A source without a key in the secret store is skipped. `bhote task sync` always runs by hand. |
-| `TASK_WRITE` | `off` | Write status back | A status change of a mirrored task goes back to Linear (`issueUpdate`) or the IMS (`PATCH`/`PUT`). Off: it stays local until the outside system moves. See [task sources](task-sources.md). |
-| `LINEAR_TEAMS` | – | Linear teams | Team keys (`IMS,ENG`): only their issues become tasks. Empty: every team. The key is the secret `LINEAR_API_KEY`. |
-| `IMS_URL` | `https://ims-api.bilendo.de` | IMS address | The base URL of the IMS. The key is the secret `IMS_API_KEY`. |
-| `IMS_WEB_URL` | – | IMS web address | Where an item opens in the browser (`<it>/work-items/<id>`, `<it>/tasks/<id>`); empty: the API address of the item. |
-| `IMS_STATUS_MAP` | – | IMS status names | `name=status` pairs that replace the defaults (`Open=next, In Progress=now, Review=review, Blocked=waiting, Backlog=later`, the done set is `done`), e.g. `In Test=review,Parked=later`. |
+| `TASK_SYNC` | `on` | Mirror Linear triage | The daemon and the panel run `bhote task sync` now and then (every `API_CACHE_EVERY` x 6 seconds, at most 120; the answers come from the API cache). A source without a key in the secret store is skipped. `bhote task sync` always runs. See [task sources](task-sources.md). |
+| `TASK_WRITE` | `off` | Write status back | Marking a mirrored task done goes back to Linear (the issue moves to the Done state of its team). Other status changes stay local. Off: Linear alone decides. See [task sources](task-sources.md). |
+| `LINEAR_TEAMS` | – | Linear teams | Team keys (`ENG,OPS`): only their issues **in triage** become tasks. Empty: every team the key sees. The key is the secret `LINEAR_API_KEY`. |
 | `DEPLOY_MONITOR` | `off` | Deployment monitor | The last deployments of the projects above the agents ([monitors](monitors.md)). |
 | `DEPLOY_EVERY` | `60` | Deploy interval (s) | Seconds between two deployment checks. |
 | `DEPLOY_GITHUB` · `DEPLOY_CIRCLECI` | `on` | GitHub Actions · CircleCI | The deployment monitor's modules. |
