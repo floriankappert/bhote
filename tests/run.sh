@@ -4,7 +4,7 @@
 cd "$(dirname "$0")/.." || exit 1
 export BHOTE_API_CACHE=off   # no suite may read or write the real API cache (tests/monitor.sh tests the cache itself)
 export BHOTE_HERDR_BACKEND=classic   # the suites answer with a fake herdr; the herdr-app source has its own checks (tests/herdr_app.sh)
-[ $# -gt 0 ] || set -- smoke cli secret agents herdr_app input store slack monitor follow frame fuzz panel sync kharka   # (kharka is skipped without the kharka binary)
+[ $# -gt 0 ] || set -- smoke cli secret agents inbox herdr_app input store slack monitor follow frame fuzz panel sync kharka   # (kharka is skipped without the kharka binary)
 fail=0
 for s in "$@"; do
     printf '── %s\n' "$s"

@@ -791,10 +791,14 @@ export default class Bhote extends View {
 
   // The test processes of every machine, every 5 s (the right panel). A run is a row for as long as its process lives.
   loadLiveTests(cx) {
+    if (this.liveLoading && Date.now() - this.liveAt > 45000) this.liveLoading = false;   // (a poll that never came back must not stop the polling for good)
     if (this.liveLoading || Date.now() - this.liveAt < 4000) return;
     this.liveLoading = true; this.liveAt = Date.now();
     cx.spawn(async (cx) => {
       let changed = false;
+      // rows of a machine that has not answered for a while are not true any more (the process may have ended): they go, the card stops saying "testing"
+      this.liveSeen ??= {};
+      for (const k of Object.keys(this.liveTests)) if (this.liveTests[k]?.length && Date.now() - (this.liveSeen[k] ?? 0) > 25000) { this.liveTests[k] = []; changed = true; }
       for (const m of this.srvMachines()) {
         const key = m.name == null ? "local" : m.label;
         try {
@@ -818,6 +822,7 @@ export default class Bhote extends View {
           const one = [...by.values()].map((r) => (r.count > 1 ? { ...r, title: `${r.count} processes${r.title ? ` · ${r.title}` : ""}` } : r));
           if (JSON.stringify((this.liveTests[key] ?? []).map((x) => x.pid)) !== JSON.stringify(one.map((x) => x.pid)) || (this.liveTests[key] ?? []).some((x, i) => x.count !== one[i]?.count)) changed = true;
           this.liveTests[key] = one;
+          this.liveSeen[key] = Date.now();
         } catch (_e) { /* that machine does not answer: its last rows stay */ }
       }
       this.liveLoading = false;
@@ -1963,18 +1968,36 @@ export default class Bhote extends View {
     const reset = (iso) => { const s = (Date.parse(iso) - Date.now()) / 1000; if (!(s > 0)) return ""; return s < 3600 ? `${Math.round(s / 60)}m` : s < 86400 ? `${Math.floor(s / 3600)}h ${Math.round((s % 3600) / 60)}m` : `${Math.floor(s / 86400)}d ${Math.round((s % 86400) / 3600)}h`; };
     const colorOf = (u) => u >= 90 ? t.blocked : u >= 70 ? t.ansi3 : t.working;
     // the thin bar as before, its figure above it at the right end
-    const cell = (w) => { const u = w?.used ?? 0;
+    // The weekly limit looks ahead: if the use of the week so far went on at the same pace, where would it stand when the week ends? Green up to 70 %, yellow up
+    // to 90, orange up to 100, red above. (In the first 4 hours of a week the pace says nothing yet: the bar goes by the figure itself.)
+    const projection = (w) => {
+      const end = Date.parse(w?.resets ?? ""); if (!(end > 0)) return null;
+      const span = 7 * 86400000, el = (Date.now() - (end - span)) / span;
+      if (!(el > 4 / 168) || el > 1) return null;
+      return (w.used ?? 0) / el;
+    };
+    const paceColor = (p) => (p <= 70 ? (t.ansi2 ?? t.done) : p <= 90 ? "#e5c07b" : p <= 100 ? "#f08a24" : t.blocked);
+    const cell = (w, week) => { const u = w?.used ?? 0;
+      const proj = week ? projection(w) : null;
+      const col = proj != null ? paceColor(proj) : colorOf(u);
       return v_flex().flex_1().min_w(0).gap(2)
         .child(h_flex().items_center().gap(4)
           .child(div().flex_1().min_w(0).truncate().text_size(10).text_color(t.dim).child(w ? reset(w.resets) : ""))
+          .when(proj != null, (e) => e.child(div().flex_none().text_size(10).text_color(col).child(`→ ${Math.round(proj)}%`)))
           .child(div().flex_none().text_size(10.5).text_color(t.foreground).child(w ? `${Math.round(u)}%` : "–")))
-        .child(progress(t, u / 100, colorOf(u), "100%")); };
+        // the weekly limit is divided into its seven days by fine vertical strokes (in the colour of the ground, they cut the bar into seven pieces)
+        .child(week ? div().relative().w_full().h(5).flex_none().child(progress(t, u / 100, col, "100%"))
+          // where the pace would end the week: the stretch from the figure to the projection, fainter, in the same colour (at most to the end of the bar)
+          .when(proj != null && proj > u, (e) => e.child(h_flex().absolute().inset_0().child(div().w(`${Math.min(100, u)}%`).flex_none())
+            .child(div().w(`${Math.max(0, Math.min(100, proj) - Math.min(100, u))}%`).h(5).rounded(3).bg(col).opacity(0.3))))
+          .child(h_flex().absolute().inset_0().children([0, 1, 2, 3, 4, 5, 6].map((i) => div().flex_1().h_full().when(i < 6, (e) => e.border_r(1).border_color(t.chrome)))))
+          : progress(t, u / 100, colorOf(u), "100%")); };
     const name = (a) => a.profile === "claude" ? "Main" : "Alternative";
     return [v_flex().flex_none().pt(4).pb(12)
       .child(this.sectionHead(t, "usage-head", "Claude usage", shut, this.guard((_e, cx) => { setShared("bhote.usageShut", !shut); cx.notify(); })))
       .children((shut ? [] : list).map((a) => h_flex().id(`usage-${a.profile}`).px(15).py(3).gap(8).items_center()
         .child(div().w(72).flex_none().truncate().text_size(12).text_color(t.foreground).child(name(a)))
-        .child(a.error ? div().text_size(10.5).text_color(a.error.startsWith("Rate limited") ? t.dim : t.blocked).child(a.error) : h_flex().flex_1().min_w(0).gap(6).child(cell(a.five_hour)).child(cell(a.seven_day)))))];
+        .child(a.error ? div().text_size(10.5).text_color(a.error.startsWith("Rate limited") ? t.dim : t.blocked).child(a.error) : h_flex().flex_1().min_w(0).gap(6).child(cell(a.five_hour, false)).child(cell(a.seven_day, true)))))];
   }
 
   jobsBar(t) {
@@ -2718,6 +2741,17 @@ export default class Bhote extends View {
     return null;
   }
 
+  // The marker files ~/.cache/bhote/inbox/<node>-<name> tell the Claude Code hook (integrations/claude/hooks/inbox-hook.sh) that something waits for an agent of this
+  // machine, so that it asks kharka only then. Written here for what is queued (also from other machines), with every round while something waits (the hook
+  // removes a marker after it took the last message); `bhote send` writes it at once for a receiver on this machine.
+  markInbox(marks) {
+    const names = [...marks].sort();
+    const sig = names.join(" ");
+    if (!names.length && !this.inboxSig) return;
+    this.inboxSig = sig;
+    exec("bhote", ["inbox", "--mark", ...names], { timeout: 15000 }).catch(() => {});
+  }
+
   loadMessages(cx, again) {
     if (this.msgLoading) { if (again) this.msgAgain = true; return; }   // (a round that is under way may have missed it: one more right after)
     this.msgLoading = true;
@@ -2726,12 +2760,15 @@ export default class Bhote extends View {
       try {
         if (!this.localNode) this.localNode = (await this.kharka(["whoami"])).stdout.trim();
         const keys = (await this.kharka(["ls", "msg"])).stdout.split("\n").map((x) => x.trim()).filter(Boolean);
-        const waiting = {}, busy = new Set();
+        const waiting = {}, busy = new Set(), marks = new Set();
+        const nowS = Math.floor(Date.now() / 1000);
         for (const k of keys) {
           if (this.msgDone.has(k)) continue;
-          let rec; try { rec = JSON.parse((await this.kharka(["get", k])).stdout); } catch (_e) { continue; }
-          if (rec.state !== "queued") { this.msgDone.add(k); continue; }
+          let rec, hlc; try { const e = JSON.parse((await this.kharka(["get", "--entry", k])).stdout); rec = e.value; hlc = e.hlc; } catch (_e) { continue; }
+          // queued, or claimed so long ago (5 minutes) that whoever claimed it is gone: both are still to hand over
+          if (!(rec.state === "queued" || (rec.state === "claimed" && nowS - (rec.claimedAt ?? 0) > 300))) { this.msgDone.add(k); continue; }
           const [, node, slug] = k.split("/");
+          if (node === this.localNode) marks.add(`${node}-${slug}`);       // (the marker for the Claude Code hook of that agent: see markInbox)
           const hit = this.agentOfKey(node, slug);
           if (!hit) continue;                                              // (that agent is not here now: it waits)
           const lk = `${node}/${slug}`;
@@ -2745,13 +2782,17 @@ export default class Bhote extends View {
           const body = String(rec.text ?? "").replace(/\s+/g, " ").trim();
           const read = body && body.length <= 1500 ? `Text: ${body}` : `Read it with: ${this.kharkaBin || "kharka"} get ${k}  (the field text).`;
           const line = `Message from ${rec.from}${rec.title ? ` - ${rec.title}` : ""}. ${read}${reply}`;
+          // the claim first: only one of the panel and the inbox hook of the agent gets the message (kharka put --if-hlc; exit 4 = the other one was first)
+          try { await this.kharka(["put", k, JSON.stringify({ ...rec, state: "claimed", claimedAt: nowS, claimedBy: "herdr-app" }), "--if-hlc", hlc]); } catch (_e) { busy.delete(lk); continue; }
           try {
-            await exec("hc", ["send", hit.a.address, line.replace(/\s+/g, " ")], { timeout: 20000 });
+            try { await exec("hc", ["send", hit.a.address, line.replace(/\s+/g, " ")], { timeout: 20000 }); }
+            catch (e) { await this.kharka(["put", k, JSON.stringify(rec)]).catch(() => {}); throw e; }   // (not sent: it waits again)
             await this.kharka(["put", k, JSON.stringify({ ...rec, state: "delivered", deliveredAt: Math.floor(Date.now() / 1000) })]);
             if (rec.topic) exec("bhote", ["__act", "startdone", rec.topic], { timeout: 30000 }).catch(() => {});   // (a topic handed over: that agent is its agent now)
             this.msgDone.add(k); waiting[lk] -= 1; changed = true;
           } catch (_e) { /* the next round tries again */ }
         }
+        this.markInbox(marks);
         if (JSON.stringify(waiting) !== JSON.stringify(this.msgWaiting)) { this.msgWaiting = waiting; changed = true; }
       } catch (_e) { /* no kharka here: nothing to hand over */ }
       this.msgLoading = false;
@@ -4606,15 +4647,15 @@ export default class Bhote extends View {
     for (const x of rb) {
       const st = x.stages.map((y) => y.state);
       const kind = st.includes("failed") ? "failed" : st.includes("running") ? "running" : st.includes("approval") ? "waiting" : null;
-      if (kind) { ri.push({ kind, text: x.project, dots: x.stages, right: x.ref, key: `r|${x.project}|${x.ref}|${x.at}` }); seen.add(x.project); }
-      else if ((x.rank === 0 || x.rank === 5) && x.at >= since) { seen.add(x.project); ri.push({ kind: "done", text: x.project, dots: x.stages, right: `${x.ref} · ${ago(x.at)}`, key: `r|${x.project}|${x.ref}|${x.at}` }); }   // (a deployment or a merge of the last four hours)
+      if (kind) { ri.push({ kind, text: x.project, dots: x.stages, right: x.ref, when: x.at ? ago(x.at) : "", key: `r|${x.project}|${x.ref}|${x.at}` }); seen.add(x.project); }
+      else if ((x.rank === 0 || x.rank === 5) && x.at >= since) { seen.add(x.project); ri.push({ kind: "done", text: x.project, dots: x.stages, right: x.ref, when: ago(x.at), key: `r|${x.project}|${x.ref}|${x.at}` }); }   // (a deployment or a merge of the last four hours)
     }
     // a project that was deployed in the last four hours shows the path of that deployment, whatever its runbook shows now
     for (const proj of this.projects) {
       if (!proj.ci || seen.has(proj.title)) continue;
       const last = this.deploysAll().find((x) => x.state === "ok" && x.time >= since && this.projectOf(x.project) === proj.title);
       const stages = last ? this.runStages(last, "d") : null;
-      if (stages) ri.push({ kind: "done", text: proj.title, dots: runbookPhases(stages), right: `${this.whatOf(last).text || last.label} · ${ago(last.time)}`, key: `r|${proj.title}|${deployKey(last)}` });
+      if (stages) ri.push({ kind: "done", text: proj.title, dots: runbookPhases(stages), right: this.whatOf(last).text || last.label, when: ago(last.time), key: `r|${proj.title}|${deployKey(last)}` });
     }
     specs.push({ id: "runbooks", title: "Runbooks", items: ri.filter((i) => !(i.key in gone)), fig: String(rb.length), sub: rb.length === 1 ? "project" : "projects" });
     return specs;
@@ -4670,12 +4711,15 @@ export default class Bhote extends View {
               .child(div().flex_1().min_w(0).truncate().pl(4).text_size(11).text_color(faint).child(it.right ?? "")))
             .when(!it.dots, (e) => e.child(div().flex_none().text_size(10.5).text_color(it.kind === "running" ? faint : c).child(rightText))))
           .when(!!bar, (e) => e.child(bar)))
-        .when(!!it.key, (e) => e.child(hov
-          ? div().id(`dash-x-${i}`).w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).text_size(11).cursor_pointer().text_color(faint)
-            .hover((x) => x.bg(red ? "#ffffff2e" : t.hover).text_color(ink))
-            .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-            .on_click((_e, cx) => { cx.stop_propagation(); this.dismissDash(it.key, cx); }).child("✕")
-          : div().w(16).h(16).flex_none()));
+        // the end of the row: when it happened (a finished deployment stays four hours: it says how long ago it was), at the right edge like the count in the head;
+        // the dismiss x takes its place while the pointer is on the row
+        .when(!!it.key || !!(it.dots && it.when), (e) => e.child(h_flex().w(it.dots && it.when ? 46 : 16).h(16).flex_none().items_center().justify_end()
+          .child(hov && it.key
+            ? div().id(`dash-x-${i}`).w(16).h(16).flex_none().flex().items_center().justify_center().rounded(4).text_size(11).cursor_pointer().text_color(faint)
+              .hover((x) => x.bg(red ? "#ffffff2e" : t.hover).text_color(ink))
+              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+              .on_click((_e, cx) => { cx.stop_propagation(); this.dismissDash(it.key, cx); }).child("✕")
+            : it.dots && it.when ? div().flex_none().text_size(10.5).text_color(it.kind === "done" ? c : faint).child(it.when) : div().w(16).h(16).flex_none())));
     };
     // The tile in steps. Coming: 1. it opens (S), 2. it makes room for the items (P, the height of the items), 3. the items fade in (O). Going: 1. the items fade
     // out, 2. the room is taken back, 3. the tile closes (and fades) when nothing is left. A change of the items while it is open only moves P.

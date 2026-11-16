@@ -25,6 +25,19 @@ session itself, so you see it without looking at the panel. It needs Claude Code
 The mod only calls the CLI (`bhote current --json`, `bhote <status> <id>`), so it finds the task the way `bhote current` does
 (Claude session, else herdr pane). The reminder does not depend on the agent: it comes from any task of your list.
 
+## Messages between agents: the inbox hook
+
+`bhote send <agent> <text>` keeps a message in kharka; the herdr-app hands it to an agent that is free. An agent that works for an hour never is. The hook `integrations/claude/hooks/inbox-hook.sh` brings the messages to it at its next tool call (event `PostToolUse`) or prompt (`UserPromptSubmit`; not `Stop`) as additional context: who wrote, the text (a long one: the `kharka get` command), and `bhote send <name> "..."` to answer. bhote does not edit your settings; add this to the `settings.json` of each Claude profile:
+
+```json
+{ "hooks": {
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "~/Development/bhote/integrations/claude/hooks/inbox-hook.sh", "timeout": 10 } ] } ],
+    "PostToolUse":      [ { "hooks": [ { "type": "command", "command": "~/Development/bhote/integrations/claude/hooks/inbox-hook.sh", "timeout": 10 } ] } ]
+} }
+```
+
+Cost: when nothing waits, one directory test and no process (about 5 ms with the bash start); only when a marker for this agent exists does it run `bhote inbox --hook <event>` (about 0.1 to 0.4 s, once per message). It needs `HC_TERMINAL_ID` (an agent of herdr), `bhote` on the `PATH` (else it uses its own checkout) and kharka. It shows only this agent's messages, and respects the ear (off = nothing). `bhote inbox [--peek] [--json]` shows them by hand. The markers and the claim are described in [herdr-app](herdr-app.md#agents-and-messages). Other machines: the hook runs on the machine of the receiving agent; a message from another machine arrives once the panel there has marked it (a few seconds).
+
 ## Switching it off
 
 `bhote config set CLAUDE_MOD off` (or settings › *Claude Code mod*) switches the display off on this machine: the pane is empty, `/task` says so (the reminder has its own switch, `FRIENDLY_REMINDER`),

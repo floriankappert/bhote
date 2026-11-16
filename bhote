@@ -5390,7 +5390,83 @@ cli_send() {  # bhote send <agent> <text...> [--title <t>] [--from <name>]: a me
     id="$(date +%s)-$$"; key="msg/$node/$slug/$id"
     json=$(jq -cn --arg from "${fring:-${from:-the user}}" --arg fromRef "$fref" --arg to "$tname" --arg title "$title" --arg text "$text" --argjson at "$(date +%s)" '{from: $from, fromRef: $fromRef, to: $to, title: $title, text: $text, at: $at, state: "queued"}') || return 1
     kharka_run put "$key" "$json" >/dev/null || { echo "bhote: kharka did not take the message" >&2; return 1; }
-    echo "queued for ${rn:-$tname} ($tm), from ${fring:-${from:-the user}}${fref:+ (it answers with: bhote send $fref ...)}: it gets it when its ear is on and it is free ($key)"
+    [ "$tm" = "${HOST:-}" ] && inbox_mark add "$node" "$slug"   # (an agent of this machine with the Claude Code hook sees at once that something waits; other machines: the panel writes the marker)
+    echo "queued for ${rn:-$tname} ($tm), from ${fring:-${from:-the user}}${fref:+ (it answers with: bhote send $fref ...)}: it gets it when its ear is on and it is free, or at its next tool call with the inbox hook ($key)"
+}
+INBOX_DIR=${BHOTE_INBOX:-${XDG_CACHE_HOME:-$HOME/.cache}/bhote/inbox}   # one empty file per agent with a message waiting: <kharka node>-<name of its space, letters and digits>
+inbox_mark() {  # inbox_mark add|rm <node> <slug>: the marker the Claude Code hook looks at before it asks kharka (a file test, no process)
+    case "$1" in
+        add) mkdir -p "$INBOX_DIR" 2>/dev/null && : > "$INBOX_DIR/$2-$3" ;;
+        rm) rmf "$INBOX_DIR/$2-$3" ;;
+    esac
+    return 0
+}
+inbox_self_set() {  # inbox_self_set <node var> <slug var>: this agent as the panel knows it (kharka node of this machine, its space name from the terminal's label "where")
+    local _wh _n _nm
+    [ -n "${HC_TERMINAL_ID:-}" ] || return 1
+    _wh=$(hc get "$HC_TERMINAL_ID" 2>/dev/null | jq -r '.labels.where // empty' 2>/dev/null); [ -n "$_wh" ] || return 1
+    _n=$(kharka_run whoami 2>/dev/null); [ -n "$_n" ] || return 1
+    _nm=$(ring_norm "${_wh%% / *}"); printf -v "$1" '%s' "$_n"; printf -v "$2" '%s' "${_nm:-home}"
+}
+inbox_text() {  # inbox_text <var> <key> <record json>: what the agent reads for one message (as the panel's one-line prompt)
+    local _kb _from _title _body _reply _ref _read
+    kharka_bin_set _kb
+    _from=$(jq -r '.from // "the user"' <<< "$3"); _title=$(jq -r '.title // ""' <<< "$3"); _ref=$(jq -r '.fromRef // ""' <<< "$3")
+    _body=$(jq -r '.text // "" | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; "")' <<< "$3")
+    if [ -n "$_ref" ]; then _reply=" To answer: bhote send $_ref \"...\""; else _reply=" It comes from the person, not from an agent: answer here in this session."; fi
+    if [ -n "$_body" ] && [ "${#_body}" -le 1500 ]; then _read="Text: $_body"; else _read="Read it with: $_kb get $2  (the field text)."; fi
+    printf -v "$1" '%s' "Message from $_from${_title:+ - $_title}. $_read$_reply"
+}
+cli_inbox() {  # bhote inbox [--hook <event>] [--peek] [--as <node>/<slug>] [--json] | --mark [<node>-<slug> ...]
+    # The messages that wait for THIS agent (bhote send, kharka msg/<node>/<slug>/…, state queued), for a Claude Code hook: an agent at work takes them at its
+    # next tool call instead of at the end of its turn. Each one is claimed (kharka put --if-hlc, state delivered) before it is shown, so that the panel and the
+    # hook never both hand it over. The ear is respected (listen/<node>/<slug>). --peek shows without claiming. --mark replaces the markers (the panel calls it).
+    local ev="" peek="" as="" node="" slug="" mark="" n=0 now max=5 key hlc rec st ear out="" txt lk line left=0 ctx tmp files f rc listen
+    while [ $# -gt 0 ]; do
+        case "$1" in --hook) ev=${2:-}; shift ;; --peek) peek=1 ;; --whoami) inbox_self_set node slug || return 1; echo "$node-$slug"; return 0 ;; --as) as=${2:-}; shift ;; --mark) mark=1; shift; break ;; *) echo "bhote: inbox [--hook <event>] [--peek] [--as <node>/<slug>] [--json] | --mark [<node>-<slug> ...]" >&2; return 1 ;; esac
+        shift
+    done
+    if [ -n "$mark" ]; then   # exactly these markers stay; the others go
+        mkdir -p "$INBOX_DIR" 2>/dev/null || return 0
+        for f in "$INBOX_DIR"/*; do [ -e "$f" ] || continue; lk=$(basename "$f"); case " $* " in *" $lk "*) ;; *) rm -f "$f" ;; esac; done
+        for lk in "$@"; do case "$lk" in ''|*[!a-z0-9-]*|*/*) continue ;; esac; [ -e "$INBOX_DIR/$lk" ] || : > "$INBOX_DIR/$lk"; done
+        return 0
+    fi
+    case "$ev" in ''|UserPromptSubmit|PostToolUse) ;; *) return 0 ;; esac   # (an event we do not serve gets nothing and claims nothing)
+    kharka_found || return 0
+    if [ -n "$as" ]; then node=${as%%/*}; slug=${as#*/}
+    else inbox_self_set node slug || { [ -n "$ev" ] && return 0; echo "bhote: inbox: this is not an agent of herdr (no HC_TERMINAL_ID/label); name one with --as <node>/<slug>" >&2; return 1; }; fi
+    # the ear: no record = AGENT_LISTEN
+    listen=$(kharka_run get "listen/$node/$slug" 2>/dev/null | jq -r 'if .listening == false then "off" else "on" end' 2>/dev/null)
+    [ -n "$listen" ] || { [ "$(cfg_get AGENT_LISTEN on)" = off ] && listen=off || listen=on; }
+    if [ "$listen" = off ]; then [ -n "$json" ] && [ -z "$ev" ] && echo '[]'; return 0; fi
+    now=$(date +%s); tmp=$RUN_DIR/inbox.$$; mkdir -p "$RUN_DIR" 2>/dev/null
+    kharka_run ls --entries "msg/$node/$slug/" 2>/dev/null | jq -c 'select(.value.state == "queued" or (.value.state == "claimed" and ((.value.claimedAt // 0) < (now - 300)))) | {key, hlc, value}' 2>/dev/null | sort > "$tmp"
+    local arr="[]"
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if [ "$n" -ge "$max" ]; then left=$(( left + 1 )); continue; fi
+        key=$(jq -r .key <<< "$line"); hlc=$(jq -r .hlc <<< "$line"); rec=$(jq -c .value <<< "$line")
+        if [ -z "$peek" ]; then   # the claim: only the one whose stamp still holds gets it (exit 4: the other one was first)
+            kharka_run put "$key" "$(jq -c --argjson at "$now" '. + {state: "delivered", deliveredAt: $at, deliveredBy: "inbox"}' <<< "$rec")" --if-hlc "$hlc" >/dev/null 2>&1 || continue
+            if [ -n "$(jq -r '.topic // empty' <<< "$rec")" ]; then bhote_info; act_startdone "$(jq -r .topic <<< "$rec")" 2>/dev/null; fi
+        fi
+        n=$(( n + 1 )); inbox_text txt "$key" "$rec"; out="${out:+$out
+}- $txt"
+        arr=$(jq -c --arg key "$key" --argjson r "$rec" '. + [{key: $key, from: $r.from, fromRef: ($r.fromRef // ""), title: ($r.title // ""), text: $r.text, at: $r.at}]' <<< "$arr")
+    done < "$tmp"
+    rm -f "$tmp"
+    [ "$left" -eq 0 ] && [ -z "$peek" ] && inbox_mark rm "$node" "$slug"   # (nothing waits any more: the hook stops asking kharka)
+    if [ -n "$ev" ]; then
+        [ "$n" -gt 0 ] || return 0
+        ctx="bhote: $n message(s) from other agents arrived for you while you worked. Read them and, where they ask something, answer with bhote send (they may wait for you).
+$out"
+        [ "$left" -gt 0 ] && ctx="$ctx
+($left more waiting: they come with your next tool call.)"
+        jq -cn --arg ev "$ev" --arg ctx "$ctx" --arg sm "bhote: $n message(s) handed to this agent" '{systemMessage: $sm, hookSpecificOutput: {hookEventName: $ev, additionalContext: $ctx}}'
+    elif [ -n "$json" ]; then echo "$arr"
+    elif [ "$n" -gt 0 ]; then echo "$out"; [ "$left" -gt 0 ] && echo "($left more waiting)"; fi
+    return 0
 }
 cli_update() {  # bhote update: asks GitHub now; prints whether there is a newer version and the command that updates
     update_fetch || { echo "bhote: could not ask GitHub (offline?)" >&2; return 1; }
@@ -7579,6 +7655,7 @@ bhote — tasks and agents next to herdr.
   bhote reload                       restart the bhote panels of this machine (after an update)
   bhote app install|check            the add-on for the herdr Mac app: copy it into ~/.config/herdr-app, or check it
   bhote send <agent> <text>          a message for another agent: the herdr-app hands it over when its ear is on and it is free
+  bhote inbox [--hook <event>] [--peek]  the messages that wait for this agent, claimed and shown (the Claude Code hook inbox-hook.sh calls it)
   bhote find                         search tasks and agents, jump there (for a herdr popup: settings › Find key)
   bhote event                        an agent status event from herdr (the plugin calls it)
   bhote version · bhote help
@@ -7624,6 +7701,7 @@ bhote_cli() {
         update) cli_update ;;
         reload) cli_reload ;;
         send) bhote_info; cli_send "$@" ;;
+        inbox) cli_inbox "$@" ;;
         app) cli_app "$@" ;;
         skills) cli_skills "$@" ;;
         mod) cli_mod "$@" ;;

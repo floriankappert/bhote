@@ -35,6 +35,9 @@ Agents message each other with `bhote send <agent> <text>`: the message is kept 
 when the **ear** on the agent's card is on and the agent is free; with the ear off, or while it works, it waits (the card counts them). The sender is the agent the command is called from; a message from you says `the user`.
 The ear is the record `listen/<node>/<name>` in kharka (`{"listening": false}`); without one, `AGENT_LISTEN` counts.
 
+A Claude Code agent in a long turn is never "free", so the idle path alone would hold its messages for hours. The **inbox hook** (`integrations/claude/hooks/inbox-hook.sh`, how to switch it on: [claude-mod](claude-mod.md#messages-between-agents-the-inbox-hook)) hands them over at the agent's next tool call (`bhote inbox`). Both paths **claim** a message before they hand it over (`kharka put --if-hlc`: state `claimed`, then `delivered`), so it is delivered once; a claim older than 5 minutes (a panel that died) is taken over. Without the hook, agents get messages as before, when they are free.
+The hook is cheap because of **marker files**, `~/.cache/bhote/inbox/<node>-<name>`: `bhote send` writes one at once when the receiver is on the same machine, the panel writes them for everything queued for an agent of its machine (so also for messages from other machines, within its 4 s round; without the panel those wait for the idle path) and `bhote inbox` removes it after the last message. Without a marker the hook only tests a directory.
+
 ## Dev servers
 
 A service is a name, a machine, a port and a start command run in your dev shell (`zsh -ic`), kept in `~/.config/bhote/servers.json` ([configuration](configuration.md#services-herdr-app)). It runs while its port answers.

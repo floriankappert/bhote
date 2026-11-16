@@ -368,6 +368,10 @@ into `~/.config/herdr-app` (`HERDR_APP_HOME` picks another folder), then loads t
 
 A message for another agent. `<agent>` is any agent ref (its name `Frodo`, a number, `machine/pane`). The message is kept in kharka (`msg/<kharka node>/<name of its space, letters and digits in lower case>/<id>`, state `queued`), and the herdr-app hands it to the agent, as a one-line prompt that says where to read it (`kharka get <key>`, the field `text`), as soon as the **ear** on the agent's card is on and the agent is free (`idle` or `done`: not working, not asking). With the ear off, or while the agent works, it waits; the card shows how many wait next to the ear. Afterwards the record says `delivered`. The sender is the agent the command is called from (its terminal, `HC_TERMINAL_ID`) or the agent `--from` names (or `$BHOTE_FROM`); the receiver sees its name and answers with `bhote send <that name>`. A message from the person (no agent behind it) says `the user` and is answered in the receiver's own session. The target and the sender are found by their records, so it works on a machine that has no list of agents (`bhote agents` is empty without herdr-app); a space called `~` is `home` in the key.
 
+### `bhote inbox [--hook <event>] [--peek] [--json] [--as <node>/<slug>]`
+
+The messages that wait for **this** agent (found like the panel does: the kharka node of the machine and the name of its space, from `HC_TERMINAL_ID`), each claimed in kharka (state `delivered`) before it is printed; `--peek` does not claim, `--json` prints an array. Nothing when the ear is off. `--hook UserPromptSubmit|PostToolUse` prints the Claude Code hook JSON (`systemMessage`, `hookSpecificOutput.additionalContext`) and nothing else; other events print and claim nothing. At most 5 per call. `--mark [<node>-<slug> ...]` replaces the marker files `~/.cache/bhote/inbox/` (the panel calls it). The hook script and its settings: [claude-mod](claude-mod.md#messages-between-agents-the-inbox-hook).
+
 ### `bhote reload`
 
 Restarts the bhote panels of this machine, for example after an update. It ends each panel itself and starts bhote again
