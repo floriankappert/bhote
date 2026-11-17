@@ -4750,13 +4750,14 @@ export default class Bhote extends View {
     const runs = new Map();   // the runs of one project and suite that go on at once (on one machine) are one row, with how many
     for (const x of shown) {
       const text = `${x.project} · ${x.label}`;
-      if (x.state === "failed") ti.push({ kind: "failed", text, right: ago(x.time) });
+      const pr = /#(\d+)\b/.exec(String(x.label ?? "")), obj = pr ? objOf(this.projectOf(x.project), `#${pr[1]}`) : null;   // (a run of a pull request hangs on the same object as its card)
+      if (x.state === "failed") ti.push({ kind: "failed", text, right: ago(x.time), obj });
       else if (x.state === "running" || x.state === "queued") {
         const k = `${x.machine ?? ""}|${text}`;
         const e = this.runEstimate(x, "t");
         const g = runs.get(k);
         if (g) { g.n += 1; if (e.frac != null) g.fracs.push(e.frac); if (e.remain != null) g.remain = Math.max(g.remain ?? 0, e.remain); }
-        else { const it = { kind: "running", text, fracs: e.frac != null ? [e.frac] : [], remain: e.remain, n: 1 }; runs.set(k, it); ti.push(it); }
+        else { const it = { kind: "running", text, fracs: e.frac != null ? [e.frac] : [], remain: e.remain, n: 1, obj }; runs.set(k, it); ti.push(it); }
       }
     }
     for (const it of runs.values()) { it.frac = it.fracs.length ? it.fracs.reduce((a, b) => a + b, 0) / it.fracs.length : null; if (it.n > 1) it.text = `${it.text} ×${it.n}`; }
