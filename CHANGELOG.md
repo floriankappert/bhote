@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Secrets for every agent by default**: `bhote env run -- cmd` in a folder without a bound environment gives `cmd` each secret with a name of its own (`CIRCLECI_TOKEN`, `LINEAR_API_KEY` …) as the variable of that name; the values are never printed. `BHOTE_ENV_DEFAULT=off` turns it off.
 - **Accept assigns the issue to you** (`bhote task triage <task> accept`; `--no-assign` leaves it unassigned): an accepted issue is no longer in triage and would otherwise belong to nobody, so it would not show up anywhere; now it is one of the issues assigned to you (filter *linear (assigned to me)*).
 - **Uncommitted changes on the agent cards** (panel on the left): a small icon with the number of files with uncommitted changes in the folder the agent works in (looked at every 8 s with the commit it stands on).
 - **Linear, two kinds.** `triage` (assigned to nobody, state triage: the ones you decide) and `mine` (open issues assigned to you: `started` is now, a review state is review, backlog is later, the rest next; `source_kind` says which). The overview and *all sources* show only the triage ones, in their own **Triage** subsection of the Tasks list (not under Next); the source filter has *linear (triage)* and *linear (assigned to me)*. Accept and decline apply to triage only. A mine task that is no longer open or no longer yours is marked done (*No longer open and assigned to you in Linear.*).

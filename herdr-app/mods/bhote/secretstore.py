@@ -761,6 +761,23 @@ def env_vars(name):
     return res
 
 
+DEFAULT_SKIP = {"ANTHROPIC_API_KEY"}          # (it would switch `claude` to API billing)
+AUTO_NAME_RE = re.compile(r"_[0-9a-f]{4}$")     # (a name `bhote secret scan` made up for a key it could not name: GITHUB_TOKEN_66d2)
+
+
+def default_vars():
+    """The environment of every folder without an environment of its own: each secret with a name of its own (CIRCLECI_TOKEN) as the variable of that name.
+    Unreadable ones are left out, never an error. Off with BHOTE_ENV_DEFAULT=off."""
+    if os.environ.get("BHOTE_ENV_DEFAULT") == "off": return {}
+    res = {}
+    for sec, e in load_index().items():
+        if not NAME_RE.match(sec) or sec in DEFAULT_SKIP or AUTO_NAME_RE.search(sec): continue
+        try: v = read_value(sec, e)
+        except Exception: v = None
+        if v is not None: res[sec] = v
+    return res
+
+
 def cmd_env(a):
     es = load_envs(); sub = a.sub
     if sub == "ls":
@@ -799,13 +816,15 @@ def cmd_env(a):
         cmd = list(a.rest)
         if cmd and cmd[0] == "--": cmd = cmd[1:]
         name = a.name
+        dflt = False
+        if name == "--": name = None; cmd = list(a.rest)
         if name in (None, "--auto", "-"):
             name = env_for_dir(os.getcwd())
-            if not name:                               # nothing bound to this folder: the command runs as it is (the start paths use this)
+            if not name:                               # nothing bound to this folder: the secrets with a name of their own (default_vars)
                 if not cmd: raise Fail("env run [NAME] -- command")
-                os.execvp(cmd[0], cmd)
+                dflt = True
         if not cmd: raise Fail("env run NAME -- command")
-        env = dict(os.environ); env.update(env_vars(name))
+        env = dict(os.environ); env.update(default_vars() if dflt else env_vars(name))
         try: os.execvpe(cmd[0], cmd, env)
         except OSError as e: raise Fail(f"{cmd[0]}: {e.strerror}")
     else:

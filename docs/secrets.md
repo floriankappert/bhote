@@ -22,7 +22,7 @@ request. `bhote secret` keeps keys in a store, shows them only masked, and gives
 | `bhote secret machines [--json]` | Read-only matrix machine × secret: present, missing, different (by fingerprint). Nothing is sent between machines; 1Password does that. |
 | `bhote env set NAME VAR=SECRET…` · `unset` · `rm` · `ls` | Named sets of variables that point at secrets (`~/.config/bhote/envs.json`: references only, nothing in a repo). |
 | `bhote env bind NAME [dir]` · `unbind` · `which` | An environment for a folder (and below it). |
-| `bhote env run [NAME] -- cmd` | Runs `cmd` with the variables. Without NAME (or `--auto`) the environment bound to the current folder; none bound: `cmd` runs as it is. |
+| `bhote env run [NAME] -- cmd` | Runs `cmd` with the variables. Without NAME (or `--auto`) the environment bound to the current folder; none bound: every secret with a name of its own (not a `_xxxx` hash suffix, not `ANTHROPIC_API_KEY`) as the variable of that name, in any folder (`BHOTE_ENV_DEFAULT=off` turns that off). |
 
 `ENV_INJECT on`: a headless agent started from the panel runs through `bhote env run --auto`; a service in `servers.json` with `"env": "NAME"` gets that environment.
 Default off.
