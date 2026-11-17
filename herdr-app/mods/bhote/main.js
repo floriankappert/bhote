@@ -277,6 +277,8 @@ function runbookPhases(stages) {
   });
 }
 
+const DASH_GUTTER = 28;   // (the left margin of the dashboard tiles: room for the rails that tie the tiles of one object together)
+
 // The object a dashboard row is about, to connect the tiles that hold the same one: a project and the number of its pull request ("IMS|1817"), or null.
 function objOf(project, text) {
   const m = /^#(\d+)\b/.exec(String(text ?? ""));
@@ -4899,7 +4901,7 @@ export default class Bhote extends View {
     live.forEach((b, i) => { const g = groups.get(find(i)) ?? { sev: 9, n: 99, tiles: [] }; g.sev = Math.min(g.sev, sev[b.mode] ?? 4); g.n = Math.min(g.n, b.n); g.tiles.push(b); groups.set(find(i), g); });
     const big = [...groups.values()].sort((a, b) => a.sev - b.sev || a.n - b.n).flatMap((g) => g.tiles.sort((a, b) => a.n - b.n));
     if (!big.length) return null;
-    return v_flex().flex_none().relative().px(10).pt(4).pb(2).children(big.map((b) => b.el)).children(this.dashRails(t, big));
+    return v_flex().flex_none().relative().pl(DASH_GUTTER).pr(10).pt(4).pb(2).children(big.map((b) => b.el)).children(this.dashRails(t, big));
   }
 
   // The tiles that hold the same object (a pull request: its row in Pull requests, its pipeline in Deployments, its path in Runbooks) are tied together by a rail
@@ -4912,16 +4914,16 @@ export default class Bhote extends View {
     tiles.forEach((b, i) => { if (!b.shown) return; for (const r of b.rows) { if (!r.obj) continue; (objs.get(r.obj) ?? objs.set(r.obj, []).get(r.obj)).push({ i, y: tops[i] + r.y, kind: r.kind }); } });
     const out = []; let lane = 0;
     for (const pts of objs.values()) {
-      if (new Set(pts.map((q) => q.i)).size < 2 || lane > 1) continue;
+      if (new Set(pts.map((q) => q.i)).size < 2 || lane > 2) continue;
       const kinds = pts.map((q) => q.kind);
       const color = kinds.includes("failed") ? t.blocked : kinds.includes("running") ? t.working : kinds.includes("waiting") ? t.ansi3 : (t.ansi2 ?? t.done);
-      const x = 3 + lane * 4; lane += 1;
+      const x = 6 + lane * 7; lane += 1;   // (up to three rails side by side in the margin)
       const y0 = Math.min(...pts.map((q) => q.y)), y1 = Math.max(...pts.map((q) => q.y));
       out.push(div().absolute().left(x - 2).top(y0).w(5).h(y1 - y0).rounded(3).bg(color).opacity(0.22));   // (the glow)
       out.push(div().absolute().left(x - 0.5).top(y0).w(2).h(y1 - y0).rounded(1).bg(color).opacity(0.9));   // (the line)
       for (const q of pts) {
         out.push(div().absolute().left(x - 3.5).top(q.y - 3.5).w(7).h(7).rounded(3.5).bg(color));
-        out.push(div().absolute().left(x + 1.5).top(q.y - 0.5).w(8).h(1).bg(color).opacity(0.6));   // (a stub to the tile)
+        out.push(div().absolute().left(x + 1.5).top(q.y - 0.5).w(DASH_GUTTER - x - 2.5).h(1).bg(color).opacity(0.6));   // (a stub to the tile)
       }
     }
     return out;
