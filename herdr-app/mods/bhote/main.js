@@ -3946,16 +3946,19 @@ export default class Bhote extends View {
   tabBar(t, cx) {
     const prList = this.prs.filter((x) => !x.merged).map((x) => ({ state: x.checks.some((c) => c.state === "failed") ? "failed" : x.checks.some((c) => c.state === "running") ? "running" : "ok" }));
     const tabs = [["home", "Overview", null], ["topics", "Tasks", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Secrets", null]];
-    return h_flex().flex_none().gap(2).px(8).pt(8).pb(6).items_center().border_b(1).border_color(t.border)
-      .children(tabs.map(([id, label, list]) => {
+    // Index-card tabs: each has a background and a border, they sit on the divider line; the lit one is the panel's own colour and
+    // has no line under it, so it is open towards the page below.
+    return h_flex().flex_none().items_end().pl(8).pt(8)
+      .children([...tabs.map(([id, label, list], i) => {
         const on = this.tab === id;
         const failed = list ? list.filter((x) => x.state === "failed").length : 0;
-        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).py(4).rounded(6).items_center().text_size(12)
-          .bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted).hover((x) => x.bg(on ? t.selected : t.hover))
+        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).pt(3).pb(on ? 4 : 3).rounded(2).items_center().text_size(11)
+          .border_t(1).border_r(1).when(!on, (el) => el.border_b(1)).when(i === 0, (el) => el.border_l(1)).border_color(t.border)
+          .bg(on ? t.chrome : t.surface).text_color(on ? t.foreground : t.muted).hover((x) => x.bg(on ? t.chrome : t.hover))
           .on_click((_e, cx) => this.setTab(cx, id))
-          .child(id === "home" ? svg("mods/bhote/layout-dashboard.svg").size(16).flex_none() : label)   // (the overview is an icon: Lucide layout-dashboard; no running counts on the tabs, they only took room)
+          .child(id === "home" ? svg("mods/bhote/layout-dashboard.svg").size(14).flex_none() : label)   // (the overview is an icon: Lucide layout-dashboard; no running counts on the tabs, they only took room)
           .when(failed > 0, (el) => el.child(div().px(4).rounded(8).text_size(10).bg("#a8162e").text_color("#ffffff").child(String(failed))));
-      }));
+      }), div().flex_1().h(1).border_b(1).border_color(t.border)]);   // (the divider continues to the right of the last tab)
   }
 
   // The project a run belongs to: runs are named after worktrees ("IMS-wt1", "IMS (wt2)"); they belong to the project of that name.
