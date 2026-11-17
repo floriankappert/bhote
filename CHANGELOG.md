@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Dashboard: one failure no longer paints the whole tile red.** A failed row gets a red box of its own; the tile turns red only when everything in it failed.
 - **Dashboard: the Tests tile joins the rail** when a test run belongs to a pull request ("IMS · PR #1821"), like the pull request and runbook tiles of the same one.
 - **Side panel tabs look like index cards:** each tab has a background and a border and sits on the divider line; the lit one is open towards the page below. Smaller type (11 instead of 12).
 - **Dashboard order:** the tiles are ordered by urgency (red, running, waiting, recent), and tiles that hold the same pull request stay together in the order of a change (pull requests, deployments, tests, runbooks).

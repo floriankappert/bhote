@@ -4794,9 +4794,10 @@ export default class Bhote extends View {
     const src = has ? s.items : st.last;
     const failed = src.filter((i) => i.kind === "failed"), run = src.filter((i) => i.kind === "running"), wait = src.filter((i) => i.kind === "waiting"), done = src.filter((i) => i.kind === "done");
     const mode = failed.length ? "red" : run.length ? "active" : wait.length ? "waiting" : done.length ? "recent" : "idle";
+    const allFailed = failed.length > 0 && failed.length === src.length;   // (the whole tile is red only when everything in it failed; one failure is a red box around its row)
     const open = (_e, cx) => this.setTab(cx, s.id);
-    const accent = mode === "red" ? t.blocked : mode === "active" ? t.working : mode === "waiting" ? t.ansi3 : (t.ansi2 ?? t.done);
-    const red = mode === "red";
+    const accent = allFailed ? t.blocked : run.length ? t.working : wait.length ? t.ansi3 : failed.length ? t.blocked : mode === "active" ? t.working : mode === "waiting" ? t.ansi3 : (t.ansi2 ?? t.done);
+    const red = allFailed;
     const items = [...failed, ...run, ...wait, ...done];
     const cap = 5;
     const ink = red ? "#ffffff" : t.foreground, faint = red ? "#fecdd3" : t.dim;
@@ -4825,7 +4826,9 @@ export default class Bhote extends View {
       const done = it.segs?.filter((st) => st !== "running" && st !== "failed").length;
       const rightText = it.kind === "running" ? [it.segs?.length ? `${done}/${it.segs.length}` : "", it.frac != null ? `${pct}%` : "", short(it.remain)].filter(Boolean).join(" · ") : (it.dots ? "" : it.right ?? "");
       const hov = !!it.key && this.dashHover === it.key;
+      const boxed = it.kind === "failed" && !red;   // (a failed row in a tile that is otherwise fine: a red box around just that row)
       return h_flex().id(`dash-${s.id}-${i}`).w_full().flex_none().gap(8).items_start().py(2)
+        .when(boxed, (e) => e.px(6).rounded(8).border(1).border_color("#e5484d").bg("#e5484d1a"))
         .when(!!it.key, (e) => e.on_hover((h, cx) => { if (h) this.dashHover = it.key; else if (this.dashHover === it.key) this.dashHover = null; cx.notify(); }))
         .child(div().mt(6).w(6).h(6).rounded(3).flex_none().bg(c))
         .child(v_flex().flex_1().min_w(0).gap(4)
@@ -4847,7 +4850,7 @@ export default class Bhote extends View {
     };
     // The tile in steps. Coming: 1. it opens (S), 2. it makes room for the items (P, the height of the items), 3. the items fade in (O). Going: 1. the items fade
     // out, 2. the room is taken back, 3. the tile closes (and fades) when nothing is left. A change of the items while it is open only moves P.
-    const rowH = (it) => (it.kind === "running" ? (it.segs?.length ? 28 + (it.segNames ? 14 : 0) : it.frac != null ? 29 : 28) : 20);   // (the bar of `progress` is 5 px, the segments and the breathing bar 4; the captions of the segments 12 + 2)
+    const rowH = (it) => (it.kind === "failed" && !red ? 2 : 0) + (it.kind === "running" ? (it.segs?.length ? 28 + (it.segNames ? 14 : 0) : it.frac != null ? 29 : 28) : 20);   // (the bar of `progress` is 5 px, the segments and the breathing bar 4; the captions of the segments 12 + 2)
     const wantP = has ? 4 + items.slice(0, cap).reduce((a, it) => a + rowH(it), 0) + 4 * (Math.min(items.length, cap) - 1) + (items.length > cap ? 18 : 0) : 0;
     const dt = Math.min(100, now - st.at);
     st.at = now;
