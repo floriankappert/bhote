@@ -4685,8 +4685,11 @@ export default class Bhote extends View {
     for (const x of this.deploysAll()) { const k = `${x.project}|${x.label}`; if (!newest.has(k)) newest.set(k, x); }
     const deploys = [...newest.values()];
     const di = [];
+    const prTexts = new Set(pi.filter((i) => i.kind !== "waiting" || i.right === "ready to merge").map((i) => i.text));   // (the pull requests the section above already shows)
     for (const x of deploys) {
-      const text = `${x.project} · ${this.whatOf(x).text || x.label}`;
+      const what = this.whatOf(x).text || x.label;
+      if (prTexts.has(what)) continue;                                   // a run of a pull request that is listed above is not shown twice
+      const text = `${x.project} · ${what}`;
       const key = `d|${deployKey(x)}`;
       if (x.state === "failed") di.push({ kind: "failed", text, right: "failed", key });
       else if (x.state === "running" || x.state === "queued") { const e = this.runEstimate(x, "d"); di.push({ kind: "running", text, frac: e.frac, remain: e.remain, key }); }
