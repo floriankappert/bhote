@@ -4901,7 +4901,7 @@ export default class Bhote extends View {
     live.forEach((b, i) => { const g = groups.get(find(i)) ?? { sev: 9, n: 99, tiles: [] }; g.sev = Math.min(g.sev, sev[b.mode] ?? 4); g.n = Math.min(g.n, b.n); g.tiles.push(b); groups.set(find(i), g); });
     const big = [...groups.values()].sort((a, b) => a.sev - b.sev || a.n - b.n).flatMap((g) => g.tiles.sort((a, b) => a.n - b.n).map((b) => ({ ...b, linked: g.tiles.length > 1 })));
     if (!big.length) return null;
-    return v_flex().flex_none().relative().px(10).pt(4).pb(2).children(big.map((b) => (b.linked ? div().w_full().flex_none().pl(DASH_GUTTER - 10).child(b.el) : b.el)))   // (only a tile that hangs on a rail sits further in).children(this.dashRails(t, big));
+    return v_flex().flex_none().relative().px(10).pt(4).pb(2).children(big.map((b) => (b.linked ? div().w_full().flex_none().pl(DASH_GUTTER - 10).child(b.el) : b.el))).children(this.dashRails(t, big));   // (only a tile that hangs on a rail sits further in)
   }
 
   // The tiles that hold the same object (a pull request: its row in Pull requests, its pipeline in Deployments, its path in Runbooks) are tied together by a rail
