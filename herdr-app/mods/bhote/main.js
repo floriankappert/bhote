@@ -2807,8 +2807,9 @@ export default class Bhote extends View {
   }
 
   loadMessages(cx, again) {
+    if (this.msgLoading && Date.now() - (this.msgLoadAt ?? 0) > 60000) this.msgLoading = false;   // (a round that hangs for a minute (a call that never answers) must not stop every later one)
     if (this.msgLoading) { if (again) this.msgAgain = true; return; }   // (a round that is under way may have missed it: one more right after)
-    this.msgLoading = true;
+    this.msgLoading = true; this.msgLoadAt = Date.now();
     cx.spawn(async (cx) => {
       let changed = false;
       try {

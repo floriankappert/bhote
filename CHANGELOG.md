@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Handovers and messages no longer wait forever behind a hung round:** a round that asks kharka for messages and does not finish within a minute is given up, so the next one runs.
 - **Dashboard: one failure no longer paints the whole tile red.** A failed row gets a red box of its own; the tile turns red only when everything in it failed.
 - **Dashboard: the Tests tile joins the rail** when a test run belongs to a pull request ("IMS · PR #1821"), like the pull request and runbook tiles of the same one.
 - **Side panel tabs look like index cards:** each tab has a background and a border and sits on the divider line; the lit one is open towards the page below. Smaller type (11 instead of 12).
