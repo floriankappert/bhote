@@ -6944,8 +6944,16 @@ cli_reminder() {  # bhote reminder [--json]: a random task that waits, is next o
     jq -cn --arg id "${T_ID[$pick]}" --arg title "${T_TITLE[$pick]}" --arg d "${T_DESC[$pick]:-}" --arg st "$st" --arg w "$w" \
         '{id: $id, title: ($title | gsub("[\u0000-\u001f]"; " ")), description: (if $d == "" then null else ($d | gsub("[\u0000-\u001f]"; " ")) end), status: $st, waiting_for: (if $w == "" then null else $w end)}'
 }
+agent_name_ensure() {  # the agent that runs this (a terminal of the herdr-app: HC_TERMINAL_ID, else HERDR_PANE_ID) makes sure its space has an agent record, so a name from
+    # Middle-earth, at the start of every Claude session (the SessionStart hook): the panel asks for it, too, but only while it runs and sees the agent. In the background, silent.
+    local pane=${HC_TERMINAL_ID:-${HERDR_PANE_ID:-}} ws label; case "$pane" in ''|*[!A-Za-z0-9:_-]*) return 0 ;; esac
+    ws=$(herdr pane list 2>/dev/null | jq -r --arg p "$pane" '[.result.panes[] | select(.pane_id == $p)][0].workspace_id // empty' 2>/dev/null) || return 0; [ -n "$ws" ] || return 0
+    label=$(herdr workspace list 2>/dev/null | jq -r --arg w "$ws" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // empty' 2>/dev/null) || return 0; [ -n "$label" ] || return 0
+    act_agentnum "$label" >/dev/null 2>&1
+}
 cli_current() {  # bhote current [--json [--full] [--mod]]: --mod is the Claude Code mod asking: with CLAUDE_MOD off it gets {"disabled":true} and draws nothing
     local i f hit="" full="" mod=""; for i in "$@"; do case "$i" in --full) full=1 ;; --mod) mod=1 ;; esac; done
+    case " $* " in *" --json "*|*" --mod "*) ;; *) [ -n "${CLAUDECODE:-}" ] && { agent_name_ensure & } >/dev/null 2>&1 ;; esac   # (the hook: plain `bhote current`, once per session start)
     if [ -n "$mod" ] && [ "$(cfg_get CLAUDE_MOD on)" = off ]; then printf '{"disabled":true}\n'; return 0; fi
     topics_load
     for (( i = 0; i < T_N; i++ )); do
