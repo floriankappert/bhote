@@ -4905,7 +4905,7 @@ export default class Bhote extends View {
   }
 
   // The tiles that hold the same object (a pull request: its row in Pull requests, its pipeline in Deployments, its path in Runbooks) are tied together by a rail
-  // in the left margin: a glowing line from the first of its rows to the last, with a dot on each row. Its colour is the state of the object: red when one of its rows
+  // in the left margin: a line from the first of its rows to the last: it leaves the tile to the left, bends down in the margin and bends back (round corners, no dots). Its colour is the state of the object: red when one of its rows
   // failed, orange while one runs, else green. Only when the tiles stand still (the rows are where they are drawn).
   dashRails(t, tiles) {
     const tops = []; let y = 4;
@@ -4919,12 +4919,10 @@ export default class Bhote extends View {
       const color = kinds.includes("failed") ? t.blocked : kinds.includes("running") ? t.working : kinds.includes("waiting") ? t.ansi3 : (t.ansi2 ?? t.done);
       const x = 6 + lane * 7; lane += 1;   // (up to three rails side by side in the margin)
       const y0 = Math.min(...pts.map((q) => q.y)), y1 = Math.max(...pts.map((q) => q.y));
-      out.push(div().absolute().left(x - 2).top(y0).w(5).h(y1 - y0).rounded(3).bg(color).opacity(0.22));   // (the glow)
-      out.push(div().absolute().left(x - 0.5).top(y0).w(2).h(y1 - y0).rounded(1).bg(color).opacity(0.9));   // (the line)
-      for (const q of pts) {
-        out.push(div().absolute().left(x - 3.5).top(q.y - 3.5).w(7).h(7).rounded(3.5).bg(color));
-        out.push(div().absolute().left(x + 1.5).top(q.y - 0.5).w(DASH_GUTTER - x - 2.5).h(1).bg(color).opacity(0.6));   // (a stub to the tile)
-      }
+      // one line: from the first row it leaves the tile to the left, bends down in the margin and bends back to the last row (a bracket with round corners)
+      const w = DASH_GUTTER - x - 1, r = Math.max(2, Math.min(9, (y1 - y0) / 2));
+      out.push(div().absolute().left(x).top(y0 - 1).w(w).h(y1 - y0 + 2).border_l(2).border_t(2).border_b(2).border_color(color).rounded_tl(r).rounded_bl(r).opacity(0.9));
+      for (const q of pts) if (q.y > y0 + 0.5 && q.y < y1 - 0.5) out.push(div().absolute().left(x).top(q.y - 1).w(w).h(2).bg(color).opacity(0.9));   // (a row in between joins the line)
     }
     return out;
   }
