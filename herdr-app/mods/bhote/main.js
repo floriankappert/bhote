@@ -3952,7 +3952,7 @@ export default class Bhote extends View {
       .children([div().w(8).h(1).border_b(1).border_color(t.border), ...tabs.map(([id, label, list], i) => {
         const on = this.tab === id;
         const failed = list ? list.filter((x) => x.state === "failed").length : 0;
-        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).h(on ? 26 : 24).rounded_tl_xs().rounded_tr_md().items_center().text_size(11)
+        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).h(on ? 26 : 24).rounded_tl_md().rounded_tr_md().items_center().text_size(11)
           .border_t(1).border_r(1).when(!on, (el) => el.border_b(1)).border_l(i === 0 ? 1 : 0).border_color(t.border)
           .bg(on ? t.chrome : t.surface).text_color(on ? t.foreground : t.muted).hover((x) => x.bg(on ? t.chrome : t.hover))
           .on_click((_e, cx) => this.setTab(cx, id))
