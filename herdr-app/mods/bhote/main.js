@@ -935,14 +935,16 @@ export default class Bhote extends View {
     const finished = checks.filter((c) => c.state !== "running").length;
     const now = Date.now() / 1000;
     let remain = null, part = 0;
+    const parts = [];   // how far each check is (1 when it is over), for the segments of the bar
     for (const c of checks) {
-      if (c.state !== "running") continue;
+      if (c.state !== "running") { parts.push(1); continue; }
       const el = c.started ? now - c.started : 0;
       const ex = c.started ? this.expected(c.key, el) : null;
-      part += ex ? Math.min(0.95, el / ex.total) : Math.min(0.9, 1 - Math.exp(-el / 360));
+      const f = ex ? Math.min(0.95, el / ex.total) : Math.min(0.9, 1 - Math.exp(-el / 360));
+      part += f; parts.push(f);
       if (ex) remain = Math.max(remain ?? 0, ex.remain);
     }
-    return { frac: total ? Math.min(0.99, (finished + part) / total) : null, finished, total, remain };
+    return { frac: total ? Math.min(0.99, (finished + part) / total) : null, finished, total, remain, parts };
   }
 
   // --- changes shown at once -----------------------------------------------------------------------------------------------------
@@ -4697,7 +4699,7 @@ export default class Bhote extends View {
       const text = `${p.number ? `#${p.number} ` : ""}${p.title}`;
       const key = (what) => `p|${p.project}|${p.number}|${what}`;   // (another state of the same pull request is a new row)
       if (failing(p)) pi.push({ kind: "failed", text, right: `${failing(p)} failed`, key: key("failed") });
-      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), key: key("running") }); }
+      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), segFracs: e.parts, key: key("running") }); }
       else if (!p.draft && p.review === "APPROVED") pi.push({ kind: "waiting", text, right: "ready to merge", key: key("ready") });
       else if (p.review === "CHANGES_REQUESTED") pi.push({ kind: "waiting", text, right: "changes requested", key: key("changes") });
     }
@@ -4797,8 +4799,8 @@ export default class Bhote extends View {
       const pct = Math.max(0, Math.min(100, Math.round((it.frac ?? 0) * 100)));
       let bar = null;
       if (it.kind === "running") {
-        if (it.segs?.length) bar = h_flex().w_full().gap(2).children(it.segs.map((st) => div().flex_1().h(4).rounded(2).bg(st === "running" ? track : segColor(st)).overflow_hidden()
-          .when(st === "running", (e) => e.child(div().h(4).w("55%").rounded(2).bg(t.working)))));
+        if (it.segs?.length) bar = h_flex().w_full().gap(2).children(it.segs.map((st, i) => div().flex_1().h(4).rounded(2).bg(st === "running" ? track : segColor(st)).overflow_hidden()
+          .when(st === "running", (e) => e.child(div().h(4).w(`${Math.round(100 * (it.segFracs?.[i] ?? 0.5))}%`).rounded(2).bg(t.working)))));   // (each running check as far as its own estimate)
         else if (it.frac != null) bar = progress(t, it.frac, red ? "#ffffff" : t.working, "100%").bg(track);
         else {
           this.pulsing = true;   // (no estimate: the bar breathes; the panel is drawn again while it is on screen)
