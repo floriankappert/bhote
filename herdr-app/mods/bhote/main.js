@@ -4919,10 +4919,16 @@ export default class Bhote extends View {
       const color = kinds.includes("failed") ? t.blocked : kinds.includes("running") ? t.working : kinds.includes("waiting") ? t.ansi3 : (t.ansi2 ?? t.done);
       const x = 6 + lane * 7; lane += 1;   // (up to three rails side by side in the margin)
       const y0 = Math.min(...pts.map((q) => q.y)), y1 = Math.max(...pts.map((q) => q.y));
-      // one line: from the first row it leaves the tile to the left, bends down in the margin and bends back to the last row (a bracket with round corners)
-      const w = DASH_GUTTER - x - 1, r = Math.max(2, Math.min(9, (y1 - y0) / 2));
-      out.push(div().absolute().left(x).top(y0 - 1).w(w).h(y1 - y0 + 2).border_l(2).border_t(2).border_b(2).border_color(color).rounded_tl(r).rounded_bl(r).opacity(0.9));
-      for (const q of pts) if (q.y > y0 + 0.5 && q.y < y1 - 0.5) out.push(div().absolute().left(x).top(q.y - 1).w(w).h(2).bg(color).opacity(0.9));   // (a row in between joins the line)
+      // one line: from the first row it leaves the tile to the left, bends down in the margin and bends back to the last row. Made of parts that are known to draw: bars
+      // with a fill, and each corner a quarter of a ring (a round frame in a window of a quarter its size).
+      const w = DASH_GUTTER - x - 1, r = Math.max(3, Math.min(9, Math.floor((y1 - y0) / 2)));
+      const corner = (top) => div().absolute().left(x).top(top ? y0 - 1 : y1 + 1 - r).w(r).h(r).overflow_hidden()
+        .child(div().absolute().left(0).top(top ? 0 : -r).w(2 * r).h(2 * r).rounded(r).border(2).border_color(color));
+      out.push(div().absolute().left(x + r).top(y0 - 1).w(w - r).h(2).bg(color));                       // (out of the first row)
+      out.push(div().absolute().left(x + r).top(y1 - 1).w(w - r).h(2).bg(color));                       // (back into the last row)
+      if (y1 - y0 + 2 - 2 * r > 0) out.push(div().absolute().left(x).top(y0 - 1 + r).w(2).h(y1 - y0 + 2 - 2 * r).bg(color));   // (down the margin)
+      out.push(corner(true)); out.push(corner(false));
+      for (const q of pts) if (q.y > y0 + 0.5 && q.y < y1 - 0.5) out.push(div().absolute().left(x).top(q.y - 1).w(w).h(2).bg(color));   // (a row in between joins the line)
     }
     return out;
   }
