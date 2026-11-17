@@ -6950,6 +6950,7 @@ agent_name_ensure() {  # the agent that runs this (a terminal of the herdr-app: 
     ws=$(herdr pane list 2>/dev/null | jq -r --arg p "$pane" '[.result.panes[] | select(.pane_id == $p)][0].workspace_id // empty' 2>/dev/null) || return 0; [ -n "$ws" ] || return 0
     label=$(herdr workspace list 2>/dev/null | jq -r --arg w "$ws" '[.result.workspaces[] | select(.workspace_id == $w)][0].label // empty' 2>/dev/null) || return 0; [ -n "$label" ] || return 0
     act_agentnum "$label" >/dev/null 2>&1
+    store_sync >/dev/null 2>&1   # (the record reaches the other machines at once: without a panel nothing else syncs, so Omarchy did not know Dwalin)
 }
 cli_current() {  # bhote current [--json [--full] [--mod]]: --mod is the Claude Code mod asking: with CLAUDE_MOD off it gets {"disabled":true} and draws nothing
     local i f hit="" full="" mod=""; for i in "$@"; do case "$i" in --full) full=1 ;; --mod) mod=1 ;; esac; done
