@@ -4695,7 +4695,15 @@ export default class Bhote extends View {
     // what went live in the last four hours (every run, not only the newest of an environment) stays in view
     const since = Date.now() / 1000 - DASH_RECENT_S;
     for (const x of this.deploysAll()) if (x.state === "ok" && x.time >= since) di.push({ kind: "done", text: `${x.project} · ${this.whatOf(x).text || x.label}`, right: ago(x.time), key: `d|${deployKey(x)}` });
-    specs.push({ id: "deploys", title: "Deployments", items: di.filter((i) => !(i.key in gone)), fig: deploys.length ? (deploys[0].state === "ok" ? "deployed" : deploys[0].state) : "–", sub: "" });
+    // runs that read the same (one pull request has several jobs: build-backend, build-frontend …) are one row, with how many; the bar is their mean, the time left the longest
+    const dg = new Map(), dm = [];
+    for (const it of di.filter((i) => !(i.key in gone))) {
+      const k = `${it.kind}|${it.text}|${it.right ?? ""}`, g = dg.get(k);
+      if (!g) { const c = { ...it, n: 1, fracs: it.frac != null ? [it.frac] : [] }; dg.set(k, c); dm.push(c); continue; }
+      g.n += 1; if (it.frac != null) g.fracs.push(it.frac); if (it.remain != null) g.remain = Math.max(g.remain ?? 0, it.remain);
+    }
+    for (const it of dm) { if (it.fracs.length) it.frac = it.fracs.reduce((a, b) => a + b, 0) / it.fracs.length; if (it.n > 1) it.text = `${it.text} ×${it.n}`; delete it.fracs; delete it.n; }
+    specs.push({ id: "deploys", title: "Deployments", items: dm, fig: deploys.length ? (deploys[0].state === "ok" ? "deployed" : deploys[0].state) : "–", sub: "" });
     // tests
     const { shown } = this.testsShown();
     const ti = [];
