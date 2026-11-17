@@ -4395,7 +4395,20 @@ export default class Bhote extends View {
       else { stages = runbookStages(proj, { hasPR: false, tests: "none", merged: false, target: "" }); ref = ""; rank = 9; }
       if (!stages) continue;
       const at = run ? run.time : pr ? (pr.merged || pr.updated || 0) : 0;   // (when the change last moved: the collapsed tile shows the latest)
-      out.push({ project: proj.title, ref, stages: runbookPhases(stages), rank, at });
+      // the workflows of the pipeline that is under way (CircleCI: backend, frontend, portal …) with how far each is: the rows of deploys.list that share its pipeline
+      let workflows = [];
+      if (run && run.url) {
+        const pipe = (u) => String(u ?? "").replace(/\/workflows\/.*$/, "");
+        const mine = pipe(run.url);
+        const seenWf = new Set();
+        for (const w of this.deploysAll()) {
+          if (pipe(w.url) !== mine || seenWf.has(w.label)) continue;
+          seenWf.add(w.label);
+          workflows.push({ name: w.label.replace(/^[a-z]+-(?=.*-workflow$)/, "").replace(/-workflow$/, ""), state: w.state, done: w.done, total: w.total });
+        }
+        workflows.sort((a, b) => a.name.localeCompare(b.name));
+      }
+      out.push({ project: proj.title, ref, stages: runbookPhases(stages), rank, at, workflows });
     }
     return out.sort((a, b) => a.rank - b.rank);
   }
@@ -4422,10 +4435,13 @@ export default class Bhote extends View {
   runbooksPage(t) {
     const items = this.runbookItems();
     if (!items.length) return [empty(t, "◎", "No runbooks", "A project with CI settings shows the path of its changes here")];
-    const row = (x) => h_flex().id(`rb-${x.project}-${x.ref}`).gap(4).items_center().px(15).py(3)
+    const wfLine = (w) => h_flex().gap(3).items_center().flex_none().child(this.stageCircle(t, w.state === "running" || w.state === "queued" ? "running" : w.state === "ok" ? "ok" : w.state === "failed" ? "failed" : w.state === "approval" ? "approval" : "waiting", 6))
+      .child(div().text_size(10).text_color(t.dim).child(`${w.name}${w.total ? ` ${w.done}/${w.total}` : ""}`));
+    const row = (x) => div().flex_none().child(h_flex().id(`rb-${x.project}-${x.ref}`).gap(4).items_center().px(15).py(3)
       .child(div().w(104).flex_none().truncate().text_size(12).text_color(t.foreground).child(x.project))
       .child(h_flex().gap(4).items_center().flex_none().children(x.stages.map((y) => this.stageCircle(t, y.state, 9))))
-      .child(div().flex_1().min_w(0).truncate().pl(8).text_size(11).text_color(t.dim).child(x.ref.length > 34 ? `${x.ref.slice(0, 33)}…` : x.ref));
+      .child(div().flex_1().min_w(0).truncate().pl(8).text_size(11).text_color(t.dim).child(x.ref.length > 34 ? `${x.ref.slice(0, 33)}…` : x.ref)))
+      .when(x.workflows?.length > 0, (el) => el.child(h_flex().gap(10).items_center().flex_wrap().pl(123).pr(15).pb(3).children(x.workflows.map(wfLine))));   // (what the pipeline under way is doing: one dot per workflow)
     return [div().flex_none().pt(6).child(this.dividerCaption(t, "Runbooks", [this.countTag(t, items.length)])), ...items.map(row)];
   }
 

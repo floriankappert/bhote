@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Runbooks tab:** a project whose pipeline is under way shows its CircleCI workflows (backend, frontend, portal …) under its row, one dot each with the jobs done of the total.
 - **Dashboard, Deployments:** a run of a pull request that the Pull requests section already shows (open, failed or ready to merge) is not listed again; runs that read the same (several jobs of one pull request) are one row with `×n`, the bar their mean, instead of one row each.
 - The **Env** tab of the side panel is now called **Secrets**.
 - **Secrets for every agent by default**: `bhote env run -- cmd` in a folder without a bound environment gives `cmd` each secret with a name of its own (`CIRCLECI_TOKEN`, `LINEAR_API_KEY` …) as the variable of that name; the values are never printed. `BHOTE_ENV_DEFAULT=off` turns it off.
