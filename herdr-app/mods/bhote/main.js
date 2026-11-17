@@ -4699,7 +4699,7 @@ export default class Bhote extends View {
       const text = `${p.number ? `#${p.number} ` : ""}${p.title}`;
       const key = (what) => `p|${p.project}|${p.number}|${what}`;   // (another state of the same pull request is a new row)
       if (failing(p)) pi.push({ kind: "failed", text, right: `${failing(p)} failed`, key: key("failed") });
-      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), segFracs: e.parts, key: key("running") }); }
+      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), segFracs: e.parts, segNames: p.checks.map((c) => String(c.name ?? "").replace(/^ci\/circleci:\s*/, "").replace(/\/.*$/, "")), key: key("running") }); }
       else if (!p.draft && p.review === "APPROVED") pi.push({ kind: "waiting", text, right: "ready to merge", key: key("ready") });
       else if (p.review === "CHANGES_REQUESTED") pi.push({ kind: "waiting", text, right: "changes requested", key: key("changes") });
     }
@@ -4799,8 +4799,10 @@ export default class Bhote extends View {
       const pct = Math.max(0, Math.min(100, Math.round((it.frac ?? 0) * 100)));
       let bar = null;
       if (it.kind === "running") {
-        if (it.segs?.length) bar = h_flex().w_full().gap(2).children(it.segs.map((st, i) => div().flex_1().h(4).rounded(2).bg(st === "running" ? track : segColor(st)).overflow_hidden()
-          .when(st === "running", (e) => e.child(div().h(4).w(`${Math.round(100 * (it.segFracs?.[i] ?? 0.5))}%`).rounded(2).bg(t.working)))));   // (each running check as far as its own estimate)
+        if (it.segs?.length) bar = h_flex().w_full().gap(2).items_start().children(it.segs.map((st, i) => v_flex().flex_1().min_w(0).gap(2)   // (a phase: its segment, and under it its caption)
+          .child(div().w_full().h(4).rounded(2).bg(st === "running" ? track : segColor(st)).overflow_hidden()
+            .when(st === "running", (e) => e.child(div().h(4).w(`${Math.round(100 * (it.segFracs?.[i] ?? 0.5))}%`).rounded(2).bg(t.working))))   // (each running check as far as its own estimate)
+          .child(div().w_full().h(12).truncate().text_size(9.5).text_color(st === "failed" ? segColor(st) : faint).child(it.segNames?.[i] ?? ""))));
         else if (it.frac != null) bar = progress(t, it.frac, red ? "#ffffff" : t.working, "100%").bg(track);
         else {
           this.pulsing = true;   // (no estimate: the bar breathes; the panel is drawn again while it is on screen)
@@ -4832,7 +4834,7 @@ export default class Bhote extends View {
     };
     // The tile in steps. Coming: 1. it opens (S), 2. it makes room for the items (P, the height of the items), 3. the items fade in (O). Going: 1. the items fade
     // out, 2. the room is taken back, 3. the tile closes (and fades) when nothing is left. A change of the items while it is open only moves P.
-    const rowH = (it) => (it.kind === "running" ? (it.frac != null && !it.segs?.length ? 29 : 28) : 20);   // (the bar of `progress` is 5 px, the segments and the breathing bar 4)
+    const rowH = (it) => (it.kind === "running" ? (it.segs?.length ? 28 + (it.segNames ? 14 : 0) : it.frac != null ? 29 : 28) : 20);   // (the bar of `progress` is 5 px, the segments and the breathing bar 4; the captions of the segments 12 + 2)
     const wantP = has ? 4 + items.slice(0, cap).reduce((a, it) => a + rowH(it), 0) + 4 * (Math.min(items.length, cap) - 1) + (items.length > cap ? 18 : 0) : 0;
     const dt = Math.min(100, now - st.at);
     st.at = now;
