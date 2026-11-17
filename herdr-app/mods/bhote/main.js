@@ -4885,8 +4885,19 @@ export default class Bhote extends View {
   }
 
   dashboardView(t) {
-    const built = this.dashSpecs(t).map((s) => this.dashTile(t, s));
-    const big = built.filter((b) => b.el);   // (a tile that is closed is not there: its tab is one click away in the tab bar)
+    const built = this.dashSpecs(t).map((s, n) => ({ ...this.dashTile(t, s), n }));
+    // The order: what is on fire first (red, then running, waiting, recent), and the tiles that hold the same object (a pull request in Pull requests, Deployments and
+    // Runbooks) next to each other, in the way a change goes (pull requests, deployments, tests, runbooks), so that their rail does not run past a tile that has nothing to
+    // do with it. A group goes where its most urgent tile would; equal ones keep the order they always had.
+    const live = built.filter((b) => b.el);   // (a tile that is closed is not there: its tab is one click away in the tab bar)
+    const sev = { red: 0, active: 1, waiting: 2, recent: 3, idle: 4 };
+    const root = live.map((_b, i) => i);
+    const find = (i) => (root[i] === i ? i : (root[i] = find(root[i])));
+    const owner = new Map();
+    live.forEach((b, i) => { for (const r of b.rows ?? []) { if (!r.obj) continue; if (owner.has(r.obj)) root[find(i)] = find(owner.get(r.obj)); else owner.set(r.obj, i); } });
+    const groups = new Map();
+    live.forEach((b, i) => { const g = groups.get(find(i)) ?? { sev: 9, n: 99, tiles: [] }; g.sev = Math.min(g.sev, sev[b.mode] ?? 4); g.n = Math.min(g.n, b.n); g.tiles.push(b); groups.set(find(i), g); });
+    const big = [...groups.values()].sort((a, b) => a.sev - b.sev || a.n - b.n).flatMap((g) => g.tiles.sort((a, b) => a.n - b.n));
     if (!big.length) return null;
     return v_flex().flex_none().relative().px(10).pt(4).pb(2).children(big.map((b) => b.el)).children(this.dashRails(t, big));
   }
