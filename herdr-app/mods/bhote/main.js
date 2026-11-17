@@ -4921,19 +4921,20 @@ export default class Bhote extends View {
       const y0 = Math.min(...pts.map((q) => q.y)), y1 = Math.max(...pts.map((q) => q.y));
       // one line: from the first row it leaves the tile to the left, bends down in the margin and bends back to the last row. Only the parts that are known to show (rounded
       // elements with a fill): bars, and the two bends as a row of small dots along a quarter circle.
-      const xr = x + 1, xe = x + (DASH_GUTTER - x - 1);                  // (the middle of the vertical line, and where the line ends at the tile)
-      const r = Math.max(3, Math.min(9, Math.floor((y1 - y0) / 2)));
-      const bar = (l, tp, bw, bh) => out.push(div().absolute().left(l).top(tp).w(bw).h(bh).rounded(1).bg(color));
-      bar(xr + r, y0 - 1, xe - xr - r, 2);                               // (out of the first row)
-      bar(xr + r, y1 - 1, xe - xr - r, 2);                               // (back into the last row)
-      if (y1 - y0 - 2 * r > 0) bar(x, y0 + r, 2, y1 - y0 - 2 * r);      // (down the margin)
-      const N = 10;
+      const T = 3;                                                       // (the thickness of the line)
+      const xr = x + T / 2, xe = x + (DASH_GUTTER - x - 1);              // (the middle of the vertical line, and where the line ends at the tile)
+      const r = Math.max(4, Math.min(12, Math.floor((y1 - y0) / 2)));
+      const bar = (l, tp, bw, bh) => out.push(div().absolute().left(l).top(tp).w(bw).h(bh).bg(color));
+      bar(xr + r, y0 - T / 2, xe - xr - r, T);                           // (out of the first row)
+      bar(xr + r, y1 - T / 2, xe - xr - r, T);                           // (back into the last row)
+      if (y1 - y0 - 2 * r > 0) bar(x, y0 + r, T, y1 - y0 - 2 * r);      // (down the margin)
+      const N = Math.ceil(r * 3);                                        // (dots closer than a pixel: the bends are smooth)
       for (let k = 0; k <= N; k++) {
         const a = Math.PI + (Math.PI / 2) * (k / N), c = Math.cos(a) * r, sn = Math.sin(a) * r;   // (the top bend: from the left of the circle up to its top)
-        out.push(div().absolute().left(xr + r + c - 1.2).top(y0 + r + sn - 1.2).w(2.4).h(2.4).rounded(1.2).bg(color));
-        out.push(div().absolute().left(xr + r + c - 1.2).top(y1 - r - sn - 1.2).w(2.4).h(2.4).rounded(1.2).bg(color));   // (the bottom bend, mirrored)
+        out.push(div().absolute().left(xr + r + c - T / 2).top(y0 + r + sn - T / 2).w(T).h(T).rounded(T / 2).bg(color));
+        out.push(div().absolute().left(xr + r + c - T / 2).top(y1 - r - sn - T / 2).w(T).h(T).rounded(T / 2).bg(color));   // (the bottom bend, mirrored)
       }
-      for (const q of pts) if (q.y > y0 + 0.5 && q.y < y1 - 0.5) out.push(div().absolute().left(x).top(q.y - 1).w(xe - x).h(2).rounded(1).bg(color));   // (a row in between joins the line)
+      for (const q of pts) if (q.y > y0 + 0.5 && q.y < y1 - 0.5) bar(x, q.y - T / 2, xe - x, T);   // (a row in between joins the line)
     }
     return out;
   }
