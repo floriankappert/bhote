@@ -3,7 +3,7 @@
 API keys must not travel through a chat: what an agent sees ends up as plaintext in `~/.claude*/projects/**.jsonl`, `history.jsonl`, shell snapshots and in every later
 request. `bhote secret` keeps keys in a store, shows them only masked, and gives a command its keys as environment variables without anybody (or any agent) reading them.
 
-**The rule:** a key enters through a password field in the Env tab or a terminal prompt (`bhote secret set NAME`), never through a chat. Agents and Claude see names and
+**The rule:** a key enters through a password field in the Secrets tab or a terminal prompt (`bhote secret set NAME`), never through a chat. Agents and Claude see names and
 "present", never values. Masked form everywhere: first 6 and last 3 characters and the length, `sk-ant…gAA (108)` (a short value shows less).
 
 ## Commands
@@ -27,7 +27,7 @@ request. `bhote secret` keeps keys in a store, shows them only masked, and gives
 `ENV_INJECT on`: a headless agent started from the panel runs through `bhote env run --auto`; a service in `servers.json` with `"env": "NAME"` gets that environment.
 Default off.
 
-## The Env tab
+## The Secrets tab
 
 Secrets with masked value, backend and presence per machine (`✓` same, `≠` different value, `–` missing), the environments below. **+** opens a form with a password
 field. The typed value does not travel in an argument (the panel's `exec` has no stdin, and `ps` shows arguments): the panel creates a folder `~/.cache/bhote/in-…` with

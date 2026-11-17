@@ -560,7 +560,7 @@ export default class Bhote extends View {
   init(_props, cx) {
     if (props()?.settings) { this.initSettings(cx); return; }   // the settings dialog
     if (props()?.headless) { this.initHeadless(cx); return; }   // the form for another headless agent
-    if (props()?.envForm) { this.initEnvForm(cx); return; }     // the form of the Env tab: add a secret, rename one
+    if (props()?.envForm) { this.initEnvForm(cx); return; }     // the form of the Secrets tab: add a secret, rename one
     if (props()?.menu) { this.menu = props().menu; return; }   // the Options popup: a list of items, nothing to load
     this.side = props()?.side === "left" ? "left" : "right";
     // the tab that is open (the overview of four tiles, or the tab of a tile): kept in the shared state, so a reload does not throw it away
@@ -3934,7 +3934,7 @@ export default class Bhote extends View {
   // The tab bar of the right panel: Tasks, Deployments, Tests; a monitor's tab shows what runs (orange) and what failed (red).
   tabBar(t, cx) {
     const prList = this.prs.filter((x) => !x.merged).map((x) => ({ state: x.checks.some((c) => c.state === "failed") ? "failed" : x.checks.some((c) => c.state === "running") ? "running" : "ok" }));
-    const tabs = [["home", "Overview", null], ["topics", "Tasks", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Env", null]];
+    const tabs = [["home", "Overview", null], ["topics", "Tasks", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Secrets", null]];
     return h_flex().flex_none().gap(2).px(8).pt(8).pb(6).items_center().border_b(1).border_color(t.border)
       .children(tabs.map(([id, label, list]) => {
         const on = this.tab === id;
@@ -4429,7 +4429,7 @@ export default class Bhote extends View {
     return [div().flex_none().pt(6).child(this.dividerCaption(t, "Runbooks", [this.countTag(t, items.length)])), ...items.map(row)];
   }
 
-  // --- the Env tab: the secret manager (bhote secret). Only names, masked forms (first 6 and last 3 characters and the length), fingerprints and who has what
+  // --- the Secrets tab: the secret manager (bhote secret). Only names, masked forms (first 6 and last 3 characters and the length), fingerprints and who has what
   // come here, never a value. A key is typed into the field of the form (a password field) and travels to the store in a file of a 0700 folder
   // (bhote secret set NAME --from-file F --shred), never in an argument; Reveal copies it to the clipboard through bhote (cleared after SECRET_CLIP_SECONDS).
   loadEnv(cx, matrix) {
