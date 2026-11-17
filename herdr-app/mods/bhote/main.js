@@ -277,6 +277,12 @@ function runbookPhases(stages) {
   });
 }
 
+// The object a dashboard row is about, to connect the tiles that hold the same one: a project and the number of its pull request ("IMS|1817"), or null.
+function objOf(project, text) {
+  const m = /^#(\d+)\b/.exec(String(text ?? ""));
+  return m && project ? `${project}|${m[1]}` : null;
+}
+
 // A GitHub check of a pull request (a check run of Actions, or a commit status such as CircleCI's) as ok | failed | running | skipped.
 function checkOf(c) {
   const name = c.name || c.context || c.workflowName || "check";
@@ -4698,10 +4704,10 @@ export default class Bhote extends View {
     for (const p of prs) {
       const text = `${p.number ? `#${p.number} ` : ""}${p.title}`;
       const key = (what) => `p|${p.project}|${p.number}|${what}`;   // (another state of the same pull request is a new row)
-      if (failing(p)) pi.push({ kind: "failed", text, right: `${failing(p)} failed`, key: key("failed") });
-      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), segFracs: e.parts, segNames: p.checks.map((c) => String(c.name ?? "").replace(/^ci\/circleci:\s*/, "").replace(/\/.*$/, "")), key: key("running") }); }
-      else if (!p.draft && p.review === "APPROVED") pi.push({ kind: "waiting", text, right: "ready to merge", key: key("ready") });
-      else if (p.review === "CHANGES_REQUESTED") pi.push({ kind: "waiting", text, right: "changes requested", key: key("changes") });
+      if (failing(p)) pi.push({ kind: "failed", text, right: `${failing(p)} failed`, key: key("failed"), obj: objOf(p.project, text) });
+      else if (running(p)) { const e = this.checkEstimate(p.checks); pi.push({ kind: "running", text, frac: e.frac, remain: e.remain, segs: p.checks.map((c) => c.state), segFracs: e.parts, segNames: p.checks.map((c) => String(c.name ?? "").replace(/^ci\/circleci:\s*/, "").replace(/\/.*$/, "")), key: key("running"), obj: objOf(p.project, text) }); }
+      else if (!p.draft && p.review === "APPROVED") pi.push({ kind: "waiting", text, right: "ready to merge", key: key("ready"), obj: objOf(p.project, text) });
+      else if (p.review === "CHANGES_REQUESTED") pi.push({ kind: "waiting", text, right: "changes requested", key: key("changes"), obj: objOf(p.project, text) });
     }
     for (const q of this.reviewReqs ?? []) pi.push({ kind: "waiting", text: `#${q.number} ${q.title}`, right: `review for you${q.author ? ` · ${q.author}` : ""}`, key: `p|${q.project}|${q.number}|review` });
     specs.push({ id: "prs", title: "Pull requests", items: pi.filter((i) => !(i.key in gone)), fig: this.prAt ? String(prs.length) : "…", sub: prs.length ? "open" : "none open" });
@@ -4716,9 +4722,10 @@ export default class Bhote extends View {
       if (prTexts.has(what)) continue;                                   // a run of a pull request that is listed above is not shown twice
       const text = `${x.project} · ${what}`;
       const key = `d|${deployKey(x)}`;
-      if (x.state === "failed") di.push({ kind: "failed", text, right: "failed", key });
-      else if (x.state === "running" || x.state === "queued") { const e = this.runEstimate(x, "d"); di.push({ kind: "running", text, frac: e.frac, remain: e.remain, key }); }
-      else if (x.state === "approval") di.push({ kind: "waiting", text, right: "approval", key });
+      const obj = objOf(this.projectOf(x.project), what);
+      if (x.state === "failed") di.push({ kind: "failed", text, right: "failed", key, obj });
+      else if (x.state === "running" || x.state === "queued") { const e = this.runEstimate(x, "d"); di.push({ kind: "running", text, frac: e.frac, remain: e.remain, key, obj }); }
+      else if (x.state === "approval") di.push({ kind: "waiting", text, right: "approval", key, obj });
     }
     // what went live in the last four hours (every run, not only the newest of an environment) stays in view
     const since = Date.now() / 1000 - DASH_RECENT_S;
@@ -4756,8 +4763,8 @@ export default class Bhote extends View {
     for (const x of rb) {
       const st = x.stages.map((y) => y.state);
       const kind = st.includes("failed") ? "failed" : st.includes("running") ? "running" : st.includes("approval") ? "waiting" : null;
-      if (kind) { ri.push({ kind, text: x.project, dots: x.stages, right: x.ref, when: x.at ? ago(x.at) : "", key: `r|${x.project}|${x.ref}|${x.at}` }); seen.add(x.project); }
-      else if ((x.rank === 0 || x.rank === 5) && x.at >= since) { seen.add(x.project); ri.push({ kind: "done", text: x.project, dots: x.stages, right: x.ref, when: ago(x.at), key: `r|${x.project}|${x.ref}|${x.at}` }); }   // (a deployment or a merge of the last four hours)
+      if (kind) { ri.push({ kind, text: x.project, dots: x.stages, right: x.ref, when: x.at ? ago(x.at) : "", key: `r|${x.project}|${x.ref}|${x.at}`, obj: objOf(x.project, x.ref) }); seen.add(x.project); }
+      else if ((x.rank === 0 || x.rank === 5) && x.at >= since) { seen.add(x.project); ri.push({ kind: "done", text: x.project, dots: x.stages, right: x.ref, when: ago(x.at), key: `r|${x.project}|${x.ref}|${x.at}`, obj: objOf(x.project, x.ref) }); }   // (a deployment or a merge of the last four hours)
     }
     // a project that was deployed in the last four hours shows the path of that deployment, whatever its runbook shows now
     for (const proj of this.projects) {
@@ -4859,7 +4866,11 @@ export default class Bhote extends View {
       .child(v_flex().w_full().gap(4).opacity(ease(st.O))
         .children(items.slice(0, cap).map(row))
         .when(items.length > cap, (e) => e.child(div().text_size(10.5).text_color(faint).child(`+${items.length - cap} more`))));
-    return { mode, el: div().w_full().flex_none().h(Math.round(ease(st.S) * (HEAD + 2) + st.P)).mb(Math.round(8 * ease(st.S))).overflow_hidden().opacity(ease(st.S)).child(card) };
+    // where the rows are in the tile (the middle of each row's first line, from the top of the tile), for the rails that connect the tiles of one object
+    let ry = 1 + 12 + 18 + 4;
+    const rows = items.slice(0, cap).map((it) => { const y = ry + 10; ry += rowH(it) + 4; return { obj: it.obj ?? null, kind: it.kind, y }; });
+    const h = Math.round(ease(st.S) * (HEAD + 2) + st.P), mb = Math.round(8 * ease(st.S));
+    return { mode, h, mb, rows, shown: ease(st.O) >= 1 && ease(st.S) >= 1, el: div().w_full().flex_none().h(h).mb(mb).overflow_hidden().opacity(ease(st.S)).child(card) };
   }
 
   // Nothing to show on the dashboard (no run, nothing red, nothing that waits): a line to smile about; it changes every half hour.
@@ -4877,7 +4888,32 @@ export default class Bhote extends View {
     const built = this.dashSpecs(t).map((s) => this.dashTile(t, s));
     const big = built.filter((b) => b.el);   // (a tile that is closed is not there: its tab is one click away in the tab bar)
     if (!big.length) return null;
-    return v_flex().flex_none().px(10).pt(4).pb(2).children(big.map((b) => b.el));
+    return v_flex().flex_none().relative().px(10).pt(4).pb(2).children(big.map((b) => b.el)).children(this.dashRails(t, big));
+  }
+
+  // The tiles that hold the same object (a pull request: its row in Pull requests, its pipeline in Deployments, its path in Runbooks) are tied together by a rail
+  // in the left margin: a glowing line from the first of its rows to the last, with a dot on each row. Its colour is the state of the object: red when one of its rows
+  // failed, orange while one runs, else green. Only when the tiles stand still (the rows are where they are drawn).
+  dashRails(t, tiles) {
+    const tops = []; let y = 4;
+    for (const b of tiles) { tops.push(y); y += b.h + b.mb; }
+    const objs = new Map();
+    tiles.forEach((b, i) => { if (!b.shown) return; for (const r of b.rows) { if (!r.obj) continue; (objs.get(r.obj) ?? objs.set(r.obj, []).get(r.obj)).push({ i, y: tops[i] + r.y, kind: r.kind }); } });
+    const out = []; let lane = 0;
+    for (const pts of objs.values()) {
+      if (new Set(pts.map((q) => q.i)).size < 2 || lane > 1) continue;
+      const kinds = pts.map((q) => q.kind);
+      const color = kinds.includes("failed") ? t.blocked : kinds.includes("running") ? t.working : kinds.includes("waiting") ? t.ansi3 : (t.ansi2 ?? t.done);
+      const x = 3 + lane * 4; lane += 1;
+      const y0 = Math.min(...pts.map((q) => q.y)), y1 = Math.max(...pts.map((q) => q.y));
+      out.push(div().absolute().left(x - 2).top(y0).w(5).h(y1 - y0).rounded(3).bg(color).opacity(0.22));   // (the glow)
+      out.push(div().absolute().left(x - 0.5).top(y0).w(2).h(y1 - y0).rounded(1).bg(color).opacity(0.9));   // (the line)
+      for (const q of pts) {
+        out.push(div().absolute().left(x - 3.5).top(q.y - 3.5).w(7).h(7).rounded(3.5).bg(color));
+        out.push(div().absolute().left(x + 1.5).top(q.y - 0.5).w(8).h(1).bg(color).opacity(0.6));   // (a stub to the tile)
+      }
+    }
+    return out;
   }
 
   // The Tasks section's head (in the Tasks tab): its caption on a divider with "select all" as a link, with a pick the Actions button, the total count at the
