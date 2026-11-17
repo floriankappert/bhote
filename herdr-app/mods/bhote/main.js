@@ -765,9 +765,9 @@ export default class Bhote extends View {
         try {
           const have = new Set((agents() ?? []).map((a) => a.space));
           const labelOf = (s) => ((s.machine ?? null) === null ? this.hostLabel : this.machineLabel(s.machine));   // (spaces of another machine too: "Omarchy|homeassistant")
-          const need = spaces().filter((s) => have.has(s.id) && s.name && !this.ringMap.has(`${labelOf(s)}/${s.name}`.toLowerCase().replace(/[^a-z0-9]/g, "")) && !(this.ringAsked ??= new Set()).has((s.machine ?? null) === null ? s.name : `${labelOf(s)}|${s.name}`))
+          const need = spaces().filter((s) => have.has(s.id) && s.name && !this.ringMap.has(`${labelOf(s)}/${s.name}`.toLowerCase().replace(/[^a-z0-9]/g, "")) && Date.now() - ((this.ringAsked ??= new Map()).get((s.machine ?? null) === null ? s.name : `${labelOf(s)}|${s.name}`) ?? 0) > 30000)   // (asked again after 30 s while the name is still missing: one ask that wrote nothing must not leave the agent without a name)
             .map((s) => ((s.machine ?? null) === null ? s.name : `${labelOf(s)}|${s.name}`));
-          if (need.length) { need.forEach((n) => this.ringAsked.add(n)); exec("bhote", ["__act", "agentnum", ...need], { timeout: 30000 }).catch(() => need.forEach((n) => this.ringAsked.delete(n))); }
+          if (need.length) { need.forEach((n) => this.ringAsked.set(n, Date.now())); exec("bhote", ["__act", "agentnum", ...need], { timeout: 30000 }).catch(() => need.forEach((n) => this.ringAsked.delete(n))); }
         } catch (_e) { /* the next load asks again */ }
         this.observeRows(this.tests, "t");
         this.observeRows(this.deploys, "d");
