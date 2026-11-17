@@ -3948,12 +3948,12 @@ export default class Bhote extends View {
     const tabs = [["home", "Overview", null], ["topics", "Tasks", null], ["prs", "PRs", prList], ["deploys", "Deploys", this.deploysAll()], ["tests", "Tests", this.testsShown().shown], ["runbooks", "Runbooks", null], ["servers", "Servers", null], ["env", "Secrets", null]];
     // Index-card tabs: each has a background and a border, they sit on the divider line; the lit one is the panel's own colour and
     // has no line under it, so it is open towards the page below.
-    return h_flex().flex_none().items_end().pl(8).pt(8)
-      .children([...tabs.map(([id, label, list], i) => {
+    return h_flex().flex_none().items_end().pt(8)
+      .children([div().w(8).h(1).border_b(1).border_color(t.border), ...tabs.map(([id, label, list], i) => {
         const on = this.tab === id;
         const failed = list ? list.filter((x) => x.state === "failed").length : 0;
-        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).pt(3).pb(on ? 4 : 3).rounded(2).items_center().text_size(11)
-          .border_t(1).border_r(1).when(!on, (el) => el.border_b(1)).when(i === 0, (el) => el.border_l(1)).border_color(t.border)
+        return h_flex().id(`tab-${id}`).gap(4).px(id === "home" ? 8 : 7).pt(on ? 6 : 3).pb(on ? 4 : 3).rounded_tl_xs().rounded_tr_md().items_center().text_size(on ? 12 : 11)
+          .border_t(1).border_r(1).when(!on, (el) => el.border_b(1)).border_l(i === 0 ? 1 : 0).border_color(t.border)
           .bg(on ? t.chrome : t.surface).text_color(on ? t.foreground : t.muted).hover((x) => x.bg(on ? t.chrome : t.hover))
           .on_click((_e, cx) => this.setTab(cx, id))
           .child(id === "home" ? svg("mods/bhote/layout-dashboard.svg").size(14).flex_none() : label)   // (the overview is an icon: Lucide layout-dashboard; no running counts on the tabs, they only took room)
