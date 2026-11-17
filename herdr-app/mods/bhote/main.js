@@ -3779,7 +3779,8 @@ export default class Bhote extends View {
     const proj = this.projects.find((q) => q.title === this.projectOf(x.project));
     if (!proj) return null;
     const now = x.state === "running" || x.state === "queued" ? "running" : x.state === "approval" ? "approval" : x.state === "failed" ? "failed" : x.state === "ok" ? "ok" : "waiting";
-    const bi = kind === "d" ? proj.deployBranches.indexOf(x.branch) : -1;
+    let bi = kind === "d" ? proj.deployBranches.indexOf(x.branch) : -1;
+    if (bi < 0 && kind === "d" && x.src === "d" && proj.deployBranches.length) bi = 0;   // (a run of deploys.list is on a deploy branch, but its row does not say which: the first environment)
     const post = postStages(proj);
     if (bi >= 0) {   // a run on a deploy branch: its environment (by name when the post stages carry it), else the first stage that is built or deployed
       const byName = proj.stages?.[bi] ? post.findIndex((l) => l.split(" (")[0] === proj.stages[bi]) : -1;
@@ -4384,7 +4385,13 @@ export default class Bhote extends View {
       if (!proj.ci) continue;
       const prs = this.prs.filter((x) => x.project === proj.title && x.kind === "pr");
       const open = prs.filter((x) => !x.merged).sort((a, b) => (b.updated || 0) - (a.updated || 0));
-      const run = this.deploysAll().filter((x) => this.projectOf(x.project) === proj.title && ["running", "queued", "approval"].includes(x.state))[0];
+      const dep = this.deploysAll().filter((x) => this.projectOf(x.project) === proj.title);
+      let run = dep.find((x) => ["running", "queued", "approval"].includes(x.state));
+      if (!run) {   // no run under way: the newest pipeline of a deploy branch that failed in the last day stays, red, until a newer one comes
+        const pipe = (u) => String(u ?? "").replace(/\/workflows\/.*$/, "");
+        const last = dep.find((x) => x.src === "d" && x.url);
+        if (last && Date.now() / 1000 - last.time < 86400) run = dep.find((x) => x.src === "d" && pipe(x.url) === pipe(last.url) && x.state === "failed");
+      }
       const failed = open.find((x) => x.checks.some((c) => c.state === "failed"));
       const live = open.find((x) => x.checks.some((c) => c.state === "running"));
       const merged = prs.filter((x) => x.merged).sort((a, b) => b.merged - a.merged)[0];
