@@ -6,7 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
-- **Agent cards: the countdown after finishing lasts 30 minutes** (was 30 s): minutes while it is long ("24m"), then "9m 40s", and seconds in the last minute. An agent that has been looked at (its pane has the focus) is seen: it gets no countdown.
+- **Agent cards: the countdown after finishing lasts 10 minutes** (was 30 s), right behind the name: minutes while it is long ("24m"), then "9m 40s", and seconds in the last minute. An agent that has been looked at (its pane has the focus) is seen: it gets no countdown.
 - **Stash entries are top-aligned:** the number, the text, the agent badge and the menu button sit at the top of the cell.
 - **Tasks: a drill-down filter.** A `filter` button next to the source menu (Tasks tab and overview) opens two rows of chips: the sources (Manual, Linear, Linear (mine), Stash, Agent; several at once) and under them the statuses that the picked sources have (several at once), each with its count. Nothing picked shows everything.
 - **Stash entries grow with their text:** a stash is no longer cut off after two lines; it gets as many lines as it needs (the list scrolls from six rows on), and dragging finds the place by the row under the pointer.
