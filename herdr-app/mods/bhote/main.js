@@ -2045,7 +2045,9 @@ export default class Bhote extends View {
           .when(proj != null && proj > u, (e) => e.child(h_flex().absolute().inset_0().child(div().w(`${Math.min(100, u)}%`).flex_none())
             .child(div().w(`${Math.max(0, Math.min(100, proj) - Math.min(100, u))}%`).h(5).rounded(3).bg(col).opacity(0.3))))
           .child(h_flex().absolute().inset_0().children([0, 1, 2, 3, 4, 5, 6].map((i) => div().flex_1().h_full().when(i < 6, (e) => e.border_r(1).border_color(t.chrome)))))
-          : progress(t, u / 100, colorOf(u), "100%")); };
+          // the 5-hour limit is divided into its five hours the same way
+          : div().relative().w_full().h(5).flex_none().child(progress(t, u / 100, colorOf(u), "100%"))
+            .child(h_flex().absolute().inset_0().children([0, 1, 2, 3, 4].map((i) => div().flex_1().h_full().when(i < 4, (e) => e.border_r(1).border_color(t.chrome)))))); };
     const name = (a) => a.profile === "claude" ? "Main" : "Alternative";
     return [v_flex().flex_none().pt(4).pb(12)
       .child(this.sectionHead(t, "usage-head", "Claude usage", shut, this.guard((_e, cx) => { setShared("bhote.usageShut", !shut); cx.notify(); })))

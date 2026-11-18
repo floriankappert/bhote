@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Claude usage: the 5-hour bar is divided into its five hours** by fine strokes, as the weekly bar is into its seven days.
 - **Handovers and messages no longer wait forever behind a hung round:** a round that asks kharka for messages and does not finish within a minute is given up, so the next one runs.
 - **Dashboard: one failure no longer paints the whole tile red.** A failed row gets a red box of its own; the tile turns red only when everything in it failed.
 - **Dashboard: the Tests tile joins the rail** when a test run belongs to a pull request ("IMS · PR #1821"), like the pull request and runbook tiles of the same one.
