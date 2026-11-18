@@ -4407,7 +4407,7 @@ export default class Bhote extends View {
         .children(svcs.length && d?.systems?.length ? [div().w(1).h(10).mx(2).flex_none().bg(t.border)] : [])   // (the services after the IMS systems of the machine)
         .children(svcs.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(svcColor(x))))
         .child(div().flex_1().min_w(0))
-        .when(!!d?.machine, (e) => e.child(this.spark(t, this.srvKey(m.name), 1, "CPU")).child(this.spark(t, this.srvKey(m.name), 2, "RAM")));
+        .when(!!d?.machine, (e) => e.child(div().flex_none().mr(10).child(this.spark(t, this.srvKey(m.name), 1, "CPU"))).child(this.spark(t, this.srvKey(m.name), 2, "RAM")));
       return v_flex().id("tile-servers").flex_none().pb(8).bg(t.chrome).child(head)
         .child(v_flex().flex_none().children(machines.map((g) => dots(g))));
     }
