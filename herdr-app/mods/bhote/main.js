@@ -4074,6 +4074,7 @@ export default class Bhote extends View {
           if (!info || info.none) continue;
           const r = await this.srvExec(m.name, info.node, [info.script, info.main], 30000);
           this.srv[key] = { ...JSON.parse(r.stdout), name: m.name, label: m.label };
+          this.sampleLoad(key, this.srv[key].machine);
         } catch (e) {
           this.srv[key] = { ...(this.srv[key] ?? {}), name: m.name, label: m.label, error: String(e?.message ?? e) };
         }
@@ -4081,6 +4082,31 @@ export default class Bhote extends View {
       this.srvLoading = false;
       cx.notify();
     });
+  }
+
+  // The load of a machine over the last four hours, one sample a minute while the panel looks at it (kept in the shared state, so a reload keeps it):
+  // [time in minutes, cpu %, ram %].
+  sampleLoad(key, m) {
+    if (!m || !(m.ramTotal > 0)) return;
+    if (!this.loadHist) { try { this.loadHist = JSON.parse(shared("bhote.loadHist") || "{}"); } catch (_e) { this.loadHist = {}; } }
+    const list = (this.loadHist[key] ??= []), now = Math.floor(Date.now() / 60000);
+    if (list.length && list[list.length - 1][0] === now) return;
+    list.push([now, Math.round(m.cpu), Math.round((100 * m.ramUsed) / m.ramTotal)]);
+    while (list.length && list[0][0] < now - 240) list.shift();
+    try { setShared("bhote.loadHist", JSON.stringify(this.loadHist)); } catch (_e) { /* not kept */ }
+  }
+
+  // A sparkline of the last four hours: 40 columns of six minutes (the highest value of each), blank where nothing was seen.
+  spark(t, key, idx, label) {
+    let hist = this.loadHist;
+    if (!hist) { try { hist = JSON.parse(shared("bhote.loadHist") || "{}"); } catch (_e) { hist = {}; } }
+    const now = Math.floor(Date.now() / 60000), cols = new Array(40).fill(null);
+    for (const q of hist[key] ?? []) { const c = 39 - Math.floor((now - q[0]) / 6); if (c >= 0 && c < 40) cols[c] = Math.max(cols[c] ?? 0, q[idx]); }
+    const hot = (v) => (v > 85 ? t.blocked : v > 65 ? t.ansi3 : (t.ansi2 ?? t.done));
+    return h_flex().gap(4).items_end().flex_none().text_size(10).text_color(t.dim)
+      .child(div().child(label))
+      .child(h_flex().items_end().w(40).h(14).flex_none().border_b(1).border_color(t.border)
+        .children(cols.map((v) => div().w(1).h(v == null ? 0 : Math.max(1, Math.round((Math.min(100, v) / 100) * 14))).flex_none().bg(hot(v ?? 0)))));
   }
 
   tickServers(cx) {
@@ -4379,7 +4405,9 @@ export default class Bhote extends View {
         .child(div().w(72).flex_none().truncate().text_size(12).text_color(t.foreground).child(m.label))   // (one machine per row, its name in the column of the usage rows)
         .children((d?.systems ?? []).map((sys) => div().w(8).h(8).rounded(4).flex_none().bg(this.slotColor(t, this.slotState(this.srvKey(m.name), sys)))))
         .children(svcs.length && d?.systems?.length ? [div().w(1).h(10).mx(2).flex_none().bg(t.border)] : [])   // (the services after the IMS systems of the machine)
-        .children(svcs.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(svcColor(x))));
+        .children(svcs.map((x) => div().w(8).h(8).rounded(4).flex_none().bg(svcColor(x))))
+        .child(div().flex_1().min_w(0))
+        .when(!!d?.machine, (e) => e.child(this.spark(t, this.srvKey(m.name), 1, "CPU")).child(this.spark(t, this.srvKey(m.name), 2, "RAM")));
       return v_flex().id("tile-servers").flex_none().pb(8).bg(t.chrome).child(head)
         .child(v_flex().flex_none().children(machines.map((g) => dots(g))));
     }
