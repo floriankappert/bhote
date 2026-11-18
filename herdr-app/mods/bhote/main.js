@@ -4099,17 +4099,30 @@ export default class Bhote extends View {
     try { setShared("bhote.loadHist", JSON.stringify(this.loadHist)); } catch (_e) { /* not kept */ }
   }
 
-  // A sparkline of the last four hours: 24 columns of ten minutes (the highest value of each), blank where nothing was seen.
+  // A sparkline of the last four hours: 12 columns of twenty minutes (the highest value of each), blank where nothing was seen, and a smooth curve
+  // through the middles of the columns (dots, cosine between two neighbours).
   spark(t, key, idx, label) {
     let hist = this.loadHist;
     if (!hist) { try { hist = JSON.parse(shared("bhote.loadHist") || "{}"); } catch (_e) { hist = {}; } }
-    const now = Math.floor(Date.now() / 60000), cols = new Array(24).fill(null);
-    for (const q of hist[key] ?? []) { const c = 23 - Math.floor((now - q[0]) / 10); if (c >= 0 && c < 24) cols[c] = Math.max(cols[c] ?? 0, q[idx]); }
+    const N = 12, CW = 4, GAP = 2, H = 10, W = N * CW + (N - 1) * GAP;
+    const now = Math.floor(Date.now() / 60000), cols = new Array(N).fill(null);
+    for (const q of hist[key] ?? []) { const c = N - 1 - Math.floor((now - q[0]) / 20); if (c >= 0 && c < N) cols[c] = Math.max(cols[c] ?? 0, q[idx]); }
     const hot = (v) => (v > 85 ? t.blocked : v > 65 ? t.ansi3 : (t.ansi2 ?? t.done));
+    const dots = [];
+    for (let i = 0; i + 1 < N; i++) {
+      const a = cols[i], b = cols[i + 1]; if (a == null || b == null) continue;
+      const x0 = i * (CW + GAP) + CW / 2, step = CW + GAP;
+      for (let x = 0; x < step; x++) {
+        const v = a + (b - a) * (1 - Math.cos(Math.PI * (x / step))) / 2;
+        dots.push(div().absolute().left(Math.round(x0 + x) - 0.5).top(Math.max(0, Math.min(H - 2, H - 1 - (Math.min(100, v) / 100) * (H - 2)))).w(1.5).h(2).bg(t.foreground));
+      }
+    }
     return h_flex().gap(4).items_end().flex_none().text_size(10).text_color(t.dim)
       .child(div().child(label))
-      .child(h_flex().items_end().gap(1).w(71).h(10).flex_none().border_b(1).border_color(t.border)
-        .children(cols.map((v) => div().w(2).h(v == null ? 0 : Math.max(1, Math.round((Math.min(100, v) / 100) * 10))).flex_none().bg(hot(v ?? 0)))));
+      .child(div().relative().w(W).h(H).flex_none().border_b(1).border_color(t.border)
+        .child(h_flex().items_end().gap(GAP).w(W).h(H)
+          .children(cols.map((v) => div().w(CW).h(v == null ? 0 : Math.max(1, Math.round((Math.min(100, v) / 100) * H))).flex_none().bg(hot(v ?? 0)).opacity(0.55))))
+        .children(dots));
   }
 
   tickServers(cx) {
