@@ -93,7 +93,6 @@ const median = (a) => { const b = [...a].sort((x, y) => x - y); return b.length 
 
 // A monitor list: time US project US label US state US done US total US note ("branch|~|title") US url.
 const FLASH_MS = 1200, FADE_MS = 1800;   // the light of a finished card dies down over the first 1.2 s; it fades to idle over the last 1.8 s
-const FANTASY = "#c4b5fd";   // the colour of the names from Middle-earth (agent cards and stashes): a violet of its own, used for nothing else
 const FINISH_MS = 10 * 60000;   // a recently finished agent: lit up for a moment, "finished" until here, then idle
 
 // While a menu is open, what lies behind it must not light up under the pointer (the popup does not catch the pointer for the panes): every
@@ -182,6 +181,16 @@ function parseRing(text) {
   const map = new Map();
   recs.forEach((r, i) => { if (!map.has(r.key)) map.set(r.key, ringName(i + 1)); });
   return map;
+}
+// Every name from Middle-earth has a colour of its own: the hue from its place in the ring (golden angle: neighbours are far apart), the same everywhere
+// (agent cards, stashes) and on every machine; a name that is not in the ring gets one from its letters.
+function nameColor(name) {
+  const base = String(name ?? "").replace(/\s*\d+$/, "").trim().toLowerCase();
+  let i = RING.findIndex((r) => r.toLowerCase() === base);
+  if (i < 0) { i = 0; for (const ch of base) i = (i * 31 + ch.charCodeAt(0)) % 997; }
+  const h = (i * 137.508) % 360, sat = 0.55 + 0.17 * (i % 3), l = 0.62 + 0.09 * (Math.floor(i / 3) % 3), a = sat * Math.min(l, 1 - l);
+  const f = (n) => { const k = (n + h / 30) % 12; return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)))).toString(16).padStart(2, "0"); };
+  return `#${f(0)}${f(8)}${f(4)}`;
 }
 function ringName(num) {
   const n = Number(num);
@@ -3430,7 +3439,7 @@ export default class Bhote extends View {
                 .on_click(this.guard((_e, cx) => this.startEditStash(x, cx)))
                 .child(div().w(14).flex_none().text_size(11).text_color(t.dim).cursor_pointer().child(String(i + 1)))
                 .child(div().flex_1().min_w(0).text_size(12).text_color(t.foreground).child(x.text.replace(/\n+/g, " ↵ ")))
-                .when(!!x.agent?.name, (r) => r.child(this.chip(t, FANTASY).child(x.agent.name.toUpperCase())))
+                .when(!!x.agent?.name, (r) => r.child(this.chip(t, nameColor(x.agent.name)).child(x.agent.name.toUpperCase())))
                 .child(this.optionsBtn(t, `op-st-${x.id}`, () => this.stashItems(x))))
               .when(after, (r) => r.child(div().h(2).mx(8).mb(2).rounded(1).bg(t.accent)));
           })))));
@@ -4386,7 +4395,7 @@ export default class Bhote extends View {
   // rounded, a hairline and a tint of their own colour.
   // The badge with the name of an agent from Middle-earth (Frodo): always in its own colour; a pane code (w2:a1) is no such name and stays grey.
   nameChip(t, text, dimColor) {
-    return this.chip(t, /^(?:[A-Z]{1,3}\/)?w\d+:a\d+$/.test(text) ? dimColor : FANTASY).child(text);
+    return this.chip(t, /^(?:[A-Z]{1,3}\/)?w\d+:a\d+$/.test(text) ? dimColor : nameColor(text)).child(text);
   }
 
   chip(t, color, id) {
