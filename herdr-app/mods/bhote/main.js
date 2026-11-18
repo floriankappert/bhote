@@ -93,6 +93,7 @@ const median = (a) => { const b = [...a].sort((x, y) => x - y); return b.length 
 
 // A monitor list: time US project US label US state US done US total US note ("branch|~|title") US url.
 const FLASH_MS = 1200, FADE_MS = 1800;   // the light of a finished card dies down over the first 1.2 s; it fades to idle over the last 1.8 s
+const FANTASY = "#c4b5fd";   // the colour of the names from Middle-earth (agent cards and stashes): a violet of its own, used for nothing else
 const FINISH_MS = 10 * 60000;   // a recently finished agent: lit up for a moment, "finished" until here, then idle
 
 // While a menu is open, what lies behind it must not light up under the pointer (the popup does not catch the pointer for the panes): every
@@ -1758,11 +1759,11 @@ export default class Bhote extends View {
           .when(!!agent && (o.listen?.waiting ?? 0) > 0, (el) => el.child(this.chip(t, o.listen.blocked ? t.blocked : t.ansi3).child(`${o.listen.waiting}${o.listen.blocked ? " · draft" : ""}`)))   // (messages that wait: ear off, or the agent at work; red "draft": it could not be typed in, a person has an unfinished text in that prompt)
           .when(!!o.monitor, (el) => el.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color(t.accent).bg(tint(t.accent, "22", t.surface)).border(1).border_color(tint(t.accent, "55", t.border))
             .child((o.monitor.length > 1 ? `monitor ${o.monitor.length}` : `monitor · ${(o.monitor[0].every ?? "").replace(/^Every /i, "").replace(" minutes", "m").replace(" minute", "m").replace(" hours", "h").replace(" hour", "h").replace(" seconds", "s").replace(" second", "s")}`).toUpperCase())))
-          .when(mini && !!ident, (el) => el.child(this.chip(t, active ? t.muted : t.dim).child(ident)))
+          .when(mini && !!ident, (el) => el.child(this.nameChip(t, ident, active ? t.muted : t.dim)))
           .when(!!word, (el) => el.child(this.chip(t, badgeColor).child(word.toUpperCase()))))
         .when(!mini && (!!task || !!ident), (el) => el.child(h_flex().gap(8).items_center().pl(indent)
           .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(active ? t.foreground : dim ? t.dim : t.muted).child(task || " "))
-          .when(!!ident, (e) => e.child(this.chip(t, active ? t.muted : t.dim).child(ident)))))
+          .when(!!ident, (e) => e.child(this.nameChip(t, ident, active ? t.muted : t.dim)))))
         .when(!mini && !!o.branch, (el) => el.child(div().truncate().pl(indent).text_size(11).text_color(active ? t.muted : t.dim).child(`⎇ ${o.branch}`)))
         // the deployment under way: a bar across the card, the percentage and the time left at its end
         .when(!!dep, (el) => { const fr = Math.max(0, Math.min(1, dep.frac ?? 0)); return el.child(h_flex().gap(8).items_center().pl(indent).pt(3)   // (yellow always has its bar: empty while there is no figure yet)
@@ -3429,8 +3430,7 @@ export default class Bhote extends View {
                 .on_click(this.guard((_e, cx) => this.startEditStash(x, cx)))
                 .child(div().w(14).flex_none().text_size(11).text_color(t.dim).cursor_pointer().child(String(i + 1)))
                 .child(div().flex_1().min_w(0).text_size(12).text_color(t.foreground).child(x.text.replace(/\n+/g, " ↵ ")))
-                .when(!!x.agent?.name, (r) => r.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color("#c4b5fd")
-                  .bg(tint("#7c3aed", "30", t.surface)).border(1).border_color(tint("#7c3aed", "66", t.border)).child(x.agent.name.toUpperCase())))
+                .when(!!x.agent?.name, (r) => r.child(this.chip(t, FANTASY).child(x.agent.name.toUpperCase())))
                 .child(this.optionsBtn(t, `op-st-${x.id}`, () => this.stashItems(x))))
               .when(after, (r) => r.child(div().h(2).mx(8).mb(2).rounded(1).bg(t.accent)));
           })))));
@@ -4384,6 +4384,11 @@ export default class Bhote extends View {
   // A small icon button; it remembers where it is (for a menu) and never counts as a click on what is behind it.
   // The small marks on an agent card (the bar of the context, uncommitted files, the ear, waiting messages, the state, the name) share one look: 18 high,
   // rounded, a hairline and a tint of their own colour.
+  // The badge with the name of an agent from Middle-earth (Frodo): always in its own colour; a pane code (w2:a1) is no such name and stays grey.
+  nameChip(t, text, dimColor) {
+    return this.chip(t, /^(?:[A-Z]{1,3}\/)?w\d+:a\d+$/.test(text) ? dimColor : FANTASY).child(text);
+  }
+
   chip(t, color, id) {
     const e = div().flex_none().h(18).px(6).flex().items_center().justify_center().gap(3).rounded(5).border(1)
       .border_color(tint(color, "55", t.border)).bg(tint(color, "22", t.surface)).text_color(color).text_size(9.5).font_semibold();
