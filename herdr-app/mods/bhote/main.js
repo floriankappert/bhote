@@ -4096,16 +4096,16 @@ export default class Bhote extends View {
     try { setShared("bhote.loadHist", JSON.stringify(this.loadHist)); } catch (_e) { /* not kept */ }
   }
 
-  // A sparkline of the last four hours: 30 columns of eight minutes (the highest value of each), blank where nothing was seen.
+  // A sparkline of the last four hours: 24 columns of ten minutes (the highest value of each), blank where nothing was seen.
   spark(t, key, idx, label) {
     let hist = this.loadHist;
     if (!hist) { try { hist = JSON.parse(shared("bhote.loadHist") || "{}"); } catch (_e) { hist = {}; } }
-    const now = Math.floor(Date.now() / 60000), cols = new Array(30).fill(null);
-    for (const q of hist[key] ?? []) { const c = 29 - Math.floor((now - q[0]) / 8); if (c >= 0 && c < 30) cols[c] = Math.max(cols[c] ?? 0, q[idx]); }
+    const now = Math.floor(Date.now() / 60000), cols = new Array(24).fill(null);
+    for (const q of hist[key] ?? []) { const c = 23 - Math.floor((now - q[0]) / 10); if (c >= 0 && c < 24) cols[c] = Math.max(cols[c] ?? 0, q[idx]); }
     const hot = (v) => (v > 85 ? t.blocked : v > 65 ? t.ansi3 : (t.ansi2 ?? t.done));
     return h_flex().gap(4).items_end().flex_none().text_size(10).text_color(t.dim)
       .child(div().child(label))
-      .child(h_flex().items_end().w(60).h(10).flex_none().border_b(1).border_color(t.border)
+      .child(h_flex().items_end().gap(1).w(71).h(10).flex_none().border_b(1).border_color(t.border)
         .children(cols.map((v) => div().w(2).h(v == null ? 0 : Math.max(1, Math.round((Math.min(100, v) / 100) * 10))).flex_none().bg(hot(v ?? 0)))));
   }
 
