@@ -6,6 +6,8 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Tasks: a drill-down filter.** A `filter` button next to the source menu (Tasks tab and overview) opens two rows of chips: the sources (Manual, Linear, Linear (mine), Stash, Agent; several at once) and under them the statuses that the picked sources have (several at once), each with its count. Nothing picked shows everything.
+- **Stash entries grow with their text:** a stash is no longer cut off after two lines; it gets as many lines as it needs (the list scrolls from six rows on), and dragging finds the place by the row under the pointer.
 - **Agent cards: a 30 second countdown after an agent finished.** The green phase now lasts 30 s (was 15) and shows a bar that runs down and the seconds left next to the name, so one sees which agents finished when.
 - **Servers, folded: a sparkline of CPU and RAM per machine** for the last four hours (one sample a minute while the panel looks at the machine, twenty-minute columns, with a smooth curve through them; gaps stay blank).
 - **Claude usage: the 5-hour bar is divided into its five hours** by fine strokes, as the weekly bar is into its seven days.

@@ -3404,12 +3404,7 @@ export default class Bhote extends View {
               // dictate: the field has the focus, then superwhisper starts recording and types what it hears into it
               .child(this.ibtn(t, "stash-dictate", "mic", () => { this.stashIn.focus(); exec("open", ["superwhisper://record"]).catch(() => {}); }, { color: t.muted, hover: t.accent, w: 22 })))
             .when(empty, (e) => e.child(div().absolute().left(10).top(6).h(24).flex().items_center().text_size(12.5).text_color(t.dim).opacity(0.6).child(div().italic().font_family("Helvetica Neue").child("Stash: write, or dictate with superwhisper"))))))   // (the app font may have no italic: a system font that has one)
-        .when(list.length > 0, (e) => e.child(v_flex().id("stash-list").max_h(PITCH * 4).overflow_y_scrollbar().pt(6).pb(4)
-          .on_mouse_move((ev, cx) => {
-            if (!this.drag) return;
-            const to = Math.max(0, Math.min(list.length - 1, Math.floor(((ev.local_position?.y ?? 0) - 6) / PITCH)));
-            if (to !== this.drag.to) { this.drag.to = to; cx.notify(); }
-          })
+        .when(list.length > 0, (e) => e.child(v_flex().id("stash-list").max_h(PITCH * 6).overflow_y_scrollbar().pt(6).pb(4)
           .children(list.map((x, i) => {
             const d = this.drag;
             const moving = d && d.id === x.id;
@@ -3425,12 +3420,13 @@ export default class Bhote extends View {
             }
             return v_flex().id(`stw-${x.id}`)
               .when(before, (r) => r.child(div().h(2).mx(8).mb(2).rounded(1).bg(t.accent)))
-              .child(h_flex().id(`st-${x.id}`).gap(8).items_center().h(46).overflow_hidden().bg(t.surface).border(1).border_color(moving ? t.accent : t.border).rounded(8).mx(8).mb(4).pl(10).pr(4).opacity(moving ? 0.6 : 1)
+              .child(h_flex().id(`st-${x.id}`).gap(8).items_center().min_h(46).py(6).bg(t.surface).border(1).border_color(moving ? t.accent : t.border).rounded(8).mx(8).mb(4).pl(10).pr(4).opacity(moving ? 0.6 : 1)
+                .on_mouse_move((_ev, cx) => { if (this.drag && this.drag.to !== i) { this.drag.to = i; cx.notify(); } })   // (the rows differ in height now: the row under the pointer is the place)
                 .hover((r) => r.bg(t.raised))
                 .on_mouse_down("left", (e, cx) => { if (!this.editingStash) { this.dragMoved = false; this.drag = { id: x.id, from: i, to: i }; cx.notify(); } })
                 .on_click(this.guard((_e, cx) => this.startEditStash(x, cx)))
                 .child(div().w(14).flex_none().text_size(11).text_color(t.dim).cursor_pointer().child(String(i + 1)))
-                .child(div().flex_1().min_w(0).max_h(32).overflow_hidden().text_size(12).text_color(t.foreground).child(x.text.replace(/\n+/g, " ↵ ")))
+                .child(div().flex_1().min_w(0).text_size(12).text_color(t.foreground).child(x.text.replace(/\n+/g, " ↵ ")))
                 .when(!!x.agent?.name, (r) => r.child(div().flex_none().px(6).py(1).rounded(5).text_size(9.5).font_semibold().text_color("#c4b5fd")
                   .bg(tint("#7c3aed", "30", t.surface)).border(1).border_color(tint("#7c3aed", "66", t.border)).child(x.agent.name.toUpperCase())))
                 .child(this.optionsBtn(t, `op-st-${x.id}`, () => this.stashItems(x))))
@@ -3484,9 +3480,44 @@ export default class Bhote extends View {
 
   // The filter by source of the Tasks section: "" = all.
   srcFilter() { try { const v = shared("bhote.srcFilter"); return v === "all" || SRC_FILTERS.includes(v) ? v : ""; } catch (_e) { return ""; } }
-  srcOk(x) { const f = this.srcFilter(); return !f || f === "all" || srcKey(x) === f; }
+  // The drill-down filter: first the sources (several at once), then the statuses that the picked sources have (several at once). Nothing picked = everything.
+  srcSel() { try { const v = shared("bhote.srcSel"); return Array.isArray(v) ? v.filter((k) => SRC_FILTERS.includes(k)) : []; } catch (_e) { return []; } }
+  stSel() { try { const v = shared("bhote.stSel"); return Array.isArray(v) ? v : []; } catch (_e) { return []; } }
+  triOf(x) { return x.source === "linear" && !isMine(x) && x.group === "next"; }   // (Linear issues in triage: their own status)
+  stKey(x) { return this.triOf(x) ? "triage" : x.group; }
+  srcSelOk(x) { const sel = this.srcSel(); return !sel.length || sel.includes(srcKey(x)); }
+  srcOk(x) { const f = this.srcFilter(), st = this.stSel(); return (!f || f === "all" || srcKey(x) === f) && this.srcSelOk(x) && (!st.length || st.includes(this.stKey(x))); }
   allTopics() { return [...this.topics, ...this.mine]; }
-  taskPool() { const f = this.srcFilter(); return f === "linear-mine" ? this.mine : f === "all" ? this.allTopics() : this.topics; }   // what the Tasks tab lists
+  taskPool() { const f = this.srcFilter(); return f === "linear-mine" ? this.mine : f === "all" || this.srcSel().length ? this.allTopics() : this.topics; }   // what the Tasks tab lists
+
+  // The two rows of chips under the head of the Tasks section: the sources, and under them the statuses of the picked sources, each with how many tasks it holds.
+  filterRows(t) {
+    const open = (x) => x.group !== "done" && !x.dismissed;
+    const SRC_LABEL = { manual: "Manual", linear: "Linear", "linear-mine": "Linear (mine)", stash: "Stash", agent: "Agent" };
+    const ST_ORDER = ["triage", "review", "now", "testing", "deploying", "finished", "next", "waiting", "later"];
+    const ST_LABEL = { triage: "Triage", review: "Review", now: "Now", testing: "Testing", deploying: "Deploying", finished: "Finished", next: "Next", waiting: "Waiting", later: "Later" };
+    const sel = this.srcSel(), st = this.stSel();
+    const pool = this.allTopics().filter(open);
+    const srcN = {}; for (const x of pool) srcN[srcKey(x)] = (srcN[srcKey(x)] ?? 0) + 1;
+    const stN = {}; for (const x of pool.filter((q) => this.srcSelOk(q))) stN[this.stKey(x)] = (stN[this.stKey(x)] ?? 0) + 1;
+    const chip = (id, label, n, on, click) => div().id(id).flex_none().flex().items_center().gap(4).px(7).h(20).rounded(10).cursor_pointer().text_size(10.5)
+      .text_color(on ? t.foreground : t.muted).bg(on ? tint(t.accent, "33", t.surface) : t.surface).border(1).border_color(on ? tint(t.accent, "99", t.border) : t.border)
+      .hover((e) => e.bg(on ? tint(t.accent, "44", t.surface) : t.hover)).on_click(this.guard((_e, cx) => click(cx)))
+      .child(label).child(div().text_size(10).text_color(t.dim).child(String(n)));
+    const toggle = (list, k) => (list.includes(k) ? list.filter((q) => q !== k) : [...list, k]);
+    const setSrc = (next, cx) => {
+      // the statuses that the new sources do not have are dropped from the pick
+      const keep = new Set(this.allTopics().filter((x) => open(x) && (!next.length || next.includes(srcKey(x)))).map((x) => this.stKey(x)));
+      try { setShared("bhote.srcSel", next); setShared("bhote.stSel", this.stSel().filter((k) => keep.has(k))); } catch (_e) { /* not remembered */ }
+      cx.notify();
+    };
+    const row = (label, chips) => h_flex().gap(4).items_start().px(12)
+      .child(div().w(44).h(20).flex_none().flex().items_center().text_size(10).text_color(t.dim).child(label))
+      .child(h_flex().flex_1().min_w(0).gap(4).flex_wrap().children(chips));
+    return v_flex().flex_none().gap(4).pt(6).pb(4)
+      .child(row("Source", SRC_FILTERS.filter((k) => srcN[k] || sel.includes(k)).map((k) => chip(`fs-${k}`, SRC_LABEL[k], srcN[k] ?? 0, sel.includes(k), (cx) => setSrc(toggle(sel, k), cx)))))
+      .child(row("Status", ST_ORDER.filter((k) => stN[k] || st.includes(k)).map((k) => chip(`ft-${k}`, ST_LABEL[k], stN[k] ?? 0, st.includes(k), (cx) => { try { setShared("bhote.stSel", toggle(st, k)); } catch (_e) { /* not remembered */ } cx.notify(); }))));
+  }
 
   line(t, x, cx, sub) {
     const st = this.plainState(t, x);
@@ -5011,6 +5042,13 @@ export default class Bhote extends View {
       .on_click(this.guard(() => this.openMenu([{ type: "head", label: "Show tasks from" },
         ...["", "all", ...SRC_FILTERS].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v === "linear" ? "linear (triage)" : v === "linear-mine" ? "linear (assigned to me)" : v === "all" ? "all sources" : v || "overview"} (${this.allTopics().filter((x) => x.group !== "done" && !x.dismissed && (v === "all" ? true : v ? srcKey(x) === v : !isMine(x))).length})` }))], this.anchor)))
       .child(cur ? (cur === "all" ? "all sources" : `source: ${cur === "linear-mine" ? "linear (mine)" : cur}`) : "overview");
+    let filtOpen = false;
+    try { filtOpen = shared("bhote.filtOpen") === true; } catch (_e) { filtOpen = false; }
+    const nFilt = this.srcSel().length + this.stSel().length;
+    const filtLink = div().id("tasks-filter").flex_none().cursor_pointer().px(6).h(18).flex().items_center().gap(3).rounded(5).text_size(10.5).text_color(nFilt ? t.accent : t.dim)
+      .bg(filtOpen ? t.selected : t.chrome).hover((e) => e.bg(t.hover).text_color(t.foreground))
+      .on_click(this.guard((_e, cx) => { try { setShared("bhote.filtOpen", !filtOpen); } catch (_e2) { /* not remembered */ } cx.notify(); }))
+      .child(nFilt ? `filter · ${nFilt}` : "filter");
     const picked = keys.filter((k) => sel.topics.has(k)).length;
     // "Tasks (select all)": the words in brackets are a link (with something picked: "clear")
     const link = div().id("topics-select-all").cursor_pointer().text_size(10.5).text_color(t.dim).hover((e) => e.text_color(t.foreground))
@@ -5028,7 +5066,8 @@ export default class Bhote extends View {
       .child(link)
       .child(div().text_size(10.5).text_color(t.dim).child(")"));
     return div().flex_none().pt(6).child(this.dividerCaption(t, caption, [
-      ...(picked > 0 ? [actions] : []), srcLink, this.countTag(t, open), plus]));
+      ...(picked > 0 ? [actions] : []), srcLink, filtLink, this.countTag(t, open), plus]))
+      .when(filtOpen, (el) => el.child(this.filterRows(t)));
   }
 
   // The deployments that run, for the left panel (which does not ask CI itself): the branch they are for, what they are, how far they are.
@@ -5314,7 +5353,7 @@ export default class Bhote extends View {
     if (this.error) rows.push(div().p(10).text_color(t.blocked).child(`bhote: ${this.error}`));
     this.enterBegin("topics", this.taskPool().filter((x) => !x.dismissed).map((x) => x.id));
     // the tasks by status, in the order of the work; no agent is shown (a task meets one when it is started on it)
-    const isTri = (x) => x.source === "linear" && !isMine(x) && x.group === "next";   // Linear issues in triage: their own subsection, to decide
+    const isTri = (x) => this.triOf(x);   // Linear issues in triage: their own subsection, to decide
     const of = (g) => this.taskPool().filter((x) => (g === "triage" ? isTri(x) : x.group === g && !(g === "next" && isTri(x))) && !x.dismissed && this.srcOk(x));
     const sections = [["triage", "Triage"], ["review", "Review"], ["now", "Now"], ["testing", "Testing"], ["deploying", "Waiting for deployment"], ["finished", "Finished"],
       ["next", "Next"], ["waiting", "Waiting"], ["later", "Later"]].map(([k, label]) => [k, label, of(k)]);
