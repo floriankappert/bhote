@@ -4112,9 +4112,9 @@ export default class Bhote extends View {
     for (let i = 0; i + 1 < N; i++) {
       const a = cols[i], b = cols[i + 1]; if (a == null || b == null) continue;
       const x0 = i * (CW + GAP) + CW / 2, step = CW + GAP;
-      for (let x = 0; x < step; x++) {
+      for (let x = 0; x < step; x += 0.5) {
         const v = a + (b - a) * (1 - Math.cos(Math.PI * (x / step))) / 2;
-        dots.push(div().absolute().left(Math.round(x0 + x) - 0.5).top(Math.max(0, Math.min(H - 2, H - 1 - (Math.min(100, v) / 100) * (H - 2)))).w(1.5).h(2).bg(t.foreground));
+        dots.push(div().absolute().left(x0 + x).top(Math.max(0, Math.min(H - 1, H - 1 - (Math.min(100, v) / 100) * (H - 1)))).w(1).h(1).bg(t.foreground));
       }
     }
     return h_flex().gap(4).items_end().flex_none().text_size(10).text_color(t.dim)
