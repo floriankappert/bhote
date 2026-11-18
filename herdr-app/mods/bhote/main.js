@@ -93,7 +93,7 @@ const median = (a) => { const b = [...a].sort((x, y) => x - y); return b.length 
 
 // A monitor list: time US project US label US state US done US total US note ("branch|~|title") US url.
 const FLASH_MS = 1200, FADE_MS = 1800;   // the light of a finished card dies down over the first 1.2 s; it fades to idle over the last 1.8 s
-const FINISH_MS = 15000;   // a recently finished agent: lit up for a moment, "finished" until here, then idle
+const FINISH_MS = 30000;   // a recently finished agent: lit up for a moment, "finished" until here, then idle
 
 // While a menu is open, what lies behind it must not light up under the pointer (the popup does not catch the pointer for the panes): every
 // hover style is skipped then. The menu itself (its own instance) keeps its hover.
@@ -1740,6 +1740,9 @@ export default class Bhote extends View {
         .child(h_flex().gap(8).items_center()
           .child(this.agentIcon(t, agent, active, tone, st.word))
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
+          .when(!!agent && fa != null, (el) => el.child(h_flex().flex_none().gap(5).items_center()   // (the countdown of the green phase: how long until the card goes idle; a bar that runs down and the seconds)
+            .child(div().w(34).h(4).rounded(2).flex_none().bg(tint(t.done, "33", t.border)).overflow_hidden().child(div().h(4).w(`${Math.round(100 * Math.max(0, 1 - fa / FINISH_MS))}%`).rounded(2).bg(t.done)))
+            .child(div().w(20).flex_none().text_size(10).text_color(t.done).child(`${Math.max(0, Math.ceil((FINISH_MS - fa) / 1000))}s`))))
           .when(!!agent && o.ctx != null, (el) => { const c = o.ctx, col = c >= 85 ? t.blocked : c >= 60 ? t.ansi3 : t.done ?? t.accent;   // (the context of the session: an upright bar that fills from below; yellow from 60 %, red from 85 %)
             return el.child(this.chip(t, col, `ctx-${id}`).px(5).child(v_flex().w(3).h(10).rounded(2).bg(tint(col, "40", t.border)).overflow_hidden().justify_end()
               .child(div().w(3).h(Math.max(1, Math.round(10 * c / 100))).rounded(2).bg(col)))); })
@@ -1914,7 +1917,7 @@ export default class Bhote extends View {
     for (const k of Object.keys(fin)) if (!live.has(k) || now - fin[k] > FINISH_MS + 1000) { delete fin[k]; changed = true; }
     if (changed) { try { setShared("bhote.finished", fin); } catch (_e) { /* not remembered */ } }
     // while a card lights up or fades to idle the panel is drawn at the rate of the timer (smooth), otherwise twice a second while one is finished
-    this.animating = Object.values(fin).some((t0) => { const age = now - t0; return age < FLASH_MS || age > FINISH_MS - FADE_MS; });
+    this.animating = Object.values(fin).some((t0) => { const age = now - t0; return age < FINISH_MS; });   // (the countdown on the card runs down smoothly)
     return changed || Object.keys(fin).length > 0;
   }
 

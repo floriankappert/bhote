@@ -6,6 +6,7 @@ uses [semantic versioning](https://semver.org/). Each release's section is also 
 ## [Unreleased]
 
 ### Added
+- **Agent cards: a 30 second countdown after an agent finished.** The green phase now lasts 30 s (was 15) and shows a bar that runs down and the seconds left next to the name, so one sees which agents finished when.
 - **Servers, folded: a sparkline of CPU and RAM per machine** for the last four hours (one sample a minute while the panel looks at the machine, ten-minute columns; gaps stay blank).
 - **Claude usage: the 5-hour bar is divided into its five hours** by fine strokes, as the weekly bar is into its seven days.
 - **Handovers and messages no longer wait forever behind a hung round:** a round that asks kharka for messages and does not finish within a minute is given up, so the next one runs.
