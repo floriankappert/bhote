@@ -1742,7 +1742,7 @@ export default class Bhote extends View {
           .child(div().flex_1().min_w(0).truncate().font_semibold().text_color(dim ? t.dim : t.foreground).child(o.name))
           .when(!!agent && fa != null, (el) => el.child(h_flex().flex_none().gap(5).items_center()   // (the countdown of the green phase: how long until the card goes idle; a bar that runs down and the seconds)
             .child(div().w(34).h(4).rounded(2).flex_none().bg(tint(t.done, "33", t.border)).overflow_hidden().child(div().h(4).w(`${Math.round(100 * Math.max(0, 1 - fa / FINISH_MS))}%`).rounded(2).bg(t.done)))
-            .child(div().flex_none().text_size(10).text_color(t.done).child(((sec) => (sec >= 600 ? `${Math.ceil(sec / 60)}m` : sec >= 60 ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s` : `${sec}s`))(Math.max(0, Math.ceil((FINISH_MS - fa) / 1000))))))
+            .child(div().flex_none().text_size(10).text_color(t.done).child(((sec) => (sec >= 600 ? `${Math.ceil(sec / 60)}m` : sec >= 60 ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, "0")}s` : `${sec}s`))(Math.max(0, Math.ceil((FINISH_MS - fa) / 1000)))))))
           .when(!!agent && o.ctx != null, (el) => { const c = o.ctx, col = c >= 85 ? t.blocked : c >= 60 ? t.ansi3 : t.done ?? t.accent;   // (the context of the session: an upright bar that fills from below; yellow from 60 %, red from 85 %)
             return el.child(this.chip(t, col, `ctx-${id}`).px(5).child(v_flex().w(3).h(10).rounded(2).bg(tint(col, "40", t.border)).overflow_hidden().justify_end()
               .child(div().w(3).h(Math.max(1, Math.round(10 * c / 100))).rounded(2).bg(col)))); })
