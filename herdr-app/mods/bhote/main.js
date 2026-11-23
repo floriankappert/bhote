@@ -246,11 +246,17 @@ function runbookStages(proj, o) {
   // a build of the merged pull request that finished well: the stages up to and including the first environment (Build + Deploy, or Staging) are done
   const envAt = post.findIndex((l) => ["Deploy", "Staging", "Production"].includes(kind(l)));
   const doneTo = o.merged && !o.off && !busy && pending < 0 && bs.some((b) => b.state === "ok") ? envAt : -1;
+  // deployments not watched, but the pull request went into a deploy branch of the project (Marketing: develop = Staging, main = Production): that branch
+  // is deployed by the merge itself, so the stages up to its environment are done (the last branch: all of them); a Release by hand stays the user's step
+  const bi = o.merged && o.off && o.target ? (proj?.deployBranches ?? []).indexOf(o.target) : -1;
+  const offTo = bi < 0 || post.some((l) => kind(l) === "Release") ? -1 : bi >= proj.deployBranches.length - 1 ? post.length - 1
+    : (proj.stages?.[bi] ? post.findIndex((l) => kind(l) === proj.stages[bi]) : -1);
   post.forEach((l, i) => {
     let state = "waiting";
     if (o.at != null && o.at >= 0) state = i < o.at ? "ok" : i === o.at ? o.now : "waiting";   // (a run on a deploy branch)
     else if (o.merged) {
-      if (kind(l) === "Release" || o.off) state = kind(l) === "Release" || i === 0 ? "ready" : "waiting";   // (by hand, or not watched: the next step is yours)
+      if (o.off && i <= offTo) state = "ok";
+      else if (kind(l) === "Release" || o.off) state = kind(l) === "Release" || i === 0 ? "ready" : "waiting";   // (by hand, or not watched: the next step is yours)
       else if (pending >= 0) state = i < pending ? "ok" : i === pending ? "approval" : "waiting";
       else if (busy && i === first) state = busy;
       else if (i <= doneTo && kind(l) !== "Release") state = "ok";
@@ -4487,13 +4493,12 @@ export default class Bhote extends View {
 
   // --- the runbooks tile: for each project the stages of the way a change goes, as circles ---------------------------------------------------------
   // Empty: not done (or not reached yet), green: done, orange: under way (a build, tests, an approval that waits), red: failed. Which change a project
-  // shows: a deployment that runs, else a pull request that failed, one whose checks run, the newest open one, the newest merged one.
+  // shows: a deployment that runs, else the newest merged pull request (an open one is only checked: its card in the PRs tab shows that).
   runbookItems() {
     const out = [];
     for (const proj of this.projects) {
       if (!proj.ci) continue;
       const prs = this.prs.filter((x) => x.project === proj.title && x.kind === "pr");
-      const open = prs.filter((x) => !x.merged).sort((a, b) => (b.updated || 0) - (a.updated || 0));
       const dep = this.deploysAll().filter((x) => this.projectOf(x.project) === proj.title);
       let run = dep.find((x) => ["running", "queued", "approval"].includes(x.state));
       if (!run) {   // no run under way: the newest pipeline of a deploy branch that failed in the last day stays, red, until a newer one comes
@@ -4501,13 +4506,12 @@ export default class Bhote extends View {
         const last = dep.find((x) => x.src === "d" && x.url);
         if (last && Date.now() / 1000 - last.time < 86400) run = dep.find((x) => x.src === "d" && pipe(x.url) === pipe(last.url) && x.state === "failed");
       }
-      const failed = open.find((x) => x.checks.some((c) => c.state === "failed"));
-      const live = open.find((x) => x.checks.some((c) => c.state === "running"));
       const merged = prs.filter((x) => x.merged).sort((a, b) => b.merged - a.merged)[0];
-      const pr = failed ?? live ?? open[0] ?? merged ?? null;
+      // a push to a branch with an open pull request is only checked by CI (its card in the PRs tab shows that): the runbook starts with the merge
+      const pr = merged ?? null;
       let stages, ref, rank;
       if (run) { stages = this.runStages(run, "d"); ref = this.whatOf(run).text || run.label; rank = 0; }
-      else if (pr) { stages = this.stagesOf(pr); ref = `#${pr.number} ${pr.title}`; rank = failed ? 1 : live ? 2 : open[0] ? 3 : 5; }
+      else if (pr) { stages = this.stagesOf(pr); ref = `#${pr.number} ${pr.title}`; rank = 5; }
       else { stages = runbookStages(proj, { hasPR: false, tests: "none", merged: false, target: "" }); ref = ""; rank = 9; }
       if (!stages) continue;
       const at = run ? run.time : pr ? (pr.merged || pr.updated || 0) : 0;   // (when the change last moved: the collapsed tile shows the latest)
