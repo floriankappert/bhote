@@ -4357,6 +4357,12 @@ export default class Bhote extends View {
     return name == null ? null : tun.find((x) => x.host.endsWith(`@${name}`) || x.host === name) ?? null;
   }
 
+  // Opens the tunnel and adds the forward of the other machine's inbox (MAIL_TUNNEL_PORT -> its MAIL_PORT) to the master connection of every tunnel (ssh -O forward),
+  // whether it was just opened or stood already; ims-tunnels-start of older checkouts does not forward it, a newer one does (the second forward then fails, quietly).
+  tunnelStartCmd() {
+    return `ims-tunnels-start; for t in $(_ims_tunnels); do ssh -S "$(_ims_tunnel_sock "$t")" -O forward -L ${MAIL_TUNNEL_PORT}:localhost:${MAIL_PORT} "\${t%%:*}" >/dev/null 2>&1; done`;
+  }
+
   srvDo(cx, name, what, slot) {
     const key = this.srvKey(name);
     const systems = this.srv[key]?.systems ?? [];
@@ -4366,7 +4372,7 @@ export default class Bhote extends View {
     else if (what === "stop") { cmd = `ims-${slot}-stop`; this.srvPending[`${key}|${slot}`] = { want: "down", at }; }
     else if (what === "startAll") { cmd = "ims-start -q"; for (const x of systems) this.srvPending[`${key}|${x.slot}`] = { want: "up", at }; }
     else if (what === "stopAll") { cmd = "ims-stop"; for (const x of systems) this.srvPending[`${key}|${x.slot}`] = { want: "down", at }; }
-    else if (what === "tunnelOpen") { cmd = "ims-tunnels-start"; this.srvPending.tunnel = { want: "up", at }; }
+    else if (what === "tunnelOpen") { cmd = this.tunnelStartCmd(); this.srvPending.tunnel = { want: "up", at }; }
     else if (what === "tunnelClose") { cmd = "ims-tunnels-stop"; this.srvPending.tunnel = { want: "down", at }; }
     else return;
     cx.notify();
