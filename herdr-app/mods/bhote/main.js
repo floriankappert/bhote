@@ -221,10 +221,10 @@ function parseProjects(text) {
 
 // The runbook of a project: the whole way a change goes, from the commit to the last stage. Before the merge it is the same everywhere (Commit, PR, Tests,
 // Merge into the target branch); after it, the stages of the project (the record's `runbook`, else these defaults; else the environments of its deploy
-// branches, else "Deploy"): IMS builds a Docker image and deploys it, Bilendo Marketing has Staging, an Approval in CircleCI and Production, Bilendo is
+// branches, else "Deploy"): IMS builds a Docker image and deploys it, Marketing has Staging, an Approval in CircleCI and Production, Bilendo is
 // released by hand with Capistrano, Bhote CLI ends at the merge. Marketing always goes through develop: the pull request is merged into develop (Staging),
 // then develop is merged into main, CircleCI asks for an Approval, and Production follows.
-// (the stages after the merge are the project's own `runbook`, set in Settings › Runbooks: e.g. IMS "Build (Docker), Deploy", Bilendo Marketing "Staging, Merge (main),
+// (the stages after the merge are the project's own `runbook`, set in Settings › Runbooks: e.g. IMS "Build (Docker), Deploy", Marketing "Staging, Merge (main),
 // Approval, Production", Bilendo "Release (Capistrano)"; "none" ends the path at the merge)
 function postStages(proj) {
   if (proj?.runbook?.length) return proj.runbook.length === 1 && proj.runbook[0].toLowerCase() === "none" ? [] : proj.runbook;
@@ -412,10 +412,12 @@ const isLocalName = (m) => !m || m.toLowerCase() === "mac";
 // The list is the person's own (Settings › Servers, ~/.config/bhote/servers.json): [{ id, name, machine, port, url, start, stop }]. machine is null for this
 // computer, else the name of a herdr machine. A start command runs in the dev shell (zsh -ic), detached: it is what you would type (bilendo-start,
 // marketing-start), with the output in ~/.cache/bhote/svc/<id>.log and the process group in <id>.pid. Whether it runs is whether its port answers.
+const MAIL_PORT = 8025;          // the inbox (web UI) of a machine's own mail catcher: Mailpit on the Mac, the mail mock of the IMS checkout elsewhere
+const MAIL_TUNNEL_PORT = 8026;   // where another machine's inbox appears on this one through the tunnel (8025 is taken by the own one)
 const SVC_FILE = "~/.config/bhote/servers.json";
 const SVC_SEED = [
   { id: "bilendo", name: "Bilendo", machine: null, port: 3000, url: "http://localhost:3000", start: "bilendo-start", stop: "" },
-  { id: "marketing", name: "Bilendo Marketing", machine: null, port: 3002, url: "http://localhost:3002", start: "marketing-start", stop: "marketing-stop" },
+  { id: "marketing", name: "Marketing", machine: null, port: 3002, url: "http://localhost:3002", start: "marketing-start", stop: "marketing-stop" },
 ];
 const SVC_PROBE = '(exec 3<>/dev/tcp/127.0.0.1/"$1") 2>/dev/null && { echo up; exit 0; }; d="${HOME:?}/.cache/bhote/svc"; '   // up | booting (its process lives, the port is not open yet) | down
   + 'if command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet "bhote-svc-$2" 2>/dev/null; then echo booting; exit 0; fi; '
@@ -4382,8 +4384,10 @@ export default class Bhote extends View {
       ...(on.has("client") ? [{ type: "url", url: `http://localhost:${sys.client}`, label: `Client  ·  localhost:${sys.client}` }] : []),
       ...(on.has("portal") ? [{ type: "url", url: `http://localhost:${sys.portal}`, label: `Portal  ·  localhost:${sys.portal}` }] : []),
       ...(on.has("server") ? [{ type: "url", url: `http://localhost:${sys.port}`, label: `API  ·  localhost:${sys.port}` }] : []),
-      // Mailpit is one shared instance for all slots (brew service, web UI on 8025); only offered while the system runs.
-      ...(on.size ? [{ type: "url", url: "http://localhost:8025", label: "Mailpit  ·  localhost:8025" }] : []),
+      // The mail inbox is one per machine, shared by all its slots (web UI on MAIL_PORT); only offered while the system runs. Another machine's inbox comes
+      // through the tunnel on MAIL_TUNNEL_PORT (the Mac keeps its own on MAIL_PORT): that forward is set up by ims-tunnels-start, which has to use the same port.
+      ...(on.size ? [name == null ? { type: "url", url: `http://localhost:${MAIL_PORT}`, label: `Mailpit  ·  localhost:${MAIL_PORT}` }
+        : { type: "url", url: `http://localhost:${MAIL_TUNNEL_PORT}`, label: `Mail (${this.machineLabel(name)})  ·  localhost:${MAIL_TUNNEL_PORT}` }] : []),
     ];
   }
 

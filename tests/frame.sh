@@ -12,12 +12,12 @@ BD=""; bhoted_bin_set BD
 [ -n "$BD" ] || { echo "skipped: no bhoted binary"; rm -rf "$T"; exit 0; }
 NOW=$(date +%s); export FIXNOW=$NOW; US=$'\037'
 proj() { printf 'id=proj-%s\nkind=project\ntitle=%s\nci=%s\ndeleted=0\nupdated=1\n' "$1" "$2" "$3" > "$T/data/topics/proj-$1.topic"; }
-proj ims IMS circleci:gh/acme/ims; proj bilendo Bilendo circleci:gh/acme/bilendo; proj bm "Bilendo Marketing" circleci:gh/acme/bm; proj cli "Bhote CLI" github:me/bhote
+proj ims IMS circleci:gh/acme/ims; proj bilendo Bilendo circleci:gh/acme/bilendo; proj bm "Marketing" circleci:gh/acme/bm; proj cli "Bhote CLI" github:me/bhote
 proj plain Plain ""; proj rails Rails github:acme/rails; proj ab "Alpha Beta" github:acme/ab; proj om "Omega 9" github:acme/om; proj ima "Ima Zed" github:acme/ima; proj dup "Imaginary Zoo" github:acme/dup
 line() { printf '%s\n' "$*" | sed "s/ ${US} /${US}/g"; }
 mk() { printf '%s\n' "$(( NOW - $1 ))$US$2$US$3$US$4$US$5$US$6$US$7$US$8"; }
 { mk 5 IMS Backend running 3 7 "feat/cancel (#12)" https://ci/1; mk 70 IMS Frontend running "" "" "Add credits (#13)" https://ci/2; mk 130 Bilendo Staging queued "" "" "release 42" https://ci/3
-  mk 200 "Bilendo Marketing" Production approval "" "" "Merge pull request #5 from acme/feat/x" https://ci/4; mk 3700 IMS Backend ok 9 9 "fix/x (#10)" https://ci/5; mk 4000 IMS Portal failed 2 5 "oops" https://ci/6
+  mk 200 "Marketing" Production approval "" "" "Merge pull request #5 from acme/feat/x" https://ci/4; mk 3700 IMS Backend ok 9 9 "fix/x (#10)" https://ci/5; mk 4000 IMS Portal failed 2 5 "oops" https://ci/6
   mk 90000 "Bhote CLI" main canceled "" "" "main" https://ci/7; mk 100000 "Alpha Beta" web ok 1 1 "ünïcode — wide 日本語 title" https://ci/8; mk 100500 Plain none ok 1 1 "n" ""; } > "$T/shared/deploys.list"
 { mk 8 IMS server running 24 79 "feat/calc|~|2031 passed" https://ci/1; mk 300 IMS client ok 3 3 "feat/calc|~|48 passed" https://ci/2; mk 600 IMS portal failed 1 2 "wip/x|~|2 failed · 10 passed" https://ci/3
   mk 900 IMS portal ok 2 2 "wip/x|~|12 passed" https://ci/4; mk 1200 Bilendo build canceled 0 0 "main|~|" https://ci/5; mk 5000 Rails test ok 9 9 "old list without a branch" https://ci/6

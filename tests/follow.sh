@@ -66,7 +66,7 @@ fixture() {  # fixture <dir>: topics, agents and state files, deterministic
     printf 'url = git@github.com:acme/ims.git\n' > /dev/null
     printf '[core]\n\tbare = false\n[remote "origin"]\n\turl = git@github.com:Acme/IMS.git\n' > "$d/repo2/.git/config"; echo "ref: refs/heads/main" > "$d/repo2/.git/HEAD"
     printf 'id=proj-ims\nkind=project\ntitle=IMS\nrepos=github.com/acme/ims\nworkspaces=IMS (main)\ndeleted=0\nupdated=1\n' > "$d/topics/proj-ims.topic"
-    printf 'id=proj-bm\nkind=project\ntitle=Bilendo Marketing\nrepos=github.com/acme/bm\ndeleted=0\nupdated=1\n' > "$d/topics/proj-bm.topic"
+    printf 'id=proj-bm\nkind=project\ntitle=Marketing\nrepos=github.com/acme/bm\ndeleted=0\nupdated=1\n' > "$d/topics/proj-bm.topic"
     printf '%s\n' "$H${US}P30${US}t1${US}a${US}${US}${US}$d/repo2" "$H${US}P31${US}t1${US}a${US}github.com/acme/ims${US}proj-ims${US}$d/repo2" "$H${US}P32${US}t2${US}a${US}${US}${US}$d/wt40" "$H${US}P33${US}t2${US}${US}${US}${US}/x" > "$d/shared/agents.meta.local"
     printf '%s\n' "$H${US}P30${US}idle${US}w1${US}" "$H${US}P31${US}idle${US}w1${US}" "$H${US}P32${US}idle${US}IMS (main)${US}" "$H${US}P40${US}working${US}a40${US}" "$H${US}P41${US}idle${US}a41${US}" "$H${US}P42${US}idle${US}a42${US}" "$H${US}P43${US}working${US}a43${US}" >> "$d/shared/agents.local"
     printf '%s\n' "P40${US}$d/wt40" "P41${US}$d/wt41" "P42${US}$d/wt41" "P43${US}$d/wt41" >> "$d/shared/agents.cwd"

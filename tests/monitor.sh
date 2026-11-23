@@ -295,8 +295,8 @@ case "$blk" in *"$(printf '\035cap:deploys\035')"*) ok "section: the caption car
 section_toggle deploys; ! section_compact deploys && ok "section: toggled back" || bad "toggle back"
 # the project names in the checkboxes: at most 3 characters, no two the same
 ab() { mon_abbr_set r "$1" "${2:-}"; printf '%s' "$r"; }
-[ "$(ab IMS)" = IMS ] && [ "$(ab Rails)" = RAI ] && [ "$(ab "Bilendo Marketing")" = BM ] && [ "$(ab Bilendo)" = BIL ] && [ "$(ab "Bhote CLI")" = BC ] && [ "$(ab micro-manager)" = MM ] && [ "$(ab Ab)" = AB ] \
-  && ok "abbreviations: initials of several words, three letters of one, a short name as it is" || bad "abbreviations: $(ab IMS) $(ab Rails) $(ab "Bilendo Marketing") $(ab Bilendo) $(ab "Bhote CLI") $(ab micro-manager)"
+[ "$(ab IMS)" = IMS ] && [ "$(ab Rails)" = RAI ] && [ "$(ab Marketing)" = MAR ] && [ "$(ab Bilendo)" = BIL ] && [ "$(ab "Bhote CLI")" = BC ] && [ "$(ab micro-manager)" = MM ] && [ "$(ab Ab)" = AB ] \
+  && ok "abbreviations: initials of several words, three letters of one, a short name as it is" || bad "abbreviations: $(ab IMS) $(ab Rails) $(ab Marketing) $(ab Bilendo) $(ab "Bhote CLI") $(ab micro-manager)"
 [ "$(ab "Big Mountain" "BM")" = BIG ] && [ "$(ab "Big Mountain" "BM BIG")" = BIM ] && [ "$(ab "Big Mountain" "BM BIG BIM BIN")" = BI2 ] \
   && ok "abbreviations: a clash takes the next candidate, at last a digit" || bad "abbreviation clashes: $(ab "Big Mountain" "BM") $(ab "Big Mountain" "BM BIG") $(ab "Big Mountain" "BM BIG BIM BIN")"
 # what went live and which branch is tested: in brackets behind the name, also when it went through

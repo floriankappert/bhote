@@ -88,7 +88,7 @@ written).
 ## Services (herdr-app)
 
 Dev servers that are not IMS are listed in `~/.config/bhote/servers.json` (Settings › Servers writes it; it is made with two entries the first time):
-`[{"id": "marketing", "name": "Bilendo Marketing", "machine": null, "port": 3002, "url": "http://localhost:3002", "start": "marketing-start", "stop": "marketing-stop"}]`.
+`[{"id": "marketing", "name": "Marketing", "machine": null, "port": 3002, "url": "http://localhost:3002", "start": "marketing-start", "stop": "marketing-stop"}]`.
 `machine` is `null` for this computer, else the name of a herdr machine (shown by its alias, `MACHINE_LABELS`: `omarchy-flo=Omarchy`). A service belongs to one machine: Bilendo on the Mac and Bilendo on Omarchy are two entries, each under its machine in the Servers tab, the overview tile and Settings › Servers (`Copy to Omarchy` makes the second one). On Linux a service starts as a systemd user unit `bhote-svc-<id>` (a program started through `hc exec` does not outlive it); on macOS as a detached process group. The start command runs in the dev shell (`zsh -ic`), detached, with its output in
 `~/.cache/bhote/svc/<id>.log` and its process group in `<id>.pid`; the service counts as running while its port answers. Stopping runs the stop command (if any),
 then ends the process group and whatever still listens on the port.

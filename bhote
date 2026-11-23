@@ -4855,7 +4855,7 @@ mon_proj_toggle() {  # mon_proj_toggle <deploys|tests> <project name>: switch th
     cfg_set "$k" "$new"
 }
 mon_abbr_set() {  # mon_abbr_set <var> <project name> <abbreviations taken, space separated>: at most 3 characters, capitals: the initials of the words
-    # (Bilendo Marketing: BM), the first three letters of a single word longer than 3 (Rails: RAI), a short name as it is (IMS); a clash takes the next
+    # (Bhote CLI: BC), the first three letters of a single word longer than 3 (Rails: RAI), a short name as it is (IMS); a clash takes the next
     # candidate (the first three letters, the first two plus the last initial) and at last a digit (BI2)
     local n w words=() ini="" flat c cand=() i k
     uc_set n "$2"; flat=${n//[!A-Z0-9]/}
