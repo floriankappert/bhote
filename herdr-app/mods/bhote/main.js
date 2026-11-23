@@ -4376,6 +4376,8 @@ export default class Bhote extends View {
       ...(on.has("client") ? [{ type: "url", url: `http://localhost:${sys.client}`, label: `Client  ·  localhost:${sys.client}` }] : []),
       ...(on.has("portal") ? [{ type: "url", url: `http://localhost:${sys.portal}`, label: `Portal  ·  localhost:${sys.portal}` }] : []),
       ...(on.has("server") ? [{ type: "url", url: `http://localhost:${sys.port}`, label: `API  ·  localhost:${sys.port}` }] : []),
+      // Mailpit is one shared instance for all slots (brew service, web UI on 8025); only offered while the system runs.
+      ...(on.size ? [{ type: "url", url: "http://localhost:8025", label: "Mailpit  ·  localhost:8025" }] : []),
     ];
   }
 
