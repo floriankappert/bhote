@@ -56,8 +56,8 @@ function parseTopics(text) {
 // The sources of a task. One without a `source` line (made before sources existed) gets its source from what it is, without touching its file:
 // what an agent made (a waiting task of an agent, an automatic review card or a card made for an agent) is agent, the rest manual.
 const SOURCES = ["agent", "stash", "linear", "manual"];
-// The filter values: Linear has two: the issues in triage (to decide: the default view, the overview) and the open ones assigned to you (only in their own filter).
-const SRC_FILTERS = ["agent", "stash", "linear", "linear-mine", "manual"];   // (+ "all": every task, also the ones assigned to you; "" is the overview)
+// The filter values: Linear has two: the issues in triage (to decide) and the open ones assigned to you (also in the overview).
+const SRC_FILTERS = ["agent", "stash", "linear", "linear-mine", "manual"];   // (+ "all": every task; "" is the overview, which holds the ones assigned to you too)
 const isMine = (x) => x.source === "linear" && x.sourceKind === "mine";
 const srcKey = (x) => (isMine(x) ? "linear-mine" : x.source);
 function sourceOf(v) {
@@ -3507,7 +3507,7 @@ export default class Bhote extends View {
   srcSelOk(x) { const sel = this.srcSel(); return !sel.length || sel.includes(srcKey(x)); }
   srcOk(x) { const f = this.srcFilter(), st = this.stSel(); return (!f || f === "all" || srcKey(x) === f) && this.srcSelOk(x) && (!st.length || st.includes(this.stKey(x))); }
   allTopics() { return [...this.topics, ...this.mine]; }
-  taskPool() { const f = this.srcFilter(); return f === "linear-mine" ? this.mine : f === "all" || this.srcSel().length ? this.allTopics() : this.topics; }   // what the Tasks tab lists
+  taskPool() { const f = this.srcFilter(); return f === "linear-mine" ? this.mine : this.allTopics(); }   // what the Tasks tab lists (the overview too: the Linear issues assigned to you stay in it after you accept them)
 
   // The two rows of chips under the head of the Tasks section: the sources, and under them the statuses of the picked sources, each with how many tasks it holds.
   filterRows(t) {
@@ -5072,7 +5072,7 @@ export default class Bhote extends View {
       .hover((e) => e.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", (e) => { this.anchor = this.anchorOf(e); })
       .on_click(this.guard(() => this.openMenu([{ type: "head", label: "Show tasks from" },
-        ...["", "all", ...SRC_FILTERS].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v === "linear" ? "linear (triage)" : v === "linear-mine" ? "linear (assigned to me)" : v === "all" ? "all sources" : v || "overview"} (${this.allTopics().filter((x) => x.group !== "done" && !x.dismissed && (v === "all" ? true : v ? srcKey(x) === v : !isMine(x))).length})` }))], this.anchor)))
+        ...["", "all", ...SRC_FILTERS].map((v) => ({ type: "srcfilter", value: v, check: cur === v, label: `${v === "linear" ? "linear (triage)" : v === "linear-mine" ? "linear (assigned to me)" : v === "all" ? "all sources" : v || "overview"} (${this.allTopics().filter((x) => x.group !== "done" && !x.dismissed && (v === "all" || v === "" ? true : srcKey(x) === v)).length})` }))], this.anchor)))
       .child(cur ? (cur === "all" ? "all sources" : `source: ${cur === "linear-mine" ? "linear (mine)" : cur}`) : "overview");
     let filtOpen = false;
     try { filtOpen = shared("bhote.filtOpen") === true; } catch (_e) { filtOpen = false; }
