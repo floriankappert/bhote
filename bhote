@@ -119,6 +119,7 @@ API_CACHE_EVERY|15|int:1:3600|Seconds an answer of GitHub or CircleCI stays in t
 TASK_SYNC|on|bool|Mirror the Linear issues in triage into tasks now and then, through the shared API cache (every API_CACHE_EVERY seconds at most; a source without a key in the secret store is skipped)
 TASK_WRITE|off|bool|Marking a mirrored task done is written back to Linear (the issue moves to the Done state of its team). Other status changes stay local. Off: Linear stays the only one that changes it
 LINEAR_TEAMS||list|Only the issues in triage of these Linear team keys become tasks (e.g. ENG,OPS); empty: all teams the key sees. The key is the secret LINEAR_API_KEY (bhote secret set LINEAR_API_KEY)
+SECRET_BROKER_ALLOW|gh,git|list|The programs the secret broker runs for a process that cannot reach the keychain (a sandboxed agent): by bare name, in a folder below the home folder. The broker runs in your login session (bhote secret broker install, once, in your own terminal); every request is in secret-broker.log (bhote secret broker log)
 DEPLOY_EVERY|60|int:15:3600|Seconds between two deployment checks
 DEPLOY_GITHUB|on|bool|Deployment monitor: GitHub Actions (through gh and its login)
 DEPLOY_CIRCLECI|on|bool|Deployment monitor: CircleCI (its API v2, with the CircleCI token)

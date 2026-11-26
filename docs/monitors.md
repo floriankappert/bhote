@@ -95,8 +95,8 @@ in `~/.cache/bhote/api` (`BHOTE_API_CACHE` moves it, `off` turns the cache off),
 (`{key, fetched_at, ttl, status, etag, body, error, fails, retry_at}`; the CircleCI token is never part of a key or an entry).
 
 - **Fresh** (age below the ttl): the answer comes from the file, no call. The ttl is `API_CACHE_EVERY` (15 s) while the answer shows
-  something in progress (running, queued, pending); a quiet answer is kept 6 times as long (at most 120 s). A failure alone is not "in
-  progress": it stays red until someone acts. The consumers keep their own rhythm (`DEPLOY_EVERY`, the panel's 90 s); the cache only makes
+  something in progress (running, queued, pending); a quiet answer is kept 6 times as long (at most 120 s; the pull request lists of the mod: 30 s). A failure alone is not "in
+  progress": it stays red until someone acts. The consumers keep their own rhythm (`DEPLOY_EVERY`, the panel's 30 s for pull requests); the cache only makes
   sure that two of them within the ttl are one request.
 - **Errors**: the last good body stays (`status: stale`) and is what everybody gets; the next try waits 15 s, 30 s ... up to 15 minutes,
   or until the reset time of a rate limit when the daemon knows it (CircleCI `Retry-After`).

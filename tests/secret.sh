@@ -17,6 +17,7 @@ def run(argv):
     if cmd == "find-generic-password":
         if not os.path.exists(f): return 44
         print(open(f).read()); return 0
+    if cmd == "list-keychains": return 1 if os.environ.get("FAKE_NO_KC") else (print('"/fake/login.keychain-db"') or 0)
     if cmd == "delete-generic-password":
         if os.path.exists(f): os.unlink(f)
         return 0
@@ -216,5 +217,21 @@ printf '{"prompt":"my key %s"}' "$GH" | SECRET_GUARD=warn bash "$G" > "$T/g3"; r
 if [ $rc = 0 ] && grep -q systemMessage "$T/g3" && ! leak "$T/g3"; then ok "guard warn: exit 0, notice only for the person"; else bad "guard warn"; fi
 printf '{"prompt":"my key %s"}' "$GH" | SECRET_GUARD=off bash "$G"; [ $? = 0 ] && ok "guard off: silent" || bad "guard off"
 printf '{"prompt":"nothing special, FOO_KEY=your-key-here"}' | SECRET_GUARD=block bash "$G"; [ $? = 0 ] && ok "guard: no key, no stop" || bad "guard false positive"
+
+# 14) the broker: a process that cannot reach the keychain (FAKE_NO_KC) has its command run by the broker of the login session
+SP=herdr-app/mods/bhote/secretstore.py; export BHOTE_BROKER_DIR=$T/broker
+printf 'brk-value-4711' | python3 -I "$SP" set BRK_TEST --stdin >/dev/null 2>&1
+echo "SECRET_BROKER_ALLOW=env,git" >> "$BHOTE_CONFIG"
+python3 -I "$SP" broker run >/dev/null 2>&1 & BP=$!; sleep 1.5
+n=$(FAKE_NO_KC=1 python3 -I "$SP" env run -- env 2>/dev/null | grep -c '^BRK_TEST=brk-value-4711$'); [ "$n" = 1 ] && ok "broker: the command runs with the secret in its environment" || bad "broker run ($n)"
+FAKE_NO_KC=1 python3 -I "$SP" env run -- sh -c 'echo hi' > "$T/b1" 2> "$T/b2"; rc=$?
+[ $rc = 126 ] && ! grep -q '^hi' "$T/b1" && grep -q "not allowed" "$T/b2" && ok "broker: a program outside SECRET_BROKER_ALLOW is refused" || bad "broker allow list ($rc)"
+FAKE_NO_KC=1 python3 -I "$SP" env run -- git -c core.pager=x status >/dev/null 2>&1; [ $? = 126 ] && ok "broker: git -c is refused" || bad "broker git -c"
+FAKE_NO_KC=1 python3 -I "$SP" env run -- git nosuchcmd >/dev/null 2>&1; [ $? = 1 ] && ok "broker: the exit code of the command comes back" || bad "broker exit code"
+kill $BP 2>/dev/null; wait $BP 2>/dev/null
+grep -q "refused sh" "$BHOTE_DATA/secret-broker.log" && grep -q "run env" "$BHOTE_DATA/secret-broker.log" && grep -q "done env rc=0" "$BHOTE_DATA/secret-broker.log" && ! grep -q "brk-value-4711" "$BHOTE_DATA/secret-broker.log" && ok "broker: every request is logged in bhote's data folder, without a value" || bad "broker log"
+touch -t 200001010000 "$BHOTE_BROKER_DIR/alive"      # (a broker that stopped a while ago)
+FAKE_NO_KC=1 python3 -I "$SP" env run -- git --version >/dev/null 2> "$T/b3"; grep -q "no broker runs" "$T/b3" && ok "broker: without one the old behaviour stays, with a hint" || bad "no broker hint"
+unset BHOTE_BROKER_DIR
 
 rm -rf "${T:?}"; exit $fail

@@ -43,6 +43,7 @@ Nothing that reaches another machine is on by default: bhote opens no ssh connec
 | `TASK_SYNC` | `on` | Mirror Linear triage | The daemon and the panel run `bhote task sync` now and then (every `API_CACHE_EVERY` x 6 seconds, at most 120; the answers come from the API cache). A source without a key in the secret store is skipped. `bhote task sync` always runs. See [task sources](task-sources.md). |
 | `TASK_WRITE` | `off` | Write status back | Marking a mirrored task done goes back to Linear (the issue moves to the Done state of its team). Other status changes stay local. Off: Linear alone decides. See [task sources](task-sources.md). |
 | `LINEAR_TEAMS` | – | Linear teams | Team keys (`ENG,OPS`): only their issues **in triage** become tasks. Empty: every team the key sees. The key is the secret `LINEAR_API_KEY`. |
+| `SECRET_BROKER_ALLOW` | `gh,git` | Broker programs | The programs the [secret broker](#secret-broker) runs for a process that cannot reach the keychain (a sandboxed agent). By bare name, in a folder below the home folder. |
 | `DEPLOY_MONITOR` | `off` | Deployment monitor | The last deployments of the projects above the agents ([monitors](monitors.md)). |
 | `DEPLOY_EVERY` | `60` | Deploy interval (s) | Seconds between two deployment checks. |
 | `DEPLOY_GITHUB` · `DEPLOY_CIRCLECI` | `on` | GitHub Actions · CircleCI | The deployment monitor's modules. |
@@ -94,3 +95,12 @@ Dev servers that are not IMS are listed in `~/.config/bhote/servers.json` (Setti
 then ends the process group and whatever still listens on the port.
 
 A start that does not work shows as `failed` on the service's card, with the last lines of `<id>.log` (the shell's own noise left out): the start command ended and the port does not answer (checked after 6 s), or the port did not answer within 2 minutes. A task `<name> did not start on <machine>` is made in `review`, in the project of the same name, with the key line of the log as its description (140 characters). Start again, or dismiss the card, to clear it.
+
+## Secret broker
+
+On macOS a process outside your login session (a sandboxed agent, ssh, cron) cannot use the Keychain: `bhote secret`, `bhote env run` and `gh` then find nothing ("not readable", "token invalid"). The broker is a small loop in your login session that runs such commands for them: install it **once, in your own terminal** (`bhote secret broker install`, a LaunchAgent). From then on `bhote env run -- gh pr create …` in a process without the keychain hands the command to the broker and prints its output and exit code.
+
+- Only the programs in `SECRET_BROKER_ALLOW` run (default `gh,git`), by bare name, in a folder below your home; `git -c`, `--config-env` and `--exec-path` are refused. Requests are files in `~/.local/share/bhote/broker/` (0700, your user only).
+- This is a way out of the sandbox of the one who asks, for exactly those programs. `gh` and `git` can still run what is in a repository (hooks): allow more only on purpose.
+- Every request is logged in `~/.local/share/bhote/secret-broker.log` (`bhote secret broker log`): time, the first words of the command, folder, refusals, exit code, never a secret or the output.
+- `bhote secret broker status | log | uninstall`.

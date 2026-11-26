@@ -363,7 +363,8 @@ async function apiGet(key, argv) {
   try { r = await exec("gh", argv, { timeout: 40000 }); } catch (e) { fail = String(e?.message ?? e); }
   let entry;
   if (r && r.code === 0) {
-    const ttl = API_ACTIVE.test(r.stdout) ? apiBase : Math.max(apiBase, Math.min(apiBase * 6, 120));
+    // a quiet answer is kept 6 x the base (at most 120 s); the lists of pull requests at most 30 s: a new pull request and its short checks must show up while they run
+    const ttl = API_ACTIVE.test(r.stdout) ? apiBase : Math.max(apiBase, Math.min(apiBase * 6, /^gh pr list /.test(key) ? 30 : 120));
     entry = { key, fetched_at: now, tried_at: now, ttl, status: "ok", etag: "", body: r.stdout, error: "", fails: 0, retry_at: 0 };
   } else {
     if (r) { const l = (r.stderr ?? "").toLowerCase(); fail = /rate limit|http 429|http 403/.test(l) ? "rate limit" : ((r.stderr ?? "").split("\n")[0] || "gh failed").slice(0, 200); }
@@ -529,6 +530,7 @@ const SETTINGS = [
   ["PR_CHECKS_IGNORE", "Integrations", "GitHub", "Ignored checks", "Checks of pull requests that bhote leaves out (comma-separated, * as a wildcard, e.g. codecov/*). They are not shown, not counted and never turn a pull request red. Empty: none.", ""],
   ["GITHUB_BRANCHES", "Integrations", "GitHub", "Agent branches", "Show the git branch each task's agent works on."],
   ["LINEAR_TEAMS", "Integrations", "Linear", "Teams", "Only the issues in triage of these Linear team keys become tasks (e.g. ENG,OPS); empty: all teams the key sees. The key is the secret LINEAR_API_KEY (bhote secret set LINEAR_API_KEY)."],
+  ["SECRET_BROKER_ALLOW", "Integrations", "Secrets", "Broker programs", "The programs the secret broker runs for a process that cannot reach the keychain (a sandboxed agent), by bare name: gh,git (empty: the default). Install it once in your own terminal: bhote secret broker install; the requests are in secret-broker.log."],
   ["CIRCLECI_TOKEN", "Integrations", "CircleCI", "API token", "Personal API token for CircleCI (falls back to $CIRCLECI_TOKEN)."],
   ["DEPLOY_CIRCLECI", "Integrations", "CircleCI", "Deployments", "Include deployments from CircleCI.", ""],
   ["DEPLOY_PIPELINES", "Integrations", "CircleCI", "Pipelines on other branches", "Also show CircleCI pipelines running on other branches, with branch and author.", ""],
@@ -672,7 +674,7 @@ export default class Bhote extends View {
     this.learned = new Set();
     cx.timer.every(5000, (cx) => this.load(cx));
     this.load(cx);
-    if (this.side === "right") { cx.timer.every(90000, (cx) => this.loadPRs(cx)); }
+    if (this.side === "right") { cx.timer.every(30000, (cx) => this.loadPRs(cx)); }
     // the servers: the IMS systems of every machine; polled while the overview or the Servers tab is open
     this.srv = {};          // by machine: what servers.js reported
     this.srvInfo = {};      // by machine: where its IMS checkout and its node are

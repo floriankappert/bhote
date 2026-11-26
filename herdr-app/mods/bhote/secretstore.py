@@ -206,8 +206,7 @@ def pick_backend(forced=None):
     want = forced or os.environ.get("BHOTE_SECRET_BACKEND") or cfg_get("SECRET_BACKEND", "auto") or "auto"
     if want == "auto":
         if sys.platform == "darwin" and which("security"):
-            r = run(["security", "find-generic-password", "-s", SERVICE, "-a", "__probe__"], timeout=15)
-            if r.returncode in (0, 44): return "keychain"      # (44: no such item, which is what the probe expects)
+            if keychain_reachable(): return "keychain"
             raise Fail("the keychain is not reachable from this process (a background or sandboxed process may not use it: run this in your own terminal, "
                        "or choose the encrypted file on purpose: bhote config set SECRET_BACKEND file)")
         if sys.platform != "darwin" and which("secret-tool"):
@@ -824,11 +823,204 @@ def cmd_env(a):
                 if not cmd: raise Fail("env run [NAME] -- command")
                 dflt = True
         if not cmd: raise Fail("env run NAME -- command")
+        if os.environ.get("BHOTE_BROKER") != "off" and not keychain_reachable():      # (outside the login session: the broker of the login session runs it)
+            if broker_alive(): return broker_run(cmd, None if dflt else name, dflt)
+            print("bhote: the keychain is not reachable from this process and no broker runs (in your own terminal: bhote secret broker install)", file=sys.stderr)
         env = dict(os.environ); env.update(default_vars() if dflt else env_vars(name))
         try: os.execvpe(cmd[0], cmd, env)
         except OSError as e: raise Fail(f"{cmd[0]}: {e.strerror}")
     else:
         raise Fail("env ls | set NAME VAR=SECRET... | unset NAME VAR... | rm NAME | bind NAME [dir] | unbind NAME [dir] | which [dir] | run NAME -- cmd")
+
+
+# ── the broker: commands for processes that cannot reach the keychain ────────────────────────────────────────────────
+# A process outside the login session of the user (a sandboxed agent, ssh, cron) cannot use the macOS Keychain. The broker is a small loop that runs in the
+# login session (a LaunchAgent: `bhote secret broker install`, once, in your own terminal) and runs the commands such a process asks for, with the secrets
+# in their environment, and hands the output back. The protocol is files in a folder of the user (0700): req/<id>.json (argv, cwd, environment), res/<id>.out,
+# .err and, last, .rc. A command the broker runs is the user's own, but not under the sandbox of the one who asked: so only the programs in
+# SECRET_BROKER_ALLOW run (default gh, git), by bare name, in a folder below the home, never with a value of a secret in the answer file except what the
+# program itself prints. Every request is logged in bhote's data folder (secret-broker.log; `bhote secret broker log`): time, the first words of the command, folder, refusals, exit code.
+BROKER_DIR = os.environ.get("BHOTE_BROKER_DIR") or os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share"), "bhote", "broker")
+BROKER_ALLOW = "gh,git"
+BROKER_LABEL = "dev.bhote.secret-broker"
+BROKER_TIMEOUT = 600
+
+
+def keychain_reachable():
+    """False when this process cannot use the macOS Keychain (outside the login session). Other systems: True (their backends fail by themselves)."""
+    if sys.platform != "darwin" or not which("security"): return True
+    # (not by looking for an item: without the search list of the login session every item is "not found" (44), which looks like a working keychain)
+    try:
+        r = run(["security", "list-keychains"], timeout=15)
+        return r.returncode == 0 and bool(r.stdout.strip())
+    except Fail: return False
+
+
+def broker_alive():
+    try: return time.time() - os.stat(os.path.join(BROKER_DIR, "alive")).st_mtime < 20
+    except OSError: return False
+
+
+def broker_run(cmd, name, dflt):
+    """env run through the broker: the answer's output is copied as it comes, the exit code of the command is returned."""
+    import uuid
+    rid = uuid.uuid4().hex
+    req = {"id": rid, "argv": cmd, "cwd": os.getcwd(), "env": name, "default": bool(dflt)}
+    write_atomic(os.path.join(BROKER_DIR, "req", rid + ".json"), json.dumps(req))
+    res = os.path.join(BROKER_DIR, "res", rid)
+    pos = {".out": 0, ".err": 0}; sinks = {".out": sys.stdout.buffer, ".err": sys.stderr.buffer}
+    end = time.time() + BROKER_TIMEOUT + 60
+    sent = time.time()
+    reqf = os.path.join(BROKER_DIR, "req", rid + ".json")
+    def drain():
+        for ext in pos:
+            try:
+                with open(res + ext, "rb") as f:
+                    f.seek(pos[ext]); b = f.read()
+            except OSError: continue
+            if b: pos[ext] += len(b); sinks[ext].write(b); sinks[ext].flush()
+    try:
+        while time.time() < end:
+            drain()
+            try: rc = int(open(res + ".rc").read().strip())
+            except (OSError, ValueError):
+                if os.path.exists(reqf) and time.time() - sent > 15:       # (the broker takes a request at once: nobody did, it has stopped)
+                    raise Fail("the broker did not pick up the request (it stopped? bhote secret broker status; in your own terminal: bhote secret broker install)")
+                time.sleep(0.1); continue
+            drain(); return rc
+        raise Fail("the broker did not answer (bhote secret broker status)")
+    finally:
+        for ext in (".out", ".err", ".rc"):
+            try: os.unlink(res + ext)
+            except OSError: pass
+        try: os.unlink(os.path.join(BROKER_DIR, "req", rid + ".json"))
+        except OSError: pass
+
+
+BROKER_LOG = os.path.join(os.environ.get("BHOTE_DATA") or os.path.join(os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share"), "bhote"), "secret-broker.log")
+
+
+def _broker_log(line):
+    """What the broker did, in the data folder of bhote beside the other logs (kharka-watch.log ...): one line per request, never a secret or the output."""
+    try:
+        os.makedirs(os.path.dirname(BROKER_LOG), exist_ok=True)
+        try:
+            if os.path.getsize(BROKER_LOG) > 1_000_000: os.replace(BROKER_LOG, BROKER_LOG + ".1")
+        except OSError: pass
+        with open(BROKER_LOG, "a") as f: f.write(f"{now()} {line}\n")
+    except OSError: pass
+
+
+def _words(argv, n=3):
+    """The first words of a command for the log (cut short: the rest could be anything somebody typed)."""
+    return " ".join(x[:60] for x in argv[:n]) if isinstance(argv, list) else "?"
+
+
+def _git_unsafe(args):
+    """Options of git before its subcommand that run programs (-c core.sshCommand=..., a changed exec path)."""
+    for a in args:
+        if not a.startswith("-"): return False
+        if a in ("-c", "--config-env", "--exec-path") or a.startswith(("--config-env=", "--exec-path=")) or (a.startswith("-c") and not a.startswith("--")): return True
+    return False
+
+
+def _broker_handle(path):
+    import threading
+    rid = os.path.basename(path)[:-5]
+    res = os.path.join(BROKER_DIR, "res", rid)
+    def finish(rc, msg=""):
+        if msg:
+            with open(res + ".err", "ab") as f: f.write((msg + "\n").encode())
+        write_atomic(res + ".rc", str(rc))
+    try:
+        st = os.stat(path)
+        if st.st_uid != os.getuid() or st.st_mode & 0o022:
+            _broker_log(f"refused {rid}: the request file is not the user's own (owner or permissions)"); os.unlink(path); return
+        req = json.load(open(path)); os.unlink(path)
+        argv, cwd = req.get("argv"), os.path.realpath(req.get("cwd") or "")
+        if not re.fullmatch(r"[0-9a-f]{32}", str(req.get("id", ""))) or req["id"] != rid: _broker_log(f"refused {rid}: bad request id"); return
+        allow = [x.strip() for x in (cfg_get("SECRET_BROKER_ALLOW", BROKER_ALLOW) or BROKER_ALLOW).split(",") if x.strip()]
+        if not isinstance(argv, list) or not argv or not all(isinstance(x, str) for x in argv): return finish(126, "bhote broker: no command")
+        if "/" in argv[0] or argv[0] not in allow:
+            _broker_log(f"refused {_words(argv)} in {cwd}: {argv[0][:30]} is not in SECRET_BROKER_ALLOW"); return finish(126, f"bhote broker: {argv[0]} is not allowed (SECRET_BROKER_ALLOW={','.join(allow)}; bhote config set SECRET_BROKER_ALLOW ...)")
+        if argv[0] == "git" and _git_unsafe(argv[1:]): _broker_log(f"refused {_words(argv)} in {cwd}: git option that runs programs"); return finish(126, "bhote broker: git -c / --config-env / --exec-path before the subcommand are not allowed here")
+        if not (cwd == HOME or cwd.startswith(HOME + os.sep)) or not os.path.isdir(cwd): _broker_log(f"refused {_words(argv)} in {cwd}: folder outside the home folder"); return finish(126, "bhote broker: the folder must be below the home folder")
+        try:
+            name = req.get("env") or (None if req.get("default") else env_for_dir(cwd))
+            env = dict(os.environ); env["BHOTE_BROKER"] = "off"
+            env.update(env_vars(name) if name else default_vars())
+        except Fail as e: _broker_log(f"failed {_words(argv)} in {cwd}: {e}"); return finish(1, f"bhote: {e}")
+        t0 = time.time(); _broker_log(f"run {_words(argv)} in {cwd} (env {name or 'default secrets'}: {len(env) - len(os.environ)} variables)")
+        p = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        def pump(src, ext):
+            with open(res + ext, "ab", buffering=0) as f:
+                for chunk in iter(lambda: src.read1(4096), b""): f.write(chunk)
+        ts = [threading.Thread(target=pump, args=(p.stdout, ".out"), daemon=True), threading.Thread(target=pump, args=(p.stderr, ".err"), daemon=True)]
+        for t in ts: t.start()
+        try: rc = p.wait(timeout=BROKER_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            p.kill(); rc = 124
+        for t in ts: t.join(5)
+        _broker_log(f"done {_words(argv, 2)} rc={rc} in {time.time() - t0:.1f}s")
+        finish(rc)
+    except FileNotFoundError as e:
+        try: finish(127, f"bhote broker: {e.filename}: not found")
+        except OSError: pass
+    except Exception as e:
+        try: finish(1, f"bhote broker: {type(e).__name__}")
+        except OSError: pass
+
+
+def broker_serve():
+    import threading
+    for d in ("req", "res"): os.makedirs(os.path.join(BROKER_DIR, d), mode=0o700, exist_ok=True)
+    os.chmod(BROKER_DIR, 0o700)
+    last = 0
+    while True:
+        if time.time() - last >= 5:
+            write_atomic(os.path.join(BROKER_DIR, "alive"), str(os.getpid())); last = time.time()
+            for f in glob.glob(os.path.join(BROKER_DIR, "res", "*")):      # (what nobody took within an hour)
+                try:
+                    if time.time() - os.stat(f).st_mtime > 3600: os.unlink(f)
+                except OSError: pass
+        for f in sorted(glob.glob(os.path.join(BROKER_DIR, "req", "*.json"))):
+            threading.Thread(target=_broker_handle, args=(f,), daemon=True).start()
+            time.sleep(0.05)
+        time.sleep(0.2)
+
+
+def cmd_broker(a):
+    act = a.action or "status"
+    plist = os.path.join(HOME, "Library", "LaunchAgents", BROKER_LABEL + ".plist")
+    if act == "run":
+        return broker_serve()
+    if act == "log":
+        try: lines = open(BROKER_LOG, errors="ignore").read().splitlines()
+        except OSError: lines = []
+        print("\n".join(lines[-40:]) if lines else f"no requests yet ({BROKER_LOG})"); return 0
+    if act == "status":
+        print(f"broker: {'running' if broker_alive() else 'not running'}  ·  keychain reachable from here: {'yes' if keychain_reachable() else 'no'}  ·  allowed: {cfg_get('SECRET_BROKER_ALLOW', BROKER_ALLOW)}")
+        return 0 if broker_alive() else 1
+    if sys.platform != "darwin": raise Fail("the broker is for macOS (the keychain of the login session); other systems have no use for it")
+    if act == "install":
+        if not keychain_reachable(): raise Fail("run this in your own terminal (the login session), not from a sandboxed or background process: the broker has to live there")
+        me = os.path.abspath(__file__)
+        body = ('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n'
+                f'<key>Label</key><string>{BROKER_LABEL}</string>\n<key>ProgramArguments</key><array><string>{sys.executable}</string><string>{me}</string><string>broker</string><string>run</string></array>\n'
+                f'<key>EnvironmentVariables</key><dict><key>PATH</key><string>{HOME}/.cargo/bin:{HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string></dict>\n'
+                '<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>\n</dict></plist>\n')
+        write_atomic(plist, body, 0o644)
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{BROKER_LABEL}"], capture_output=True)
+        r = subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", plist], capture_output=True, text=True)
+        if r.returncode != 0: raise Fail(f"launchctl bootstrap failed: {r.stderr.strip()[:200]}")
+        print(f"broker: installed ({BROKER_LABEL}); allowed programs: {cfg_get('SECRET_BROKER_ALLOW', BROKER_ALLOW)} (bhote config set SECRET_BROKER_ALLOW gh,git,curl to change)")
+        return 0
+    if act == "uninstall":
+        subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{BROKER_LABEL}"], capture_output=True)
+        try: os.unlink(plist)
+        except OSError: pass
+        print("broker: removed"); return 0
+    raise Fail("broker run | status | log | install | uninstall")
 
 
 # ── main ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -855,6 +1047,7 @@ def main(argv):
     add("purge-context", cmd_purge, ("--dry-run", {"action": "store_true"}))
     add("machines", cmd_machines, ("--machine", {}))
     add("env", cmd_env)
+    add("broker", cmd_broker, pos=[("action", {"nargs": "?"})])
     argv = list(argv)
     if argv[:1] == ["env"]:       # (by hand: argparse mangles the -- before the command of env run)
         rest = argv[1:]; post = []
