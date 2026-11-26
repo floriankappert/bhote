@@ -945,6 +945,16 @@ def _broker_handle(path):
             _broker_log(f"refused {_words(argv)} in {cwd}: {argv[0][:30]} is not in SECRET_BROKER_ALLOW"); return finish(126, f"bhote broker: {argv[0]} is not allowed (SECRET_BROKER_ALLOW={','.join(allow)}; bhote config set SECRET_BROKER_ALLOW ...)")
         if argv[0] == "git" and _git_unsafe(argv[1:]): _broker_log(f"refused {_words(argv)} in {cwd}: git option that runs programs"); return finish(126, "bhote broker: git -c / --config-env / --exec-path before the subcommand are not allowed here")
         if not (cwd == HOME or cwd.startswith(HOME + os.sep)) or not os.path.isdir(cwd): _broker_log(f"refused {_words(argv)} in {cwd}: folder outside the home folder"); return finish(126, "bhote broker: the folder must be below the home folder")
+        # macOS keeps the folders Documents, Desktop, Downloads (and others) from a process that was not allowed: the open() of the folder then waits for an answer
+        # that does not come, and so does the program in it. A look into the folder first turns the silent hang into a message (and may bring up the question).
+        probe = []
+        def look():
+            try: os.listdir(cwd); probe.append(True)
+            except OSError: probe.append(False)
+        tp = threading.Thread(target=look, daemon=True); tp.start(); tp.join(8)
+        if not probe:
+            _broker_log(f"refused {_words(argv)} in {cwd}: the folder does not open (macOS privacy: Files and Folders / Full Disk Access for {sys.executable})")
+            return finish(126, f"bhote broker: the folder {cwd} does not open for the broker: macOS keeps it back (Documents, Desktop, Downloads ...). Allow {sys.executable} under System Settings > Privacy & Security > Files and Folders (or Full Disk Access), then try again.")
         try:
             name = req.get("env") or (None if req.get("default") else env_for_dir(cwd))
             env = dict(os.environ); env["BHOTE_BROKER"] = "off"
