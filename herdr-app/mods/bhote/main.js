@@ -1715,7 +1715,7 @@ export default class Bhote extends View {
   agentIcon(t, agent, active, color, word) {
     if (!agent) return div().w(14).h(14).flex_none().flex().items_center().justify_center().child(svg("mods/bhote/terminal.svg").size(13).text_color(active ? t.muted : t.dim));   // (a space without an agent: a shell)
     const state = word ?? (agent.status === "working" ? "working" : agent.status === "blocked" ? "needs you" : agent.status === "done" ? "finished" : "idle");
-    if (state === "working") return div().w(14).flex_none().text_color(WORK).frames(SPIN, 90);   // (the card is blue, the spinner Claude orange)
+    if (state === "working" || state === "testing" || state === "deploying" || state === "ci checks") return div().w(14).flex_none().text_color(WORK).frames(SPIN, 90);   // (the card is blue, the spinner Claude orange)
     if (state === "needs you") return div().w(14).flex_none().text_color(color ?? t.blocked).child("◉");
     if (state === "finished") return div().w(14).flex_none().text_color(color ?? t.done).child("✓");
     return div().w(14).flex_none().text_color(active ? t.muted : t.dim).child("○");
