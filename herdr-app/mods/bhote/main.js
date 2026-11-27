@@ -3248,7 +3248,7 @@ export default class Bhote extends View {
           const st = a.status === "working" ? { word: "working", color: "#d97757", bar: "#d97757" }
             : a.status === "blocked" ? { word: "needs you", color: t.blocked, bar: t.blocked }
             : this.isFinished(a) ? { word: "finished", color: t.ansi2 ?? t.done, bar: t.ansi2 ?? t.done } : { word: "idle", color: t.dim, bar: t.idle };
-          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address]), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0, ctx: this.agentCtx[a.address] ?? null, wf: this.agentWf[a.address] ?? null }), 84));
+          rows.push(this.enterWrap(t, "agents", `a-${a.address}`, this.card(t, `a-${a.address}`, { dragId: s.id, dragMk: mk, agent: a, listen: this.listensTo(s), onListen: (cx) => this.toggleListen(cx, s), name: titled(s) ?? s.name, branch: s.branch, st, selected: a.focused, dim: idle, deploy: this.deployOf(s.branch, this.agentHead[a.address], s.name), testing: this.testOf(s.name), code: this.agentIdent(s, machine, remote, spaceList.indexOf(s) + 1, mine.indexOf(a) + 1, mine.indexOf(a)), finAge: this.finAge(a), monitor: this.monitorOf(a, machineOf(a)), dirty: this.agentDirty[a.address] ?? 0, ctx: this.agentCtx[a.address] ?? null, wf: this.agentWf[a.address] ?? null }), 84));
         }
       }
       if (ins === ids.length) rows.push(dropLine());   // (to the end of the section)
@@ -5182,8 +5182,17 @@ export default class Bhote extends View {
   }
 
   // The deployment that runs for a branch (an agent's), or null.
-  deployOf(branch, sha) {
-    try { return (shared("bhote.depRun") ?? []).find((x) => (branch && x.branch === branch) || (sha && x.sha && x.sha === sha)) ?? null; } catch (_e) { return null; }
+  // (a branch name alone is not enough: main of IMS must not turn the card of an agent on main of Marketing yellow, so the project has to be the space's)
+  deployOf(branch, sha, space) {
+    try { return (shared("bhote.depRun") ?? []).find((x) => (branch && x.branch === branch && this.spaceInProject(space, x.project)) || (sha && x.sha && x.sha === sha)) ?? null; } catch (_e) { return null; }
+  }
+
+  // Does the space (an agent's folder name: IMS-wt2, bilendo-marketing) belong to the project? True when either is unknown.
+  spaceInProject(space, project) {
+    const p = this.projects.find((q) => q.title === project);
+    if (!space || !project || !p) return true;
+    const base = String(space).replace(/[\s-]*\(?wt\d+\)?$/i, "").trim().toLowerCase();
+    return base === p.title.toLowerCase() || String(p.ci ?? "").toLowerCase().endsWith(`/${base}`) || base === String(project).toLowerCase();
   }
 
   // The tests that run in the worktree an agent works in (by the name of its space), or null.
