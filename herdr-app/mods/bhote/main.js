@@ -4536,13 +4536,38 @@ export default class Bhote extends View {
         for (const w of this.deploysAll()) {
           if (pipe(w.url) !== mine || seenWf.has(w.label)) continue;
           seenWf.add(w.label);
-          workflows.push({ name: w.label.replace(/^[a-z]+-(?=.*-workflow$)/, "").replace(/-workflow$/, ""), state: w.state, done: w.done, total: w.total });
+          workflows.push({ name: w.label.replace(/^[a-z]+-(?=.*-workflow$)/, "").replace(/-workflow$/, ""), state: w.state, done: w.done, total: w.total,
+            wid: w.state === "approval" ? (/\/workflows\/([0-9a-f-]{36})/.exec(String(w.url ?? "")) ?? [])[1] : undefined });
         }
         workflows.sort((a, b) => a.name.localeCompare(b.name));
       }
       out.push({ project: proj.title, ref, stages: runbookPhases(stages), rank, at, workflows });
     }
     return out.sort((a, b) => a.rank - b.rank);
+  }
+
+  // The approval of a workflow that waits in CircleCI (bhote approve). Two clicks: "Approve" asks, "Yes, approve" sends it; nothing goes out by itself.
+  approveControl(t, project, w) {
+    const key = `${project}/${w.wid}`, st = this.approveState?.[key];
+    const set = (v, cx) => { this.approveState = { ...(this.approveState ?? {}), [key]: v }; cx.notify(); };
+    const row = h_flex().gap(8).items_center().pl(123).pr(15).pb(4);
+    if (st?.busy) return row.child(div().text_size(11).text_color(t.dim).child(`Approving ${w.name} …`));
+    if (st?.msg) return row.child(div().text_size(11).text_color(st.ok ? t.done : t.blocked).child(st.msg))
+      .child(this.btn(t, `ap-ok-${key}`, "OK", (_e, cx) => set(undefined, cx)));
+    if (st?.ask) return row.child(div().text_size(11).text_color(t.blocked).child(`Approve ${w.name} of ${project}? This lets the deployment go on (maybe to production).`))
+      .child(this.btn(t, `ap-yes-${key}`, "Yes, approve", (_e, cx) => {
+        set({ busy: true }, cx);
+        cx.spawn(async (cx) => {
+          let r;
+          try { r = await exec("bhote", ["approve", w.wid, "--yes"], { timeout: 30000 }); } catch (e) { r = { stdout: "", stderr: String(e?.message ?? e), code: 1 }; }
+          const out = `${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n").pop() || "no answer";
+          this.approveState = { ...(this.approveState ?? {}), [key]: { msg: out, ok: !r.code } };
+          cx.notify();
+        });
+      }, { danger: true }))
+      .child(this.btn(t, `ap-no-${key}`, "Cancel", (_e, cx) => set(undefined, cx)));
+    return row.child(div().text_size(11).text_color(t.dim).child(`${w.name} waits for approval`))
+      .child(this.btn(t, `ap-${key}`, "Approve …", (_e, cx) => set({ ask: true }, cx)));
   }
 
   // One circle for a stage.
@@ -4573,7 +4598,8 @@ export default class Bhote extends View {
       .child(div().w(104).flex_none().truncate().text_size(12).text_color(t.foreground).child(x.project))
       .child(h_flex().gap(4).items_center().flex_none().children(x.stages.map((y) => this.stageCircle(t, y.state, 9))))
       .child(div().flex_1().min_w(0).truncate().pl(8).text_size(11).text_color(t.dim).child(x.ref.length > 34 ? `${x.ref.slice(0, 33)}…` : x.ref)))
-      .when(x.workflows?.length > 0, (el) => el.child(h_flex().gap(10).items_center().flex_wrap().pl(123).pr(15).pb(3).children(x.workflows.map(wfLine))));   // (what the pipeline under way is doing: one dot per workflow)
+      .when(x.workflows?.length > 0, (el) => el.child(h_flex().gap(10).items_center().flex_wrap().pl(123).pr(15).pb(3).children(x.workflows.map(wfLine))))   // (what the pipeline under way is doing: one dot per workflow)
+      .children((x.workflows ?? []).filter((w) => w.wid).map((w) => this.approveControl(t, x.project, w)));
     return [div().flex_none().pt(6).child(this.dividerCaption(t, "Runbooks", [this.countTag(t, items.length)])), ...items.map(row)];
   }
 

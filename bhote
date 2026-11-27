@@ -4387,6 +4387,28 @@ circleci_get() {  # circleci_get <API v2 path>: its JSON; 1 without a token or o
     case "$1" in *[!A-Za-z0-9/_.?=\&-]*) return 1 ;; esac
     api_cached "circleci $1" circleci_curl "$1"
 }
+circleci_approve() {  # circleci_approve <workflow id> [--yes]: the approval jobs that wait in a CircleCI workflow; with --yes it approves them (the token goes to curl on stdin, never printed)
+    local wid=${1:-} yes=${2:-} t j rows name rid code n=0
+    case "$wid" in [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*-*-*-*) ;; *) echo "bhote approve <workflow id> [--yes]: the id is the uuid after /workflows/ in the CircleCI link" >&2; return 2 ;; esac
+    case "$wid" in *[!0-9a-f-]*) echo "bhote approve: not a workflow id" >&2; return 2 ;; esac
+    t=$(circleci_token); [ -n "$t" ] || { echo "bhote approve: no CircleCI token (bhote secret set CIRCLECI_TOKEN)" >&2; return 1; }
+    j=$(circleci_curl "workflow/$wid/job") || { echo "bhote approve: CircleCI did not answer for this workflow (token, id)" >&2; return 1; }
+    rows=$(printf '%s' "$j" | jq -r '.items[] | select(.type == "approval" and .status == "on_hold") | [.approval_request_id, .name] | @tsv' 2>/dev/null)
+    [ -n "$rows" ] || { echo "nothing waits for approval in this workflow"; return 1; }
+    while IFS=$'\t' read -r rid name; do
+        [ -n "$rid" ] || continue
+        if [ "$yes" != "--yes" ]; then echo "waits: $name (add --yes to approve it)"; continue; fi
+        case "$rid" in *[!0-9a-f-]*) continue ;; esac
+        code=$(printf 'header = "Circle-Token: %s"\n' "$t" | curl -s -o /dev/null -w '%{http_code}' --max-time 15 -K - -X POST "https://circleci.com/api/v2/workflow/$wid/approve/$rid")
+        case "$code" in
+            2*) echo "approved: $name"; n=$(( n + 1 )) ;;
+            401|403) echo "bhote approve: CircleCI refused ($code): this token has no right to approve" >&2; return 1 ;;
+            *) echo "bhote approve: CircleCI answered $code for $name" >&2; return 1 ;;
+        esac
+    done <<< "$rows"
+    api_cache_refresh >/dev/null 2>&1
+    return 0
+}
 with_timeout() {  # with_timeout <seconds> <command…>: its output, its status; killed (status 143) when it does not end in time
     local o p k rc d=${TMPDIR:-/tmp}; [ -d "${RUN_DIR:-}" ] && d=$RUN_DIR
     o=$(mktemp "$d/to.XXXXXX") || return 1
@@ -7853,6 +7875,7 @@ bhote_cli() {
         deploys) bhote_info; cli_monitor_list deploys ;;
         tests) bhote_info; cli_monitor_list tests ;;
         test) [ "${1:-}" = run ] || { echo "bhote: test run [-n <name>] -- <command>" >&2; return 1; }; shift; bhote_info; cli_test_run "$@" ;;
+        approve) bhote_info; circleci_approve "$@" ;;
         refresh) n=$(api_cache_refresh); echo "API cache: $n entries are due again; the next cycle asks GitHub and CircleCI at once" ;;
         monitor) bhote_info; cli_monitor "$@" ;;                              # (the Omarchy bar widget, any Waybar-style bar)
         find) bhote_info; find_main ;;

@@ -316,6 +316,12 @@ of Minitest, Vitest, RSpec, pytest or bhote's own tests.
 Makes every entry of the shared API cache due again, so the next cycle of the daemon, the CLI and the panels asks GitHub and
 CircleCI at once ([API cache](monitors.md#api-cache)).
 
+### `bhote approve <workflow id> [--yes]`
+
+Shows the approval jobs that wait in a CircleCI workflow (the uuid after `/workflows/` in its link); with `--yes` it approves them
+(`POST /workflow/{id}/approve/{request}`). The token comes from the secret store and never appears. A refusal (401/403) says that the token
+cannot approve. The Runbooks tab shows an "Approve …" button on a workflow that waits, with a confirmation; agents approve only on Florian's word.
+
 ### `bhote monitor detect [<project>]` · `bhote monitor check`
 
 `detect` finds each project's CI from its repository on GitHub (GitHub Actions deploy workflows, or CircleCI deploy jobs and
