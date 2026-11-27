@@ -11,6 +11,7 @@ import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, set
 
 const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "review", "later", "done"]);
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
+const WORK = "#d97757";   // (Claude orange: the spinner of everything that is working)
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 // The text of all task files, each one after a record separator (0x1e) line, as tasks. The first value of a key
@@ -1712,7 +1713,7 @@ export default class Bhote extends View {
   agentIcon(t, agent, active, color, word) {
     if (!agent) return div().w(14).h(14).flex_none().flex().items_center().justify_center().child(svg("mods/bhote/terminal.svg").size(13).text_color(active ? t.muted : t.dim));   // (a space without an agent: a shell)
     const state = word ?? (agent.status === "working" ? "working" : agent.status === "blocked" ? "needs you" : agent.status === "done" ? "finished" : "idle");
-    if (state === "working") return div().w(14).flex_none().text_color("#d97757").frames(SPIN, 90);   // (the card is blue, the spinner Claude orange)
+    if (state === "working") return div().w(14).flex_none().text_color(WORK).frames(SPIN, 90);   // (the card is blue, the spinner Claude orange)
     if (state === "needs you") return div().w(14).flex_none().text_color(color ?? t.blocked).child("◉");
     if (state === "finished") return div().w(14).flex_none().text_color(color ?? t.done).child("✓");
     return div().w(14).flex_none().text_color(active ? t.muted : t.dim).child("○");
@@ -4575,6 +4576,7 @@ export default class Bhote extends View {
     const orange = "#f08a24";
     const color = state === "ok" ? (t.ansi2 ?? t.done) : state === "failed" ? t.blocked : state === "running" || state === "approval" ? orange : null;
     if (!color) return div().w(size).h(size).flex_none().rounded(size / 2).border(1.5).border_color(t.dim);
+    if (state === "running") return div().w(size).h(size).flex_none().flex().items_center().justify_center().text_size(size + 1).text_color(WORK).frames(SPIN, 90);   // (under way: the spinner of a working agent)
     if (color !== orange) return div().w(size).h(size).flex_none().rounded(size / 2).bg(color);
     // under way: the orange circle pulses (a slow sine of the clock; the panel is drawn again every 100 ms while one is on screen)
     this.pulsing = true;
@@ -4968,7 +4970,7 @@ export default class Bhote extends View {
       return h_flex().id(`dash-${s.id}-${i}`).w_full().flex_none().gap(8).items_start().py(2)
         .when(boxed, (e) => e.px(6).rounded(8).border(1).border_color("#e5484d").bg("#e5484d1a"))
         .when(!!it.key, (e) => e.on_hover((h, cx) => { if (h) this.dashHover = it.key; else if (this.dashHover === it.key) this.dashHover = null; cx.notify(); }))
-        .child(div().mt(6).w(6).h(6).rounded(3).flex_none().bg(c))
+        .child(it.kind === "running" ? div().mt(3).w(9).flex_none().text_size(10).text_color(red ? "#ffffff" : WORK).frames(SPIN, 90) : div().mt(6).w(6).h(6).rounded(3).flex_none().bg(c))
         .child(v_flex().flex_1().min_w(0).gap(4)
           .child(h_flex().gap(8).items_center().h(16)
             .child(it.dots ? div().w(92).flex_none().truncate().text_size(12).text_color(ink).child(it.text) : div().flex_1().min_w(0).truncate().text_size(12).text_color(ink).child(it.text))
@@ -5314,7 +5316,7 @@ export default class Bhote extends View {
     const meta = [x.project, x.branch ? `⎇ ${x.branch}` : "", x.prTitle, clock(x.time), archived ? "archived" : ""].filter(Boolean).join(" · ");
     const jobChips = x.jobs?.length ? h_flex().gap(4).flex_wrap().children(x.jobs.map((j) => { const c = j.state === "failed" ? t.blocked : j.state === "ok" ? (t.ansi2 ?? t.done) : j.state === "canceled" ? t.dim : t.working;
       return h_flex().gap(4).items_center().px(6).h(18).rounded(9).text_size(10.5).text_color(t.muted).bg(tint(c, "1f", t.surface)).border(1).border_color(tint(c, "55", t.border))
-        .child(div().w(6).h(6).rounded(3).flex_none().bg(c)).child(j.label); })) : null;
+        .child(j.state === "running" ? div().w(8).flex_none().text_size(9).text_color(WORK).frames(SPIN, 90) : div().w(6).h(6).rounded(3).flex_none().bg(c)).child(j.label); })) : null;
     return h_flex().id(id).gap(10).items_center().bg(t.surface).border(1).border_color(picked ? t.accent : x.state === "failed" ? "#a8162e" : t.border).rounded(10).mx(8).mb(6).pl(10).pr(6).py(10)
       .hover((e) => e.bg(t.raised)).on_click(this.guard(() => this.open(x.url)))
       // the badge: the state; a tick when the run is selected
@@ -5392,7 +5394,7 @@ export default class Bhote extends View {
           .child(div().flex_none().text_color(t.dim).child(clock(x.time))))
         .when(!isTest && !!x.stacked && x.jobs?.length > 0, (el) => el.child(h_flex().gap(4).flex_wrap().children(x.jobs.map((j) => { const c = j.state === "failed" ? t.blocked : j.state === "ok" ? (t.ansi2 ?? t.done) : j.state === "canceled" ? t.dim : j.state === "approval" ? t.ansi3 : t.working;
           return h_flex().gap(4).items_center().px(6).h(18).rounded(9).text_size(10.5).text_color(t.muted).bg(tint(c, "1f", t.surface)).border(1).border_color(tint(c, "55", t.border))
-            .child(div().w(6).h(6).rounded(3).flex_none().bg(c)).child(j.label); }))))
+            .child(j.state === "running" ? div().w(8).flex_none().text_size(9).text_color(WORK).frames(SPIN, 90) : div().w(6).h(6).rounded(3).flex_none().bg(c)).child(j.label); }))))
         .when(!isTest && !!this.runStages(x, kind), (el) => el.child(this.pathRow(t, this.runStages(x, kind))))
         .when(x.state === "running", (el) => {
           const e = this.runEstimate(x, kind);
