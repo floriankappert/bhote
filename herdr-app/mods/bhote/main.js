@@ -12,6 +12,8 @@ import { agents, spaces, run, theme, props, exec, home, watchFolder, shared, set
 const STATUSES = new Set(["now", "testing", "finished", "next", "waiting", "review", "later", "done"]);
 const CARD_ORDER = ["review", "now", "testing", "deploying", "finished"];
 const WORK = "#d97757";   // (Claude orange: the spinner of everything that is working)
+// The window is not shown (minimized, covered, another Space, a sleeping display): what only draws something stops, the data timers skip their turn.
+const hidden = () => { try { return window()?.visible === false; } catch (_e) { return false; } };
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 // The text of all task files, each one after a record separator (0x1e) line, as tasks. The first value of a key
@@ -675,7 +677,7 @@ export default class Bhote extends View {
     this.learned = new Set();
     cx.timer.every(5000, (cx) => this.load(cx));
     this.load(cx);
-    if (this.side === "right") { cx.timer.every(30000, (cx) => this.loadPRs(cx)); }
+    if (this.side === "right") { cx.timer.every(30000, (cx) => { if (!hidden()) this.loadPRs(cx); }); }
     // the servers: the IMS systems of every machine; polled while the overview or the Servers tab is open
     this.srv = {};          // by machine: what servers.js reported
     this.srvInfo = {};      // by machine: where its IMS checkout and its node are
@@ -683,7 +685,7 @@ export default class Bhote extends View {
     this.srvLoading = false;
     this.srvAt = 0;
     this.srvHover = null;
-    if (this.side === "right") cx.timer.every(3000, (cx) => this.tickServers(cx));
+    if (this.side === "right") cx.timer.every(3000, (cx) => { if (!hidden()) this.tickServers(cx); });
     // the version in the branding of the foot row: the last one seen at once, then what `bhote --version` says now
     try { this.version = localStorage.getItem("version") ?? ""; } catch (_e) { this.version = ""; }
     if (this.side === "right") cx.spawn(async (cx) => {
@@ -695,10 +697,10 @@ export default class Bhote extends View {
     if (this.side === "right") cx.timer.after(3000, (cx) => { const m = this.cfgMeta(); if (!m || Date.now() - (m.at ?? 0) > 12 * 3600 * 1000) this.fetchCfgMeta(cx, null); });   // (the settings dialog opens at once)
     if (this.side === "right") cx.timer.every(4000, () => this.publishDeploys());
     if (this.side === "right") this.loadDeployHistory().then(() => cx.notify());
-    if (this.side === "right") cx.timer.every(40, (cx) => { if (Date.now() < (this.animUntil ?? 0)) cx.notify(); });   // (what comes in is drawn again while it does)
-    if (this.side === "right") { this.loadLiveTests(cx); cx.timer.every(5000, (cx) => this.loadLiveTests(cx)); }
+    if (this.side === "right") cx.timer.every(40, (cx) => { if (Date.now() < (this.animUntil ?? 0) && !hidden()) cx.notify(); });   // (what comes in is drawn again while it does)
+    if (this.side === "right") { this.loadLiveTests(cx); cx.timer.every(5000, (cx) => { if (!hidden()) this.loadLiveTests(cx); }); }
     this.pulsing = false;
-    if (this.side === "right") cx.timer.every(100, (cx) => { if (this.pulsing) { this.pulsing = false; cx.notify(); } });   // (a render that draws a pulsing circle sets it again)
+    if (this.side === "right") cx.timer.every(100, (cx) => { if (this.pulsing) { this.pulsing = false; if (!hidden()) cx.notify(); } });   // (a render that draws a pulsing circle sets it again)
     // the scheduled headless agents (timers that run Claude: slack monitors, depbot ...) of every machine, in the left panel
     this.jobs = {};         // by machine: [{ timer, svc, name, active, next, last, running, failed }]
     this.jobPending = {};   // `${machine}|${timer}`: "run" | "pause" | "resume" until the poll shows it
@@ -710,18 +712,18 @@ export default class Bhote extends View {
     this.agentCwd = {};     // an agent's address: the folder it runs in
     this.monReady = {};     // machines where monitors.py is in place
     this.monLoading = false;
-    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < Math.max(this.commitAnimUntil ?? 0, this.animUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); { const sel = this.jobLogSel; if (sel) { const j = Object.values(this.jobs).flat().find((q) => `${this.srvKey(q.machine)}|${q.timer}` === sel.pk); if (j?.running && Date.now() - (this.jobLogText[sel.pk]?.at ?? 0) > 3000) this.loadJobLogText(cx, j); } } try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
+    if (this.side === "left") { this.trackFinished(); this.trackSpaces(); this.tick = 0; cx.timer.every(70, (cx) => { this.tick += 1; if (hidden()) { if (this.tick % 7 === 0) this.trackFinished(); return; } if (this.tick % 7 === 0 && this.trackFinished()) cx.notify(); else if (this.animating || Date.now() < Math.max(this.commitAnimUntil ?? 0, this.animUntil ?? 0)) cx.notify(); }); cx.timer.every(2000, (cx) => { this.trackSpaces(); { const sel = this.jobLogSel; if (sel) { const j = Object.values(this.jobs).flat().find((q) => `${this.srvKey(q.machine)}|${q.timer}` === sel.pk); if (j?.running && Date.now() - (this.jobLogText[sel.pk]?.at ?? 0) > 3000) this.loadJobLogText(cx, j); } } try { const v = shared("bhote.jobsRefresh"); if (v && v !== this.jobsSeen) { this.jobsSeen = v; this.jobLoading = false; this.loadJobs(cx); } } catch (_e) { /* the 15 s poll covers it */ } }); }
     // Ctrl+S in a terminal (the binding bhote:stash in keys.json, written by the setting STASH_LINK): the prompt goes into the stash, the key on to the program
     // (both panels listen, one handles it: whichever copy of the mod the app delivers it to)
     cx.spawn(async (cx) => { for (;;) { let c; try { c = await nextCommand(); } catch (_e) { return; } if (c === "stash") { try { if (Date.now() - Number(shared("bhote.stashKeyAt") ?? 0) < 800) continue; setShared("bhote.stashKeyAt", Date.now()); } catch (_e) { /* handle it */ } await this.stashKey(cx); } } });
     // the Linear issues in triage become tasks (a source without a key in the secret store is skipped by bhote; the answers go through the API cache)
     if (this.side === "left") cx.timer.every(90000, () => { if (this.taskSync !== false) exec("bhote", ["task", "sync", "--quiet"], { timeout: 180000 }).catch(() => {}); });
     if (this.side === "right") { this.mirrorStash(this.stashList()); cx.timer.every(2000, () => this.adoptStash()); }
-    if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { this.loadJobs(cx); this.loadMonitors(cx); }); }
-    if (this.side === "left") { this.usage = []; this.loadUsage(cx); cx.timer.every(120000, (cx) => this.loadUsage(cx)); }
-    if (this.side === "left") { this.loadHeads(cx); cx.timer.every(8000, (cx) => this.loadHeads(cx)); }
+    if (this.side === "left") { this.loadJobs(cx); this.loadMonitors(cx); cx.timer.every(15000, (cx) => { if (hidden()) return; this.loadJobs(cx); this.loadMonitors(cx); }); }
+    if (this.side === "left") { this.usage = []; this.loadUsage(cx); cx.timer.every(120000, (cx) => { if (!hidden()) this.loadUsage(cx); }); }
+    if (this.side === "left") { this.loadHeads(cx); cx.timer.every(8000, (cx) => { if (!hidden()) this.loadHeads(cx); }); }
     if (this.side === "left") { this.loadListen(cx); cx.timer.every(5000, (cx) => this.loadListen(cx)); cx.timer.every(4000, (cx) => this.loadMessages(cx)); }
-    if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => this.loadCommits(cx)); }
+    if (this.side === "left") { this.loadCommits(cx); cx.timer.every(1000, (cx) => { if (!hidden()) this.loadCommits(cx); }); }
     // Tasks are plain files: reload when one changes.
     cx.spawn(async (cx) => {
       const dir = `${home()}/.local/share/bhote/topics`;
